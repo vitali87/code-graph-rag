@@ -39,6 +39,27 @@ CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
 
+# The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
+# registry only ever covered the process that ran the failed update: a crash or
+# an MCP server restart left a fresh registry seeing a project that looks whole,
+# so it would hydrate a scoped updater from the partial graph and treat its
+# missing definitions as authoritative. Persisting the flag beside the project
+# means the refusal survives the process that earned it.
+#
+# Set with `SET`, cleared by REMOVING the property rather than setting false, so
+# a project indexed before this existed reads the same as one that completed:
+# absent means complete, and no migration is needed.
+CYPHER_MARK_PROJECT_INCOMPLETE = (
+    "MATCH (p:Project {name: $project_name}) SET p.run_incomplete = true"
+)
+CYPHER_CLEAR_PROJECT_INCOMPLETE = (
+    "MATCH (p:Project {name: $project_name}) REMOVE p.run_incomplete"
+)
+CYPHER_PROJECT_IS_INCOMPLETE = (
+    "MATCH (p:Project {name: $project_name}) "
+    "RETURN coalesce(p.run_incomplete, false) AS run_incomplete"
+)
+
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)

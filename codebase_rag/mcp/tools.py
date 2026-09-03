@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from rich.console import Console
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
@@ -860,6 +861,9 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        # Cleared only after the flush: the marker must outlive any failure
+        # that leaves batches uncommitted.
+        self._persist_incomplete(project_name, False)
         self._graph_incomplete = False
         self._live_updater = updater
 
@@ -906,6 +910,9 @@ class MCPToolsRegistry:
         self._live_updater = None
         self._graph_incomplete = True
         self.ingestor.ensure_constraints()
+        # After ensure_constraints so the Project node the marker attaches to
+        # exists even on a first index.
+        self._persist_incomplete(project_name, True)
         self.ingestor.flush_all()
 
         exclude_paths, unignore_paths = self._ignore_sets()
@@ -920,9 +927,65 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        # Cleared only after the flush: the marker must outlive any failure
+        # that leaves batches uncommitted.
+        self._persist_incomplete(project_name, False)
         self._graph_incomplete = False
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    def _persist_incomplete(self, project_name: str, incomplete: bool) -> None:
+        """Record (or clear) the incomplete-run marker on the Project node.
+
+        `_graph_incomplete` lives on this registry, so it only ever covered
+        the process that ran the failed update. A crash or an MCP restart
+        left a fresh registry seeing a project that looks whole, hydrating a
+        scoped updater from the partial graph and treating its missing
+        definitions as authoritative (issue #1679). The marker survives that.
+
+        Never raises. A store that cannot take the marker must not turn a
+        working update into a failed one: the in-process flag still guards
+        this process, and the persisted one is an extra net for the next.
+        Logged rather than silently swallowed, because a marker that never
+        persists degrades this guard back to the old behaviour and an
+        operator should be able to see that in the log.
+        """
+        query = (
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            if incomplete
+            else cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
+        )
+        try:
+            self.ingestor.execute_write(query, {cs.KEY_PROJECT_NAME: project_name})
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                    project=project_name, incomplete=incomplete, error=error
+                )
+            )
+
+    def _persisted_incomplete(self, project_name: str) -> bool:
+        """Whether a previous process left this project mid-update.
+
+        An absent property means complete, so a project indexed before this
+        marker existed reads exactly like one whose run finished and no
+        migration is needed. A store that cannot answer returns False rather
+        than blocking every reingest on an unreadable graph; the not-indexed
+        guard and the in-process flag both still apply.
+        """
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                    project=project_name, error=error
+                )
+            )
+            return False
+        return any(bool(row.get("run_incomplete")) for row in rows or [])
 
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
@@ -934,7 +997,11 @@ class MCPToolsRegistry:
             # project is gone, and hydrating from nothing would leave every
             # unrelated definition missing.
             project_name = derive_project_name(Path(self.project_root))
-            if self._graph_incomplete:
+            # The persisted marker is what makes this survive the process
+            # that earned it: with no retained updater this may be a fresh
+            # registry after a crash, where `_graph_incomplete` is False
+            # because nothing in THIS process failed (issue #1679).
+            if self._graph_incomplete or self._persisted_incomplete(project_name):
                 raise ValueError(
                     cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
                 )
