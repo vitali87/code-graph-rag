@@ -973,7 +973,7 @@ class MCPToolsRegistry:
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
     def _persist_incomplete(self, project_name: str, incomplete: bool) -> bool:
-        """Record (or clear) the incomplete-run marker on the Project node.
+        """Record (or clear) the incomplete-run marker on its own node.
 
         `_graph_incomplete` lives on this registry, so it only ever covered
         the process that ran the failed update. A crash or an MCP restart
