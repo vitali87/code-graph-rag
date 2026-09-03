@@ -355,10 +355,28 @@ def _publish_hash_cache(
             if observed_at is not None:
                 os.utime(f.fileno(), (observed_at, observed_at))
             created = os.fstat(f.fileno())
-        # `os.replace` takes a path, so the swap window closes only if the
-        # path still names the inode the exclusive open created. A mismatch
-        # means someone replaced it: refuse rather than publish whatever is
-        # there now.
+        # A cheap refusal, not the security boundary. The boundary is the
+        # threat model, and it is worth stating because "there is still a
+        # window between this check and the rename" is true and does not
+        # matter (#1701 review):
+        #
+        # The temporary is always a SIBLING of the cache (`with_name`), and
+        # `rename(2)` moves directory ENTRIES without following symlinks on
+        # either name -- measured: renaming a symlink over a file leaves the
+        # link's target untouched. So once `O_EXCL|O_NOFOLLOW` closes the
+        # open-time follow, which was the only path that could write OUTSIDE
+        # this directory, a post-creation swap can at worst leave the cache
+        # entry pointing at a link the attacker chose.
+        #
+        # Doing that needs WRITE on the directory, and anyone with directory
+        # write can unlink the cache and replace it outright without racing
+        # anything. The window grants no capability its own precondition does
+        # not already grant. The one directory shape writable by others is
+        # world-writable-plus-sticky, and the sticky bit forbids renaming or
+        # unlinking another user's entries, so the swap fails there too.
+        #
+        # The check stays because it costs one lstat and turns a swap into a
+        # refusal rather than a silent publish.
         current = os.lstat(tmp_path)
         if (current.st_ino, current.st_dev) != (created.st_ino, created.st_dev):
             raise OSError(
