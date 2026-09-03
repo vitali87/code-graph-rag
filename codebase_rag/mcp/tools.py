@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -892,10 +892,11 @@ class MCPToolsRegistry:
             self._live_updater = updater
         try:
             report = updater.reingest(paths, deleted=deleted)
-        except ValueError:
+        except (ValueError, ReingestAborted):
             # A refusal (a path outside the repository, a directory) is
-            # raised while the paths are split, before anything is touched:
-            # the updater is still valid.
+            # raised while the paths are split, and an abort while the call
+            # was still reading the graph; neither touched anything, so the
+            # updater is still valid and the call may simply be retried.
             raise
         except Exception:
             # The run may have deleted the affected subtrees and never

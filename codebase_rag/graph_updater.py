@@ -282,6 +282,19 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
+class ReingestAborted(RuntimeError):
+    """`reingest()` gave up before its first delete or content write.
+
+    Raised for a graph read that failed while the call was still gathering
+    what it needs (the module paths, the inbound edges). Nothing has been
+    deleted and no definition has been rewritten; the only writes a fresh
+    updater may have issued by then are the idempotent Package and Folder
+    upserts of its structure hydration, which leave the graph as it was.
+    A caller keeps its updater and may simply retry, unlike a failure
+    after the deletes began.
+    """
+
+
 def _stem_key(file_key: str) -> str:
     """The relative path without its extension: what same-stem siblings share."""
     return Path(file_key).with_suffix("").as_posix()
@@ -3530,36 +3543,45 @@ class GraphUpdater:
         if not present and not gone:
             return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
-        self._hydrate_for_reingest()
-        # Generated-source roots and the delombok overlay are per-run inputs;
-        # a watcher's updater lives across many events, so refresh them per
-        # call (the batch path does the same through _delombok_stale_keys).
-        self._register_generated_sources()
-        cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
-        hashes = _load_hash_cache(cache_path)
+        # Everything up to the inbound-edge capture issues no delete and no
+        # content write (a fresh updater's structure hydration re-emits
+        # idempotent Package and Folder upserts, nothing more). A failure
+        # there leaves the graph as it was and says so with ReingestAborted,
+        # so a caller holding the updater (the MCP tool, the watcher) keeps
+        # it rather than treating the graph as partially rewritten.
+        try:
+            self._hydrate_for_reingest()
+            # Generated-source roots and the delombok overlay are per-run inputs;
+            # a watcher's updater lives across many events, so refresh them per
+            # call (the batch path does the same through _delombok_stale_keys).
+            self._register_generated_sources()
+            cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
+            hashes = _load_hash_cache(cache_path)
 
-        # Same-stem reconciliation, as the batch path does it (issue #1569):
-        # a stem with a sibling added or deleted by this call is in flux, its
-        # on-disk survivors re-parse unseeded, and the module-qn map is
-        # seeded from the graph for everything else so the disambiguator
-        # sees the taken qns on a fresh updater.
-        flux_stems, survivors = self._reingest_flux_survivors(present, gone, hashes)
-        existing_paths = self._existing_module_paths()
-        if existing_paths is None:
-            # The sink claims a query surface but the read failed: the taken
-            # qns are unknown, and seeding nothing would let a re-parsed
-            # file claim a qn the graph already holds. Abort before any
-            # delete, as the inbound-edge capture does.
-            raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN)
-        graph_paths = set(existing_paths)
-        self._seed_module_qns_from_graph(graph_paths - set(gone), flux_stems)
-        # A gone file seeds regardless: its map entry is what the state drop
-        # below keys on to free its qn and forget its rehydrated form.
-        self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
+            # Same-stem reconciliation, as the batch path does it (issue #1569):
+            # a stem with a sibling added or deleted by this call is in flux, its
+            # on-disk survivors re-parse unseeded, and the module-qn map is
+            # seeded from the graph for everything else so the disambiguator
+            # sees the taken qns on a fresh updater.
+            flux_stems, survivors = self._reingest_flux_survivors(present, gone, hashes)
+            existing_paths = self._existing_module_paths()
+            if existing_paths is None:
+                # The sink claims a query surface but the read failed: the taken
+                # qns are unknown, and seeding nothing would let a re-parsed
+                # file claim a qn the graph already holds. Abort before any
+                # delete, as the inbound-edge capture does.
+                raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN)
+            graph_paths = set(existing_paths)
+            self._seed_module_qns_from_graph(graph_paths - set(gone), flux_stems)
+            # A gone file seeds regardless: its map entry is what the state drop
+            # below keys on to free its qn and forget its rehydrated form.
+            self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
 
-        affected = self._reingest_dependents({**present, **survivors}, gone)
-        all_keys = sorted({*present, *gone, *survivors, *affected})
-        captured = self._capture_inbound_edges(all_keys)
+            affected = self._reingest_dependents({**present, **survivors}, gone)
+            all_keys = sorted({*present, *gone, *survivors, *affected})
+            captured = self._capture_inbound_edges(all_keys)
+        except Exception as exc:
+            raise ReingestAborted(str(exc)) from exc
         self._reparsed_file_keys = set(all_keys)
 
         # Walk order, as the batch path re-parses (issue #1569): the first

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag.graph_updater import ReingestAborted
 from codebase_rag.mcp.client import query_mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
@@ -762,6 +763,27 @@ class TestReingest:
             )
             assert "Error" not in await mcp_registry.update_repository()
             assert "error" not in await mcp_registry.reingest(["a.py"])
+
+    async def test_an_aborted_reingest_keeps_the_retained_updater(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        # An abort while the call was still reading the graph (a failed
+        # module-path or inbound-edge query) wrote nothing: the updater and
+        # the graph are intact, so the next call must not be refused as
+        # if the graph were partial.
+        _mark_indexed(mcp_registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_cls:
+            updater = mock_updater_cls.return_value
+            updater.reingest.side_effect = ReingestAborted("graph read failed")
+            result = await mcp_registry.reingest(["a.py"])
+            assert "graph read failed" in result["error"]
+            assert mcp_registry._live_updater is updater
+            updater.reingest.side_effect = None
+            updater.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            assert "error" not in await mcp_registry.reingest(["a.py"])
+            assert mock_updater_cls.call_count == 1
 
     async def test_a_refused_reingest_keeps_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry

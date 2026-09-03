@@ -22,6 +22,7 @@ from codebase_rag.graph_updater import (
     CYPHER_PROJECT_PY_MODULES,
     CYPHER_PROJECT_ROUTE_HANDLERS,
     GraphUpdater,
+    ReingestAborted,
 )
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import create_and_run_updater
@@ -359,9 +360,10 @@ def test_reingest_aborts_when_the_module_paths_cannot_be_read(
     _write(root, "util.ts", SIBLING_TS.replace("return 2", "return 3"))
     updater = _sibling_updater(store, root)
 
-    with pytest.raises(RuntimeError, match="module paths could not be read"):
+    with pytest.raises(ReingestAborted, match="module paths could not be read") as info:
         updater.reingest(["util.ts"])
 
+    assert isinstance(info.value.__cause__, RuntimeError)
     assert _snapshot(store) == before
 
 
@@ -955,7 +957,7 @@ def test_a_warm_updater_aborts_when_the_inbound_capture_fails(
 
     store.fetch_all = failing  # type: ignore[method-assign]
     before = _snapshot(store)
-    with pytest.raises(RuntimeError, match="inbound-edge query outage"):
+    with pytest.raises(ReingestAborted, match="inbound-edge query outage"):
         updater.reingest(["pkg/util.py"])
     assert _snapshot(store) == before
 
