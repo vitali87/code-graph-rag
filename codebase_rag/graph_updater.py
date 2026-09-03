@@ -268,8 +268,13 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
 
 def _publish_hash_cache(
     cache_path: Path, hashes: FileHashCache, observed_at: float | None
-) -> None:
+) -> bool:
     """Write the hash cache and its timestamp as one visible step.
+
+    Returns True when the cache is published, False when it is not. The
+    caller needs that answer: the directory-mtime map must not advance past
+    a hash cache that failed to publish, or the pair on disk becomes the
+    fresh-map/stale-cache combination that hides an addition entirely.
 
     `_is_already_in_sync` skips any file whose mtime is at or below this
     file's, so a cache carrying its own write time hides every edit made
@@ -293,6 +298,7 @@ def _publish_hash_cache(
             os.utime(tmp_path, (observed_at, observed_at))
         os.replace(tmp_path, cache_path)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
+        return True
     except OSError as e:
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
         try:
@@ -307,6 +313,7 @@ def _publish_hash_cache(
             logger.warning(
                 ls.CACHE_STAMP_CLEANUP_FAILED, path=tmp_path, error=cleanup_error
             )
+        return False
 
 
 def _load_parser_fingerprint(stamp_path: Path) -> str | None:
@@ -1332,13 +1339,21 @@ class GraphUpdater:
         # compared, and the file loop only walks keys the hash cache already
         # names, so a file added in the gap is never indexed. Publishing the
         # hash cache first leaves the harmless window.
+        # A failed publish leaves the PREVIOUS hash cache on disk, so advancing
+        # the map anyway would build exactly the fresh-map/stale-cache pair the
+        # ordering above exists to avoid: nothing would be compared, and a file
+        # added during the run would never be indexed. Withholding the map
+        # keeps both artefacts one run behind, which only costs a rescan.
+        hash_cache_published = True
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
-            _publish_hash_cache(cache_path, new_hashes, observed_at)
+            hash_cache_published = _publish_hash_cache(
+                cache_path, new_hashes, observed_at
+            )
             self._pending_hash_cache = None
-        if self._pending_dir_mtimes is not None:
+        if self._pending_dir_mtimes is not None and hash_cache_published:
             _save_dir_mtimes(*self._pending_dir_mtimes)
-            self._pending_dir_mtimes = None
+        self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
 
         if self._single_file is None:

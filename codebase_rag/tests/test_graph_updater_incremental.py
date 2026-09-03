@@ -419,7 +419,7 @@ class TestCrashBetweenCacheSaveAndFlush:
 
         def _edit_then_save(
             path: Path, hashes: dict[str, str], observed_at: float | None
-        ) -> None:
+        ) -> bool:
             nonlocal reached_write_site
             reached_write_site = True
             # The observation instant is already captured by now, and this
@@ -432,7 +432,10 @@ class TestCrashBetweenCacheSaveAndFlush:
             # is still the newer of the two and the successor still skips.
             time.sleep(0.2)
             target.write_text(edited, encoding="utf-8")
-            real_save(path, hashes, observed_at)
+            # Pass the real verdict through: swallowing it would report a
+            # failed publish as a success and let the directory-mtime map
+            # advance past a cache that never landed.
+            return bool(real_save(path, hashes, observed_at))
 
         monkeypatch.setattr(
             graph_updater_module, "_publish_hash_cache", _edit_then_save
@@ -643,6 +646,87 @@ class TestCrashBetweenCacheSaveAndFlush:
         leftovers = sorted(q.name for q in py_project.glob("*.tmp"))
         assert not leftovers, f"temporary cache files were left behind: {leftovers}"
 
+    def test_a_failed_publish_does_not_advance_the_directory_mtimes(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A hash cache that did not publish must not advance the map.
+
+        The two artefacts are only safe as a PAIR. A failed publish leaves the
+        previous hash cache on disk, so advancing the directory-mtime map
+        builds the fresh-map/stale-cache combination the publish order exists
+        to avoid: `_is_already_in_sync` compares every recorded directory
+        against a map that already calls it current, finds nothing changed,
+        and the file loop walks only the keys the OLD cache names. A file
+        added during the failed run is then never indexed at all.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        mtimes_path = py_project / cs.DIR_MTIMES_FILENAME
+        before = mtimes_path.read_text(encoding="utf-8")
+        assert before.strip() not in ("", "{}"), (
+            "fixture guard: run 1 recorded no directory mtimes, so an "
+            "unchanged map below would prove nothing"
+        )
+
+        # An addition is what the pair has to keep visible, and it also moves
+        # the containing directory's mtime so run 2 has something new to
+        # record. Without it the map could be byte-identical for the trivial
+        # reason that nothing changed.
+        (py_project / "module_c.py").write_text(
+            "def c():\n    return 1\n", encoding="utf-8"
+        )
+
+        real_replace = os.replace
+        reached = False
+
+        def _refuse_replace(src: object, dst: object) -> None:
+            nonlocal reached
+            if str(src).endswith(".tmp"):
+                reached = True
+                raise OSError(errno.EROFS, "Read-only file system")
+            real_replace(src, dst)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "replace", _refuse_replace)
+
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        monkeypatch.undo()
+
+        assert reached, (
+            "the run never attempted the atomic rename, so the assertion "
+            "below would hold for a run that simply had nothing to publish"
+        )
+        assert mtimes_path.read_text(encoding="utf-8") == before, (
+            "the directory-mtime map advanced past a hash cache that failed "
+            "to publish, leaving the pair that hides an addition"
+        )
+
+        # The pair is still consistent, which is the point of withholding it:
+        # the next run must NOT take the fast path, so module_c is indexed.
+        assert not GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )._is_already_in_sync(), (
+            "the successor took the in-sync fast path, so the file added "
+            "during the failed run is never indexed"
+        )
+
     def test_a_temp_that_cannot_be_cleaned_up_does_not_end_the_run(
         self,
         py_project: Path,
@@ -772,10 +856,15 @@ class TestCrashBetweenCacheSaveAndFlush:
 
         def _publish_unless_second(
             path: Path, hashes: dict[str, str], observed_at: float | None
-        ) -> None:
+        ) -> bool:
             order.append("hash_cache")
             if len(order) == 1:
-                real_publish(path, hashes, observed_at)
+                return bool(real_publish(path, hashes, observed_at))
+            # The STOP this test models is the process dying between the two
+            # publishes, not a publish that failed. Reporting success is what
+            # keeps the caller reaching `_save_dir_mtimes`, which is the call
+            # whose ordering is under test.
+            return True
 
         def _dir_mtimes_unless_second(path: Path, mtimes: dict[str, float]) -> None:
             order.append("dir_mtimes")
