@@ -877,6 +877,10 @@ INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+INCREMENTAL_FILE_FAILED = (
+    "Failed to index {path}; the remaining changed files are still rebuilt "
+    "before the error is raised: {error}"
+)
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
 HASH_CACHE_ORPHANED = (
     "Hash cache exists but project '{project}' has no modules in the graph; "

@@ -280,6 +280,11 @@ def _save_parser_fingerprint(stamp_path: Path, fingerprint: str) -> None:
         logger.warning(ls.PARSER_FINGERPRINT_SAVE_FAILED, path=stamp_path, error=e)
 
 
+def _stem_key(file_key: str) -> str:
+    """The relative path without its extension: what same-stem siblings share."""
+    return Path(file_key).with_suffix("").as_posix()
+
+
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
     if not cache_path.is_file():
         return {}
@@ -993,15 +998,14 @@ class GraphUpdater:
         self._graph_state_unknown = False
         # Per-run for the same reason (issue #1620's shape): a run that raised
         # between `_process_files` and the commit point leaves its cache
-        # stashed on the instance. No test covers this because no such write is
-        # reachable, and the argument is structural rather than a survey of
-        # paths: `_process_files` contains no `return` and no `raise`, and
-        # `run` returns only at the in-sync fast path below, which is above the
-        # commit point. All three stashes are unconditional top-level
-        # statements of `_process_files`, so every path that reaches the commit
-        # point has re-stashed all three before getting there. Reset anyway: the
-        # guarantee is a property of those two functions' control flow, and
-        # the first early `return` added to either one silently ends it.
+        # stashed on the instance. `_process_files` has exactly one raise, the
+        # deferred first parse failure, and it sits AFTER the observed-at
+        # stash and BEFORE the two cache stashes, so a raising run leaves
+        # `_pending_cache_observed_at` set and the other two None; `run`
+        # returns only at the in-sync fast path below, above the commit
+        # point. This reset is what makes that leftover harmless on a reused
+        # instance, and the first early `return` added to either function
+        # is covered by it too.
         self._pending_hash_cache = None
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
@@ -1666,7 +1670,11 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
 
-    def _seed_module_qns_from_graph(self, eligible_paths: set[str]) -> None:
+    def _seed_module_qns_from_graph(
+        self,
+        eligible_paths: set[str],
+        flux_stems: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
         # Cross-language module-qn disambiguation (definition_processor.
         # _disambiguate_module_qn) only sees files processed this run. On an
         # incremental ADD of a file whose basename collides with an already-
@@ -1693,6 +1701,9 @@ class GraphUpdater:
             # eligible_paths, so a same-basename ADD (delete shapes.rs + add
             # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
+                continue
+            # A survivor of a stem in flux re-parses unseeded (issue #1569).
+            if _stem_key(path) in flux_stems:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
@@ -2528,8 +2539,22 @@ class GraphUpdater:
 
         eligible_files = self._collect_eligible_files()
 
+        # Stems with a same-stem sibling added or deleted this run: their
+        # survivors are not seeded and re-parse below, so the bare qn goes to
+        # whichever file the clean rule (first in walk order) gives it,
+        # rather than to whichever file was indexed first (issue #1569).
+        eligible_keys = {key for _fp, key in eligible_files}
+        flux_stems = (
+            set()
+            if is_full_build
+            else {
+                _stem_key(key)
+                for key in (eligible_keys - old_hashes.keys())
+                | (old_hashes.keys() - eligible_keys)
+            }
+        )
         if not is_full_build:
-            self._seed_module_qns_from_graph({key for _fp, key in eligible_files})
+            self._seed_module_qns_from_graph(eligible_keys, flux_stems)
         # A full build can still land on a graph that already holds this
         # project: the cache lives in the repo working tree, the graph does
         # not, so a fresh clone of an indexed repo (or a force run) parses
@@ -2658,8 +2683,18 @@ class GraphUpdater:
         # absent from the cache set here and never join the dependents query.
         # Union them back in; the walk-eligible subtraction below drops the
         # ones that still exist (issue #1567).
+        # A file the graph still holds but neither the cache nor the walk
+        # names (a cacheless or forced rebuild over an existing graph) must
+        # go before the parse too, for the same-stem reason as above: a
+        # surviving sibling parsed first would otherwise claim its qn and
+        # the post-parse delete by path would find nothing.
+        graph_only_gone = (
+            preexisting_paths - eligible_by_key.keys() - unreadable_keys
+            if preexisting_paths
+            else frozenset()
+        )
         deleted_before_parse = sorted(
-            (set(old_hashes) | self._delombok_stale_keys)
+            (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
             - eligible_by_key.keys()
             - unreadable_keys
         )
@@ -2673,13 +2708,18 @@ class GraphUpdater:
         siblings = {
             key
             for key in eligible_by_key
-            if flipped_dirs and Path(key).parent.as_posix() in flipped_dirs
+            if (flipped_dirs and Path(key).parent.as_posix() in flipped_dirs)
+            or (flux_stems and _stem_key(key) in flux_stems)
         }
+        # The siblings join the dependents query: a flux-stem survivor's
+        # module qn changes on this run, so a file that includes or calls it
+        # must re-parse too, or its captured inbound edges are restored
+        # against the old qn (a wrong IMPORTS edge, a dropped CALLS edge).
         affected = 0
         for caller_key in sorted(
             {
                 *self._affected_caller_keys(
-                    sorted({*reindexed_keys, *deleted_before_parse})
+                    sorted({*reindexed_keys, *deleted_before_parse, *siblings})
                 ),
                 *siblings,
             }
@@ -2702,12 +2742,39 @@ class GraphUpdater:
             reindexed_keys = sorted(
                 file_key for _fp, file_key, is_new, _b in changed_entries if not is_new
             )
-        captured_inbound = self._capture_inbound_edges(reindexed_keys)
+        # Pass 2 order decides which same-stem file claims the bare module
+        # qn; a clean build processes files in walk order, so the re-parse
+        # set follows it too instead of the order the dependents were found.
+        eligible_order = {key: i for i, (_fp, key) in enumerate(eligible_files)}
+        changed_entries.sort(key=lambda entry: eligible_order.get(entry[1], -1))
+        # A caller that lives in a DELETED file must not be restored: its
+        # module is gone, and if a surviving same-stem sibling has just taken
+        # over its qn the restore would hang the dead file's edge on the
+        # survivor (issue #1569).
+        deleted_set = set(deleted_before_parse)
+        captured_inbound = [
+            row
+            for row in self._capture_inbound_edges(reindexed_keys)
+            if row.get(cs.KEY_CALLER_PATH) not in deleted_set
+        ]
         self._reparsed_file_keys = {
             file_key for _fp, file_key, _new, _b in changed_entries
         }
 
+        # Every old subtree goes BEFORE any file of this run is parsed, not
+        # one by one as each file is reached: a same-stem sibling parsed
+        # earlier claims the survivor's old module qn, the MERGE lands on the
+        # old node and rewrites its path, and the per-file delete by path
+        # then finds nothing, leaving the old definitions beside the new
+        # ones (issue #1569). This loop is the only graph delete on the
+        # re-parse path: every non-new entry is in reindexed_keys, so the
+        # per-file loop below only clears local state. It runs only once
+        # every changed file has pre-parsed: a parse failure then leaves
+        # the old subtrees in place instead of an emptied graph.
         pre_parsed = self._pre_parse_changed_files(changed_entries)
+        for stale_key in (*reindexed_keys, *deleted_before_parse):
+            self._delete_module_entities(stale_key)
+        first_failure: Exception | None = None
 
         with Progress(
             SpinnerColumn(),
@@ -2728,14 +2795,24 @@ class GraphUpdater:
                         and cached_relative_path(filepath, self.repo_path).as_posix()
                         in self._cpp_frontend_covered,
                     )
-                    self._delete_module_entities(file_key)
 
                 changed_count += 1
-                self._process_single_file(
-                    filepath,
-                    file_bytes=file_bytes,
-                    pre_parsed=pre_parsed.get(filepath),
-                )
+                # Every stale subtree went in the loop above, so a failure
+                # here must not abort this loop: every module after it would
+                # stay deleted and never be rebuilt. The remaining files are
+                # processed, the deletion reconciliation and inbound-edge
+                # restore below still run, and the first error is re-raised
+                # before the cache commit so the next run retries the lot.
+                try:
+                    self._process_single_file(
+                        filepath,
+                        file_bytes=file_bytes,
+                        pre_parsed=pre_parsed.get(filepath),
+                    )
+                except Exception as exc:
+                    logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
+                    if first_failure is None:
+                        first_failure = exc
 
                 processed_since_flush += 1
                 if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
@@ -2768,7 +2845,10 @@ class GraphUpdater:
             for deleted_key in deleted_keys:
                 deleted_path = self.repo_path / deleted_key
                 self.remove_file_from_state(deleted_path)
-                self._delete_module_entities(deleted_key)
+                # A key the up-front loop already cleared gets no second
+                # module delete; only the File node is still to go.
+                if deleted_key not in deleted_set:
+                    self._delete_module_entities(deleted_key)
                 if isinstance(self.ingestor, QueryProtocol):
                     # Keyed on the absolute path: a sibling project's File
                     # node can share the relative path (issue #897).
@@ -2785,6 +2865,8 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
         if unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
+        if first_failure is not None:
+            raise first_failure
 
         # Deferred to the post-flush commit point in `run` (issue #1615). The
         # deletions above are execute_write calls that only become durable at

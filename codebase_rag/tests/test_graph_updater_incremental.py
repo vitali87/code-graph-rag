@@ -2,10 +2,12 @@ import errno
 import json
 import os
 import time
+from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
@@ -58,12 +60,62 @@ def _module_path_queries(mock_ingestor: MagicMock) -> int:
     )
 
 
-def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
-    return {
+def _deleted_module_counts(mock_ingestor: MagicMock) -> Counter[str]:
+    return Counter(
         call.args[1][cs.KEY_PATH]
         for call in mock_ingestor.execute_write.call_args_list
         if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
-    }
+    )
+
+
+def _deleted_module_paths(mock_ingestor: MagicMock) -> set[str]:
+    return set(_deleted_module_counts(mock_ingestor))
+
+
+def test_an_edited_file_is_deleted_exactly_once(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The up-front stale-subtree loop is the only delete on the re-parse
+    # path; a second per-file delete inside the parse loop is a wasted
+    # write per re-indexed file, and a set-typed check cannot see it.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    module_a = py_project / "module_a.py"
+    module_a.write_text(module_a.read_text() + "\n")
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+
+    counts = _deleted_module_counts(mock_ingestor)
+    assert "module_a.py" in counts
+    assert all(n == 1 for n in counts.values()), dict(counts)
+
+
+def test_a_deleted_file_is_deleted_exactly_once(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The up-front loop clears a deleted file's subtree before the parse;
+    # the post-parse reconciliation must not issue the same delete again.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    (py_project / "module_a.py").unlink()
+
+    mock_ingestor.reset_mock()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+
+    counts = _deleted_module_counts(mock_ingestor)
+    assert counts["module_a.py"] == 1, dict(counts)
+    assert all(n == 1 for n in counts.values()), dict(counts)
 
 
 @pytest.fixture
@@ -1400,3 +1452,117 @@ class TestSlots:
         cache = BoundedASTCache()
         with pytest.raises(AttributeError):
             cache.nonexistent_attr = "value"  # type: ignore[attr-defined]
+
+
+def test_a_graph_only_module_is_deleted_before_the_first_parse(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Cacheless rebuild over an existing graph: module_c.py is gone from
+    # disk and was never in a cache, only the graph names it. Its subtree
+    # must go before any file is parsed, or a same-stem survivor parsed
+    # first claims its qn and the later delete by path finds nothing.
+    parsers, queries = load_parsers()
+
+    def module_paths(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_PROJECT_MODULE_PATHS:
+            return [
+                {cs.KEY_PATH: "module_a.py"},
+                {cs.KEY_PATH: "module_b.py"},
+                {cs.KEY_PATH: "module_c.py"},
+            ]
+        return []
+
+    mock_ingestor.fetch_all.side_effect = module_paths
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    deleted_at_first_parse: list[set[str]] = []
+    real_parse = updater._process_single_file
+
+    def spy(*args: object, **kwargs: object) -> None:
+        if not deleted_at_first_parse:
+            deleted_at_first_parse.append(_deleted_module_paths(mock_ingestor))
+        real_parse(*args, **kwargs)
+
+    updater._process_single_file = spy  # type: ignore[method-assign]
+    updater.run()
+
+    assert deleted_at_first_parse, "no file was parsed"
+    assert "module_c.py" in deleted_at_first_parse[0]
+    assert _deleted_module_counts(mock_ingestor)["module_c.py"] == 1
+
+
+def test_a_parse_failure_still_rebuilds_the_other_changed_modules(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Every changed module's old subtree is deleted before the first parse,
+    # so a file that fails to parse must not abort the loop: the modules
+    # after it would stay deleted and never be rebuilt. The error still
+    # surfaces once the remaining files are processed.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    for name in ("module_a.py", "module_b.py"):
+        path = py_project / name
+        path.write_text(path.read_text() + "\n")
+        os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    real_parse = updater._process_single_file
+    parsed: list[str] = []
+
+    def flaky(filepath: Path, *args: object, **kwargs: object) -> None:
+        if filepath.name == "module_a.py":
+            raise RuntimeError("parse died")
+        parsed.append(filepath.name)
+        real_parse(filepath, *args, **kwargs)
+
+    updater._process_single_file = flaky  # type: ignore[method-assign]
+    errors: list[str] = []
+    sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+    try:
+        with pytest.raises(RuntimeError, match="parse died"):
+            updater.run()
+    finally:
+        logger.remove(sink_id)
+
+    # Both subtrees were deleted up front; only the survivor was rebuilt.
+    assert {"module_a.py", "module_b.py"} <= _deleted_module_paths(mock_ingestor)
+    assert "module_b.py" in parsed
+    # The re-raised error carries the message, not the file: only the log
+    # names which file failed.
+    assert any("module_a.py" in line and "parse died" in line for line in errors)
+
+
+def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # The stale-subtree deletes run only once every changed file has
+    # pre-parsed; a failure there must not leave an emptied graph behind.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    module_a = py_project / "module_a.py"
+    module_a.write_text(module_a.read_text() + "\n")
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    os.utime(module_a, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    with (
+        patch.object(
+            updater, "_pre_parse_changed_files", side_effect=RuntimeError("parse died")
+        ),
+        pytest.raises(RuntimeError, match="parse died"),
+    ):
+        updater.run()
+
+    assert _deleted_module_paths(mock_ingestor) == set()

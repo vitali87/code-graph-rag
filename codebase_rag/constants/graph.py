@@ -556,7 +556,7 @@ CYPHER_INBOUND_EDGES = (
     "RETURN head(labels(caller)) AS caller_label, "
     "caller.qualified_name AS caller_qn, type(r) AS rel, "
     "head(labels(target)) AS target_label, target.qualified_name AS target_qn, "
-    "properties(r) AS props"
+    "caller.path AS caller_path, properties(r) AS props"
 )
 # Files whose code DEPENDS on a re-indexed file (issue #1229 phase 4): a
 # change there can rebind their calls (a new override shadowing an inherited
