@@ -1960,3 +1960,53 @@ class TestHashCachePublishSymlinkSafety:
         assert not any(str(os.getpid()) in name for name in seen), (
             f"the temporary name still embeds the pid, so it stays guessable: {seen}"
         )
+
+    def test_a_symlink_swapped_in_after_creation_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exclusive open guards creation only; the rest must use the fd.
+
+        A local writer able to modify the cache directory can unlink the
+        temporary between its creation and the calls that follow, then drop a
+        symlink at the same name. A path-based `os.utime` then rewrites the
+        LINK TARGET's timestamp and `os.replace` publishes the link itself as
+        the hash cache, with the publish still reporting success (#1701
+        review, verified exploitable).
+
+        Both assertions are needed and neither implies the other: stamping
+        through the descriptor stops the timestamp write, and the inode check
+        stops the symlink being published. A fix doing only the first still
+        installs the link.
+        """
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        before = victim.stat().st_mtime
+
+        real_open = graph_updater_module._open_exclusive_temp
+
+        def _swap_after_create(path: Path) -> tuple[int, str]:
+            fd, name = real_open(path)
+            os.unlink(name)
+            os.symlink(victim, name)
+            return fd, name
+
+        monkeypatch.setattr(
+            graph_updater_module, "_open_exclusive_temp", _swap_after_create
+        )
+
+        published = graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "deadbeef"}, 1_000_000.0
+        )
+
+        assert victim.stat().st_mtime == before, (
+            "the stamp followed a symlink swapped in after creation and "
+            "rewrote the victim's timestamp"
+        )
+        assert not cache_path.is_symlink(), (
+            "a symlink swapped in after creation was published as the cache"
+        )
+        assert not published, (
+            "a publish that could not use the file it created must report "
+            "failure, not success over whatever replaced it"
+        )

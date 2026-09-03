@@ -342,10 +342,28 @@ def _publish_hash_cache(
         logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
         return False
     try:
+        # Everything below acts on the DESCRIPTOR, never the pathname. The
+        # exclusive no-follow open protects only creation: a local writer can
+        # unlink the temporary between then and here and drop a symlink in its
+        # place, after which a path-based `os.utime` rewrites the link
+        # target's timestamp and `os.replace` publishes the link itself as the
+        # cache -- with this function still reporting success. Verified
+        # exploitable before this change (#1701 review).
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hashes, f, indent=2)
-        if observed_at is not None:
-            os.utime(tmp_path, (observed_at, observed_at))
+            f.flush()
+            if observed_at is not None:
+                os.utime(f.fileno(), (observed_at, observed_at))
+            created = os.fstat(f.fileno())
+        # `os.replace` takes a path, so the swap window closes only if the
+        # path still names the inode the exclusive open created. A mismatch
+        # means someone replaced it: refuse rather than publish whatever is
+        # there now.
+        current = os.lstat(tmp_path)
+        if (current.st_ino, current.st_dev) != (created.st_ino, created.st_dev):
+            raise OSError(
+                f"temporary cache path {tmp_path} was replaced after creation"
+            )
         os.replace(tmp_path, cache_path)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
         return True
