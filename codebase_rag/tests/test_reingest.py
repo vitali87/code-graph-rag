@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
@@ -420,6 +421,69 @@ def test_reingest_reparses_in_walk_order_across_directories(
 
     assert seen == [key for key in walk_order if key in set(layout)]
     assert seen != shuffled
+
+
+def _warnings_during(action: Callable[[], object]) -> list[str]:
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="WARNING")
+    try:
+        action()
+    finally:
+        logger.remove(sink)
+    return lines
+
+
+def test_reingest_removes_the_cache_when_it_cannot_backdate_it(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A cache stamped with the wrong instant hides edits from the next run,
+    # so a failed backdate removes it and says so with its own message.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    changed, deleted = edit_rename_callee(fixture_root)
+
+    def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
+        raise OSError(1, "EPERM utime")
+
+    monkeypatch.setattr(os, "utime", failing_utime)
+    warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
+
+    assert not cache.exists()
+    assert any(
+        "Could not backdate" in line and "EPERM utime" in line for line in warnings
+    )
+
+
+def test_reingest_reports_a_cache_it_could_neither_backdate_nor_remove(
+    fixture_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    cache = fixture_root / cs.HASH_CACHE_FILENAME
+    changed, deleted = edit_rename_callee(fixture_root)
+
+    def failing_utime(path: object, times: object = None, **kwargs: object) -> None:
+        raise OSError(1, "EPERM utime")
+
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == cache:
+            raise OSError(1, "EPERM unlink")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(os, "utime", failing_utime)
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    warnings = _warnings_during(lambda: updater.reingest(changed, deleted=deleted))
+
+    assert cache.exists()
+    assert any("Could not backdate" in line for line in warnings)
+    assert any(
+        "Could not remove" in line and "EPERM unlink" in line for line in warnings
+    )
 
 
 def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
