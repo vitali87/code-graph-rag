@@ -768,14 +768,15 @@ class MCPToolsRegistry:
         # name would let two repos named alike delete each other's graphs.
         project_name = derive_project_name(Path(self.project_root))
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
-        self._cleanup_project_embeddings(project_name)
-        self.ingestor.delete_project(project_name)
-        # The retained updater described the graph just deleted; if the
-        # rebuild fails from here on, a later reingest must refuse rather
-        # than resolve against those definitions or against the partial
-        # graph the failed rebuild left behind.
+        # Before the first write, not after: the delete and the flushes are
+        # autocommit writes that can fail part way. From here until the
+        # rebuild completes, a later reingest must refuse rather than
+        # resolve against the retained updater's definitions or against
+        # whatever partial graph a failure left behind.
         self._live_updater = None
         self._graph_incomplete = True
+        self._cleanup_project_embeddings(project_name)
+        self.ingestor.delete_project(project_name)
 
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
@@ -827,6 +828,16 @@ class MCPToolsRegistry:
     def _update_repository_sync(self) -> str:
         project_name = derive_project_name(Path(self.project_root))
 
+        # Dropped and marked before the first write: the initial flush
+        # commits batches left by earlier calls and can fail part way, and
+        # the run itself mutates the graph before it can fail. Either way
+        # the retained updater would describe the graph as it was, and a
+        # later reingest would resolve against definitions the partial
+        # update has already replaced. The incomplete flag makes that
+        # reingest refuse until an update completes, since hydrating from
+        # the partial graph would be no better.
+        self._live_updater = None
+        self._graph_incomplete = True
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
@@ -840,14 +851,6 @@ class MCPToolsRegistry:
             exclude_paths=exclude_paths,
             project_name=project_name,
         )
-        # Dropped before the run mutates the graph: if the update fails part
-        # way, the retained updater would describe the graph as it was
-        # before, and a later reingest would resolve against definitions the
-        # partial update has already replaced. The incomplete flag then makes
-        # that reingest refuse until an update completes, since hydrating
-        # from the partial graph would be no better.
-        self._live_updater = None
-        self._graph_incomplete = True
         updater.run()
         self.ingestor.flush_all()
         self._graph_incomplete = False
@@ -887,7 +890,21 @@ class MCPToolsRegistry:
                 project_name=project_name,
             )
             self._live_updater = updater
-        report = updater.reingest(paths, deleted=deleted)
+        try:
+            report = updater.reingest(paths, deleted=deleted)
+        except ValueError:
+            # A refusal (a path outside the repository, a directory) is
+            # raised while the paths are split, before anything is touched:
+            # the updater is still valid.
+            raise
+        except Exception:
+            # The run may have deleted the affected subtrees and never
+            # rebuilt them: the retained updater describes a graph that no
+            # longer exists, and the next scoped call must not reuse it
+            # over that partial state. update_repository is the recovery.
+            self._live_updater = None
+            self._graph_incomplete = True
+            raise
         return ReingestToolResult(
             reparsed=list(report.reparsed),
             affected=list(report.affected),
