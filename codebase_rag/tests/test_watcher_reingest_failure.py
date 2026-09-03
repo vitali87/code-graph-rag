@@ -71,9 +71,16 @@ class TestReingestFailedMidRun:
 
         updater.reingest.side_effect = None
         handler.dispatch(_Event("/repo/b.py"))
-        assert updater.run.called, (
-            "the next change must restore a whole graph before resolving against it"
-        )
+
+        # ORDER is the property, and `updater.run.called` does not carry it:
+        # it is equally true of a watcher that re-ingests b.py against the
+        # partial graph FIRST and rebuilds afterwards, which is the bug
+        # wearing the fix's clothes. `mock_calls` records both children in
+        # call order, so the sequence pins what the test name claims.
+        # `run` and `reingest` are the only methods the handler calls
+        # (`repo_path` is attribute access), so this stays exact.
+        sequence = [name for name, _args, _kwargs in updater.mock_calls]
+        assert sequence == ["reingest", "run", "reingest"], sequence
 
     def test_the_rebuild_happens_once_not_on_every_later_change(
         self, handler: CodeChangeEventHandler, updater: MagicMock
