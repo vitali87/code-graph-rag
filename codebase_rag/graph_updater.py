@@ -1323,6 +1323,14 @@ class GraphUpdater:
         self._link_endpoint_resources()
 
         self._prune_orphan_nodes()
+        # The prune issues its own deletes and has no flush of its own, so the
+        # flush above cannot cover them (issue #1645). Without this they are
+        # still queued when the caches commit below, and a run that stops in
+        # between tells its successor the tree was reconciled while the
+        # deletes never became durable: the successor takes the in-sync fast
+        # path, never re-issues them, and the orphan survives until a full
+        # rebuild. Same invariant as #1615, on the writes that pass fixed.
+        self.ingestor.flush_all()
 
         self._generate_semantic_embeddings()
 
