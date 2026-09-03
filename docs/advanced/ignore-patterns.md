@@ -76,7 +76,7 @@ How to override it depends on which kind of file it is:
 So a bundle you maintain, or a third-party one you want to ask questions about,
 can be indexed deliberately:
 
-```
+```text
 !docs/js/jquery.min.js
 ```
 
