@@ -78,6 +78,43 @@ def test_exact_and_heuristic_calls_are_tagged(
     assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
 
 
+def test_an_engine_bound_call_does_not_inherit_the_previous_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The Java engine binds `s.bar()` without going through the resolver's
+    # generic path, where the verdict is reset; the label must still be
+    # this call's own, whatever the node before it resolved to.
+    (temp_repo / "Svc.java").write_text(
+        "public class Svc {\n    public void bar() {}\n}\n"
+    )
+    (temp_repo / "Main.java").write_text(
+        "public class Main {\n    Svc s;\n    void run() {\n        s.bar();\n"
+        "        new Svc();\n        s.bar();\n    }\n}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+    by_callee = _resolutions(mock_ingestor, ".Main.run()")
+    assert by_callee["bar()"] == {cs.EdgeResolution.EXACT}
+
+
+def test_resolving_a_calls_arguments_does_not_change_its_own_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `helper(lonely)` binds helper through the import (exact) and then
+    # resolves the argument reference `lonely` by name (heuristic); the
+    # argument pass must not rewrite the verdict the call edge reads back.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text(
+        "def helper(f):\n    return f()\n\n\ndef lonely():\n    return 2\n"
+    )
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\n\n\ndef run():\n    helper(lonely)\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+
+
 def test_ambiguous_callee_fans_out_as_overload(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -330,6 +367,47 @@ def _dead_code_with(min_resolution: str | None) -> set[str]:
     )._replace(entry_points=(f"{PROJECT}.m.main",), min_resolution=min_resolution)
     rows = collect_dead_code(ingestor, PROJECT, config)
     return {str(r[cs.KEY_QUALIFIED_NAME]) for r in rows}
+
+
+def test_min_resolution_keeps_structural_relationships() -> None:
+    # INHERITS and its kin carry no resolution label; a floor above
+    # `exact` must not drop them, or the walk loses the paths that keep
+    # overrides and protocol stubs alive.
+    from unittest.mock import patch
+
+    from codebase_rag import dead_code as dead_code_module
+
+    rels = [
+        {
+            cs.KEY_FROM_LABEL: "Class",
+            cs.KEY_FROM_QN: f"{PROJECT}.m.Derived",
+            cs.KEY_REL_TYPE: "INHERITS",
+            cs.KEY_TO_LABEL: "Class",
+            cs.KEY_TO_QN: f"{PROJECT}.m.Base",
+            cs.KEY_RESOLUTION: None,
+        },
+        {
+            cs.KEY_FROM_LABEL: "Function",
+            cs.KEY_FROM_QN: f"{PROJECT}.m.main",
+            cs.KEY_REL_TYPE: "CALLS",
+            cs.KEY_TO_LABEL: "Function",
+            cs.KEY_TO_QN: f"{PROJECT}.m.sure",
+            cs.KEY_RESOLUTION: "exact",
+        },
+    ]
+    ingestor = MagicMock()
+    ingestor.fetch_all = MagicMock(
+        side_effect=lambda q, p=None: [] if q == cq.CYPHER_DEAD_CODE_NODES else rels
+    )
+    config = default_dead_code_config(
+        include_tests=False, include_classes=False
+    )._replace(entry_points=(f"{PROJECT}.m.main",), min_resolution="dynamic")
+    with patch.object(
+        dead_code_module, "dead_code_from_graph", return_value=set()
+    ) as walk:
+        collect_dead_code(ingestor, PROJECT, config)
+    kept = {rel[2] for rel in walk.call_args.args[1]}
+    assert kept == {"INHERITS"}, kept
 
 
 def test_min_resolution_drops_heuristic_edges_from_the_walk() -> None:

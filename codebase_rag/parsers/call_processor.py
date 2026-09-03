@@ -670,6 +670,22 @@ _RESOLVED_RELS = frozenset(
 )
 
 
+def _preserves_verdict[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
+    # The resolver's verdict belongs to the call node being emitted; the
+    # passes that resolve a call's ARGUMENTS (callable flow, function
+    # references, callable parameters) go through the resolver too and would
+    # otherwise overwrite it before the edge reads it back (issue #1526).
+    @wraps(fn)
+    def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
+        saved = self._resolver.last_resolution
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            self._resolver.last_resolution = saved
+
+    return wrapper
+
+
 def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Restore the processor's current edge-site node when the pass returns.
 
@@ -3300,6 +3316,12 @@ class CallProcessor:
         for call_node in call_nodes:
             self._site_node = call_node
             self._resolution = cs.EdgeResolution.EXACT
+            # A callee bound by a language frontend (Jedi, the Java and C#
+            # engines, the Go frontend, a typed C++ operator) never enters
+            # resolve_function_call, which is where the resolver resets its
+            # verdict; without this reset such an edge would inherit the
+            # label the previous call node left behind (issue #1526).
+            resolver.last_resolution = cs.EdgeResolution.EXACT
             node_id = _id(call_node)
             if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
@@ -4095,6 +4117,10 @@ class CallProcessor:
                             calls_rel,
                             (cs.NodeLabel.FUNCTION, qn_key, variant),
                         )
+        # Edges the later passes emit (decorators, property reads, operator
+        # dispatch) are exact bindings; they must not carry the verdict the
+        # last call node of this loop left behind.
+        self._resolution = cs.EdgeResolution.EXACT
 
     @_site_scoped
     def _ingest_operator_dispatch_calls(
@@ -5899,6 +5925,7 @@ class CallProcessor:
                 module_qn, target_module
             )
 
+    @_preserves_verdict
     def _ingest_callable_param_calls(
         self,
         call_node: Node,
@@ -5931,6 +5958,7 @@ class CallProcessor:
                     caller_qn,
                 )
 
+    @_preserves_verdict
     def _collect_callable_flow(
         self,
         call_node: Node,
@@ -6148,6 +6176,7 @@ class CallProcessor:
                 caller_qn,
             )
 
+    @_preserves_verdict
     def _ingest_argument_function_references(
         self,
         call_node: Node,
