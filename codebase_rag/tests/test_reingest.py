@@ -527,6 +527,52 @@ def test_reingest_replaces_the_type_edges_of_a_changed_annotation(
     }
 
 
+@pytest.mark.parametrize("fresh_updater", [False, True], ids=["warm", "fresh"])
+def test_reingest_of_a_type_keeps_the_annotation_edges_of_a_non_importing_referrer(
+    temp_repo: Path, fresh_updater: bool
+) -> None:
+    # An annotation resolves a unique project type by suffix without an
+    # import, so the referring file is not a dependent of the type's file.
+    # Re-ingesting the type recreates its node; the referrer's RETURNS and
+    # ACCEPTS edges must be captured and restored like the other inbound
+    # edges, or they vanish until the referrer is edited (issue #1527).
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "types_.py", "class Widget:\n    pass\n")
+    _write(root, "mod.py", "def f(x: Widget) -> Widget:\n    return x\n")
+    store = _StatefulIngestor()
+    updater = _updater(store, root)
+    updater.run(force=True)
+    _write(root, "types_.py", "class Widget:\n    pass\n\n\nclass Other:\n    pass\n")
+    if fresh_updater:
+        updater = _updater(store, root)
+
+    report = updater.reingest(["types_.py"])
+
+    assert report.affected == (), "mod.py must not need a re-parse to keep its edges"
+    actual = _snapshot(store)
+    expected = _clean_index(root)
+    assert actual == expected, _diff(actual, expected)
+    typed = {
+        (e[1], e[2], e[4])
+        for e in actual[1]
+        if e[2]
+        in (cs.RelationshipType.RETURNS.value, cs.RelationshipType.ACCEPTS.value)
+    }
+    assert typed == {
+        (
+            f"{PROJECT}.mod.f",
+            cs.RelationshipType.RETURNS.value,
+            f"{PROJECT}.types_.Widget",
+        ),
+        (
+            f"{PROJECT}.mod.f",
+            cs.RelationshipType.ACCEPTS.value,
+            f"{PROJECT}.types_.Widget",
+        ),
+    }
+
+
 def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)

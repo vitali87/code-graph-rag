@@ -89,6 +89,8 @@ _INBOUND_DEPENDENT_RELS = frozenset(
         cs.RelationshipType.INHERITS.value,
         cs.RelationshipType.IMPLEMENTS.value,
         cs.RelationshipType.OVERRIDES.value,
+        cs.RelationshipType.RETURNS.value,
+        cs.RelationshipType.ACCEPTS.value,
     }
 )
 # The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding

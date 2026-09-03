@@ -561,7 +561,12 @@ CYPHER_ALL_MODULE_QNS = (
 # and alias both, by test_incremental_implements_edge.py; its other RETURN
 # aliases are not.
 CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
+    # RETURNS and ACCEPTS join the restore (issue #1527): a function whose
+    # annotation names a type resolves it by unique suffix without importing
+    # its module, so its file is not a dependent and the edge would otherwise
+    # die with the recreated type node.
+    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
+    "|RETURNS|ACCEPTS]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
