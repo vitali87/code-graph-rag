@@ -286,6 +286,7 @@ def test_a_deleted_mod_rs_is_swept_on_its_recorded_qn(temp_repo: Path) -> None:
     for qn_set in updater.simple_name_lookup.values():
         assert not [qn for qn in qn_set if "helper" in qn]
 
+
 def test_rehydration_rebuilds_module_qns_instead_of_accumulating(
     temp_repo: Path,
 ) -> None:
@@ -338,10 +339,16 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     updater.run(force=True)
     updater._rehydrated_module_qns.add("proj.stale")
 
-    def _boom(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
-        raise RuntimeError("module query failed")
-
     original = store.fetch_all
+
+    def _boom(query: str, *args: object, **kwargs: object) -> list[dict[str, object]]:
+        # Only the module query fails. Failing every query makes the
+        # definition fetch raise first, and the function returns long before
+        # it reaches the clear this test is about.
+        if query is cs.CYPHER_ALL_MODULE_QNS:
+            raise RuntimeError("module query failed")
+        return original(query, *args, **kwargs)
+
     store.fetch_all = _boom  # type: ignore[method-assign]
     try:
         updater._is_full_build = True
