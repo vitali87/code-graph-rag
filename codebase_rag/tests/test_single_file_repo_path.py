@@ -337,7 +337,7 @@ class TestSingleFileRunScope:
         dict DROPS those siblings from the cache, and a dropped key takes the
         `is_new` path next run, skipping delete-before-reingest.
 
-        The stale set is DERIVED, not assigned: `_collect_delombok_state`
+        The stale set is DERIVED, not assigned: `_register_generated_sources`
         recomputes both delombok fields from the on-disk state file during
         `run`, so setting the attributes on the updater beforehand is
         overwritten and the test would pass on broken code too. Planting a
