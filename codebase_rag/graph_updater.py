@@ -479,6 +479,10 @@ class GraphUpdater:
         # them: the reconciliation it was meant to do may not have happened,
         # so that run must not stamp its exclusion set as reconciled.
         self._graph_state_unknown: bool = False
+        # Set when an orphaned cache could not be deleted: the file is still on
+        # disk, so this run must ignore it in memory rather than trust it
+        # (issue #1647).
+        self._cache_discarded_in_memory: bool = False
         # Written at the post-flush commit point in `run`, never inside
         # `_process_files` (issue #1615).
         self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
@@ -1178,6 +1182,10 @@ class GraphUpdater:
         )
         logger.info(ls.ENSURING_PROJECT, name=self.project_name)
 
+        # Reset BEFORE the discard below, which is what SETS it: a reset after
+        # that call would clear the flag it just raised and make the in-memory
+        # discard dead code (issue #1647).
+        self._cache_discarded_in_memory = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._warn_if_parser_changed()
@@ -2549,8 +2557,26 @@ class GraphUpdater:
         if count:
             return
         logger.warning(ls.HASH_CACHE_ORPHANED.format(project=self.project_name))
-        cache_path.unlink(missing_ok=True)
-        (self.repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
+        # Discarding is best-effort by intent: `missing_ok=True` already says a
+        # cache that is not there is fine, and a cache that cannot be REMOVED
+        # is the same situation one step later. Every other filesystem writer
+        # on this path degrades quietly, so a read-only tree reaches here
+        # having survived all of them and must not lose the whole indexing run
+        # to a file it only wanted to delete (issue #1647).
+        for stale in (cache_path, self.repo_path / cs.DIR_MTIMES_FILENAME):
+            try:
+                stale.unlink(missing_ok=True)
+            except OSError as e:
+                # Failing to DELETE the file must not resurrect TRUSTING it.
+                # The mtime fast path (`file_mtime <= cache_mtime`) skips a
+                # file before its hash is ever compared, and a real run stamps
+                # the cache at or after its sources, so a surviving cache makes
+                # every file look unchanged against hashes already known dead:
+                # the run indexes nothing, and the next run repeats it forever
+                # because the graph is still empty. Ignoring the cache in
+                # memory gives this run the full rebuild the discard intended.
+                self._cache_discarded_in_memory = True
+                logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
     def _warn_if_parser_changed(self) -> None:
         # No hash cache means a full build is coming: nothing to compare.
@@ -2611,7 +2637,9 @@ class GraphUpdater:
             return False
         cache_mtime = cache_path.stat().st_mtime
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
-        old_hashes = _load_hash_cache(cache_path)
+        old_hashes = (
+            {} if self._cache_discarded_in_memory else _load_hash_cache(cache_path)
+        )
         old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
         if not old_hashes or not old_dir_mtimes:
             return False
@@ -2738,7 +2766,14 @@ class GraphUpdater:
         self.factory.import_processor.reset_java_path_caches()
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
-        old_hashes = _load_hash_cache(cache_path) if not force else {}
+        # `_cache_discarded_in_memory`: the orphan discard could not delete the
+        # file, so treat it as gone for this run (issue #1647). Without this the
+        # mtime fast path below skips every file against hashes known dead, and
+        # the run indexes nothing on every subsequent run too.
+        cache_is_dead = self._cache_discarded_in_memory
+        old_hashes = (
+            _load_hash_cache(cache_path) if not (force or cache_is_dead) else {}
+        )
         # Snapshot for the single-file merge, read from DISK and independently
         # of `force`. Two distinct reasons it cannot reuse `old_hashes`:
         #
@@ -2757,8 +2792,12 @@ class GraphUpdater:
         #
         # Only the single-file commit reads this; a project run replaces the
         # cache wholesale from its own complete walk, as it always has.
+        # A discarded cache is dead for the snapshot too: merging over it
+        # would carry forward the very hashes the discard rejected.
         pristine_hashes = (
-            _load_hash_cache(cache_path) if self._single_file is not None else {}
+            _load_hash_cache(cache_path)
+            if self._single_file is not None and not cache_is_dead
+            else {}
         )
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)

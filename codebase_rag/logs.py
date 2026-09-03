@@ -902,6 +902,12 @@ HASH_CACHE_ORPHANED = (
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+HASH_CACHE_DISCARD_FAILED = (
+    "Could not discard the orphaned cache file {path} ({error}); this run "
+    "ignores it and rebuilds fully, so nothing is lost, but the stale file is "
+    "still on disk and EVERY later run pays the same full rebuild until it "
+    "goes. Delete it by hand, or re-run once the path is writable"
+)
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
     "A parser input changed since this graph was built: parser code, a grammar "
