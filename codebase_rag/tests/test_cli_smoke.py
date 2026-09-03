@@ -11,6 +11,14 @@ from codebase_rag import cli_help as ch
 from codebase_rag import constants as cs
 from codebase_rag.cli import app
 
+# Deadline for a CLI subprocess, not a performance assertion. Starting the CLI
+# costs ~12s because `--help` imports the whole parser stack before it can
+# render, so a 30s deadline left barely 2.5x headroom and the tests below
+# flaked under `pytest -n 2` while passing alone (issue #1655). These tests ask
+# "does the CLI start and print", and a generous deadline does not weaken that;
+# the startup cost itself is the separate question.
+_CLI_TIMEOUT_SECONDS = 120
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # rich draws the options table with box-drawing borders whose glyphs land
 # BETWEEN the words of a wrapped cell (legacy Windows consoles wrap one column
@@ -35,7 +43,7 @@ def test_help_command_works() -> None:
         capture_output=True,
         text=True,
         encoding=cs.ENCODING_UTF8,
-        timeout=30,
+        timeout=_CLI_TIMEOUT_SECONDS,
         env={**__import__("os").environ, "NO_COLOR": "1"},
     )
 
@@ -66,7 +74,7 @@ def test_version_flag() -> None:
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
-            timeout=30,
+            timeout=_CLI_TIMEOUT_SECONDS,
         )
 
         assert result.returncode == 0, (
@@ -143,6 +151,19 @@ def test_help_command_rejects_unknown_command() -> None:
 
     assert result.exit_code == 2
     assert "not a cgr command" in result.stderr
+
+
+def test_every_cli_subprocess_uses_the_shared_deadline() -> None:
+    # Guards the class rather than the two sites fixed in #1655: a new CLI
+    # subprocess written with its own literal deadline would reintroduce the
+    # flake silently, and only under parallel load, which is the hardest kind
+    # of failure to attribute. Matching on the value rather than on a forbidden
+    # number so any literal fails, not just the one that bit us.
+    source = Path(__file__).read_text(encoding=cs.ENCODING_UTF8)
+    values = set(re.findall(r"timeout=(\w+)", source))
+    assert values == {"_CLI_TIMEOUT_SECONDS"}, (
+        f"CLI subprocesses must share the deadline constant; found {sorted(values)}"
+    )
 
 
 def test_command_summaries_are_single_line() -> None:
