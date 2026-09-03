@@ -2008,11 +2008,24 @@ class GraphUpdater:
         module_map = dp.module_qn_to_file_path
         if not module_map:
             return
-        in_graph: set[str] = set()
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
-            qn = row.get(cs.KEY_QUALIFIED_NAME)
-            if isinstance(qn, str):
-                in_graph.add(qn)
+        # No rows is "no verdict", never "the graph is empty". A read that
+        # fails or comes back empty against a populated map is the unflushed
+        # or transient case, and pruning on it would drop every entry except
+        # the handful this run re-parsed -- on a one-file incremental run over
+        # a large repo, almost the whole map. Same posture as
+        # _rehydrate_registry_from_graph, where a failed query leaves the
+        # previous state intact.
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+        except Exception:
+            logger.warning(ls.SEED_PRUNE_NO_VERDICT)
+            return
+        in_graph = {
+            qn for row in rows if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+        }
+        if not in_graph:
+            logger.warning(ls.SEED_PRUNE_NO_VERDICT)
+            return
         parsed_this_run = {path for path, _lang in self._parsed_files}
         for qn in [qn for qn in module_map if qn not in in_graph]:
             # A file this run parsed writes its own entry and its Module node

@@ -527,6 +527,73 @@ def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
     assert "proj.other" in pruned
 
 
+def _seeded_updater(temp_repo: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "util.py": "def helper():\n    return 1\n",
+            "other.py": "def x():\n    return 1\n",
+        },
+    )
+    store = _StatefulIngestor()
+    _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+    return updater, store
+
+
+def test_an_empty_module_read_does_not_prune_the_seeded_map(
+    temp_repo: Path,
+) -> None:
+    # No rows is "no verdict", not "the graph is empty". Pruning on an empty
+    # read would drop every entry except the few this run re-parsed, which on
+    # a one-file incremental run over a large repo is nearly the whole map.
+    updater, store = _seeded_updater(temp_repo)
+    before = dict(updater.factory.definition_processor.module_qn_to_file_path)
+    assert len(before) > 1, before
+
+    original = store.fetch_all
+
+    def _empty(query: str, *args: object, **kwargs: object) -> list[dict[str, object]]:
+        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+            return []
+        return original(query, *args, **kwargs)
+
+    store.fetch_all = _empty  # type: ignore[method-assign]
+    try:
+        updater._prune_stale_seeded_module_qns()
+    finally:
+        store.fetch_all = original  # type: ignore[method-assign]
+
+    assert updater.factory.definition_processor.module_qn_to_file_path == before
+
+
+def test_a_failed_module_read_does_not_prune_the_seeded_map(
+    temp_repo: Path,
+) -> None:
+    # Same posture for a raising read, matching _rehydrate_registry_from_graph.
+    updater, store = _seeded_updater(temp_repo)
+    before = dict(updater.factory.definition_processor.module_qn_to_file_path)
+
+    original = store.fetch_all
+
+    def _boom(query: str, *args: object, **kwargs: object) -> list[dict[str, object]]:
+        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+            raise RuntimeError("module path read failed")
+        return original(query, *args, **kwargs)
+
+    store.fetch_all = _boom  # type: ignore[method-assign]
+    try:
+        updater._prune_stale_seeded_module_qns()
+    finally:
+        store.fetch_all = original  # type: ignore[method-assign]
+
+    assert updater.factory.definition_processor.module_qn_to_file_path == before
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
