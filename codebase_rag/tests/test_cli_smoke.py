@@ -265,6 +265,23 @@ def _argv_bindings(tree: ast.AST) -> dict[str, ast.AST]:
     `cmd = [sys.executable, "-m", "codebase_rag.cli"]` followed by `run(cmd)`
     is the same spawn as the inline form, and a detector that only reads the
     call's own arguments cannot see it.
+
+    DELIBERATELY FLAT, and therefore best-effort. Bindings are keyed by name
+    across the whole module, so a name rebound later, or reused in a second
+    function, resolves to whichever assignment `ast.walk` reached last. A
+    module where one function builds a CLI argv into `cmd` and another builds
+    something else into `cmd` can hide the first.
+
+    Scope-correct resolution means per-function symbol tables and a dataflow
+    pass, which is a disproportionate amount of machinery for what this check
+    buys: its only job is to justify keeping the DEADLINE gate above scoped to
+    this file, and its failure mode is a false negative that returns the repo
+    to where it was before any of this existed. The deadline gate itself reads
+    one file exhaustively and does not depend on this.
+
+    So the limit is recorded rather than engineered away. If a CLI spawn ever
+    does appear elsewhere, the honest fix is to give that file its own deadline
+    constant, not to make this resolver cleverer.
     """
     bindings: dict[str, ast.AST] = {}
     for node in ast.walk(tree):
