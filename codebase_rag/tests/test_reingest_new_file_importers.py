@@ -76,9 +76,16 @@ class TestModuleNamesOffered:
             ("util.py", {"util"}),
             ("pkg/util.py", {"util", "pkg.util"}),
             ("a/b/deep.ts", {"deep", "a.b.deep"}),
-            # A package is named by its DIRECTORY; `__init__` is never written
-            # in an import, so offering it would match nothing.
+            # A directory-module entry point is named by its DIRECTORY. Its own
+            # stem is never written in an import, so offering it matches
+            # nothing, and keeping it in the dotted form yields `pkg.pkg`.
             ("pkg/__init__.py", {"pkg"}),
+            ("utils/mod.rs", {"utils"}),
+            ("a/b/utils/mod.rs", {"utils", "a.b.utils"}),
+            ("components/index.ts", {"components"}),
+            # A Rust crate root is named by the manifest, not the directory, so
+            # it keeps its own stem rather than being folded into the parent.
+            ("src/lib.rs", {"lib", "src.lib"}),
         ],
     )
     def test_both_spellings_are_offered(

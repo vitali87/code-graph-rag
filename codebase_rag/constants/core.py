@@ -103,6 +103,11 @@ TEXT_UNKNOWN = "unknown"
 
 TMP_EXTENSION = ".tmp"
 
+# Filenames whose module IS their directory: an importer writes the directory
+# name, never the file's own stem. `__init__` (Python), `mod` (Rust) and
+# `index` (JS/TS/node resolution). `lib.rs`/`main.rs` are crate roots named by
+# the manifest rather than the directory, so they are deliberately absent.
+DIRECTORY_MODULE_STEMS: frozenset[str] = frozenset({"__init__", "mod", "index"})
 MOD_RS = "mod.rs"
 LIB_RS = "lib.rs"
 MAIN_RS = "main.rs"

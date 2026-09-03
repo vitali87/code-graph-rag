@@ -2093,10 +2093,12 @@ class GraphUpdater:
             path = PurePosixPath(key)
             parts = list(path.parent.parts)
             stem = path.stem
-            if not stem or stem == cs.INIT_PY.removesuffix(".py"):
-                # A package `__init__` is named by its DIRECTORY: `pkg`, and
-                # `a.b.pkg` from the root -- never `pkg.pkg`, which is what
-                # keeping the stem in the dotted form produces.
+            if not stem or stem in cs.DIRECTORY_MODULE_STEMS:
+                # A directory-module entry point is named by its DIRECTORY:
+                # `pkg`, and `a.b.pkg` from the root -- never `pkg.pkg`, which
+                # is what keeping the stem in the dotted form produces. Covers
+                # `__init__.py`, Rust's `mod.rs` and JS/TS `index.*`, which an
+                # importer all spell as the directory.
                 if not parts:
                     continue
                 stem = parts.pop()
