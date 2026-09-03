@@ -776,9 +776,17 @@ class MCPToolsRegistry:
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
         self._graph_incomplete = True
+        self._persist_incomplete(project_name, True)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
-        self._graph_incomplete = False
+        # The durable marker must go too. It lives on its own node precisely
+        # so `delete_project` cannot reach it -- which is what lets it survive
+        # an index's delete-then-rebuild -- but that means an INTENTIONAL
+        # delete leaves it behind, and a fresh registry would then refuse
+        # reingest forever for a project the user deliberately removed
+        # (#1705 review, round 2). The in-process flag follows the durable
+        # state, as everywhere else.
+        self._graph_incomplete = not self._persist_incomplete(project_name, False)
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -932,19 +940,26 @@ class MCPToolsRegistry:
         # the partial graph would be no better.
         self._live_updater = None
         self._graph_incomplete = True
-        self.ingestor.ensure_constraints()
-        # The marker MERGEs its own node, so this works before any Project
-        # exists. An earlier version set a property on the Project with MATCH,
-        # which updated zero rows on a first index and left a failed first run
-        # unmarked -- the exact case the guard exists for (#1705 review).
+        # The marker goes down BEFORE ensure_constraints, not after.
+        # `ensure_constraints` runs `_migrate_legacy_path_keys`, which drops
+        # constraints and can run purge queries -- autocommitted, destructive
+        # work. Writing the marker after it left a window where a crash
+        # during migration produced a damaged graph with nothing recording
+        # that a run had started (#1705 review, round 2).
         #
-        # Aborts on failure for the same reason as the index path: the flush
-        # below commits batches left by earlier calls, so continuing without a
-        # marker risks a partial graph no later process can recognise.
+        # It MERGEs its own node, so it works before any Project exists: an
+        # earlier version set a property on the Project with MATCH, which
+        # updated zero rows on a first index and left a failed first run
+        # unmarked.
+        #
+        # Aborts on failure because the marker is the only protection that
+        # survives a restart; nothing has been touched yet, so stopping costs
+        # nothing.
         if not self._persist_incomplete(project_name, True):
             raise RuntimeError(
                 cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
             )
+        self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
         exclude_paths, unignore_paths = self._ignore_sets()
