@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, Protocol
 
@@ -168,6 +169,27 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     return None
 
 
+@lru_cache(maxsize=8)
+def _tool_runs(executable: str) -> bool:
+    """Whether the binary at this path can actually run (issue #1639).
+
+    Cached on the resolved path: the answer cannot change within a process,
+    and `formatter_check` is called once per patched file.
+    """
+    try:
+        probe = subprocess.run(
+            [executable, cs.PATCH_VERSION_FLAG],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=cs.PATCH_FORMATTER_TIMEOUT_S,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return probe.returncode == 0
+
+
 def formatter_check(
     language: cs.SupportedLanguage | None, content: bytes, suffix: str
 ) -> tuple[str | None, bool | None]:
@@ -175,12 +197,21 @@ def formatter_check(
 
     `None, None` when the language has none or the tool is not installed;
     the check reports, it never rewrites.
+
+    "Not installed" is decided by INVOKING the tool, not by finding a file on
+    PATH (issue #1639). Every rustup-managed toolchain leaves a shim on PATH
+    for components it does not have, and that shim exits non-zero with
+    "'rustfmt' is not installed for the toolchain". Judged by presence, that
+    non-zero exit is indistinguishable from a real "your code is misformatted"
+    verdict, so the caller was told `formatted=False` and the user read
+    "applied, but rustfmt would reformat it" -- a claim about their code that
+    no formatter ever made.
     """
     if language is None or language not in _FORMATTERS:
         return None, None
     tool, flags = _FORMATTERS[language]
     executable = shutil.which(tool)
-    if executable is None:
+    if executable is None or not _tool_runs(executable):
         return tool, None
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
         handle.write(content)

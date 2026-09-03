@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import difflib
 import shutil
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -394,6 +396,41 @@ def test_java_rename_preserves_syntax(tmp_path: Path) -> None:
     assert result.content.decode().replace("assist", "helper") == JAVA_SRC
 
 
+@lru_cache(maxsize=8)
+def _runnable_formatter(binary: str) -> bool:
+    """Whether a formatter is on PATH AND can actually run (issue #1639).
+
+    `shutil.which` answers "is there a file here", which is not the question a
+    skip guard needs. Every rustup-managed toolchain puts a shim on PATH for
+    components it does NOT have, so `which("rustfmt")` returns a real path that
+    exits non-zero with "'rustfmt' is not installed for the toolchain" the
+    moment it is invoked. The test then hard-FAILS on a machine that simply
+    lacks the tool, which is the permissive direction of a proxy standing in
+    for the property.
+
+    Probing by invocation covers that, a broken install, and any future
+    incompatibility in one check. Same shape as `_runnable_dotnet_trace` and
+    `_dotnet_with_sdk` in test_dynamic_trace_speedscope.py (issue #1449).
+    Cached because the guard is consulted per test and the answer cannot
+    change within a run.
+    """
+    found = shutil.which(binary)
+    if found is None:
+        return False
+    try:
+        probe = subprocess.run(
+            [found, "--version"],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return probe.returncode == 0
+
+
 GO_SRC = "package main\n\nfunc helper(a, b int) int { return helper(a, b) }\n"
 
 
@@ -407,7 +444,7 @@ def test_go_rename_runs_the_gofmt_check(tmp_path: Path) -> None:
     assert result.parses is True
     assert result.content.decode().replace("assist", "helper") == GO_SRC
     assert result.formatter == cs.PATCH_GOFMT
-    if shutil.which(cs.PATCH_GOFMT):
+    if _runnable_formatter(cs.PATCH_GOFMT):
         assert result.formatted is True
     else:
         assert result.formatted is None
@@ -426,15 +463,15 @@ def test_rust_rename_runs_the_rustfmt_check(tmp_path: Path) -> None:
     assert result.parses is True
     assert result.content.decode().replace("assist", "helper") == RUST_SRC
     assert result.formatter == cs.PATCH_RUSTFMT
-    if shutil.which(cs.PATCH_RUSTFMT):
+    if _runnable_formatter(cs.PATCH_RUSTFMT):
         assert result.formatted is True
     else:
         assert result.formatted is None
 
 
 def test_formatter_drift_is_reported_not_rewritten(tmp_path: Path) -> None:
-    if not shutil.which(cs.PATCH_GOFMT):
-        pytest.skip("gofmt not installed")
+    if not _runnable_formatter(cs.PATCH_GOFMT):
+        pytest.skip(f"{cs.PATCH_GOFMT} is not on PATH or cannot run")
     _grammar("go")
     _write(tmp_path, "m.go", GO_SRC)
     patcher = Patcher(tmp_path)

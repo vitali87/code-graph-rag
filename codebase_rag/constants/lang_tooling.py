@@ -154,6 +154,10 @@ LANG_ELLIPSIS = "..."
 # node types a rename may target beyond the shared `identifier` family.
 PATCH_GOFMT = "gofmt"
 PATCH_GOFMT_LIST_FLAG = "-l"
+# Probed by invocation before a formatter's verdict is trusted: a rustup shim
+# for an uninstalled component is a real file on PATH that exits non-zero, and
+# that is indistinguishable from "your code is misformatted" (issue #1639).
+PATCH_VERSION_FLAG = "--version"
 PATCH_RUSTFMT = "rustfmt"
 PATCH_RUSTFMT_CHECK_FLAG = "--check"
 PATCH_RUSTFMT_EDITION_FLAG = "--edition"
