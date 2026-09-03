@@ -360,6 +360,79 @@ def via_typed_local():
         assert ("nested.m.via_instance", "nested.m.Outer.Inner") in edges
 
 
+class TestMultiPartReceiver:
+    """A namespace head does not make the whole receiver a namespace.
+
+    `mod_a.instance` reads as a module followed by a value, and judging the
+    receiver by its head alone accepted `mod_a.instance.Error()` -- the original
+    defect reached through one more segment. The whole receiver has to resolve.
+    """
+
+    @pytest.fixture
+    def chain_project(self, temp_repo: Path) -> Path:
+        project = temp_repo / "chain"
+        project.mkdir()
+        (project / "mod_a.py").write_text(
+            encoding="utf-8",
+            data="""
+class Error:
+    def __init__(self, msg):
+        self.msg = msg
+
+    def Error(self):
+        return self.msg
+
+
+instance = Error("x")
+
+
+def helper():
+    return 1
+""",
+        )
+        (project / "mod_b.py").write_text(
+            encoding="utf-8",
+            data='''
+import mod_a
+
+
+def via_module_then_instance():
+    """Head is a module, tail is an INSTANCE: a method call."""
+    return mod_a.instance.Error()
+
+
+def via_module_then_function():
+    """Head is a module, tail is a FUNCTION: also a method call."""
+    return mod_a.helper.Error()
+
+
+def via_module_direct():
+    """The whole receiver is the module: a genuine construction."""
+    return mod_a.Error("boom")
+''',
+        )
+        return project
+
+    @pytest.mark.parametrize(
+        "caller", ["via_module_then_instance", "via_module_then_function"]
+    )
+    def test_a_value_reached_through_a_module_does_not_construct(
+        self, chain_project: Path, mock_ingestor: MagicMock, caller: str
+    ) -> None:
+        create_and_run_updater(chain_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert (f"chain.mod_b.{caller}", "chain.mod_a.Error") not in edges
+
+    def test_the_module_receiver_itself_still_constructs(
+        self, chain_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        # The control: the same head, with nothing after it, must keep its edge.
+        # Without this, rejecting every multi-segment receiver would pass above.
+        create_and_run_updater(chain_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert ("chain.mod_b.via_module_direct", "chain.mod_a.Error") in edges
+
+
 class TestInheritedNestedClass:
     """`self.Inner()` in a subclass resolves to `Base.Inner`, and that is real.
 
