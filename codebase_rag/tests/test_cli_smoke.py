@@ -195,6 +195,41 @@ def test_cli_spawns_in_this_file_share_the_deadline() -> None:
     )
 
 
+def _names_the_cli(node: ast.AST | None) -> bool:
+    """Whether any string constant reachable from `node` launches the CLI."""
+    if node is None:
+        return False
+    for element in ast.walk(node):
+        if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+            continue
+        if cs.CLI_MODULE_INVOCATION in element.value:
+            return True
+        # The console scripts in [project.scripts] pay the same startup cost as
+        # `-m codebase_rag.cli`, so they need the same deadline.
+        if element.value in cs.CLI_ENTRY_POINT_NAMES:
+            return True
+    return False
+
+
+def _argv_bindings(tree: ast.AST) -> dict[str, ast.AST]:
+    """Every `name = <expr>` in the tree, so an argv held in a variable resolves.
+
+    `cmd = [sys.executable, "-m", "codebase_rag.cli"]` followed by `run(cmd)`
+    is the same spawn as the inline form, and a detector that only reads the
+    call's own arguments cannot see it.
+    """
+    bindings: dict[str, ast.AST] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.value is not None:
+                bindings[node.target.id] = node.value
+    return bindings
+
+
 def _cli_spawn_lines(tree: ast.AST) -> list[int]:
     """Lines that launch the CLI as a SUBPROCESS.
 
@@ -203,7 +238,13 @@ def _cli_spawn_lines(tree: ast.AST) -> list[int]:
     pay no startup cost and need no deadline. A substring scan counts them as
     spawns, which is how the first version of this gate reported twenty
     offenders that were all imports.
+
+    Covers the argv spellings that reach a real process: positional, the
+    `args=` keyword, an argv bound to a local first, and the console-script
+    names as well as `-m codebase_rag.cli`. Each was a confirmed bypass of an
+    earlier version of this detector, so the control below pins all of them.
     """
+    bindings = _argv_bindings(tree)
     found: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -212,16 +253,17 @@ def _cli_spawn_lines(tree: ast.AST) -> list[int]:
         name = target.attr if isinstance(target, ast.Attribute) else None
         if name is None and isinstance(target, ast.Name):
             name = target.id
-        if name not in _SUBPROCESS_LAUNCHERS or not node.args:
+        if name not in _SUBPROCESS_LAUNCHERS:
             continue
-        for element in ast.walk(node.args[0]):
-            if (
-                isinstance(element, ast.Constant)
-                and isinstance(element.value, str)
-                and cs.CLI_MODULE_INVOCATION in element.value
-            ):
-                found.append(node.lineno)
-                break
+        argv = node.args[0] if node.args else None
+        if argv is None:
+            argv = next((kw.value for kw in node.keywords if kw.arg == "args"), None)
+        if argv is None:
+            continue
+        if _names_the_cli(argv) or (
+            isinstance(argv, ast.Name) and _names_the_cli(bindings.get(argv.id))
+        ):
+            found.append(node.lineno)
     return found
 
 
@@ -258,9 +300,23 @@ def test_the_spawn_detector_separates_spawns_from_imports() -> None:
     assert _cli_spawn_lines(
         ast.parse("subprocess.Popen([sys.executable, '-m', 'codebase_rag.cli'])")
     ) == [1]
+    # Three forms that bypassed an earlier version of this detector. Each is
+    # ordinary Python that a future test could reasonably be written in, so
+    # each stays pinned rather than being fixed and forgotten.
+    assert _cli_spawn_lines(
+        ast.parse("subprocess.run(args=[sys.executable, '-m', 'codebase_rag.cli'])")
+    ) == [1]
+    assert _cli_spawn_lines(
+        ast.parse(
+            "cmd = [sys.executable, '-m', 'codebase_rag.cli']\nsubprocess.run(cmd)"
+        )
+    ) == [2]
+    assert _cli_spawn_lines(ast.parse("subprocess.run(['cgr', '--help'])")) == [1]
     # An in-process CliRunner test imports the same module and must NOT count.
     assert _cli_spawn_lines(ast.parse("from codebase_rag.cli import app")) == []
     assert _cli_spawn_lines(ast.parse("_RUNNER.invoke(app, ['help'])")) == []
+    # A subprocess that is not the CLI must not be swept in.
+    assert _cli_spawn_lines(ast.parse("subprocess.run(['git', 'status'])")) == []
     # This file is the one place that really does spawn it.
     assert len(_cli_spawn_lines(ast.parse(Path(__file__).read_text("utf-8")))) == 2
 
