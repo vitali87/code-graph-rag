@@ -356,17 +356,199 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
     ) -> tuple[str, str] | None:
-        return self._redirect_protocol_method(
-            self._resolve_function_call(
-                call_name,
-                module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
-            )
+        return self._reject_class_via_value_receiver(
+            self._redirect_protocol_method(
+                self._resolve_function_call(
+                    call_name,
+                    module_qn,
+                    local_var_types,
+                    class_context,
+                    caller_qn,
+                    language,
+                    call_point,
+                )
+            ),
+            call_name,
+            module_qn,
+            class_context,
+            local_var_types,
         )
+
+    def _reject_class_via_value_receiver(
+        self,
+        result: tuple[str, str] | None,
+        call_name: str,
+        module_qn: str,
+        class_context: str | None = None,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[str, str] | None:
+        """Drop a CLASS answer for `value.Name()` -- a value never constructs.
+
+        Two independent paths reach a class by discarding the receiver and
+        looking the trailing name up on its own: `_try_resolve_module_method`
+        (same module) and `_try_resolve_via_trie` (cross module). Both then look
+        like construction to the emit site, which records INSTANTIATES for any
+        callee that resolved to a Class.
+
+        So `err.Error()` on a stdlib error became "constructs the first-party
+        `Error` struct", and `buf.String()` on a `bytes.Buffer` became
+        "constructs `render.text.String`". Go is worst hit because `Error()` and
+        `String()` are its two most idiomatic interface methods, but Python
+        reproduces it identically (issue #1641).
+
+        The receiver decides. `Outer.Inner()` IS a genuine instantiation whose
+        receiver is a class, and `pkg.Thing()` one whose receiver is a module,
+        so this rejects only a receiver that resolves to neither -- an ordinary
+        identifier holding a value. Guarding here rather than at either lookup
+        keeps one rule for both paths; JS/TS and Dart already carry their own
+        version of it further down (`_resolve_two_part_call`, the unique-member
+        gate), which is why neither reproduced.
+        """
+        if result is None or result[0] != cs.NodeLabel.CLASS:
+            return result
+        # `::` and `:` are static paths (`Type::new`, `Class::method`), where a
+        # type receiver is the normal spelling; only a `.` receiver can be a value.
+        if cs.SEPARATOR_DOT not in call_name:
+            return result
+        receiver = call_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        # `::` is a static path (`Type::new`), where a type receiver is the
+        # normal spelling. A BARE `:` is not: in Python it is a slice or a dict
+        # key inside the receiver expression (`xs[1:2].Error()`), and exempting
+        # on it let the defect straight through.
+        if cs.SEPARATOR_DOUBLE_COLON in receiver:
+            return result
+        if self._receiver_names_a_type_or_module(
+            receiver, module_qn, result[1], class_context, local_var_types
+        ):
+            return result
+        logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
+        return None
+
+    def _receiver_names_a_type_or_module(
+        self,
+        receiver: str,
+        module_qn: str,
+        # Required rather than defaulted: an omitted resolved qn would make the
+        # nesting check answer False and silently reject every `self.Inner()`
+        # and typed-local construction, with no error to notice.
+        resolved_qn: str,
+        class_context: str | None = None,
+        local_var_types: dict[str, str] | None = None,
+    ) -> bool:
+        """Whether a receiver expression names something constructible-through.
+
+        A class (nested-class construction), or a module/package the caller
+        imported. Anything else -- a parameter, a field, a chained call -- holds
+        a VALUE at runtime.
+
+        `self`/`cls`/`this` and a local typed to a class are the awkward cases:
+        the receiver is spelled as a value but `self.Inner()` and `o.Inner()`
+        really do construct a nested class, and the receiver-aware paths upstream
+        resolve them correctly. Dropping them would delete edges `origin/main`
+        gets right, so both are consulted here rather than judged by name.
+        """
+        head, _, rest = receiver.partition(cs.SEPARATOR_DOT)
+        if not head or not head.isidentifier():
+            return False
+        # Single-segment only: `self.err.Error()` reaches a FIELD, an ordinary
+        # value, so a chain falls through to the namespace resolution below.
+        if not rest and self._receiver_owns_nested_class(
+            head, module_qn, resolved_qn, class_context, local_var_types
+        ):
+            return True
+        base = self._receiver_base_qn(head, module_qn)
+        if base is None:
+            return False
+        # Resolve the WHOLE receiver, not just its head. `mod_a.instance` has a
+        # module for a head and a value for a tail, and judging it by the head
+        # alone accepted `mod_a.instance.Error()` -- the original defect reached
+        # through one more segment. Being imported also says nothing about KIND:
+        # `from m import instance` and `import m` both land in the map, and only
+        # the second is a namespace.
+        full = base if not rest else f"{base}{cs.SEPARATOR_DOT}{rest}"
+        return self._import_target_is_a_namespace(full)
+
+    def _receiver_owns_nested_class(
+        self,
+        head: str,
+        module_qn: str,
+        resolved_qn: str,
+        class_context: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        """Whether `head` names a type whose OWN nested class is being built.
+
+        `self`/`cls`/`this` and a local typed to a class are spelled as values
+        but really do construct: `self.Inner()` is a nested-class construction,
+        while `self.Error()` naming a module-level `Error` is the #1641 defect
+        wearing a new receiver. So each admits only a class nested in its type.
+        """
+        if head in cs.SELF_RECEIVER_KEYWORDS and class_context:
+            if self._class_is_nested_in(resolved_qn, class_context):
+                return True
+        if not local_var_types:
+            return False
+        var_type = local_var_types.get(head)
+        if not var_type:
+            return False
+        typed_qn = self._resolve_class_name(var_type, module_qn)
+        return bool(
+            typed_qn
+            and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
+            and self._class_is_nested_in(resolved_qn, typed_qn)
+        )
+
+    def _receiver_base_qn(self, head: str, module_qn: str) -> str | None:
+        """The qn the receiver's first segment names, if it names a namespace.
+
+        `_resolve_class_name` follows the import map without checking what it
+        landed on, so it answers `mod_a.helper` for an imported FUNCTION named
+        `helper`. Confirm the qn it returns really is a Class before trusting
+        it; the name alone is not evidence of classness.
+        """
+        class_qn = self._resolve_class_name(head, module_qn)
+        if class_qn and self.function_registry.get(class_qn) == cs.NodeLabel.CLASS:
+            return class_qn
+        import_map = self.import_processor.import_mapping.get(module_qn) or {}
+        return import_map.get(head)
+
+    def _class_is_nested_in(self, class_qn: str, owner_qn: str) -> bool:
+        """Whether `class_qn` is declared inside `owner_qn` or one of its bases.
+
+        `self.Inner()` inside a `Derived(Base)` resolves to `Base.Inner`, which
+        is a real construction, so a prefix test against the enclosing type
+        alone rejects an edge that is correct. Walking the MRO makes this a
+        question about the TYPE rather than about qualified-name spelling.
+
+        The trailing separator is load-bearing: without it `Outer2.Inner` would
+        match owner `Outer` and a sibling class would read as a nested one.
+        """
+        if not class_qn or not owner_qn:
+            return False
+        return any(
+            class_qn.startswith(f"{ancestor}{cs.SEPARATOR_DOT}")
+            for ancestor in self._mro(owner_qn)
+        )
+
+    def _import_target_is_a_namespace(self, target: str) -> bool:
+        """Whether an imported name refers to something you construct THROUGH.
+
+        A class (`from m import Outer` then `Outer.Inner()`) or a module
+        (`import m` then `m.Thing()`). A function, a method or a module-level
+        instance is a VALUE, and `value.Name()` is a method call however it
+        arrived in scope.
+        """
+        kind = self.function_registry.get(target)
+        if kind is not None:
+            return kind == cs.NodeLabel.CLASS
+        # Unregistered, so it is a module IFF the registry holds anything under
+        # its qn. A module node itself is not in the function registry, but its
+        # contents are; an imported instance has an empty subtree.
+        #
+        # The label check above must stay FIRST: `find_with_prefix` returns the
+        # subtree INCLUDING the target, so an imported function reports one
+        # descendant (itself) and a prefix-only test would call it a namespace.
+        return bool(self.function_registry.find_with_prefix(target))
 
     def _resolve_js_prototype_sibling(
         self,
