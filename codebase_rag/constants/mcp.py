@@ -111,6 +111,10 @@ MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"
 )
+MCP_REINGEST_AFTER_FAILED_RUN = (
+    "The last index or update of project {project} failed part way, so its "
+    "graph is incomplete; run update_repository before reingest"
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (

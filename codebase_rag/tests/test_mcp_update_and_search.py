@@ -654,9 +654,12 @@ class TestReingest:
             assert "database gone" in outcome
             mcp_registry.ingestor.ensure_constraints.side_effect = None
 
+            # The rebuild deleted the project and then died: the graph is
+            # incomplete, and the refusal says so rather than "not indexed",
+            # since a partial rebuild may already have recreated the project.
             mcp_registry.ingestor.list_projects.return_value = []
             result = await mcp_registry.reingest(["a.py"])
-            assert "not indexed" in result["error"]
+            assert "failed part way" in result["error"]
             assert mock_updater_cls.call_count == 1
 
     async def test_wipe_database_drops_the_retained_updater(
@@ -688,12 +691,23 @@ class TestReingest:
             )
             failing = MagicMock()
             failing.run.side_effect = RuntimeError("died mid-run")
-            mock_updater_cls.side_effect = [first, failing]
+            recovered = MagicMock()
+            recovered.reingest.return_value = first.reingest.return_value
+            mock_updater_cls.side_effect = [first, failing, recovered]
             await mcp_registry.reingest(["a.py"])
             assert mcp_registry._live_updater is first
             result = await mcp_registry.update_repository()
             assert "Error" in result
             assert mcp_registry._live_updater is None
+            # The graph the failed update left is partial: a scoped reingest
+            # must not hydrate from it and treat it as authoritative.
+            refused = await mcp_registry.reingest(["a.py"])
+            assert "failed part way" in refused["error"]
+            assert mock_updater_cls.call_count == 2
+            # A completed update lifts the refusal.
+            assert "Error" not in await mcp_registry.update_repository()
+            assert "error" not in await mcp_registry.reingest(["a.py"])
+            recovered.reingest.assert_called_once()
 
     async def test_failed_embedding_wipe_still_drops_the_retained_updater(
         self, mcp_registry: MCPToolsRegistry

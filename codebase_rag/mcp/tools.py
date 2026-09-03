@@ -92,6 +92,11 @@ class MCPToolsRegistry:
         # resolves cross-file calls without re-reading the registry from the
         # graph on every call (issue #1524).
         self._live_updater: GraphUpdater | None = None
+        # True from the moment an index or update starts mutating the graph
+        # until it completes: a run that failed part way leaves a graph a
+        # scoped reingest must not hydrate from, because it would treat the
+        # missing and stale definitions as authoritative.
+        self._graph_incomplete = False
 
         self.parsers, self.queries = load_parsers()
 
@@ -766,9 +771,11 @@ class MCPToolsRegistry:
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
         # The retained updater described the graph just deleted; if the
-        # rebuild fails from here on, a later reingest must hit the
-        # not-indexed guard rather than resolve against those definitions.
+        # rebuild fails from here on, a later reingest must refuse rather
+        # than resolve against those definitions or against the partial
+        # graph the failed rebuild left behind.
         self._live_updater = None
+        self._graph_incomplete = True
 
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
@@ -785,6 +792,7 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        self._graph_incomplete = False
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -835,11 +843,14 @@ class MCPToolsRegistry:
         # Dropped before the run mutates the graph: if the update fails part
         # way, the retained updater would describe the graph as it was
         # before, and a later reingest would resolve against definitions the
-        # partial update has already replaced. With it gone, that reingest
-        # hydrates from the store instead.
+        # partial update has already replaced. The incomplete flag then makes
+        # that reingest refuse until an update completes, since hydrating
+        # from the partial graph would be no better.
         self._live_updater = None
+        self._graph_incomplete = True
         updater.run()
         self.ingestor.flush_all()
+        self._graph_incomplete = False
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
@@ -853,6 +864,10 @@ class MCPToolsRegistry:
             # project is gone, and hydrating from nothing would leave every
             # unrelated definition missing.
             project_name = derive_project_name(Path(self.project_root))
+            if self._graph_incomplete:
+                raise ValueError(
+                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                )
             if project_name not in self.ingestor.list_projects():
                 raise ValueError(
                     cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
