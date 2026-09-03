@@ -14,7 +14,7 @@ concurrency:
   # Non-PR events (main push, version-bump push, dispatch) group by SHA so each
   # commit gets its own group and can neither cancel nor be cancelled, even in a
   # burst. A cancelled run is what makes the branch CI badge flash "failing".
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
