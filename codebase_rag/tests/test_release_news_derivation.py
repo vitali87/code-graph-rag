@@ -11,8 +11,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 _WORKFLOW = (
@@ -52,3 +54,54 @@ def test_no_step_feeds_existing_news_entries_to_a_model() -> None:
         script = step.get("run", "")
         assert "known.md" not in script
         assert "newsbullets" not in script
+
+
+def _security_notice_script() -> str:
+    step = next(
+        step for step in _steps() if step.get("name") == "Prepend security notice"
+    )
+    return step["run"]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the step runs under the Ubuntu runner's bash; on the Windows runner "
+    "`bash` resolves to the WSL launcher, which has no distribution installed",
+)
+def test_security_notice_falls_back_when_the_advisory_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    # `gh api` prints its HTTP error body to STDOUT, so a draft advisory the
+    # token cannot read used to land as the advisory line of the release
+    # notes (v0.0.845). The step must fall back to the "see advisory" pointer.
+    import os
+    import subprocess
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/bin/sh\nprintf '%s' '{\"message\":\"Resource not accessible by "
+        'integration","status":"403"}\'\nexit 1\n',
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    out = tmp_path / "security.md"
+    script = (
+        _security_notice_script()
+        .replace("${{ steps.decide.outputs.ghsa }}", "GHSA-aaaa-bbbb-cccc")
+        .replace("/tmp/security.md", str(out))
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GITHUB_REPOSITORY": "vitali87/code-graph-rag",
+    }
+
+    subprocess.run(["bash", "-e", "-c", script], check=True, env=env)
+
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "## 🔒 Security"
+    assert lines[2].startswith("This release contains a security fix; see advisory")
+    assert "GHSA-aaaa-bbbb-cccc" in lines[2]
+    assert not any("403" in line for line in lines)
