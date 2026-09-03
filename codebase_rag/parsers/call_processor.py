@@ -6154,6 +6154,7 @@ class CallProcessor:
                     (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    @_preserves_verdict
     def _ingest_higher_order_builtin_calls(
         self,
         call_node: Node,

@@ -139,6 +139,26 @@ def test_resolving_a_calls_arguments_does_not_change_its_own_label(
     assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
 
 
+def test_a_higher_order_calls_callback_does_not_change_its_own_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `sorted` is a first-party shadow bound through the import (exact); the
+    # higher-order pass then resolves its `key=lonely` callback by name
+    # (heuristic) before the outer edge reads the verdict back.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text(
+        "def sorted(items, key=None):\n    return items\n\n\n"
+        "def lonely(x):\n    return x\n"
+    )
+    (temp_repo / "pkg" / "app.py").write_text(
+        "from pkg.util import sorted\n\n\ndef run(xs):\n    return sorted(xs, key=lonely)\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
+    assert by_callee["sorted"] == {cs.EdgeResolution.EXACT}
+
+
 def test_ambiguous_callee_fans_out_as_overload(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -159,6 +179,13 @@ def test_ambiguous_callee_fans_out_as_overload(
     assert {props.get(cs.KEY_RESOLUTION) for _dst, props in edges} == {
         cs.EdgeResolution.OVERLOAD
     }
+
+
+def test_trace_confirmation_leaves_trace_only_edges_alone() -> None:
+    # A static edge and an earlier run's trace-only edge can share a pair;
+    # confirming the pair must not relabel the `dynamic` one. No Cypher
+    # engine runs here, so the filter is pinned on the query text.
+    assert "coalesce(r.static_missed, false) = false" in CYPHER_TRACE_CONFIRM_CALLS
 
 
 def test_schema_and_query_column_carry_resolution() -> None:
@@ -338,6 +365,7 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
         "def run(obj):\n"
         "    def inner():\n"
         '        return getattr(obj, "solo")\n'
+        '    later = lambda: getattr(obj, "solo")\n'
         '    getattr(obj, "solo")()\n'
         '    table = {"twice": 1}\n'
         '    return getattr(obj, "twice")()\n'
@@ -345,15 +373,16 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
         "def other(obj):\n"
         '    return getattr(obj, "elsewhere")\n'
     )
-    # The nested def's literal belongs to `inner`, so `solo` has one site in
-    # `run`'s own body and that site is recorded.
-    solo = locate_dispatch_literal(tmp_path, "app.py", 1, 6, "solo")
-    assert solo is not None and (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (4, 17)
+    # The nested def's and the lambda's literals belong to other callables
+    # (the trace never attributes their frames to `run`), so `solo` has one
+    # site in `run`'s own body and that site is recorded.
+    solo = locate_dispatch_literal(tmp_path, "app.py", 1, 7, "solo")
+    assert solo is not None and (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (5, 17)
     # An earlier same-named dict key and the getattr argument cannot be told
     # apart, so `twice` is unlocatable rather than pointed at the wrong one.
-    assert locate_dispatch_literal(tmp_path, "app.py", 1, 6, "twice") is None
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "twice") is None
     # A literal outside the span never counts.
-    assert locate_dispatch_literal(tmp_path, "app.py", 1, 6, "elsewhere") is None
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "elsewhere") is None
 
 
 @pytest.mark.parametrize(

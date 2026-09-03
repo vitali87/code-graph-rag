@@ -5,7 +5,7 @@ went through `getattr(obj, "name")`, a registry keyed by `"name"`, or
 something the static pass cannot see. When the callee's name appears as a
 string literal inside the caller's own body in one of those shapes, its site
 is what a rewrite would have to touch, so the dynamic edge records it. A
-nested `def`/`class` is another callable's body and is not searched, and two
+nested `def`/`class`/`lambda` is another callable's body and is not searched, and two
 candidate literals cannot be told apart statically (an unrelated `d["name"]`
 looks exactly like a registry lookup), so the site is recorded only when the
 candidate is unique and the body holds no computed dispatch that could have
@@ -25,7 +25,13 @@ from ..parsers.utils import node_site_properties, safe_decode_text
 from ..types_defs import PropertyDict
 
 _LITERAL_PARENTS = frozenset({cs.TS_ARGUMENT_LIST, cs.TS_PY_PAIR, cs.TS_PY_SUBSCRIPT})
-_NESTED_SCOPES = frozenset({cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION})
+# A lambda counts as another callable's body too: the trace resolver drops
+# `<lambda>` frames as synthetic, so a call made inside one is never
+# attributed to the enclosing function and its literals cannot be that
+# function's dispatch site.
+_NESTED_SCOPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_LAMBDA}
+)
 
 
 def _literal_text(node: Node) -> str | None:

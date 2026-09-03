@@ -430,8 +430,12 @@ RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
 # Trace write-back (issue #1526): a static edge the runtime observed is
 # upgraded in place, on every site it has, so the upgrade never creates a
 # site-less duplicate beside the located ones.
+# Only the static edge(s) of the pair are confirmed: a trace-only edge from
+# an earlier run can sit beside a static one on the same pair and must keep
+# its `dynamic` label.
 CYPHER_TRACE_CONFIRM_CALLS = """
 MATCH (a)-[r:CALLS]->(b)
 WHERE a.qualified_name = $from_qn AND b.qualified_name = $to_qn
+  AND coalesce(r.static_missed, false) = false
 SET r.resolution = $resolution
 """
