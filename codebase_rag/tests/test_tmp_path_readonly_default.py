@@ -68,28 +68,10 @@ def test_plants_a_readonly_object(tmp_path):
 """
 
 
-def _git_env(**overrides: str) -> dict[str, str]:
-    """A Git environment with every inherited `GIT_*` routing variable gone.
-
-    `{**os.environ, ...}` is not enough. An inherited `GIT_DIR`,
-    `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` redirects a
-    `git init` away from the directory it names, so the repo under test is
-    never built where the test looks for it. The object counts these tests
-    assert on would then describe some other repository, or an empty tree --
-    and a test asserting an object is ABSENT passes vacuously when it is
-    reading the wrong directory. Dropping the whole prefix rather than a
-    listed few keeps that true for routing variables not enumerated here
-    (#1648 review).
-    """
-    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | dict(
-        overrides
-    )
-
-
 def test_git_env_drops_inherited_routing_variables(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`_git_env` must strip inherited `GIT_*`, not merely add to it.
+    """`git_env` must strip inherited `GIT_*`, not merely add to it.
 
     Pins the property directly rather than through a repo-building test: with
     `GIT_DIR` set, `git init` builds the repo somewhere else entirely, so a
@@ -98,16 +80,19 @@ def test_git_env_drops_inherited_routing_variables(
     routing variables below are the ones that redirect a command away from
     its `cwd`; `GIT_CONFIG_GLOBAL` is passed as an override to show the
     filter drops inherited values without discarding the ones a caller asks
-    for.
+    for, and `DIGIT_SCALE` is planted so a substring match in place of a
+    prefix match is caught rather than passing as an equally green result.
     """
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere" / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("GIT_INDEX_FILE", str(tmp_path / "elsewhere" / "index"))
     monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(tmp_path / "elsewhere" / "o"))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "inherited"))
-    monkeypatch.setenv("PATH", os.environ["PATH"])
+    monkeypatch.setenv("DIGIT_SCALE", "sentinel")
 
-    env = _git_env(GIT_CONFIG_GLOBAL=str(tmp_path / "wanted"))
+    from codebase_rag.tests.conftest import git_env
+
+    env = git_env(GIT_CONFIG_GLOBAL=str(tmp_path / "wanted"))
 
     leaked = sorted(k for k in env if k.startswith("GIT_") and k != "GIT_CONFIG_GLOBAL")
     assert leaked == [], (
@@ -118,8 +103,10 @@ def test_git_env_drops_inherited_routing_variables(
         "the caller's own override must win over the inherited value, or the "
         "filter has thrown away the setting it was asked to apply"
     )
-    assert "PATH" in env, (
-        "only GIT_* is dropped; stripping the rest would leave git unfindable"
+    assert env.get("DIGIT_SCALE") == "sentinel", (
+        "only variables whose NAME BEGINS with `GIT_` may be dropped; a "
+        "substring test would also eat `DIGIT_SCALE` and anything else "
+        "merely containing the token, taking unrelated settings with it"
     )
 
 
@@ -673,6 +660,50 @@ def _collect_loose_objects(repo: Path) -> tuple[list[str], list[int]]:
     return listed, readonly_modes
 
 
+def test_git_repo_fixture_survives_an_inherited_git_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The fixture's own `git init` must ignore an ambient `GIT_DIR`.
+
+    Rebuilds the fixture's setup rather than consuming the fixture, because
+    `monkeypatch` cannot reach inside an already-running fixture's setup;
+    the env below is the same call the fixture makes.
+
+    The failure this pins is silent: `git init` under a redirecting `GIT_DIR`
+    still exits 0, so `check=True` raises nothing and the caller is handed a
+    directory with no `.git` in it at all. Both assertions are on the
+    filesystem for that reason -- a return code cannot tell the two apart.
+    """
+    import subprocess
+
+    from codebase_rag.tests.conftest import git_env
+
+    elsewhere = tmp_path / "elsewhere"
+    monkeypatch.setenv("GIT_DIR", str(elsewhere / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(elsewhere))
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=repo,
+        check=True,
+        env=git_env(
+            GIT_CONFIG_GLOBAL=str(tmp_path / "absent"),
+            GIT_CONFIG_SYSTEM=str(tmp_path / "absent"),
+            GIT_DEFAULT_HASH="sha1",
+        ),
+    )
+
+    assert (repo / ".git").is_dir(), (
+        "git init did not build the repo where it was told to: the inherited "
+        "GIT_DIR redirected it, and exited 0 while doing so"
+    )
+    assert not elsewhere.exists(), (
+        "the repo was built at the inherited GIT_DIR location instead of cwd"
+    )
+
+
 def test_git_repo_fixture_tears_down_its_own_readonly_objects(
     git_repo: Path,
 ) -> None:
@@ -686,7 +717,9 @@ def test_git_repo_fixture_tears_down_its_own_readonly_objects(
 
     assert (git_repo / ".git").is_dir()
     (git_repo / "a.py").write_text("x = 1\n", encoding="utf-8")
-    env = _git_env(
+    from codebase_rag.tests.conftest import git_env
+
+    env = git_env(
         GIT_CONFIG_GLOBAL=str(git_repo / "absent"),
         GIT_CONFIG_SYSTEM=str(git_repo / "absent"),
         GIT_DEFAULT_HASH="sha1",
@@ -748,7 +781,9 @@ def test_the_loose_object_filter_rejects_a_packed_repo(
     already rejects packs, `*.idx`, `commit-graph` and the decoy by name.
     `_FANOUT_DIR` is a narrowing optimisation here, not independently pinned.
     """
-    env = _git_env(
+    from codebase_rag.tests.conftest import git_env
+
+    env = git_env(
         GIT_CONFIG_GLOBAL=str(tmp_path / "absent"),
         GIT_CONFIG_SYSTEM=str(tmp_path / "absent"),
         GIT_DEFAULT_HASH="sha1",
@@ -816,7 +851,9 @@ def test_the_loose_object_filter_accepts_a_sha256_repo(
     the pins deliberately exclude, so the sha256 branch is pinned behaviour
     rather than uncovered code that can be dropped silently.
     """
-    env = _git_env(
+    from codebase_rag.tests.conftest import git_env
+
+    env = git_env(
         GIT_CONFIG_GLOBAL=str(tmp_path / "absent"),
         GIT_CONFIG_SYSTEM=str(tmp_path / "absent"),
         GIT_DEFAULT_HASH="sha256",

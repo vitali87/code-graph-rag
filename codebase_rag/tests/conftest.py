@@ -556,6 +556,26 @@ def _tmp_path_stays_removable(request: pytest.FixtureRequest) -> Generator[None]
         _make_tmp_path_removable(root)
 
 
+def git_env(**overrides: str) -> dict[str, str]:
+    """A Git environment with every inherited `GIT_*` routing variable gone.
+
+    `{**os.environ, ...}` is not enough. An inherited `GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` redirects a
+    `git init` away from the directory it names, so the repo under test is
+    never built where the test looks for it -- and `git init` still exits 0,
+    so `check=True` does not catch it. The caller is then handed a path with
+    no `.git` at all, or object counts describing some other repository. A
+    test asserting an object is ABSENT passes vacuously that way, which is
+    why this is stripped rather than merely overridden.
+
+    Dropping the whole prefix rather than a listed few keeps that true for
+    routing variables not enumerated here (#1648 review).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | dict(
+        overrides
+    )
+
+
 @pytest.fixture
 def git_repo(tmp_path: Path) -> Generator[Path, None, None]:
     """A real git repository under `tmp_path`, torn down safely.
@@ -566,16 +586,15 @@ def git_repo(tmp_path: Path) -> Generator[Path, None, None]:
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    env = {
-        **os.environ,
-        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
-        "GIT_CONFIG_SYSTEM": str(tmp_path / "gitconfig-absent"),
+    env = git_env(
+        GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig-absent"),
+        GIT_CONFIG_SYSTEM=str(tmp_path / "gitconfig-absent"),
         # Pinned for the same reason the config files are neutralised: the
         # env is inherited, and an ambient GIT_DEFAULT_HASH=sha256 would give
         # 62-hex loose-object basenames instead of 38-hex, changing what
         # callers see.
-        "GIT_DEFAULT_HASH": "sha1",
-    }
+        GIT_DEFAULT_HASH="sha1",
+    )
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
     yield repo
     shutil.rmtree(repo, onexc=_clear_readonly, ignore_errors=False)
