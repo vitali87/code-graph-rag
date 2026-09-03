@@ -104,6 +104,7 @@ nav:
     - Graph Schema: architecture/graph-schema.md
     - I/O and Data-Flow Edges: architecture/data-flow-edges.md
     - Language Support: architecture/language-support.md
+    - Structural Delta: architecture/structural-delta.md
     - Adding a Language Frontend: architecture/language-frontends.md
     - Security Model: architecture/security.md
     - Span-Preserving Patchers: architecture/patchers.md

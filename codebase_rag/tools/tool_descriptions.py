@@ -251,16 +251,27 @@ MCP_GET_CODE_SNIPPET = (
     "Returns the source code, file path, line numbers, and docstring."
 )
 
+_MCP_DELTA_NOTE = (
+    " After the write, the touched files are re-ingested and a structural "
+    "delta is appended to the result: symbols added, removed and renamed, "
+    "callers left dangling, call sites passing too many arguments, signature "
+    "changes with a verdict per call site, new duplicates of existing "
+    "functions, new import cycles, and the tests reaching the edited symbols. "
+    "Read it before the next edit."
+)
 MCP_SURGICAL_REPLACE_CODE = (
     "Surgically replace an exact code block in a file using diff-match-patch. "
     "Only modifies the exact target block, leaving the rest unchanged."
+    + _MCP_DELTA_NOTE
 )
 
 MCP_READ_FILE = (
     "Read the contents of a file from the project. Supports pagination for large files."
 )
 
-MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
+MCP_WRITE_FILE = (
+    "Write content to a file, creating it if it doesn't exist." + _MCP_DELTA_NOTE
+)
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 
@@ -327,7 +338,7 @@ MCP_STRUCTURAL_REPLACE = (
     "Rewrite code structurally by AST pattern using ast-grep syntax. Metavariables "
     "captured by the pattern are substituted into the rewrite. Defaults to dry_run "
     "(returns a diff); set dry_run=false to write changes. "
-    "Requires the 'ast-grep' extra to be installed."
+    "Requires the 'ast-grep' extra to be installed." + _MCP_DELTA_NOTE
 )
 
 MCP_ASK_AGENT = (

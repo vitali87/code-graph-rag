@@ -78,15 +78,14 @@ _GRAPH_READERS = frozenset(
 # handlers that genuinely need the lock. Enumerating the SAFE ones is
 # checkable by reading each body once; enumerating the dangerous ones is not.
 #
-# All six below delegate to file-system or AST tools. Adding a handler here
-# is a deliberate claim that it touches no graph state.
+# All three below delegate to file-system or AST tools. Adding a handler here
+# is a deliberate claim that it touches no graph state. The write tools left
+# this list with issue #1525: they re-ingest what they wrote and read the
+# graph for the structural delta, under the lock.
 _NON_GRAPH_HANDLERS = frozenset(
     {
         "structural_search",
-        "structural_replace",
-        "surgical_replace_code",
         "read_file",
-        "write_file",
         "list_directory",
     }
 )
@@ -113,6 +112,10 @@ _GRAPH_WRITERS = frozenset(
         "update_repository",
         "delete_project",
         "wipe_database",
+        # The write tools re-ingest under the lock (issue #1525).
+        "surgical_replace_code",
+        "write_file",
+        "structural_replace",
     }
 )
 

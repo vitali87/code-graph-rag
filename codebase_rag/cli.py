@@ -1104,6 +1104,48 @@ def graph_command(ctx: typer.Context) -> None:
 
 
 @app.command(
+    name=ch.CLICommandName.CHECK,
+    help=ch.CMD_CHECK,
+    short_help=ch.CMD_CHECK,
+    epilog=ch.EXAMPLES_CHECK,
+    rich_help_panel=ch.PANEL_USE,
+)
+def check_command(
+    base: str = typer.Option("HEAD", "--base", help=ch.HELP_CHECK_BASE),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    fail_on_found: bool = typer.Option(
+        False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
+    ),
+) -> None:
+    from .structural_check import CheckError, run_check
+    from .structural_delta import has_findings
+    from .utils.path_utils import derive_project_name
+
+    root = repo_path.resolve()
+    name = project or derive_project_name(root)
+    parsers, queries = load_parsers()
+    with connect_memgraph(batch_size=settings.resolve_batch_size(None)) as ingestor:
+        if name not in ingestor.list_projects():
+            typer.echo(cs.CHECK_NOT_INDEXED.format(project=name), err=True)
+            raise typer.Exit(code=1)
+        try:
+            delta = run_check(root, base, name, ingestor, parsers, queries)
+        except CheckError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(code=1) from error
+    typer.echo(json.dumps(delta, indent=cs.MCP_JSON_INDENT))
+    if fail_on_found and has_findings(delta):
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.HELP,
     help=ch.CMD_HELP,
     short_help=ch.CMD_HELP,
