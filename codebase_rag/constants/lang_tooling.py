@@ -158,6 +158,9 @@ PATCH_GOFMT_LIST_FLAG = "-l"
 # for an uninstalled component is a real file on PATH that exits non-zero, and
 # that is indistinguishable from "your code is misformatted" (issue #1639).
 PATCH_VERSION_FLAG = "--version"
+# gofmt has no --version and exits 2 on it; -h exits 0. The liveness probe must
+# use a flag the tool accepts, or a working formatter reads as a missing one.
+PATCH_GOFMT_PROBE_FLAG = "-h"
 PATCH_RUSTFMT = "rustfmt"
 PATCH_RUSTFMT_CHECK_FLAG = "--check"
 PATCH_RUSTFMT_EDITION_FLAG = "--edition"

@@ -396,6 +396,15 @@ def test_java_rename_preserves_syntax(tmp_path: Path) -> None:
     assert result.content.decode().replace("assist", "helper") == JAVA_SRC
 
 
+# The liveness flag each formatter actually accepts. `gofmt` has no
+# `--version` (it exits 2), so probing every tool the same way reports a
+# working gofmt as missing and silently skips the Go coverage (issue #1639).
+_PROBE_FLAGS = {
+    cs.PATCH_GOFMT: cs.PATCH_GOFMT_PROBE_FLAG,
+    cs.PATCH_RUSTFMT: cs.PATCH_VERSION_FLAG,
+}
+
+
 @lru_cache(maxsize=8)
 def _runnable_formatter(binary: str) -> bool:
     """Whether a formatter is on PATH AND can actually run (issue #1639).
@@ -419,7 +428,7 @@ def _runnable_formatter(binary: str) -> bool:
         return False
     try:
         probe = subprocess.run(
-            [found, "--version"],
+            [found, _PROBE_FLAGS.get(binary, cs.PATCH_VERSION_FLAG)],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
