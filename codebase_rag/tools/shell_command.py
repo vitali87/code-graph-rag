@@ -140,14 +140,24 @@ def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
 
 
 def _rm_options(args: list[str]) -> list[str]:
-    """The tokens rm would parse as options, the complement of the operands.
+    """The tokens any supported rm might parse as options.
 
-    Reading the operand text as flags made `rm -r -- -in-root-file` look like
-    `rm -rf`, because the operand happens to contain an `r` and an `f`.
+    Deliberately the mirror image of `_rm_operands`. GNU rm permutes, so it
+    honours a flag written after an operand: `rm target -rf` deletes
+    recursively and without prompting. Stopping at the first operand, as the
+    POSIX operand rule does, would miss that and let the flag check pass.
+
+    Only `--` ends option parsing here, because after it a dash-prefixed token
+    is a filename on every rm. That keeps `rm -r -- -in-root-file` off the
+    dangerous-flag path, which is the case that made reading whole operands as
+    flags wrong in the first place.
+
+    Each helper errs towards catching more: operands POSIX-maximal so more
+    paths face the containment check, options GNU-maximal so more spellings
+    face the flag check.
     """
-    operands = _rm_operands(args)
-    end = len(args) - len(operands)
-    return [part for part in args[:end] if part.startswith("-")]
+    end = args.index("--") if "--" in args else len(args)
+    return [part for part in args[:end] if part.startswith("-") and part != "-"]
 
 
 def _rm_operands(args: list[str]) -> list[str]:

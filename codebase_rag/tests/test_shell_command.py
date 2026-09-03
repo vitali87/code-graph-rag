@@ -1224,6 +1224,19 @@ class TestDangerousRmPath:
         assert _is_dangerous_rm(["rm", "-rf", "sub/file.txt"]) is True
         assert _is_dangerous_rm(["rm", "-r", "-f", "sub/file.txt"]) is True
 
+    def test_trailing_flags_are_still_flags(self) -> None:
+        # GNU rm permutes, so a flag written after an operand still applies:
+        # `rm target -rf` deletes recursively without prompting. Stopping the
+        # option scan at the first operand, as the operand rule does, let
+        # these spellings past the dangerous-flag check.
+        assert _is_dangerous_rm(["rm", "-r", "target", "-f"]) is True
+        assert _is_dangerous_rm(["rm", "target", "-rf"]) is True
+        assert _is_dangerous_rm(["rm", "a", "-rf", "--", "-x"]) is True
+
+    def test_flags_after_end_of_options_are_filenames(self) -> None:
+        # `--` ends option parsing on every rm, so `-rf` after it is a name.
+        assert _is_dangerous_rm(["rm", "-r", "--", "-rf"]) is False
+
     def test_options_before_end_of_options_are_still_options(
         self, tmp_path: Path
     ) -> None:
