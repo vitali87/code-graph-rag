@@ -2748,19 +2748,26 @@ class GraphUpdater:
         # from it and no on-disk hash names it any more. Only the graph still
         # does. It costs a query only on the runs where the set actually
         # moved.
-        # A forced single-file run needs this too, for the same reason a full
-        # build does: `force` empties `old_hashes`, so the cache can no longer
-        # say whether the target is already in the graph, and `is_new` would
-        # fall through to True on a file the previous parse already indexed.
-        # It would then skip delete-before-reingest and stack a second parse's
-        # entities on the first -- renamed-away symbols and their
-        # CALLS/REFERENCES edges surviving beside the fresh ones (#1619 review,
-        # round 3). Only the graph still knows, so ask it.
-        forced_single_file = force and self._single_file is not None
+        # A single-file run whose cache cannot name the target needs this too,
+        # for the same reason a full build does. `is_new` would otherwise fall
+        # through to True on a file the previous parse already indexed, skip
+        # delete-before-reingest, and stack a second parse's entities on the
+        # first -- renamed-away symbols and their CALLS/REFERENCES edges
+        # surviving beside the fresh ones (#1619 review, round 3).
+        #
+        # The condition mirrors `is_full_build` above deliberately: `force`
+        # empties `old_hashes`, and a missing or evicted cache leaves it empty
+        # the same way, so both must ask the graph. Guarding on `force` alone
+        # left the identical defect on a fresh clone of an already-indexed
+        # repo -- the cache lives in the working tree, the graph does not --
+        # and after any cache eviction (#1619 review, round 4).
+        cacheless_single_file = (force or not old_hashes) and (
+            self._single_file is not None
+        )
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build
-            or forced_single_file
+            or cacheless_single_file
             or not self._exclusions_match_last_run()
             else frozenset()
         )

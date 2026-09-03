@@ -428,9 +428,17 @@ class TestSingleFileRunScope:
             "the previous cache, not be replaced by it"
         )
 
-    @pytest.mark.parametrize("force", [False, True])
+    @pytest.mark.parametrize(
+        ("force", "drop_cache"),
+        [(False, False), (True, False), (False, True)],
+        ids=["cache-names-target", "forced", "cacheless"],
+    )
     def test_single_file_run_deletes_the_target_before_reingest(
-        self, tmp_path: Path, mock_ingestor: MagicMock, force: bool
+        self,
+        tmp_path: Path,
+        mock_ingestor: MagicMock,
+        force: bool,
+        drop_cache: bool,
     ) -> None:
         """An already-indexed target must be cleared before it is re-parsed.
 
@@ -444,9 +452,18 @@ class TestSingleFileRunScope:
 
         Asserts the DELETE is issued rather than checking the cache: the cache
         is written identically either way, so a cache assertion is satisfied
-        by both the working and the broken code. Parametrised so the unforced
-        case stays a control -- it reaches the same delete through
-        `old_hashes`, and must keep doing so.
+        by both the working and the broken code.
+
+        The deciding axis is whether the cache can NAME THE TARGET, and
+        `force` is only one of two ways to make it not: a missing or evicted
+        cache leaves `old_hashes` empty exactly as `force` does. So the cases
+        are (a) the cache names it -- the control, which reaches the delete
+        through `old_hashes` and must keep doing so; (b) `force` empties it;
+        (c) the cache is gone, which is reachable WITHOUT `force` on a fresh
+        clone of an already-indexed repo, since the cache lives in the working
+        tree and the graph does not. Parametrising on `force` alone left (c)
+        invisible and a guard covering only `force` passed (#1619 review,
+        round 4).
         """
         repo = self._three_module_project(tmp_path)
         parsers, queries = load_parsers()
@@ -460,6 +477,14 @@ class TestSingleFileRunScope:
         # A real second run queries a graph that still holds the first run's
         # modules; the fake sink has to say so or nothing is "pre-existing"
         # and the test could not tell the two paths apart.
+        cache_path = repo / cs.HASH_CACHE_FILENAME
+        assert cache_path.is_file(), (
+            "fixture guard: the project run must have written a hash cache, "
+            "or the cacheless case below would be indistinguishable from it"
+        )
+        if drop_cache:
+            cache_path.unlink()
+
         second = _MockIngestor()
         second.fetch_all.return_value = [
             {cs.KEY_PATH: "module_a.py"},
@@ -478,7 +503,8 @@ class TestSingleFileRunScope:
             if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
         }
         assert "module_a.py" in deleted, (
-            f"run(force={force}) re-parsed an already-indexed file without "
-            "deleting its previous entities first, so the old parse's nodes "
-            "and edges survive alongside the new ones"
+            f"run(force={force}) with drop_cache={drop_cache} re-parsed an "
+            "already-indexed file without deleting its previous entities "
+            "first, so the old parse's nodes and edges survive alongside the "
+            "new ones"
         )
