@@ -33,8 +33,15 @@ from .utils import safe_decode_with_fallback
 
 # Identifiers, dotted paths and Rust `::` paths inside an annotation. Generic
 # brackets, pointers, arrays and unions fall away; every candidate is then
-# checked against the registry, so builtins simply resolve to nothing.
-_TYPE_NAME_RE = re.compile(r"[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*")
+# checked against the registry, so builtins simply resolve to nothing. The
+# identifier start is any word character but a digit, so a Unicode class
+# name (`class Δ`) is a candidate exactly as an ASCII one is.
+_TYPE_NAME_RE = re.compile(r"[^\W\d]\w*(?:(?:\.|::)[^\W\d]\w*)*")
+
+# A Rust path from the crate root. The registry keys modules by their file
+# path under the project (`proj.src.model.Item`), never by `crate`, so the
+# marker is dropped and the rest resolves by scope and unique suffix.
+_RUST_CRATE_ROOT = "crate" + cs.SEPARATOR_DOT
 
 # Parameter-list children that declare no parameter (`*` and `/` separators).
 _PY_SEPARATORS = frozenset({cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_POSITIONAL_SEPARATOR})
@@ -309,6 +316,8 @@ class TypeReferenceResolver:
         return None
 
     def resolve(self, name: str, module_qn: str) -> str | None:
+        if name.startswith(_RUST_CRATE_ROOT):
+            name = name[len(_RUST_CRATE_ROOT) :]
         for candidate in self._scoped_candidates(name, module_qn):
             if self._is_type(candidate):
                 return candidate

@@ -339,6 +339,25 @@ def test_resolver_prefers_imports_then_scope_then_unique_suffix() -> None:
     assert resolver.resolve("int", "p.app") is None
 
 
+def test_type_reference_names_accept_unicode_identifiers() -> None:
+    # Python allows `class Δ`; an annotation naming it must be a candidate.
+    assert type_reference_names("Optional[Δ]") == ["Optional", "Δ"]
+    assert type_reference_names("pkg.Ωmega") == ["pkg.Ωmega"]
+    assert type_reference_names("3D") == ["D"]
+
+
+def test_resolver_maps_a_rust_crate_root_path_to_the_project() -> None:
+    # `crate::model::Item` arrives as `crate.model.Item`; the registry keys
+    # the module by its path under the project, so the marker must not
+    # block the scoped and suffix resolution.
+    resolver = _resolver(
+        {"p.src.model.Item": NodeType.CLASS, "p.src.lib.load": NodeType.FUNCTION},
+        {},
+    )
+    assert resolver.resolve("crate.model.Item", "p.src.lib") == "p.src.model.Item"
+    assert resolver.resolve("crate.missing.Item", "p.src.lib") is None
+
+
 def test_resolver_prefers_the_nearest_package_among_candidates() -> None:
     resolver = _resolver({"p.a.x.Item": NodeType.CLASS, "p.b.Item": NodeType.CLASS}, {})
     assert resolver.resolve("Item", "p.a.y") == "p.a.x.Item"
