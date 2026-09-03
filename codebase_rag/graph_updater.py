@@ -1197,6 +1197,11 @@ class GraphUpdater:
             logger.info("Resolved {} deferred containment parents", linked)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
+        # The resolver memoises name -> qn answers across files; on a reused
+        # updater (MCP server, watcher) those answers can name definitions
+        # this run deleted or renamed, so every run starts Pass 3 with empty
+        # caches, as reingest already does (issue #1575).
+        self.factory.call_processor.reset_resolution_caches()
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
@@ -2170,6 +2175,13 @@ class GraphUpdater:
                 self.simple_name_lookup[simple_name] = new_qn_set
                 logger.debug(ls.CLEANED_SIMPLE_NAME, name=simple_name)
 
+        # The file no longer owns any module qn: a replacement with the same
+        # stem (util.js -> util.ts) must take the bare qn a clean index gives
+        # it, and a re-parse re-registers its own entry (issue #1575).
+        qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+        for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
+            del qn_to_path[qn]
+
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
 
@@ -2774,6 +2786,13 @@ class GraphUpdater:
         pre_parsed = self._pre_parse_changed_files(changed_entries)
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
+        # The in-memory side of a deleted file goes now as well: a reused
+        # updater (MCP server, watcher, reingest) otherwise resolves this
+        # run's re-parsed importers against the deleted definitions and
+        # suffixes a same-stem replacement's qn (issue #1575). The late
+        # deletion block repeats this harmlessly.
+        for deleted_key in deleted_before_parse:
+            self.remove_file_from_state(self.repo_path / deleted_key)
         first_failure: Exception | None = None
 
         with Progress(
