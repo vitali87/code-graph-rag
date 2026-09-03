@@ -880,6 +880,10 @@ INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+REINGEST_MODULE_PATHS_UNKNOWN = (
+    "Re-ingest aborted: the graph's module paths could not be read, so the "
+    "module qns already taken are unknown"
+)
 INCREMENTAL_FILE_FAILED = (
     "Failed to index {path}; the remaining changed files are still rebuilt "
     "before the error is raised: {error}"

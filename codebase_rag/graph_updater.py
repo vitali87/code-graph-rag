@@ -3544,7 +3544,14 @@ class GraphUpdater:
         # seeded from the graph for everything else so the disambiguator
         # sees the taken qns on a fresh updater.
         flux_stems, survivors = self._reingest_flux_survivors(present, gone, hashes)
-        graph_paths = set(self._existing_module_paths() or frozenset())
+        existing_paths = self._existing_module_paths()
+        if existing_paths is None:
+            # The sink claims a query surface but the read failed: the taken
+            # qns are unknown, and seeding nothing would let a re-parsed
+            # file claim a qn the graph already holds. Abort before any
+            # delete, as the inbound-edge capture does.
+            raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN)
+        graph_paths = set(existing_paths)
         self._seed_module_qns_from_graph(graph_paths - set(gone), flux_stems)
         # A gone file seeds regardless: its map entry is what the state drop
         # below keys on to free its qn and forget its rehydrated form.
@@ -3572,7 +3579,10 @@ class GraphUpdater:
 
         report = ReingestReport(
             reparsed=tuple(sorted(present)),
-            affected=tuple(sorted(affected)),
+            # Survivors of a stem in flux re-parsed with the dependents and
+            # are reported with them: the caller sees every file this call
+            # touched.
+            affected=tuple(sorted({*affected, *survivors})),
             removed=tuple(sorted(gone)),
             skipped=tuple(sorted(skipped)),
             elapsed_ms=(time.perf_counter() - started) * 1000.0,

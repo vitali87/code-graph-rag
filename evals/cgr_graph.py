@@ -287,6 +287,21 @@ class _StatefulIngestor:
                     }
                     module_rows.append(module_row)
                 return module_rows
+            case cs.CYPHER_PROJECT_MODULE_PATHS:
+                project_name = (
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                )
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                project_rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    if qn == project_name or (prefix and qn.startswith(prefix)):
+                        project_rows.append(
+                            {cs.KEY_PATH: _text(props.get(cs.KEY_PATH))}
+                        )
+                return project_rows
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():

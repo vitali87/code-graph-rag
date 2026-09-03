@@ -282,8 +282,18 @@ def _sibling_clean(root: Path) -> Snapshot:
             [],
             ["util.js"],
         ),
+        (
+            {"util.js": SIBLING_JS, "util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            {
+                "util.js": SIBLING_JS,
+                "util.ts": SIBLING_TS.replace("return 2", "return 3"),
+                "main.js": SIBLING_MAIN,
+            },
+            ["util.ts"],
+            [],
+        ),
     ],
-    ids=["add_loser", "add_winner", "delete_winner"],
+    ids=["add_loser", "add_winner", "delete_winner", "modify_loser"],
 )
 def test_reingest_gives_same_stem_siblings_their_clean_index_qns(
     temp_repo: Path,
@@ -312,11 +322,71 @@ def test_reingest_gives_same_stem_siblings_their_clean_index_qns(
     if fresh_updater:
         updater = _sibling_updater(store, root)
 
-    updater.reingest(changed, deleted=deleted)
+    report = updater.reingest(changed, deleted=deleted)
 
     actual = _snapshot(store)
     expected = _sibling_clean(root)
     assert actual == expected, _diff(actual, expected)
+    # Every file the call touched is in the report: re-parsed survivors of
+    # a stem in flux count as dependents.
+    touched = {*report.reparsed, *report.affected, *report.removed}
+    assert touched == set(updater._reparsed_file_keys)
+
+
+def test_reingest_aborts_when_the_module_paths_cannot_be_read(
+    temp_repo: Path,
+) -> None:
+    # A sink that claims a query surface but fails the module-path read
+    # leaves the taken qns unknown; seeding nothing would let a re-parsed
+    # loser sibling claim the winner's bare qn. The call aborts before any
+    # delete, so the graph is untouched.
+    root = temp_repo / "sib"
+    root.mkdir()
+    _write(root, "util.js", SIBLING_JS)
+    _write(root, "util.ts", SIBLING_TS)
+    _write(root, "main.js", SIBLING_MAIN)
+    store = _StatefulIngestor()
+    _sibling_updater(store, root).run(force=True)
+    before = _snapshot(store)
+    real_fetch_all = store.fetch_all
+
+    def failing(query: str, params: dict | None = None) -> list:
+        if query == cs.CYPHER_PROJECT_MODULE_PATHS:
+            raise RuntimeError("graph down")
+        return real_fetch_all(query, params)
+
+    store.fetch_all = failing  # type: ignore[method-assign]
+    _write(root, "util.ts", SIBLING_TS.replace("return 2", "return 3"))
+    updater = _sibling_updater(store, root)
+
+    with pytest.raises(RuntimeError, match="module paths could not be read"):
+        updater.reingest(["util.ts"])
+
+    assert _snapshot(store) == before
+
+
+def test_a_fresh_updater_forgets_a_deleted_modules_rehydrated_qn(
+    temp_repo: Path,
+) -> None:
+    # A fresh updater reads module qns back from the graph; the deleted
+    # file's qn must leave `known_module_paths` with the rest of its state,
+    # which keys on the map entry only the seed provides on this path.
+    root = temp_repo / "sib"
+    root.mkdir()
+    _write(root, "util.py", "def helper():\n    return 1\n")
+    _write(
+        root, "main.py", "from util import helper\n\n\ndef go():\n    return helper()\n"
+    )
+    store = _StatefulIngestor()
+    _sibling_updater(store, root).run(force=True)
+    (root / "util.py").unlink()
+    _write(root, "main.py", "def go():\n    return 1\n")
+    updater = _sibling_updater(store, root)
+
+    updater.reingest(["main.py"], deleted=["util.py"])
+
+    assert "sib.util" not in updater.known_module_paths()
+    assert "sib.main" in updater.known_module_paths()
 
 
 def test_reingest_reparses_in_walk_order_across_directories(
