@@ -998,15 +998,14 @@ class GraphUpdater:
         self._graph_state_unknown = False
         # Per-run for the same reason (issue #1620's shape): a run that raised
         # between `_process_files` and the commit point leaves its cache
-        # stashed on the instance. No test covers this because no such write is
-        # reachable, and the argument is structural rather than a survey of
-        # paths: `_process_files` contains no `return` and no `raise`, and
-        # `run` returns only at the in-sync fast path below, which is above the
-        # commit point. All three stashes are unconditional top-level
-        # statements of `_process_files`, so every path that reaches the commit
-        # point has re-stashed all three before getting there. Reset anyway: the
-        # guarantee is a property of those two functions' control flow, and
-        # the first early `return` added to either one silently ends it.
+        # stashed on the instance. `_process_files` has exactly one raise, the
+        # deferred first parse failure, and it sits AFTER the observed-at
+        # stash and BEFORE the two cache stashes, so a raising run leaves
+        # `_pending_cache_observed_at` set and the other two None; `run`
+        # returns only at the in-sync fast path below, above the commit
+        # point. This reset is what makes that leftover harmless on a reused
+        # instance, and the first early `return` added to either function
+        # is covered by it too.
         self._pending_hash_cache = None
         self._pending_dir_mtimes = None
         self._pending_cache_observed_at = None
@@ -2775,6 +2774,7 @@ class GraphUpdater:
         pre_parsed = self._pre_parse_changed_files(changed_entries)
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
+        first_failure: Exception | None = None
 
         with Progress(
             SpinnerColumn(),
@@ -2797,11 +2797,22 @@ class GraphUpdater:
                     )
 
                 changed_count += 1
-                self._process_single_file(
-                    filepath,
-                    file_bytes=file_bytes,
-                    pre_parsed=pre_parsed.get(filepath),
-                )
+                # Every stale subtree went in the loop above, so a failure
+                # here must not abort this loop: every module after it would
+                # stay deleted and never be rebuilt. The remaining files are
+                # processed, the deletion reconciliation and inbound-edge
+                # restore below still run, and the first error is re-raised
+                # before the cache commit so the next run retries the lot.
+                try:
+                    self._process_single_file(
+                        filepath,
+                        file_bytes=file_bytes,
+                        pre_parsed=pre_parsed.get(filepath),
+                    )
+                except Exception as exc:
+                    logger.error(ls.INCREMENTAL_FILE_FAILED, path=filepath, error=exc)
+                    if first_failure is None:
+                        first_failure = exc
 
                 processed_since_flush += 1
                 if processed_since_flush >= settings.FILE_FLUSH_INTERVAL:
@@ -2854,6 +2865,8 @@ class GraphUpdater:
             logger.info(ls.INCREMENTAL_CHANGED, count=changed_count)
         if unreadable_count > 0:
             logger.info(ls.INCREMENTAL_UNREADABLE, count=unreadable_count)
+        if first_failure is not None:
+            raise first_failure
 
         # Deferred to the post-flush commit point in `run` (issue #1615). The
         # deletions above are execute_write calls that only become durable at

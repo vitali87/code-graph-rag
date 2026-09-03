@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import graph_updater as graph_updater_module
@@ -1489,6 +1490,53 @@ def test_a_graph_only_module_is_deleted_before_the_first_parse(
     assert deleted_at_first_parse, "no file was parsed"
     assert "module_c.py" in deleted_at_first_parse[0]
     assert _deleted_module_counts(mock_ingestor)["module_c.py"] == 1
+
+
+def test_a_parse_failure_still_rebuilds_the_other_changed_modules(
+    py_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Every changed module's old subtree is deleted before the first parse,
+    # so a file that fails to parse must not abort the loop: the modules
+    # after it would stay deleted and never be rebuilt. The error still
+    # surfaces once the remaining files are processed.
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    ).run()
+    cache_mtime = (py_project / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    for name in ("module_a.py", "module_b.py"):
+        path = py_project / name
+        path.write_text(path.read_text() + "\n")
+        os.utime(path, (cache_mtime + 1, cache_mtime + 1))
+
+    mock_ingestor.reset_mock()
+    updater = GraphUpdater(
+        ingestor=mock_ingestor, repo_path=py_project, parsers=parsers, queries=queries
+    )
+    real_parse = updater._process_single_file
+    parsed: list[str] = []
+
+    def flaky(filepath: Path, *args: object, **kwargs: object) -> None:
+        if filepath.name == "module_a.py":
+            raise RuntimeError("parse died")
+        parsed.append(filepath.name)
+        real_parse(filepath, *args, **kwargs)
+
+    updater._process_single_file = flaky  # type: ignore[method-assign]
+    errors: list[str] = []
+    sink_id = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+    try:
+        with pytest.raises(RuntimeError, match="parse died"):
+            updater.run()
+    finally:
+        logger.remove(sink_id)
+
+    # Both subtrees were deleted up front; only the survivor was rebuilt.
+    assert {"module_a.py", "module_b.py"} <= _deleted_module_paths(mock_ingestor)
+    assert "module_b.py" in parsed
+    # The re-raised error carries the message, not the file: only the log
+    # names which file failed.
+    assert any("module_a.py" in line and "parse died" in line for line in errors)
 
 
 def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
