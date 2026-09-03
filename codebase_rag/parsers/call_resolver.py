@@ -731,7 +731,13 @@ class CallResolver:
                 self.function_registry.is_abstract(override_qn)
             ):
                 targets.add((self.function_registry[override_qn], override_qn))
-        return targets
+        # `self.Inner()` where `Inner` is a NESTED CLASS is a construction, not a
+        # virtual method call: the name resolves to `Outer.Inner`, which is a
+        # Class node, and CALLS may only target a Function/Method/Enum/Type. The
+        # construction already reaches the graph as INSTANTIATES plus a CALLS to
+        # `__init__`, so a class here is a duplicate the schema rejects outright
+        # (issue #1650).
+        return {target for target in targets if target[0] != cs.NodeLabel.CLASS.value}
 
     def js_member_twin_targets(self, callee_qn: str) -> set[tuple[str, str]]:
         # `View.prototype.lookup = function lookup(...)` registers TWO nodes for
