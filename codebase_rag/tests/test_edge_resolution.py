@@ -96,6 +96,30 @@ def test_an_engine_bound_call_does_not_inherit_the_previous_label(
     assert by_callee["bar()"] == {cs.EdgeResolution.EXACT}
 
 
+def test_typed_cpp_operator_and_alias_calls_do_not_inherit_the_previous_label(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `lonely()` binds by name only (heuristic). The typed operator call and
+    # the body-local alias construction that follow bind through the C++
+    # engine and the alias map, neither of which enters the resolver's
+    # generic path where the verdict resets; each must carry its own label.
+    (temp_repo / "vec.cpp").write_text(
+        "namespace far { int lonely(); }\n"
+        "namespace math {\n"
+        "class Vec {\npublic:\n    Vec operator+(const Vec& other) const;\n};\n"
+        "Vec Vec::operator+(const Vec& other) const { return *this; }\n"
+        "class Foo { public: Foo(); };\nFoo::Foo() {}\n"
+        "int combine(Vec a, Vec b) {\n"
+        "    lonely();\n    Vec c = a + b;\n"
+        "    lonely();\n    using Alias = Foo;\n    Alias();\n    return 0;\n}\n}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="cpp")
+    by_callee = _resolutions(mock_ingestor, ".math.combine")
+    assert by_callee["lonely"] == {cs.EdgeResolution.HEURISTIC}
+    assert by_callee["operator_plus"] == {cs.EdgeResolution.EXACT}
+    assert by_callee["Foo"] == {cs.EdgeResolution.EXACT}
+
+
 def test_resolving_a_calls_arguments_does_not_change_its_own_label(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
@@ -305,6 +329,31 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
     assert ghost[cs.KEY_RESOLUTION] == "dynamic"
     assert ghost[cs.KEY_UNLOCATABLE] is True
     assert cs.KEY_LINE not in ghost
+
+
+def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    (tmp_path / "app.py").write_text(
+        "def run(obj):\n"
+        "    def inner():\n"
+        '        return getattr(obj, "solo")\n'
+        '    getattr(obj, "solo")()\n'
+        '    table = {"twice": 1}\n'
+        '    return getattr(obj, "twice")()\n'
+        "\n"
+        "def other(obj):\n"
+        '    return getattr(obj, "elsewhere")\n'
+    )
+    # The nested def's literal belongs to `inner`, so `solo` has one site in
+    # `run`'s own body and that site is recorded.
+    solo = locate_dispatch_literal(tmp_path, "app.py", 1, 6, "solo")
+    assert solo is not None and (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (4, 17)
+    # An earlier same-named dict key and the getattr argument cannot be told
+    # apart, so `twice` is unlocatable rather than pointed at the wrong one.
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 6, "twice") is None
+    # A literal outside the span never counts.
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 6, "elsewhere") is None
 
 
 # --- dead code floor --------------------------------------------------------------

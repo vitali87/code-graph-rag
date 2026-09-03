@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
-from typing import NamedTuple
+from typing import Concatenate, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -670,7 +670,9 @@ _RESOLVED_RELS = frozenset(
 )
 
 
-def _preserves_verdict[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
+def _preserves_verdict[**P, R](
+    fn: Callable[Concatenate[CallProcessor, P], R],
+) -> Callable[Concatenate[CallProcessor, P], R]:
     # The resolver's verdict belongs to the call node being emitted; the
     # passes that resolve a call's ARGUMENTS (callable flow, function
     # references, callable parameters) go through the resolver too and would
