@@ -195,7 +195,12 @@ def _from_import_targets(module_qn: str, node: Node) -> dict[str, str]:
     base = _from_import_base(module_qn, base)
     out: dict[str, str] = {}
     for child in node.named_children:
-        if child is base_node:
+        # `==` not `is`: py-tree-sitter builds a fresh wrapper per lookup, so
+        # the node from child_by_field_name is never the same object as the
+        # one in named_children. With identity this never skipped the base,
+        # and a dotless module name passed the dot filter below and mapped
+        # to itself as though it were an imported symbol.
+        if child == base_node:
             continue
         if child.type == cs.TS_PY_DOTTED_NAME:
             name = _decode(child)
