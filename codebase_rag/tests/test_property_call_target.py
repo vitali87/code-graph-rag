@@ -25,6 +25,9 @@ class Config:
 """
 READ_LINE = 8
 CALL_LINE = 9
+# What the call path alone emits for the call site, measured with the
+# property pass disabled outright.
+CALL_PATH_EDGES = 2
 
 
 @pytest.fixture
@@ -52,9 +55,10 @@ def test_property_read_beside_a_call_through_the_property(
     run_updater(prop_project, mock_ingestor)
 
     lines = _getter_edge_lines(mock_ingestor)
-    # The plain read resolves to the getter.
-    assert READ_LINE in lines, lines
-    # The call site is the call path's to resolve. With the identity
-    # comparison the pass claimed it too, and every edge landed on the call
-    # line while the read above got none.
-    assert lines.count(CALL_LINE) < len(lines), lines
+    # The property pass owns exactly one edge here, for the plain read.
+    assert lines.count(READ_LINE) == 1, lines
+    # The call site belongs to the call path, which emits two edges for it
+    # (a dispatch fan-out and the resolved call). The property pass must add
+    # nothing on top: with the identity comparison it claimed the call
+    # target too, giving 3 on this line and none on the read line.
+    assert lines.count(CALL_LINE) == CALL_PATH_EDGES, lines
