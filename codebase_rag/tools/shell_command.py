@@ -135,22 +135,66 @@ def _is_blocked_command(cmd: str) -> bool:
 def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False
-    flags = "".join(part for part in cmd_parts[1:] if part.startswith("-"))
+    flags = "".join(_rm_options(cmd_parts[1:]))
     return "r" in flags and "f" in flags
+
+
+def _rm_options(args: list[str]) -> list[str]:
+    """The tokens any supported rm might parse as options.
+
+    Deliberately the mirror image of `_rm_operands`. GNU rm permutes, so it
+    honours a flag written after an operand: `rm target -rf` deletes
+    recursively and without prompting. Stopping at the first operand, as the
+    POSIX operand rule does, would miss that and let the flag check pass.
+
+    Only `--` ends option parsing here, because after it a dash-prefixed token
+    is a filename on every rm. That keeps `rm -r -- -in-root-file` off the
+    dangerous-flag path, which is the case that made reading whole operands as
+    flags wrong in the first place.
+
+    Each helper errs towards catching more: operands POSIX-maximal so more
+    paths face the containment check, options GNU-maximal so more spellings
+    face the flag check.
+    """
+    end = args.index("--") if "--" in args else len(args)
+    return [part for part in args[:end] if part.startswith("-") and part != "-"]
+
+
+def _rm_operands(args: list[str]) -> list[str]:
+    """The tokens rm would treat as paths.
+
+    POSIX option parsing ends at the first operand or at `--`, whichever comes
+    first, and everything from there on is a path even when it starts with a
+    dash. BSD rm (macOS) follows that literally, so `rm a -x/../../outside/x`
+    deletes the second token; GNU rm instead permutes and rejects `-x/` as a
+    bad option. Taking the POSIX reading treats more tokens as paths than GNU
+    would, so the containment check only ever errs towards refusing.
+
+    Dropping every dash-prefixed token, as this used to, let both
+    `rm -r -- -x/../../outside/victim` and `rm a -x/../../outside/victim`
+    skip the containment check entirely.
+    """
+    for index, token in enumerate(args):
+        if token == "--":
+            return args[index + 1 :]
+        if token == "-" or not token.startswith("-"):
+            return args[index:]
+    return []
 
 
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
-    path_args = [p for p in cmd_parts[1:] if not p.startswith("-")]
-    for path_arg in path_args:
+    for path_arg in _rm_operands(cmd_parts[1:]):
         if path_arg in ("*", ".", ".."):
             return True, f"rm targeting dangerous path: {path_arg}"
+        # Joining onto the root is the platform's own absoluteness test: an
+        # absolute target replaces the root outright, a relative one lands
+        # under it. A `startswith("/")` check is POSIX-only: on Windows a
+        # rooted, drive-less target such as `/x` would resolve on the Python
+        # process's drive rather than the root's, the drive rm runs on.
         try:
-            if path_arg.startswith("/"):
-                resolved = Path(path_arg).resolve()
-            else:
-                resolved = (project_root / path_arg).resolve()
+            resolved = (project_root / path_arg).resolve()
         except (OSError, ValueError):
             return True, f"rm with invalid path: {path_arg}"
         resolved_str = str(resolved)

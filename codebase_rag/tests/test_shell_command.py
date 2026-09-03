@@ -1169,6 +1169,82 @@ class TestDangerousRmPath:
         )
         assert not is_dangerous
 
+    def test_absolute_path_inside_project(self, tmp_path: Path) -> None:
+        # An absolute target is judged as itself, not as a name under the
+        # root: joining it onto the root must replace the root, on every
+        # platform, so an in-root absolute spelling keeps its pass.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        target = str(project_root / "subdir" / "file.txt")
+        is_dangerous, _ = _is_dangerous_rm_path(["rm", "-rf", target], project_root)
+        assert not is_dangerous
+
+    def test_dash_prefixed_operand_after_end_of_options_is_checked(
+        self, tmp_path: Path
+    ) -> None:
+        # `--` ends option parsing, so `-x/../../outside/victim` is a path
+        # to rm. Filtering every dash-prefixed token as an option let it
+        # skip containment: verified `(False, "")` before this check.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        argv = ["rm", "-r", "--", "-x/../../outside/victim"]
+        is_dangerous, reason = _is_dangerous_rm_path(argv, project_root)
+        assert is_dangerous
+        assert "outside project" in reason or "system directory" in reason
+
+    def test_dash_prefixed_operand_inside_project_still_passes(
+        self, tmp_path: Path
+    ) -> None:
+        # The same spelling pointed inside the root keeps its pass, so the
+        # fix is a containment check on the operand, not a ban on `--`.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        argv = ["rm", "-r", "--", "-in-root-file"]
+        assert _is_dangerous_rm_path(argv, project_root) == (False, "")
+
+    def test_dash_prefixed_operand_after_first_operand_is_checked(
+        self, tmp_path: Path
+    ) -> None:
+        # POSIX option parsing ends at the first operand, so BSD rm (macOS)
+        # reads the second token here as a path and deletes it. Filtering on
+        # the leading dash alone let this escape the containment check.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        argv = ["rm", "a", "-x/../../outside/victim"]
+        is_dangerous, reason = _is_dangerous_rm_path(argv, project_root)
+        assert is_dangerous
+        assert "outside project" in reason or "system directory" in reason
+
+    def test_operand_text_is_not_read_as_rf_flags(self, tmp_path: Path) -> None:
+        # `-in-root-file` carries both an `r` and an `f`, so scanning every
+        # dash-prefixed token for flags blocked this as if it were `rm -rf`.
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        assert _is_dangerous_rm(["rm", "-r", "--", "-in-root-file"]) is False
+        assert _is_dangerous_rm(["rm", "-rf", "sub/file.txt"]) is True
+        assert _is_dangerous_rm(["rm", "-r", "-f", "sub/file.txt"]) is True
+
+    def test_trailing_flags_are_still_flags(self) -> None:
+        # GNU rm permutes, so a flag written after an operand still applies:
+        # `rm target -rf` deletes recursively without prompting. Stopping the
+        # option scan at the first operand, as the operand rule does, let
+        # these spellings past the dangerous-flag check.
+        assert _is_dangerous_rm(["rm", "-r", "target", "-f"]) is True
+        assert _is_dangerous_rm(["rm", "target", "-rf"]) is True
+        assert _is_dangerous_rm(["rm", "a", "-rf", "--", "-x"]) is True
+
+    def test_flags_after_end_of_options_are_filenames(self) -> None:
+        # `--` ends option parsing on every rm, so `-rf` after it is a name.
+        assert _is_dangerous_rm(["rm", "-r", "--", "-rf"]) is False
+
+    def test_options_before_end_of_options_are_still_options(
+        self, tmp_path: Path
+    ) -> None:
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir(exist_ok=True)
+        argv = ["rm", "-r", "-v", "--", "sub/file.txt"]
+        assert _is_dangerous_rm_path(argv, project_root) == (False, "")
+
     def test_wildcard_dangerous(self, tmp_path: Path) -> None:
         is_dangerous, reason = _is_dangerous_rm_path(["rm", "-rf", "*"], tmp_path)
         assert is_dangerous
