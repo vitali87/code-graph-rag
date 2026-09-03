@@ -385,6 +385,39 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "elsewhere") is None
 
 
+def test_a_nested_callers_literal_is_its_own_and_siblings_do_not_leak(
+    tmp_path: Path,
+) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # The trace attributes a nested function's frame to that function, whose
+    # span is its own body; a sibling nested function's matching literal is
+    # outside that span, and the outer function owns none of them.
+    (tmp_path / "app.py").write_text(
+        "def run(obj):\n"
+        "    def first(o):\n"
+        '        return getattr(o, "target")()\n'
+        "\n"
+        "    def second(o):\n"
+        '        table = {"target": 1}\n'
+        '        return getattr(o, "target")()\n'
+        "\n"
+        "    def third(o):\n"
+        "        return o.plain()\n"
+        "\n"
+        "    return first(obj) or second(obj) or third(obj)\n"
+    )
+    first = locate_dispatch_literal(tmp_path, "app.py", 2, 3, "target")
+    assert first is not None
+    assert (first[cs.KEY_LINE], first[cs.KEY_COL]) == (3, 26)
+    # `second` holds two candidates of its own: unlocatable, not the sibling's.
+    assert locate_dispatch_literal(tmp_path, "app.py", 5, 7, "target") is None
+    # `third` holds none: the siblings' literals must not leak in.
+    assert locate_dispatch_literal(tmp_path, "app.py", 9, 10, "target") is None
+    # The outer function owns no nested body's literal.
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 12, "target") is None
+
+
 @pytest.mark.parametrize(
     "computed",
     ["getattr(obj, name)()", "TABLE[name]()", "fn = getattr(obj, name)\n    fn()"],
