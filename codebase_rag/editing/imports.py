@@ -59,6 +59,12 @@ class SymbolMove(NamedTuple):
     new_module: str
     new_name: str | None = None
     new_module_path: str | None = None
+    # A rename that also rebinds: a bare `import x` becomes `import y` (the
+    # use sites are renamed with it); an aliased entry keeps its alias.
+    rebind: bool = False
+
+
+ANY_MODULE = "*"
 
 
 class RewriteError(ValueError):
@@ -119,9 +125,19 @@ def _rewrite_entry(entry: str, new_name: str | None, keep_local: bool) -> str:
     imported = _imported(entry)
     local = _local_name(entry)
     target = new_name or imported
-    if local != imported or (keep_local and target != local):
+    if local != imported:
+        return f"{target} as {local}"
+    if keep_local and target != local:
         return f"{target} as {local}"
     return target
+
+
+def _module_matches(spelled: str, move: SymbolMove) -> bool:
+    return move.old_module in (ANY_MODULE, spelled)
+
+
+def _target_module(spelled: str, move: SymbolMove) -> str:
+    return spelled if move.old_module == ANY_MODULE else move.new_module
 
 
 def _relative_specifier(importer_path: str, target_path: str) -> str:
@@ -197,7 +213,9 @@ def _split_names(names: str) -> tuple[list[str], str, str]:
 def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
     if parsed := _match_py_from(statement):
         lead, module, mid, raw_names = parsed
-        if module != move.old_module:
+        # main's token parser (linear time) with rename-op's module test, so
+        # ANY_MODULE still widens the match to every module (issue #1530).
+        if not _module_matches(module, move):
             return None
         names = raw_names.rstrip()
         tail = raw_names[len(names) :]
@@ -207,11 +225,24 @@ def _py_rewrite(statement: str, move: SymbolMove) -> str | None:
             return None
         kept = [e for e in entries if _imported(e) != move.symbol]
         # Every entry binding the symbol moves: `helper, helper as h` binds it
-        # twice, and keeping only the first would drop the `h` binding.
+        # twice, and keeping only the first would drop the `h` binding. The
+        # local name is kept unless the move rebinds it, in which case the use
+        # sites are renamed with it and the alias goes (issue #1530).
         moved_entries = [
-            _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
+            _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+            for entry in moved
         ]
-        moved_stmt = f"{lead}{move.new_module}{mid}{', '.join(moved_entries)}"
+        new_module = _target_module(module, move)
+        if new_module == module:
+            # Same module (a rename): keep one statement, entries rewritten in
+            # place, so the surrounding parenthesis decoration is preserved.
+            by_entry = dict(zip(moved, moved_entries, strict=True))
+            rewritten = [by_entry.get(e, e) for e in entries]
+            return (
+                f"{lead}{module}{mid}"
+                f"{open_deco}{', '.join(rewritten)}{close_deco}{tail}"
+            )
+        moved_stmt = f"{lead}{new_module}{mid}{', '.join(moved_entries)}"
         if not kept:
             return f"{moved_stmt}{tail}"
         kept_stmt = f"{lead}{module}{mid}{open_deco}{', '.join(kept)}{close_deco}"
@@ -240,9 +271,11 @@ _JS_KEYWORD = re.compile(r"\s*(?:import|export)\s+(?:type\s+)?")
 
 def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | None:
     spec_match = _JS_SPEC.search(statement)
-    if spec_match is None or spec_match.group("spec") != move.old_module:
+    if spec_match is None or not _module_matches(spec_match.group("spec"), move):
         return None
-    if move.new_module_path is not None:
+    if move.old_module == ANY_MODULE:
+        new_spec = spec_match.group("spec")
+    elif move.new_module_path is not None:
         new_spec = _relative_specifier(importer_path, move.new_module_path)
     else:
         new_spec = move.new_module
@@ -262,12 +295,19 @@ def _js_rewrite(statement: str, move: SymbolMove, importer_path: str) -> str | N
     if not moved:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
-    moved_entries = ", ".join(
-        _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
-    )
+    rewritten_moved = [
+        _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+        for entry in moved
+    ]
+    moved_entries = ", ".join(rewritten_moved)
     head = statement[: named.start()]
     between = statement[named.end() : spec_match.start("spec")]
     tail = statement[spec_match.end("spec") :]
+    if new_spec == spec_match.group("spec"):
+        # Same specifier (a rename): one statement, entries rewritten in place.
+        by_entry = dict(zip(moved, rewritten_moved, strict=True))
+        rewritten = [by_entry.get(e, e) for e in entries]
+        return f"{head}{{ {', '.join(rewritten)} }}{between}{new_spec}{tail}"
     # `head` carries any default/namespace clause ("import def, "), which binds
     # a name from the ORIGINAL module: it must stay there, never be redeclared
     # in the moved statement nor follow the symbol to the new module.
@@ -300,9 +340,11 @@ def _java_rewrite(statement: str, move: SymbolMove) -> str | None:
     if m is None:
         return None
     path = m.group("path")
-    if path != f"{move.old_module}.{move.symbol}":
+    package, _dot, leaf = path.rpartition(".")
+    if leaf != move.symbol or not _module_matches(package, move):
         return None
-    return f"{m.group('lead')}{move.new_module}.{move.new_name or move.symbol}{m.group('tail')}"
+    new_package = _target_module(package, move)
+    return f"{m.group('lead')}{new_package}.{move.new_name or move.symbol}{m.group('tail')}"
 
 
 def _go_rewrite(statement: str, move: SymbolMove) -> str | None:
@@ -347,14 +389,18 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
     lead, m, tail = parts
     path = m.group("path")
     if m.group("group") is None:
-        if path != f"{move.old_module}::{move.symbol}":
+        prefix, _sep, leaf = path.rpartition("::")
+        if leaf != move.symbol or not _module_matches(prefix, move):
             return None
         alias = m.group("alias") or ""
         new_name = move.new_name or move.symbol
-        if not alias and move.new_name:
+        if not alias and move.new_name and not move.rebind:
             alias = f" as {move.symbol}"
-        return f"{lead}{move.new_module}::{new_name}{alias}{tail}"
-    if path != move.old_module:
+        # _target_module keeps the spelled prefix under ANY_MODULE, so a
+        # wildcard rename touches the name without retargeting the path.
+        new_prefix = _target_module(prefix, move)
+        return f"{lead}{new_prefix}::{new_name}{alias}{tail}"
+    if not _module_matches(path, move):
         return None
     entries = [e.strip() for e in m.group("names").split(",") if e.strip()]
     moved = [e for e in entries if _imported(e) == move.symbol]
@@ -362,14 +408,21 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
         return None
     kept = [e for e in entries if _imported(e) != move.symbol]
     moved_entries = [
-        _rewrite_entry(entry, move.new_name, keep_local=True) for entry in moved
+        _rewrite_entry(entry, move.new_name, keep_local=not move.rebind)
+        for entry in moved
     ]
+    new_path = _target_module(path, move)
+    if new_path == path:
+        # Same path (a rename): one statement, entries rewritten in place.
+        by_entry = dict(zip(moved, moved_entries, strict=True))
+        rewritten = [by_entry.get(e, e) for e in entries]
+        return f"{lead}{path}::{{{', '.join(rewritten)}}}{tail}"
     moved_body = (
         moved_entries[0]
         if len(moved_entries) == 1
         else "{" + ", ".join(moved_entries) + "}"
     )
-    moved_stmt = f"{lead}{move.new_module}::{moved_body}{tail}"
+    moved_stmt = f"{lead}{new_path}::{moved_body}{tail}"
     if not kept:
         return moved_stmt
     kept_body = kept[0] if len(kept) == 1 else "{" + ", ".join(kept) + "}"

@@ -546,6 +546,17 @@ EDIT_UNDO_DONE = "Undid transaction {tx} ({count} file(s))"
 EDIT_UNDO_STOPPED = "Stopped at transaction {tx}: {reason}"
 EDIT_SHOW_NONE = "No recorded edit transactions"
 EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
+# Rename (issue #1532).
+RENAME_UNKNOWN = "No definition named {qn} in the graph"
+RENAME_NO_DEFINITION_TOKEN = "Could not locate the name of {qn} in {path}"
+RENAME_BAD_NAME = "Not a valid identifier: {name}"
+RENAME_AMBIGUOUS = (
+    "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
+    "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
+)
+RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_PLANNED = "{count} site(s) would be rewritten"
+RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."

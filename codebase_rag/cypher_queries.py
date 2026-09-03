@@ -398,7 +398,8 @@ CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
-       n.docstring AS docstring
+       n.docstring AS docstring, n.name_start_line AS name_start_line,
+       n.name_start_col AS name_start_col
 LIMIT 1"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
@@ -498,3 +499,11 @@ WHERE a.qualified_name = $from_qn AND b.qualified_name = $to_qn
   AND coalesce(r.static_missed, false) = false
 SET r.resolution = $resolution
 """
+
+# Reference and construction sites of a definition (issue #1532): everything
+# but CALLS that names the symbol, with the site and its resolution.
+CYPHER_GRAPH_REFERENCES = """MATCH (src)-[r:REFERENCES|INSTANTIATES]->(target)
+WHERE target.qualified_name = $qn AND src.qualified_name STARTS WITH $project_prefix
+RETURN labels(src)[0] AS label, src.qualified_name AS qualified_name,
+       src.path AS path, type(r) AS rel_type, r.line AS line, r.col AS col,
+       r.end_line AS end_line, r.end_col AS end_col, r.resolution AS resolution"""

@@ -230,6 +230,23 @@ MCP_PARAM_TARGET = (
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
+MCP_RENAME = (
+    "Rename a function, method, class or other definition everywhere the graph "
+    "knows it is referenced: the definition, every call, reference and "
+    "instantiation site, import statements (aliases kept), overrides in both "
+    "directions, and Python `__all__` entries. Refuses when any site was "
+    "resolved heuristically, by overload fan-out, or only by a trace, unless "
+    "`allow_heuristic` is true. Every rewritten file must still parse; "
+    "otherwise nothing is written. Set `dry_run` to see the plan and diff "
+    "without touching the tree. Applied edits are recorded for `cgr edits "
+    "undo`, and Markdown mentions of the old name are listed for a human to "
+    "review."
+)
+MCP_PARAM_NEW_NAME = "The new identifier."
+MCP_PARAM_ALLOW_HEURISTIC = (
+    "Rewrite through heuristic, overload and trace-only sites too (default false)."
+)
+MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
 
 MCP_QUERY_CODE_GRAPH = (
     "Prefer the deterministic tools (resolve, definition, callers, callees, "
@@ -413,6 +430,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.OVERRIDES: MCP_OVERRIDES,
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
+    MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
