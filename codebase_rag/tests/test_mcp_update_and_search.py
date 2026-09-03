@@ -1138,3 +1138,66 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert "failed part way" in refused.get("error", ""), (
             f"an unreadable marker was treated as a completed run; got {refused}"
         )
+
+    async def test_the_marker_precedes_constraint_migration(
+        self, temp_project_root: Path
+    ) -> None:
+        """`ensure_constraints` is destructive, so the marker must precede it.
+
+        It runs `_migrate_legacy_path_keys`, which drops constraints and can
+        run purge queries -- autocommitted work. Marking after it left a
+        window where a crash during migration produced a damaged graph with
+        nothing recording that a run had started (#1705 review, round 2).
+
+        Asserts the ORDER of calls rather than the end state: after a
+        successful run both have happened either way, so only the sequence
+        distinguishes the fixed code from the broken code.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        order: list[str] = []
+        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
+        real_write = ingestor.execute_write.side_effect
+
+        def _tracking_write(query: str, params: dict | None = None) -> None:
+            if "SET m.run_incomplete" in query:
+                order.append("mark")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _tracking_write
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.update_repository()
+
+        assert "mark" in order and "constraints" in order, (
+            f"fixture guard: both steps must run, saw {order}"
+        )
+        assert order.index("mark") < order.index("constraints"), (
+            "the constraint migration ran before the marker was written, so a "
+            f"crash during it would leave no record of the run: {order}"
+        )
+
+    async def test_deleting_a_project_clears_its_durable_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """An intentional delete must not strand the marker.
+
+        The marker lives on its own node so `delete_project` cannot reach it,
+        which is what lets it survive an index's delete-then-rebuild. The
+        consequence is that a deliberate deletion leaves it behind, and a
+        fresh registry then refuses reingest forever for a project the user
+        removed on purpose (#1705 review, round 2).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        result = await registry.delete_project(project)
+
+        assert result.get("success"), f"the delete itself must succeed: {result}"
+        assert project not in ingestor._marker_store, (
+            "the deleted project kept its incomplete-run marker, so a fresh "
+            "registry would refuse reingest for a project that is gone"
+        )
