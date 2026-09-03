@@ -286,6 +286,45 @@ def test_a_deleted_mod_rs_is_swept_on_its_recorded_qn(temp_repo: Path) -> None:
     for qn_set in updater.simple_name_lookup.values():
         assert not [qn for qn in qn_set if "helper" in qn]
 
+def test_a_module_deleted_behind_the_updaters_back_is_forgotten(
+    temp_repo: Path,
+) -> None:
+    # The set of rehydrated module qns is rebuilt from the graph on every
+    # run, not accumulated across them. `remove_file_from_state` only drops
+    # the qns this updater removed itself, so a Module deleted by anything
+    # else -- a second updater on the same project, `delete_project` then a
+    # re-index, a run in another clone -- would otherwise linger and keep
+    # being offered to deferred import verification as a live target.
+    root = temp_repo / "proj"
+    before = {
+        "util.py": "def helper():\n    return 1\n",
+        "main.py": "from util import helper\n\n\ndef go():\n    return helper()\n",
+        "other.py": "def x():\n    return 1\n",
+    }
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+    assert "proj.util" in updater.known_module_paths(), "the shape did not rehydrate"
+
+    # Remove the Module from the store without telling the updater, which is
+    # what a second writer on the same graph looks like from here.
+    removed = [key for key in store.nodes if key[1] == "proj.util"]
+    assert removed, "expected a proj.util node to delete"
+    for key in removed:
+        del store.nodes[key]
+
+    (root / "other.py").write_text("def x():\n    return 3\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+
+    assert "proj.util" not in updater._rehydrated_module_qns
+    assert "proj.util" not in updater.known_module_paths()
+
 
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
