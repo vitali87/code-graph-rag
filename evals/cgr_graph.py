@@ -133,6 +133,10 @@ class _StatefulIngestor:
         self.nodes: dict[_NodeId, PropertyDict] = {}
         self.edges: set[_RelTuple] = set()
         self.edge_props: dict[_RelTuple, PropertyDict] = {}
+        # Adjacency indexes so a subtree delete costs the subtree, not a
+        # scan of every edge per node (the real store has indexes too).
+        self._out: dict[_NodeId, set[_RelTuple]] = {}
+        self._in: dict[_NodeId, set[_RelTuple]] = {}
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         # Same += merge semantics as _CapturingIngestor: partial re-emissions
@@ -151,8 +155,16 @@ class _StatefulIngestor:
         to_label, _to_key, to_val = to_spec
         edge = (str(from_label), from_val, str(rel_type), str(to_label), to_val)
         self.edges.add(edge)
+        self._out.setdefault((str(from_label), from_val), set()).add(edge)
+        self._in.setdefault((str(to_label), to_val), set()).add(edge)
         if properties:
             self.edge_props[edge] = dict(properties)
+
+    def reset_edges(self) -> None:
+        self.edges = set()
+        self.edge_props = {}
+        self._out = {}
+        self._in = {}
 
     def flush_all(self) -> None:
         return None
@@ -167,55 +179,21 @@ class _StatefulIngestor:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:
                 return self._path_rows(_PACKAGE_LABEL)
-            case cs.CYPHER_AFFECTED_CALLER_PATHS:
-                # Without this case the updater saw no dependents and every
-                # cross-file edge into a re-indexed file relied on the verbatim
-                # restore, which production never does for a file that holds
-                # a dependency edge: it re-parses that file (issue #1560).
-                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
-                reindexed: set[str] = (
-                    set(raw_paths) if isinstance(raw_paths, list) else set()
-                )
-                prefix = params.get(cs.KEY_PROJECT_PREFIX) if params else None
-                if not isinstance(prefix, str):
-                    return []
-                affected: set[str] = set()
-                for edge in self.edges:
-                    from_label, from_val, rel_type, to_label, to_val = edge
-                    if rel_type not in _AFFECTED_CALLER_RELS:
-                        continue
-                    target = self.nodes.get((to_label, to_val))
-                    caller = self.nodes.get((from_label, from_val))
-                    if target is None or caller is None:
-                        continue
-                    caller_path = caller.get(cs.KEY_PATH)
-                    if not isinstance(caller_path, str) or caller_path in reindexed:
-                        continue
-                    if target.get(cs.KEY_PATH) not in reindexed:
-                        continue
-                    if not (
-                        str(_text(from_val)).startswith(prefix)
-                        and str(_text(to_val)).startswith(prefix)
-                    ):
-                        continue
-                    affected.add(caller_path)
-                return [{cs.KEY_CALLER_PATH: path} for path in sorted(affected)]
             case cs.CYPHER_INBOUND_EDGES:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 changed: set[str] = (
                     set(raw_paths) if isinstance(raw_paths, list) else set()
                 )
                 inbound: list[ResultRow] = []
-                for edge in self.edges:
+                for edge in self._edges_into(changed):
                     from_label, from_val, rel_type, to_label, to_val = edge
                     if rel_type not in _INBOUND_DEPENDENT_RELS:
                         continue
-                    target = self.nodes.get((to_label, to_val))
                     caller = self.nodes.get((from_label, from_val))
-                    if target is None or caller is None:
+                    if caller is None:
                         continue
                     caller_path = caller.get(cs.KEY_PATH)
-                    if target.get(cs.KEY_PATH) not in changed or caller_path in changed:
+                    if caller_path in changed:
                         continue
                     inbound.append(
                         {
@@ -225,10 +203,41 @@ class _StatefulIngestor:
                             cs.KEY_TARGET_LABEL: to_label,
                             cs.KEY_TARGET_QN: _text(to_val),
                             cs.KEY_CALLER_PATH: _text(caller_path),
+                            # The restore re-emits the edge with its own
+                            # properties (its site, issue #1522).
                             cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound
+            case cs.CYPHER_AFFECTED_CALLER_PATHS:
+                raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
+                prefix = str(params.get(cs.KEY_PROJECT_PREFIX, "")) if params else ""
+                reindexed: set[str] = (
+                    set(raw_paths) if isinstance(raw_paths, list) else set()
+                )
+                callers: set[str] = set()
+                for (
+                    from_label,
+                    from_val,
+                    rel_type,
+                    to_label,
+                    to_val,
+                ) in self._edges_into(reindexed):
+                    if rel_type not in _AFFECTED_CALLER_RELS:
+                        continue
+                    caller = self.nodes.get((from_label, from_val))
+                    if caller is None:
+                        continue
+                    caller_path = caller.get(cs.KEY_PATH)
+                    if (
+                        not isinstance(caller_path, str)
+                        or caller_path in reindexed
+                        or not str(_text(from_val)).startswith(prefix)
+                        or not str(_text(to_val)).startswith(prefix)
+                    ):
+                        continue
+                    callers.add(caller_path)
+                return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
             case cs.CYPHER_ALL_DEFINITION_QNS:
                 defs: list[ResultRow] = []
                 for (label, uid), props in self.nodes.items():
@@ -278,6 +287,21 @@ class _StatefulIngestor:
                     }
                     module_rows.append(module_row)
                 return module_rows
+            case cs.CYPHER_PROJECT_MODULE_PATHS:
+                project_name = (
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                )
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                project_rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    if qn == project_name or (prefix and qn.startswith(prefix)):
+                        project_rows.append(
+                            {cs.KEY_PATH: _text(props.get(cs.KEY_PATH))}
+                        )
+                return project_rows
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
@@ -316,6 +340,16 @@ class _StatefulIngestor:
             case _:
                 return None
 
+    def _edges_into(self, paths: set[str]) -> list[_RelTuple]:
+        # Every edge whose TARGET node lives at one of `paths`, through the
+        # inbound index: the store answers a path-scoped query with an index
+        # lookup, not a scan of every edge.
+        found: list[_RelTuple] = []
+        for node_id, props in self.nodes.items():
+            if props.get(cs.KEY_PATH) in paths:
+                found.extend(self._in.get(node_id, ()))
+        return found
+
     def _path_rows(self, label: str) -> list[ResultRow]:
         rows: list[ResultRow] = []
         for (node_label, _uid), props in self.nodes.items():
@@ -346,19 +380,18 @@ class _StatefulIngestor:
             if node in doomed:
                 continue
             doomed.add(node)
-            for from_label, from_val, rel_type, to_label, to_val in self.edges:
-                if rel_type in _DEFINES_RELS and (from_label, from_val) == node:
+            for _fl, _fv, rel_type, to_label, to_val in self._out.get(node, ()):
+                if rel_type in _DEFINES_RELS:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)
         self._detach_delete(doomed)
 
     def _delete_orphan_external_modules(self) -> None:
-        incoming = {(to_label, to_val) for _f, _v, _r, to_label, to_val in self.edges}
         doomed = {
             (label, uid)
             for (label, uid), props in self.nodes.items()
-            if label == _EXTERNAL_MODULE_LABEL and (label, uid) not in incoming
+            if label == _EXTERNAL_MODULE_LABEL and not self._in.get((label, uid))
         }
         self._detach_delete(doomed)
 
@@ -367,11 +400,12 @@ class _StatefulIngestor:
             return
         for node in doomed:
             self.nodes.pop(node, None)
-        self.edges = {
-            edge
-            for edge in self.edges
-            if (edge[0], edge[1]) not in doomed and (edge[3], edge[4]) not in doomed
-        }
+            touched = self._out.pop(node, set()) | self._in.pop(node, set())
+            for edge in touched:
+                self.edges.discard(edge)
+                self.edge_props.pop(edge, None)
+                self._out.get((edge[0], edge[1]), set()).discard(edge)
+                self._in.get((edge[3], edge[4]), set()).discard(edge)
 
 
 def _capture(target: Path, project_name: str) -> _CapturingIngestor:

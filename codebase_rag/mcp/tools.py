@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
@@ -49,6 +49,7 @@ from codebase_rag.types_defs import (
     MCPInputSchemaProperty,
     MCPToolSchema,
     QueryResultDict,
+    ReingestToolResult,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
@@ -87,6 +88,15 @@ class MCPToolsRegistry:
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
         self._ingestor_lock = asyncio.Lock()
+        # The updater that last indexed this root, kept warm so reingest()
+        # resolves cross-file calls without re-reading the registry from the
+        # graph on every call (issue #1524).
+        self._live_updater: GraphUpdater | None = None
+        # True from the moment an index or update starts mutating the graph
+        # until it completes: a run that failed part way leaves a graph a
+        # scoped reingest must not hydrate from, because it would treat the
+        # missing and stale definitions as authoritative.
+        self._graph_incomplete = False
 
         self.parsers, self.queries = load_parsers()
 
@@ -212,6 +222,28 @@ class MCPToolsRegistry:
                 ),
                 handler=self.update_repository,
                 returns_json=False,
+            ),
+            cs.MCPToolName.REINGEST: ToolMetadata(
+                name=cs.MCPToolName.REINGEST,
+                description=td.MCP_TOOLS[cs.MCPToolName.REINGEST],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.PATHS: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.ARRAY,
+                            description=td.MCP_PARAM_REINGEST_PATHS,
+                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        ),
+                        cs.MCPParamName.DELETED: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.ARRAY,
+                            description=td.MCP_PARAM_REINGEST_DELETED,
+                            items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                        ),
+                    },
+                    required=[cs.MCPParamName.PATHS],
+                ),
+                handler=self.reingest,
+                returns_json=True,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -678,8 +710,17 @@ class MCPToolsRegistry:
                     project_name=project_name, projects=projects
                 ),
             )
+        # Before the first write, not after: a delete that fails part way
+        # has already removed graph data the retained updater still
+        # describes, and the project may still be listed, so only the
+        # incomplete flag stops the next reingest from resolving against
+        # those definitions over what is left. After a completed delete the
+        # project is gone and the not-indexed guard takes over.
+        self._live_updater = None
+        self._graph_incomplete = True
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
+        self._graph_incomplete = False
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -701,7 +742,15 @@ class MCPToolsRegistry:
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
             async with self._ingestor_lock:
+                # Same posture as delete_project: dropped and marked before
+                # the wipe, which can fail part way; cleared once the graph
+                # is gone, when the not-indexed guard covers the rest. The
+                # embedding sweep after it cannot leave a partial graph, so
+                # its failure keeps the updater dropped and nothing else.
+                self._live_updater = None
+                self._graph_incomplete = True
                 await asyncio.to_thread(self.ingestor.clean_database)
+                self._graph_incomplete = False
                 await asyncio.to_thread(clear_all_embeddings)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
@@ -729,6 +778,13 @@ class MCPToolsRegistry:
         # name would let two repos named alike delete each other's graphs.
         project_name = derive_project_name(Path(self.project_root))
         logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
+        # Before the first write, not after: the delete and the flushes are
+        # autocommit writes that can fail part way. From here until the
+        # rebuild completes, a later reingest must refuse rather than
+        # resolve against the retained updater's definitions or against
+        # whatever partial graph a failure left behind.
+        self._live_updater = None
+        self._graph_incomplete = True
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
@@ -747,6 +803,8 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        self._graph_incomplete = False
+        self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
             path=self.project_root, project_name=project_name
@@ -780,6 +838,16 @@ class MCPToolsRegistry:
     def _update_repository_sync(self) -> str:
         project_name = derive_project_name(Path(self.project_root))
 
+        # Dropped and marked before the first write: the initial flush
+        # commits batches left by earlier calls and can fail part way, and
+        # the run itself mutates the graph before it can fail. Either way
+        # the retained updater would describe the graph as it was, and a
+        # later reingest would resolve against definitions the partial
+        # update has already replaced. The incomplete flag makes that
+        # reingest refuse until an update completes, since hydrating from
+        # the partial graph would be no better.
+        self._live_updater = None
+        self._graph_incomplete = True
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
@@ -795,7 +863,86 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
+        self._graph_incomplete = False
+        self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    def _reingest_sync(
+        self, paths: list[str], deleted: list[str]
+    ) -> ReingestToolResult:
+        updater = self._live_updater
+        if updater is None:
+            # A scoped re-ingest completes a graph; it cannot stand in for
+            # the first index. After delete_project or wipe_database the
+            # project is gone, and hydrating from nothing would leave every
+            # unrelated definition missing.
+            project_name = derive_project_name(Path(self.project_root))
+            if self._graph_incomplete:
+                raise ValueError(
+                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                )
+            if project_name not in self.ingestor.list_projects():
+                raise ValueError(
+                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
+                )
+            self.ingestor.ensure_constraints()
+            # The same exclusion set the index and update paths use, or an
+            # agent-named path under a CLI-excluded directory would be
+            # indexed here and kept by every later update.
+            exclude_paths, unignore_paths = self._ignore_sets()
+            updater = GraphUpdater(
+                ingestor=self.ingestor,
+                repo_path=Path(self.project_root),
+                parsers=self.parsers,
+                queries=self.queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
+                project_name=project_name,
+            )
+            self._live_updater = updater
+        try:
+            report = updater.reingest(paths, deleted=deleted)
+        except (ValueError, ReingestAborted):
+            # A refusal (a path outside the repository, a directory) is
+            # raised while the paths are split, and an abort while the call
+            # was still reading the graph; neither touched anything, so the
+            # updater is still valid and the call may simply be retried.
+            raise
+        except Exception:
+            # The run may have deleted the affected subtrees and never
+            # rebuilt them: the retained updater describes a graph that no
+            # longer exists, and the next scoped call must not reuse it
+            # over that partial state. update_repository is the recovery.
+            self._live_updater = None
+            self._graph_incomplete = True
+            raise
+        return ReingestToolResult(
+            reparsed=list(report.reparsed),
+            affected=list(report.affected),
+            removed=list(report.removed),
+            skipped=list(report.skipped),
+            elapsed_ms=round(report.elapsed_ms, 1),
+        )
+
+    async def reingest(
+        self, paths: list[str], deleted: list[str] | None = None
+    ) -> ReingestToolResult:
+        logger.info(lg.MCP_REINGESTING.format(count=len(paths)))
+        try:
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(
+                    self._reingest_sync, list(paths), list(deleted or ())
+                )
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_REINGEST.format(error=e))
+            return ReingestToolResult(
+                error=cs.MCP_REINGEST_ERROR.format(error=e),
+                reparsed=[],
+                affected=[],
+                removed=[],
+                skipped=[],
+                elapsed_ms=0.0,
+            )
 
     async def update_repository(self) -> str:
         return await self._run_ingest(

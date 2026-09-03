@@ -263,7 +263,6 @@ WATCHER_ACTIVE = "File watcher is now active."
 WATCHER_DEBOUNCE_ACTIVE = (
     "File watcher active with debouncing (debounce={debounce}s, max_wait={max_wait}s)"
 )
-WATCHER_SKIP_NO_QUERY = "Ingestor does not support querying, skipping real-time update."
 CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
 CHANGE_DEBOUNCING = (
     "Change detected: {event_type} on {name} (debouncing for {debounce}s)"
@@ -280,11 +279,13 @@ DEBOUNCE_MAX_WAIT_ADJUSTED = (
     "Setting max_wait to debounce value."
 )
 DELETION_QUERY = "Ran deletion query for path: {path}"
-RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 EDIT_TX_REJECTED = "Edit transaction {tx} rejected by verification: {why}"
 EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
+REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
+REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
+WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
@@ -824,6 +825,8 @@ MCP_SEMANTIC_NOT_AVAILABLE = (
 )
 MCP_UPDATING_REPO = "[MCP] Updating repository at: {path}"
 MCP_ERROR_UPDATING = "[MCP] Error updating repository: {error}"
+MCP_REINGESTING = "[MCP] Re-ingesting {count} file(s)"
+MCP_ERROR_REINGEST = "[MCP] Error re-ingesting files: {error}"
 MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"
 MCP_ASK_AGENT = "[MCP] ask_agent: {question}"
 MCP_ASK_AGENT_ERROR = "[MCP] Error running ask_agent: {error}"
@@ -877,6 +880,10 @@ INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+REINGEST_MODULE_PATHS_UNKNOWN = (
+    "Re-ingest aborted: the graph's module paths could not be read, so the "
+    "module qns already taken are unknown"
+)
 INCREMENTAL_FILE_FAILED = (
     "Failed to index {path}; the remaining changed files are still rebuilt "
     "before the error is raised: {error}"
