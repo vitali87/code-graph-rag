@@ -995,6 +995,77 @@ class TestCrashBetweenCacheSaveAndFlush:
 
         assert "module_b.py" in _deleted_module_paths(mock_ingestor)
 
+    def test_prune_deletes_are_flushed_before_the_cache_commits(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """Issue #1645: the same defect on the orphan-prune writes.
+
+        `_prune_orphan_nodes` runs after the graph flush and issues its own
+        `execute_write` deletes. Without a flush of its own, those deletes are
+        still queued when the hash cache commits, so a run that stops in
+        between hands its successor caches describing a tree whose prune was
+        never applied. The successor takes the in-sync fast path and never
+        re-issues them, and the orphan survives until a full rebuild.
+        """
+        parsers, queries = load_parsers()
+
+        # A Folder row for a directory that is not on disk is an orphan, so
+        # the prune must delete it. Driving a REAL delete is what stops this
+        # test being vacuous: the default `fetch_all` mock iterates empty, the
+        # prune finds nothing, and every ordering assertion below would hold
+        # against unfixed code simply because no delete was ever issued.
+        ghost = (py_project / "gone").resolve().as_posix()
+
+        def _fetch_all(query: str) -> list[dict[str, str]]:
+            if query == cs.CYPHER_ALL_FOLDER_PATHS:
+                return [{cs.KEY_PATH: "gone", "absolute_path": ghost}]
+            return []
+
+        mock_ingestor.fetch_all = MagicMock(side_effect=_fetch_all)
+
+        order: list[str] = []
+
+        def _record_write(*args: object, **kwargs: object) -> MagicMock:
+            if args and args[0] == cs.CYPHER_DELETE_FOLDER:
+                order.append("prune_delete")
+            return MagicMock()
+
+        def _record_flush(*args: object, **kwargs: object) -> MagicMock:
+            order.append("flush")
+            return MagicMock()
+
+        mock_ingestor.execute_write = MagicMock(side_effect=_record_write)
+        mock_ingestor.flush_all = MagicMock(side_effect=_record_flush)
+
+        real_publish = graph_updater_module._publish_hash_cache
+
+        def _record_publish(*args: object, **kwargs: object) -> None:
+            order.append("cache_commit")
+            real_publish(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(graph_updater_module, "_publish_hash_cache", _record_publish):
+            GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=py_project,
+                parsers=parsers,
+                queries=queries,
+            ).run()
+
+        # The fixture must actually exercise the prune, or the ordering
+        # assertion below is satisfied by a run that pruned nothing.
+        assert "prune_delete" in order, f"prune issued no delete: {order}"
+        assert "cache_commit" in order, f"cache never committed: {order}"
+
+        # The property: every prune delete is durable before the cache that
+        # claims the tree was reconciled becomes visible. Asserting on a flush
+        # BETWEEN the two, not merely that a flush exists: the run already
+        # flushes before the prune, so `flush_all.called` is true either way.
+        deleted_at = order.index("prune_delete")
+        committed_at = order.index("cache_commit")
+        assert "flush" in order[deleted_at:committed_at], (
+            f"prune deletes were not flushed before the hash cache committed: {order}"
+        )
+
 
 class TestFastPathInSync:
     def test_second_run_skips_all_passes(
