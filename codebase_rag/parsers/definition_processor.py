@@ -18,6 +18,7 @@ from ..types_defs import (
     FunctionLocations,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
+    PendingTypeFact,
     PropertyDict,
     RustTraitImpl,
     SimpleNameLookup,
@@ -292,6 +293,8 @@ class DefinitionProcessor(
         self.pending_endpoints: list[
             tuple[cs.NodeLabel, str, list[str], str | None]
         ] = []
+        # Return/parameter annotations awaiting the full registry (#1527).
+        self.pending_type_facts: list[PendingTypeFact] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -316,6 +319,23 @@ class DefinitionProcessor(
         return (
             f"{module_qn}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip(cs.SEPARATOR_DOT)}"
         )
+
+    def emit_type_edges(self) -> int:
+        """Resolve queued return/parameter annotations into RETURNS/ACCEPTS.
+
+        Runs once the registry holds every file's types (issue #1527); the
+        queue empties, so a watch-mode re-parse only re-resolves its own.
+        """
+        from .type_facts import TypeReferenceResolver, emit_type_edges
+
+        if not self.pending_type_facts:
+            return 0
+        resolver = TypeReferenceResolver(
+            self.function_registry,
+            self.import_processor.import_mapping,
+            self.project_name,
+        )
+        return emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
 
     def process_file(
         self,

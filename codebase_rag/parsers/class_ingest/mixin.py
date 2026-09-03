@@ -21,6 +21,7 @@ from ...types_defs import (
     FunctionLocation,
     FunctionSpanKey,
     NodeType,
+    PendingTypeFact,
     PropertyDict,
     RustTraitImpl,
 )
@@ -193,6 +194,7 @@ class ClassIngestMixin:
     declared_module_qns: set[str]
     rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
+    pending_type_facts: list[PendingTypeFact]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1390,6 +1392,7 @@ class ClassIngestMixin:
                 defer_containment=self._deferred_parent_links,
                 module_qn=owner_module_qn,
                 pending_endpoints=self.pending_endpoints,
+                type_fact_sink=self.pending_type_facts,
             )
             # Record where this method landed, same as the generic method
             # path: the registered qn (a collision deduplicates it to
@@ -1539,6 +1542,7 @@ class ClassIngestMixin:
                 external_override_names=external_override_names,
                 annotated_override_sink=annotated_override_sink,
                 pending_endpoints=self.pending_endpoints,
+                type_fact_sink=self.pending_type_facts,
             )
             if (
                 ingested_qn is not None

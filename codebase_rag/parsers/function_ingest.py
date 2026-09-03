@@ -21,6 +21,7 @@ from ..types_defs import (
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
     NodeType,
+    PendingTypeFact,
     PropertyDict,
     SimpleNameLookup,
 )
@@ -34,6 +35,7 @@ from .go import utils as go_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
+from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
     callable_parameter_indices,
     extract_modifiers_and_decorators,
@@ -245,6 +247,7 @@ class FunctionIngestMixin:
     go_package_names: dict[str, str]
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
+    pending_type_facts: list[PendingTypeFact]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
@@ -1172,6 +1175,7 @@ class FunctionIngestMixin:
                 # module instead of a phantom the database would drop.
                 defer_containment=self._deferred_parent_links,
                 module_qn=entry.module_qn,
+                type_fact_sink=self.pending_type_facts,
             )
             if method_qn is not None:
                 self._register_go_name_alias(
@@ -1301,6 +1305,13 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        queue_type_facts(
+            self.pending_type_facts,
+            cs.NodeLabel.FUNCTION,
+            resolution.qualified_name,
+            module_qn,
+            extract_type_facts(func_node, language),
+        )
         # Deferred: emission happens after Pass 2 so router mount prefixes
         # (possibly declared in other modules) can resolve (issue #877).
         queue_endpoints(
@@ -1448,6 +1459,7 @@ class FunctionIngestMixin:
             props[cs.KEY_POSITIONAL_PARAMS] = python_positional_parameter_names(
                 func_node
             )
+        props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
         return props
 
@@ -1769,6 +1781,7 @@ class FunctionIngestMixin:
             # module DEFINES (never a dangling edge).
             defer_containment=self._deferred_parent_links,
             module_qn=module_qn,
+            type_fact_sink=self.pending_type_facts,
         )
         if ingested_qn is None:
             return False

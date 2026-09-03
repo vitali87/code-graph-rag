@@ -211,6 +211,9 @@ class RelationshipType(StrEnum):
     INHERITS = "INHERITS"
     IMPLEMENTS = "IMPLEMENTS"
     OVERRIDES = "OVERRIDES"
+    # Function/Method -> the project type its annotation names (issue #1527).
+    RETURNS = "RETURNS"
+    ACCEPTS = "ACCEPTS"
     CALLS = "CALLS"
     REFERENCES = "REFERENCES"
     INSTANTIATES = "INSTANTIATES"
@@ -266,6 +269,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.IMPLEMENTS,
             RelationshipType.IMPLEMENTS_MODULE,
             RelationshipType.OVERRIDES,
+            RelationshipType.RETURNS,
+            RelationshipType.ACCEPTS,
         }
     ),
     CaptureGroup.IMPORTS: frozenset(
@@ -374,6 +379,12 @@ KEY_PARAMETERS = "parameters"
 # Declared Markdown front-matter, as sorted "key=value" entries (issue #1448).
 KEY_FRONT_MATTER = "front_matter"
 KEY_DECORATORS = "decorators"
+# Return and parameter annotations as written (issue #1527). `return_type` is
+# absent when the definition has none; `param_types` is parallel to the
+# declared parameters ("" for an unannotated one) and absent, not empty, for
+# languages the extractor does not read (the positional_params rule).
+KEY_RETURN_TYPE = "return_type"
+KEY_PARAM_TYPES = "param_types"
 # Declared POSITIONAL parameter names of a Python function, receiver included,
 # for arity-TypeError diagnosis (issue #227). Positional-only because CPython's
 # "takes N positional arguments" counts nothing after `*`/`*args`, and
@@ -507,7 +518,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "AND n.qualified_name STARTS WITH $project_prefix "
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
-    "n.start_line AS start_line, n.end_line AS end_line"
+    "n.start_line AS start_line, n.end_line AS end_line, "
+    "n.return_type AS return_type, n.param_types AS param_types"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -549,7 +561,12 @@ CYPHER_ALL_MODULE_QNS = (
 # and alias both, by test_incremental_implements_edge.py; its other RETURN
 # aliases are not.
 CYPHER_INBOUND_EDGES = (
-    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES]->(target) "
+    # RETURNS and ACCEPTS join the restore (issue #1527): a function whose
+    # annotation names a type resolves it by unique suffix without importing
+    # its module, so its file is not a dependent and the edge would otherwise
+    # die with the recreated type node.
+    "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
+    "|RETURNS|ACCEPTS]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
