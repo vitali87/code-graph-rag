@@ -118,22 +118,40 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # recomputes `unignore_paths` every run, so a copy taken here would
         # go stale. Without this the watcher drops edits to a file the walk
         # indexed, and the two consumers disagree again (issue #1636).
+        # Watchdog hands this method an ABSOLUTE path, while both checks below
+        # are about the path INSIDE the repository. Relativise once, here:
+        # matching the absolute form against repo-relative unignore patterns
+        # left only the bare-filename branch working, and testing the absolute
+        # form for ignored components makes the repository's own location
+        # decide the answer -- a checkout under /tmp has `tmp` as a component,
+        # so every file in it was dropped, first-party sources included.
+        relative = self._repo_relative(path)
         if is_ignored_filename(path.name):
             unignore_paths = getattr(self.updater, "unignore_paths", None)
-            # Relativise first, mirroring `dispatch` below: watchdog hands this
-            # method an ABSOLUTE path, while unignore patterns are repo-relative.
-            # Matching the absolute string would leave only the bare-filename
-            # branch working, so the very spelling the docs give as the example
-            # (`!docs/js/jquery.min.js`) would be indexed by the walk and then
-            # dropped here -- the #1636 divergence, in the one configuration
-            # this rescue exists for.
-            try:
-                rel = path.relative_to(self.updater.repo_path).as_posix()
-            except (ValueError, AttributeError, TypeError):
-                rel = path.name
-            if not (unignore_paths and unignore_names_this_file(rel, unignore_paths)):
+            # The rescuable half (.min.js, .min.css) is ignored unless the run's
+            # unignore set names the file (issue #1637). Read from the updater
+            # rather than stored at construction: `_register_generated_sources`
+            # recomputes `unignore_paths` every run, so a copy taken here would
+            # go stale.
+            if not (
+                unignore_paths
+                and unignore_names_this_file(relative.as_posix(), unignore_paths)
+            ):
                 return False
-        return all(part not in self.ignore_patterns for part in path.parts)
+        return all(part not in self.ignore_patterns for part in relative.parts)
+
+    def _repo_relative(self, path: Path) -> Path:
+        """The path as the repository sees it, mirroring `dispatch`.
+
+        Falls back to the bare filename when the path is outside the repo (or
+        the updater cannot say where the repo is, as with a test double): that
+        keeps the filename rules working and simply cannot consult directory
+        rules it has no directories for.
+        """
+        try:
+            return path.relative_to(self.updater.repo_path)
+        except (ValueError, AttributeError, TypeError):
+            return Path(path.name)
 
     def dispatch(self, event: FileSystemEvent) -> None:
         # ┌─────────────────────────────────────────────────────────────────────┐

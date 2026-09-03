@@ -318,6 +318,38 @@ class TestIndexerAndWatcherAgree:
         other.dispatch(FileModifiedEvent(str(target)))
         assert not dropped, "the watcher indexed a bundle nothing rescued"
 
+    def test_the_repositorys_own_location_does_not_decide_relevance(
+        self, tmp_path: Path
+    ) -> None:
+        """A checkout under an ignored directory name must still be watched.
+
+        The ignored-component rule is about directories INSIDE the repository,
+        but it was applied to the absolute path, so a repo at `/tmp/...` has
+        `tmp` as a component and every file in it was dropped -- first-party
+        sources included, not just the rescued bundles this change adds. The
+        walk has never had this problem: it works in repo-relative terms.
+        """
+        repo = tmp_path / "tmp" / "node_modules" / "repo"
+        (repo / "src").mkdir(parents=True)
+        source = repo / "src" / "app.py"
+        source.write_text("x\n", encoding="utf-8")
+        inside = repo / "node_modules" / "dep.js"
+        inside.parent.mkdir()
+        inside.write_text("x\n", encoding="utf-8")
+
+        updater = MagicMock()
+        updater.unignore_paths = None
+        updater.repo_path = repo
+        handler = CodeChangeEventHandler(updater=updater)
+
+        assert handler._is_relevant(str(source)), (
+            "an ignored name ABOVE the repository root made a first-party "
+            "source invisible to the watcher"
+        )
+        # The same rule must still bite inside the repo, or this passes for a
+        # watcher that stopped checking components altogether.
+        assert not handler._is_relevant(str(inside))
+
     @pytest.mark.parametrize("rel", [*SKIPPED, *INDEXED])
     def test_same_verdict_for_every_fixture_file(self, repo: Path, rel: str) -> None:
         handler = CodeChangeEventHandler(updater=MagicMock())
