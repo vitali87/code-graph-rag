@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from watchdog.events import FileModifiedEvent
 
 import codebase_rag.constants.languages as cs
 from codebase_rag.utils.path_utils import should_skip_rel_file, walk_eligible_files
@@ -250,19 +251,72 @@ class TestIndexerAndWatcherAgree:
         unignore = frozenset({rel})
         updater = MagicMock()
         updater.unignore_paths = unignore
+        updater.repo_path = tmp_path
         handler = CodeChangeEventHandler(updater=updater)
 
         walk_indexes = not should_skip_rel_file(
             rel, ("docs", "js"), unignore_paths=unignore
         )
         assert walk_indexes, "fixture guard: the walk did not rescue the bundle"
-        assert handler._is_relevant(rel) == walk_indexes
+        # The ABSOLUTE path, which is what watchdog hands `_is_relevant` in
+        # production (`observer.schedule` is given the repo root, and `dispatch`
+        # relativises `event.src_path` itself). Passing the relative form here
+        # would test a shape production never produces: it left only the
+        # bare-filename branch working, so this exact path-form pattern was
+        # dropped by the watcher while the walk indexed it.
+        assert handler._is_relevant(str(tmp_path / rel)) == walk_indexes
+
+        # A bare filename must rescue too, at any depth.
+        by_name = MagicMock()
+        by_name.unignore_paths = frozenset({"jquery.min.js"})
+        by_name.repo_path = tmp_path
+        assert CodeChangeEventHandler(updater=by_name)._is_relevant(str(tmp_path / rel))
 
         # And without the `!`, both must still drop it: a watcher that simply
-        # stopped applying the rule would satisfy the assertion above.
+        # stopped applying the rule would satisfy the assertions above.
         bare = MagicMock()
         bare.unignore_paths = None
-        assert not CodeChangeEventHandler(updater=bare)._is_relevant(rel)
+        bare.repo_path = tmp_path
+        assert not CodeChangeEventHandler(updater=bare)._is_relevant(
+            str(tmp_path / rel)
+        )
+
+    def test_dispatch_processes_an_edit_to_a_rescued_bundle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end through `dispatch`, the entry point watchdog calls.
+
+        The unit test above pins `_is_relevant`, but it is this path that
+        decides whether an edit reaches the graph, and it is where the
+        absolute-vs-relative mismatch showed: `_is_relevant` was handed
+        watchdog's absolute `src_path` and compared it against repo-relative
+        unignore patterns, so a path-form `!` line never matched.
+        """
+        rel = "docs/js/jquery.min.js"
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True)
+        target.write_text("x\n", encoding="utf-8")
+
+        updater = MagicMock()
+        updater.unignore_paths = frozenset({rel})
+        updater.repo_path = tmp_path
+        handler = CodeChangeEventHandler(updater=updater, debounce_seconds=0)
+
+        seen: list[object] = []
+        monkeypatch.setattr(handler, "_process_change", seen.append)
+        handler.dispatch(FileModifiedEvent(str(target)))
+        assert seen, "the watcher dropped an edit to a rescued bundle"
+
+        # The same event with no `!` must still be dropped, or this passes for
+        # a watcher that stopped filtering altogether.
+        plain = MagicMock()
+        plain.unignore_paths = None
+        plain.repo_path = tmp_path
+        other = CodeChangeEventHandler(updater=plain, debounce_seconds=0)
+        dropped: list[object] = []
+        monkeypatch.setattr(other, "_process_change", dropped.append)
+        other.dispatch(FileModifiedEvent(str(target)))
+        assert not dropped, "the watcher indexed a bundle nothing rescued"
 
     @pytest.mark.parametrize("rel", [*SKIPPED, *INDEXED])
     def test_same_verdict_for_every_fixture_file(self, repo: Path, rel: str) -> None:

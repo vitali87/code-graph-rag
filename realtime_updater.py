@@ -120,9 +120,18 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # indexed, and the two consumers disagree again (issue #1636).
         if is_ignored_filename(path.name):
             unignore_paths = getattr(self.updater, "unignore_paths", None)
-            if not (
-                unignore_paths and unignore_names_this_file(path_str, unignore_paths)
-            ):
+            # Relativise first, mirroring `dispatch` below: watchdog hands this
+            # method an ABSOLUTE path, while unignore patterns are repo-relative.
+            # Matching the absolute string would leave only the bare-filename
+            # branch working, so the very spelling the docs give as the example
+            # (`!docs/js/jquery.min.js`) would be indexed by the walk and then
+            # dropped here -- the #1636 divergence, in the one configuration
+            # this rescue exists for.
+            try:
+                rel = path.relative_to(self.updater.repo_path).as_posix()
+            except (ValueError, AttributeError, TypeError):
+                rel = path.name
+            if not (unignore_paths and unignore_names_this_file(rel, unignore_paths)):
                 return False
         return all(part not in self.ignore_patterns for part in path.parts)
 

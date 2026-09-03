@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from codebase_rag import constants as cs
@@ -25,10 +26,38 @@ from ..types_defs import (
 
 # The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
 # out to the same toolchain, so they share one availability probe.
+@lru_cache(maxsize=1)
 def node_oracle_available() -> bool:
-    return (
-        shutil.which(ec.NODE_BIN) is not None and shutil.which(ec.NPM_BIN) is not None
-    )
+    """Whether the node toolchain can RUN an oracle, not merely whether it exists.
+
+    `shutil.which` answers "is this binary on PATH", which is not the question
+    a skip guard needs (issue #1639). Node 18 satisfies it and then cannot
+    `require()` the ESM-only `@ruby/prism` the oracles load, so every
+    node-backed oracle test hard-FAILED on an under-provisioned machine
+    instead of skipping: 24 failures and 4 errors on a clean main, in tests
+    named as though they were real regressions.
+
+    So the probe runs node once and asks it to do the thing that breaks. The
+    check is the ESM/CJS interop boundary rather than a parsed version number,
+    because it is the CAPABILITY that matters and a version comparison would
+    need updating for every future incompatibility. Cached: the answer cannot
+    change within a run, and four oracles consult it.
+    """
+    node = shutil.which(ec.NODE_BIN)
+    if node is None or shutil.which(ec.NPM_BIN) is None:
+        return False
+    try:
+        probe = subprocess.run(
+            [node, ec.NODE_EVAL_FLAG, ec.NODE_ESM_PROBE],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.NODE_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return probe.returncode == 0
 
 
 def _node_deps_ready(oracle_dir: Path) -> bool:

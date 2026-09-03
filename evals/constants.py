@@ -374,6 +374,14 @@ TS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
 TS_ORACLE_DIRNAME = "ts_oracle"
 TS_ORACLE_SCRIPT = "ts_ast.js"
 NODE_BIN = "node"
+# The oracle guard runs this instead of trusting `which node` (issue #1639).
+# `@ruby/prism` is ESM-only, so a Node too old to `require()` an ES module
+# satisfies a presence check and then fails the oracle with ERR_REQUIRE_ESM.
+# Probing the interop boundary covers that break, a missing install, and any
+# future incompatibility, without hard-coding a version to keep up to date.
+NODE_EVAL_FLAG = "-e"
+NODE_ESM_PROBE = "import('node:path').then(()=>process.exit(0),()=>process.exit(1))"
+NODE_PROBE_TIMEOUT_S = 30
 NPM_BIN = "npm"
 NPM_INSTALL = "install"
 NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")
