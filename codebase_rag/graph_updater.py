@@ -2748,9 +2748,20 @@ class GraphUpdater:
         # from it and no on-disk hash names it any more. Only the graph still
         # does. It costs a query only on the runs where the set actually
         # moved.
+        # A forced single-file run needs this too, for the same reason a full
+        # build does: `force` empties `old_hashes`, so the cache can no longer
+        # say whether the target is already in the graph, and `is_new` would
+        # fall through to True on a file the previous parse already indexed.
+        # It would then skip delete-before-reingest and stack a second parse's
+        # entities on the first -- renamed-away symbols and their
+        # CALLS/REFERENCES edges surviving beside the fresh ones (#1619 review,
+        # round 3). Only the graph still knows, so ask it.
+        forced_single_file = force and self._single_file is not None
         preexisting_paths = (
             self._existing_module_paths()
-            if is_full_build or not self._exclusions_match_last_run()
+            if is_full_build
+            or forced_single_file
+            or not self._exclusions_match_last_run()
             else frozenset()
         )
         # None is "the sink claims readability and the query failed", not

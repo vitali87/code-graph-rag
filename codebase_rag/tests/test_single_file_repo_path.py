@@ -427,3 +427,58 @@ class TestSingleFileRunScope:
             "the run's own file must still be recorded; the merge must add to "
             "the previous cache, not be replaced by it"
         )
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_single_file_run_deletes_the_target_before_reingest(
+        self, tmp_path: Path, mock_ingestor: MagicMock, force: bool
+    ) -> None:
+        """An already-indexed target must be cleared before it is re-parsed.
+
+        `force=True` empties `old_hashes`, so the hash cache can no longer say
+        whether the target is already in the graph. With `preexisting_paths`
+        left empty on this path, `is_new` came out True for a file the
+        previous parse had indexed, so the run skipped
+        `_delete_module_entities` and stacked a second parse on top of the
+        first -- a renamed-away function keeping its old node and its inbound
+        CALLS/REFERENCES edges beside the fresh ones.
+
+        Asserts the DELETE is issued rather than checking the cache: the cache
+        is written identically either way, so a cache assertion is satisfied
+        by both the working and the broken code. Parametrised so the unforced
+        case stays a control -- it reaches the same delete through
+        `old_hashes`, and must keep doing so.
+        """
+        repo = self._three_module_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # A real second run queries a graph that still holds the first run's
+        # modules; the fake sink has to say so or nothing is "pre-existing"
+        # and the test could not tell the two paths apart.
+        second = _MockIngestor()
+        second.fetch_all.return_value = [
+            {cs.KEY_PATH: "module_a.py"},
+            {cs.KEY_PATH: "module_b.py"},
+        ]
+        GraphUpdater(
+            ingestor=second,
+            repo_path=repo / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+        ).run(force=force)
+
+        deleted = {
+            call.args[1][cs.KEY_PATH]
+            for call in second.execute_write.call_args_list
+            if call.args and call.args[0] == cs.CYPHER_DELETE_MODULE
+        }
+        assert "module_a.py" in deleted, (
+            f"run(force={force}) re-parsed an already-indexed file without "
+            "deleting its previous entities first, so the old parse's nodes "
+            "and edges survive alongside the new ones"
+        )
