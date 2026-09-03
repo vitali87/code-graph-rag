@@ -64,3 +64,4 @@ evals/results/**/agentic_qa*records*.jsonl
 evals/results/logs/
 .cgr-parser-fingerprint
 .cgr-exclusion-state.json
+.cgr-*.tmp
