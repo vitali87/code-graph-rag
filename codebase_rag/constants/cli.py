@@ -119,6 +119,13 @@ CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
 PACKAGE_NAME = "code-graph-rag"
+# How a test spawns the CLI as a subprocess. Shared so the deadline gate in
+# test_cli_smoke can assert no other test file spawns it outside that gate
+# (issue #1655). Both spellings pay the same startup cost, so both need the
+# same deadline: `-m codebase_rag.cli`, and the console scripts in
+# [project.scripts].
+CLI_MODULE_INVOCATION = "codebase_rag.cli"
+CLI_ENTRY_POINT_NAMES: frozenset[str] = frozenset({"cgr", PACKAGE_NAME})
 CLI_MSG_VERSION = "{package} version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
