@@ -843,6 +843,12 @@ class MCPToolsRegistry:
         # whatever partial graph a failure left behind.
         self._live_updater = None
         self._graph_incomplete = True
+        # Persisted BEFORE the delete, and on a node the delete cannot reach:
+        # this path removes the Project and rebuilds it, so a marker stored on
+        # the Project would be destroyed by the very operation whose failure it
+        # records. A crash between here and the final flush must still refuse
+        # the next process's reingest (#1705 review).
+        self._persist_incomplete(project_name, True)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
@@ -863,8 +869,14 @@ class MCPToolsRegistry:
         self.ingestor.flush_all()
         # Cleared only after the flush: the marker must outlive any failure
         # that leaves batches uncommitted.
-        self._persist_incomplete(project_name, False)
-        self._graph_incomplete = False
+        #
+        # The in-process flag follows the DURABLE state, not the intention. If
+        # the clear failed, the graph still says incomplete, and reporting this
+        # run complete would leave a fresh registry refusing reingest forever
+        # while this one believed all was well. Staying incomplete locally
+        # keeps the two in agreement and makes the next update retry the clear
+        # (#1705 review).
+        self._graph_incomplete = not self._persist_incomplete(project_name, False)
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -910,8 +922,10 @@ class MCPToolsRegistry:
         self._live_updater = None
         self._graph_incomplete = True
         self.ingestor.ensure_constraints()
-        # After ensure_constraints so the Project node the marker attaches to
-        # exists even on a first index.
+        # The marker MERGEs its own node, so this works before any Project
+        # exists. An earlier version set a property on the Project with MATCH,
+        # which updated zero rows on a first index and left a failed first run
+        # unmarked -- the exact case the guard exists for (#1705 review).
         self._persist_incomplete(project_name, True)
         self.ingestor.flush_all()
 
@@ -929,12 +943,18 @@ class MCPToolsRegistry:
         self.ingestor.flush_all()
         # Cleared only after the flush: the marker must outlive any failure
         # that leaves batches uncommitted.
-        self._persist_incomplete(project_name, False)
-        self._graph_incomplete = False
+        #
+        # The in-process flag follows the DURABLE state, not the intention. If
+        # the clear failed, the graph still says incomplete, and reporting this
+        # run complete would leave a fresh registry refusing reingest forever
+        # while this one believed all was well. Staying incomplete locally
+        # keeps the two in agreement and makes the next update retry the clear
+        # (#1705 review).
+        self._graph_incomplete = not self._persist_incomplete(project_name, False)
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
-    def _persist_incomplete(self, project_name: str, incomplete: bool) -> None:
+    def _persist_incomplete(self, project_name: str, incomplete: bool) -> bool:
         """Record (or clear) the incomplete-run marker on the Project node.
 
         `_graph_incomplete` lives on this registry, so it only ever covered
@@ -943,12 +963,16 @@ class MCPToolsRegistry:
         scoped updater from the partial graph and treating its missing
         definitions as authoritative (issue #1679). The marker survives that.
 
-        Never raises. A store that cannot take the marker must not turn a
-        working update into a failed one: the in-process flag still guards
-        this process, and the persisted one is an extra net for the next.
-        Logged rather than silently swallowed, because a marker that never
-        persists degrades this guard back to the old behaviour and an
-        operator should be able to see that in the log.
+        Returns whether the write reached the store. Never raises: a store
+        that cannot take the marker must not turn a working update into a
+        failed one. But the caller MUST act on the answer rather than discard
+        it -- a failed CLEAR after a successful run leaves the graph marked
+        incomplete, and reporting the run complete would strand a fresh
+        registry refusing reingest forever (#1705 review).
+
+        Logged as well as returned, because a marker that never persists
+        degrades this guard back to the old in-process behaviour and only the
+        log would show it.
         """
         query = (
             cq.CYPHER_MARK_PROJECT_INCOMPLETE
@@ -963,6 +987,8 @@ class MCPToolsRegistry:
                     project=project_name, incomplete=incomplete, error=error
                 )
             )
+            return False
+        return True
 
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.

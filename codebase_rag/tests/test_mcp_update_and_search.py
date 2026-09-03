@@ -880,22 +880,47 @@ class TestIncompleteMarkerSurvivesTheProcess:
         store: dict[str, bool] = {}
         ingestor = MagicMock()
 
+        # A plain dict, never an attribute on the MagicMock: `getattr` on a
+        # MagicMock returns a truthy child mock for ANY name, so a
+        # `getattr(ingestor, "_fail_clear", False)` switch is permanently on.
+        failing: set[str] = set()
+
         def _write(query: str, params: dict | None = None) -> None:
-            name = (params or {}).get(cs.KEY_PROJECT_NAME)
-            if "SET p.run_incomplete" in query:
-                store[str(name)] = True
-            elif "REMOVE p.run_incomplete" in query:
-                store.pop(str(name), None)
+            name = str((params or {}).get(cs.KEY_PROJECT_NAME))
+            if "clear" in failing and "DELETE m" in query:
+                raise RuntimeError("clear write refused")
+            # MERGE creates the node when absent; MATCH does not, and a
+            # MATCH-based mark therefore writes NOTHING on a first run. The
+            # fake has to honour that difference or it answers the question
+            # the code is supposed to answer: with a branch keyed only on
+            # "SET m.run_incomplete", reverting MERGE to MATCH left every
+            # test green (#1705 review).
+            if "SET m.run_incomplete" in query:
+                if query.lstrip().startswith("MERGE") or name in store:
+                    store[name] = True
+            elif "DELETE m" in query:
+                store.pop(name, None)
 
         def _read(query: str, params: dict | None = None) -> list[dict]:
             if "run_incomplete" not in query:
                 return []
             name = str((params or {}).get(cs.KEY_PROJECT_NAME))
-            return [{"run_incomplete": store.get(name, False)}]
+            # A real MATCH returns NO ROWS when the marker node is absent, not
+            # a row saying false. Modelling the empty result matters: code that
+            # reads rows[0] would pass against a canned false and fail here.
+            return [{"run_incomplete": True}] if store.get(name) else []
+
+        def _delete_project(name: str) -> None:
+            # Models CYPHER_DELETE_PROJECT: it detaches the Project and
+            # everything it CONTAINS. A marker kept ON the Project would go
+            # with it; one on its own unconnected node must survive.
+            store.pop(f"__project_anchored__{name}", None)
 
         ingestor.execute_write.side_effect = _write
         ingestor.fetch_all.side_effect = _read
+        ingestor.delete_project.side_effect = _delete_project
         ingestor._marker_store = store
+        ingestor._failing = failing
         return ingestor
 
     def _registry(self, root: Path, ingestor: MagicMock) -> MCPToolsRegistry:
@@ -978,3 +1003,81 @@ class TestIncompleteMarkerSurvivesTheProcess:
             )
             result = await second.reingest(["a.py"])
         assert "error" not in result, f"a completed run must not refuse: {result}"
+
+    async def test_a_failed_first_index_leaves_a_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A FIRST index has no Project node yet, and must still mark.
+
+        The marker used to be a property set on the Project with `MATCH`,
+        which updates zero rows when no Project exists. `GraphUpdater.run()`
+        is what creates it, so a first index that failed left no marker at
+        all -- precisely the run the guard exists to catch (#1705 review).
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        project = derive_project_name(Path(first.project_root))
+        # No list_projects entry: nothing has ever been indexed.
+        ingestor.list_projects.return_value = []
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("first index died")
+            assert "Error" in await first.index_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "a failed FIRST index left no marker, so a fresh process cannot "
+            "tell the graph is partial"
+        )
+
+    async def test_the_marker_survives_the_project_delete_an_index_performs(
+        self, temp_project_root: Path
+    ) -> None:
+        """`index_repository` deletes the Project before rebuilding it.
+
+        A marker stored on the Project would be destroyed by the very
+        operation whose failure it records, so it lives on its own
+        unconnected node instead (#1705 review). The fake's delete_project
+        drops Project-anchored keys, so a regression to that storage fails
+        here rather than passing quietly.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("rebuild died")
+            assert "Error" in await registry.index_repository()
+
+        ingestor.delete_project.assert_called_once()
+        assert ingestor._marker_store.get(project) is True, (
+            "the project delete removed the marker it was supposed to outlive"
+        )
+
+    async def test_a_failed_clear_does_not_report_the_run_complete(
+        self, temp_project_root: Path
+    ) -> None:
+        """A clear that never reached the store must not read as complete.
+
+        Otherwise this process believes the run finished while the graph
+        still says incomplete, and a fresh registry refuses reingest forever
+        with nothing to explain it (#1705 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = await registry.update_repository()
+
+        assert "Error" not in result, "the run itself succeeded and must say so"
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must actually have failed, or this test "
+            "proves nothing"
+        )
+        assert registry._graph_incomplete is True, (
+            "the local flag reported complete while the graph still says "
+            "incomplete; a fresh registry would refuse reingest forever"
+        )

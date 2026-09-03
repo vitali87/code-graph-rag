@@ -41,23 +41,35 @@ CYPHER_PROJECT_ROOT_PATH = (
 
 # The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
 # registry only ever covered the process that ran the failed update: a crash or
-# an MCP server restart left a fresh registry seeing a project that looks whole,
-# so it would hydrate a scoped updater from the partial graph and treat its
-# missing definitions as authoritative. Persisting the flag beside the project
-# means the refusal survives the process that earned it.
+# an MCP restart left a fresh registry seeing a project that looks whole, so it
+# would hydrate a scoped updater from the partial graph and treat its missing
+# definitions as authoritative. Persisting the flag means the refusal survives
+# the process that earned it.
 #
-# Set with `SET`, cleared by REMOVING the property rather than setting false, so
-# a project indexed before this existed reads the same as one that completed:
-# absent means complete, and no migration is needed.
+# It lives on its OWN node, not as a property of the Project, for two reasons
+# found in review:
+#
+# 1. `MERGE` on a dedicated label works before any Project exists. A first
+#    index creates the Project inside `GraphUpdater.run()`, so a `MATCH
+#    (p:Project ...)` set beforehand updated ZERO rows and a failed first run
+#    left no marker at all -- exactly the case the guard exists for.
+# 2. `CYPHER_DELETE_PROJECT` detaches and deletes the Project and everything
+#    it CONTAINS, so a marker stored on the Project would be deleted by the
+#    very rebuild whose failure it is meant to record. An unconnected
+#    `:IncompleteRun` node is not reachable from that traversal and survives.
+#
+# Cleared by DELETING the node rather than setting false, so a project indexed
+# before this existed reads exactly like one that completed: absent means
+# complete, and no migration is needed.
 CYPHER_MARK_PROJECT_INCOMPLETE = (
-    "MATCH (p:Project {name: $project_name}) SET p.run_incomplete = true"
+    "MERGE (m:IncompleteRun {project: $project_name}) SET m.run_incomplete = true"
 )
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
-    "MATCH (p:Project {name: $project_name}) REMOVE p.run_incomplete"
+    "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
 )
 CYPHER_PROJECT_IS_INCOMPLETE = (
-    "MATCH (p:Project {name: $project_name}) "
-    "RETURN coalesce(p.run_incomplete, false) AS run_incomplete"
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "RETURN coalesce(m.run_incomplete, false) AS run_incomplete"
 )
 
 CYPHER_DELETE_PROJECT = """
