@@ -360,6 +360,78 @@ def via_typed_local():
         assert ("nested.m.via_instance", "nested.m.Outer.Inner") in edges
 
 
+class TestInheritedNestedClass:
+    """`self.Inner()` in a subclass resolves to `Base.Inner`, and that is real.
+
+    A prefix test against the enclosing type alone rejects it, because the
+    resolved qn sits under the BASE rather than under the receiver's own class.
+    The check has to walk the inheritance chain, which is what makes it a
+    question about the type rather than about qualified-name spelling.
+    """
+
+    @pytest.fixture
+    def inherited_project(self, temp_repo: Path) -> Path:
+        project = temp_repo / "inh"
+        project.mkdir()
+        (project / "m.py").write_text(
+            encoding="utf-8",
+            data="""
+class Base:
+    class Inner:
+        def __init__(self, v):
+            self.v = v
+
+
+class Derived(Base):
+    pass
+
+
+def via_typed_local():
+    d = Derived()
+    return d.Inner(3)
+""",
+        )
+        return project
+
+    def test_a_typed_local_constructs_a_class_nested_in_its_base(
+        self, inherited_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        create_and_run_updater(inherited_project, mock_ingestor)
+        edges = _instantiations(mock_ingestor)
+        assert ("inh.m.via_typed_local", "inh.m.Base.Inner") in edges
+
+    def test_the_predicate_walks_the_inheritance_chain(self) -> None:
+        # The `self`/`cls` half, asserted on the predicate for the #1650 reason
+        # given above. Derived declares nothing; Inner lives on Base.
+        registry = FunctionRegistryTrie()
+        registry["proj.m.Base"] = NodeLabel.CLASS
+        registry["proj.m.Base.Inner"] = NodeLabel.CLASS
+        registry["proj.m.Derived"] = NodeLabel.CLASS
+        resolver = CallResolver(
+            function_registry=registry,
+            import_processor=MagicMock(import_mapping={}),
+            type_inference=MagicMock(),
+            class_inheritance={"proj.m.Derived": ["proj.m.Base"]},
+        )
+        assert resolver._receiver_names_a_type_or_module(
+            "self", "proj.m", "proj.m.Base.Inner", class_context="proj.m.Derived"
+        )
+        # An unrelated class is still rejected in the same context, so the walk
+        # widens the check rather than disabling it.
+        assert not resolver._receiver_names_a_type_or_module(
+            "self", "proj.m", "proj.m.Unrelated", class_context="proj.m.Derived"
+        )
+
+    def test_a_sibling_sharing_a_name_prefix_is_not_nested(self) -> None:
+        # `Outer2.Inner` must not match owner `Outer`. The trailing separator
+        # in the prefix test is the only thing preventing it.
+        resolver = _resolver_with_class("proj.m.Outer")
+        assert not resolver._class_is_nested_in("proj.m.Outer2.Inner", "proj.m.Outer")
+        assert not resolver._class_is_nested_in("proj.m.OuterX", "proj.m.Outer")
+        assert not resolver._class_is_nested_in("proj.m.Outer", "proj.m.Outer")
+        assert resolver._class_is_nested_in("proj.m.Outer.A.B", "proj.m.Outer")
+
+
 class TestReceiverExpressionsContainingAColon:
     """A bare `:` inside the receiver is a slice or dict key, not a static path.
 

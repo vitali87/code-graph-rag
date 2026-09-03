@@ -416,7 +416,10 @@ class CallResolver:
         self,
         receiver: str,
         module_qn: str,
-        resolved_qn: str = "",
+        # Required rather than defaulted: an omitted resolved qn would make the
+        # nesting check answer False and silently reject every `self.Inner()`
+        # and typed-local construction, with no error to notice.
+        resolved_qn: str,
         class_context: str | None = None,
         local_var_types: dict[str, str] | None = None,
     ) -> bool:
@@ -472,10 +475,23 @@ class CallResolver:
         # bare receiver in the languages this guard runs for.
         return False
 
-    @staticmethod
-    def _class_is_nested_in(class_qn: str, owner_qn: str) -> bool:
-        """Whether `class_qn` is declared inside `owner_qn`."""
-        return bool(class_qn) and class_qn.startswith(f"{owner_qn}{cs.SEPARATOR_DOT}")
+    def _class_is_nested_in(self, class_qn: str, owner_qn: str) -> bool:
+        """Whether `class_qn` is declared inside `owner_qn` or one of its bases.
+
+        `self.Inner()` inside a `Derived(Base)` resolves to `Base.Inner`, which
+        is a real construction, so a prefix test against the enclosing type
+        alone rejects an edge that is correct. Walking the MRO makes this a
+        question about the TYPE rather than about qualified-name spelling.
+
+        The trailing separator is load-bearing: without it `Outer2.Inner` would
+        match owner `Outer` and a sibling class would read as a nested one.
+        """
+        if not class_qn or not owner_qn:
+            return False
+        return any(
+            class_qn.startswith(f"{ancestor}{cs.SEPARATOR_DOT}")
+            for ancestor in self._mro(owner_qn)
+        )
 
     def _import_target_is_a_namespace(self, target: str) -> bool:
         """Whether an imported name refers to something you construct THROUGH.
