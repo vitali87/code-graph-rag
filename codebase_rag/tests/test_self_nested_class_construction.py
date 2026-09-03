@@ -27,7 +27,9 @@ from codebase_rag.constants import RelationshipType
 from codebase_rag.tests.conftest import create_and_run_updater, get_relationships
 
 
-def _edges(mock_ingestor: MagicMock, rel: RelationshipType) -> set[tuple[str, str]]:
+def _source_target_pairs(
+    mock_ingestor: MagicMock, rel: RelationshipType
+) -> set[tuple[str, str]]:
     return {
         (call[0][0][2], call[0][2][2])
         for call in get_relationships(mock_ingestor, rel.value)
@@ -95,11 +97,11 @@ class TestSelfNestedClassConstruction:
         assert (
             "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner",
-        ) in _edges(mock_ingestor, RelationshipType.INSTANTIATES)
+        ) in _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
         assert (
             "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner.__init__",
-        ) in _edges(mock_ingestor, RelationshipType.CALLS)
+        ) in _source_target_pairs(mock_ingestor, RelationshipType.CALLS)
 
     def test_self_dispatch_to_a_real_override_survives(
         self, nested_project: Path, mock_ingestor: MagicMock
@@ -109,6 +111,6 @@ class TestSelfNestedClassConstruction:
         # dead. A fix that dropped self-dispatch edges wholesale would pass the
         # first test and break this.
         create_and_run_updater(nested_project, mock_ingestor)
-        calls = _edges(mock_ingestor, RelationshipType.CALLS)
+        calls = _source_target_pairs(mock_ingestor, RelationshipType.CALLS)
         assert ("selfnested.m.Base.draw", "selfnested.m.Base.render") in calls
         assert ("selfnested.m.Base.draw", "selfnested.m.Derived.render") in calls
