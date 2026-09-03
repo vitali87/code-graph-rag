@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable
+from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple, Protocol
 
@@ -133,9 +134,17 @@ _IDENTIFIER_TYPES = frozenset(
     }
 )
 
-_FORMATTERS: dict[cs.SupportedLanguage, tuple[str, tuple[str, ...]]] = {
+# (binary, check flags, LIVENESS flag). The liveness flag differs per tool and
+# must be one the tool actually accepts: `gofmt` has no `--version` and exits 2
+# on it, so a universal `--version` probe declares a perfectly good gofmt
+# unusable and silently drops the Go drift check (issue #1639).
+_FORMATTERS: dict[cs.SupportedLanguage, tuple[str, tuple[str, ...], str]] = {
     # gofmt -l prints the file name when it would reformat it.
-    cs.SupportedLanguage.GO: (cs.PATCH_GOFMT, (cs.PATCH_GOFMT_LIST_FLAG,)),
+    cs.SupportedLanguage.GO: (
+        cs.PATCH_GOFMT,
+        (cs.PATCH_GOFMT_LIST_FLAG,),
+        cs.PATCH_GOFMT_PROBE_FLAG,
+    ),
     cs.SupportedLanguage.RUST: (
         cs.PATCH_RUSTFMT,
         (
@@ -143,6 +152,7 @@ _FORMATTERS: dict[cs.SupportedLanguage, tuple[str, tuple[str, ...]]] = {
             cs.PATCH_RUSTFMT_EDITION_FLAG,
             cs.PATCH_RUSTFMT_EDITION,
         ),
+        cs.PATCH_VERSION_FLAG,
     ),
 }
 
@@ -168,6 +178,32 @@ def _identifier_at(root: Node, start: int, end: int) -> Node | None:
     return None
 
 
+@lru_cache(maxsize=8)
+def _tool_runs(executable: str, probe_flag: str) -> bool:
+    """Whether the binary at this path can actually run (issue #1639).
+
+    The flag is per-tool, never assumed: `gofmt` exits 2 on `--version`, so a
+    universal probe would report a working gofmt as missing and suppress the
+    Go drift check entirely -- the mirror image of the bug being fixed, and
+    just as silent.
+
+    Cached on (path, flag): the answer cannot change within a process, and
+    `formatter_check` is called once per patched file.
+    """
+    try:
+        probe = subprocess.run(
+            [executable, probe_flag],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=cs.PATCH_FORMATTER_TIMEOUT_S,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return False
+    return probe.returncode == 0
+
+
 def formatter_check(
     language: cs.SupportedLanguage | None, content: bytes, suffix: str
 ) -> tuple[str | None, bool | None]:
@@ -175,12 +211,21 @@ def formatter_check(
 
     `None, None` when the language has none or the tool is not installed;
     the check reports, it never rewrites.
+
+    "Not installed" is decided by INVOKING the tool, not by finding a file on
+    PATH (issue #1639). Every rustup-managed toolchain leaves a shim on PATH
+    for components it does not have, and that shim exits non-zero with
+    "'rustfmt' is not installed for the toolchain". Judged by presence, that
+    non-zero exit is indistinguishable from a real "your code is misformatted"
+    verdict, so the caller was told `formatted=False` and the user read
+    "applied, but rustfmt would reformat it" -- a claim about their code that
+    no formatter ever made.
     """
     if language is None or language not in _FORMATTERS:
         return None, None
-    tool, flags = _FORMATTERS[language]
+    tool, flags, probe_flag = _FORMATTERS[language]
     executable = shutil.which(tool)
-    if executable is None:
+    if executable is None or not _tool_runs(executable, probe_flag):
         return tool, None
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
         handle.write(content)
