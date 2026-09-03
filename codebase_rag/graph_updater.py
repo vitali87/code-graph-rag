@@ -3517,7 +3517,16 @@ class GraphUpdater:
         captured = self._capture_inbound_edges(all_keys)
         self._reparsed_file_keys = set(all_keys)
 
-        reparse = {**present, **affected}
+        # Walk order, as the batch path re-parses (issue #1569): the first
+        # same-stem sibling parsed claims the bare module qn, so a header
+        # found before its dependent source file would take the qn a clean
+        # index gives the source.
+        reparse = dict(
+            sorted(
+                {**present, **affected}.items(),
+                key=lambda item: (Path(item[0]).parent.parts, Path(item[0]).name),
+            )
+        )
         self._reingest_delete(reparse, gone, hashes)
         parsed = self._reingest_reparse(reparse, gone)
         self._reingest_resolve(reparse, captured)
