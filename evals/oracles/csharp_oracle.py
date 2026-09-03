@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -28,8 +29,54 @@ _CALLABLE_KINDS = frozenset(
 _DOTNET_ENV = {ec.DOTNET_TELEMETRY_ENV: "1", ec.DOTNET_NOLOGO_ENV: "1"}
 
 
+@lru_cache(maxsize=1)
 def csharp_oracle_available() -> bool:
-    return shutil.which(ec.DOTNET_BIN) is not None
+    """Whether a dotnet SDK that can BUILD this oracle is installed (issue #1639).
+
+    `which("dotnet")` answers "is the launcher present", which a runtime-only
+    install and an SDK too old for the csproj both satisfy. `Oracle.csproj`
+    targets `net10.0`, so an SDK 8 machine sailed past the guard and the build
+    then failed with NETSDK1045 -- 15 failures and 4 setup errors that read as
+    real regressions rather than as a missing toolchain.
+
+    The probe asks the SDK to list itself and requires a major version at least
+    the csproj's. Comparing majors (not attempting the build) keeps the guard
+    cheap and side-effect free; the build's own failure path still skips for
+    anything this cannot foresee, such as an unreachable NuGet feed.
+    """
+    dotnet = shutil.which(ec.DOTNET_BIN)
+    if dotnet is None:
+        return False
+    try:
+        probe = subprocess.run(
+            [dotnet, ec.DOTNET_LIST_SDKS_FLAG],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.DOTNET_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if probe.returncode != 0:
+        return False
+    return any(
+        _sdk_major(line) >= ec.CSHARP_ORACLE_MIN_SDK_MAJOR
+        for line in probe.stdout.splitlines()
+    )
+
+
+def _sdk_major(sdk_line: str) -> int:
+    """Major version from a `dotnet --list-sdks` line, or 0 if unreadable.
+
+    Lines look like `10.0.400 [/usr/share/dotnet/sdk]`. A line this cannot
+    parse must not count as a usable SDK, hence 0 rather than a raise: the
+    caller is a skip guard, and failing it closed costs a skip while failing
+    it open costs the hard failure this exists to prevent.
+    """
+    head = sdk_line.strip().split(ec.DOTNET_SDK_LINE_SEP, 1)[0]
+    major = head.split(".", 1)[0]
+    return int(major) if major.isdigit() else 0
 
 
 def _dll_fresh() -> bool:
