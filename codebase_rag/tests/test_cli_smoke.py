@@ -23,6 +23,8 @@ from codebase_rag.cli import app
 _CLI_TIMEOUT_SECONDS = 120
 # Call names that start a real process, so a deadline applies to them.
 _SUBPROCESS_LAUNCHERS = frozenset({"run", "Popen", "check_output", "check_call"})
+# A deadline that is set but whose final value cannot be read statically.
+_UNRESOLVED = "<unresolved>"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # rich draws the options table with box-drawing borders whose glyphs land
@@ -166,9 +168,10 @@ def _deadlines_not_using_the_constant(tree: ast.AST) -> list[int]:
     scan, and both are legal at these call sites. Mirrors the detector in
     `test_frontend_subprocess_timeouts.py`, which exists for the same class.
 
-    A `**{"timeout": 30}` splat is resolved too, via `_deadline_expression`;
-    only an opaque `**kwargs` built elsewhere stays invisible, and no amount of
-    AST reading fixes that one.
+    A `**{"timeout": 30}` splat is resolved too, via `_deadline_expression`,
+    including the case where a later unpacking silently replaces the value. A
+    `**kwargs` that sets no visible deadline at all is the other gate's
+    business and stays quiet here.
     """
     found: list[int] = []
     for node in ast.walk(tree):
@@ -184,26 +187,48 @@ def _deadlines_not_using_the_constant(tree: ast.AST) -> list[int]:
     return found
 
 
-def _deadline_expression(call: ast.Call) -> ast.expr | None:
+def _deadline_expression(call: ast.Call) -> ast.expr | str | None:
     """The `timeout=` value of a call, however it was spelled.
+
+    Returns the value expression, `_UNRESOLVED` when a deadline is set but its
+    final value cannot be read statically, or None when no deadline is set at
+    all (that case belongs to `test_frontend_subprocess_timeouts`).
 
     A `**{"timeout": 30}` splat carries `arg=None` in the AST, so a plain
     keyword-name lookup reads it as "no deadline set" and the call escapes the
-    gate entirely. The literal-dict form is resolvable, so it is resolved.
+    gate. Within such a mapping, later entries win, so
+    `**{"timeout": _CLI_TIMEOUT_SECONDS, **overrides}` really passes whatever
+    `overrides` holds -- while `**{**overrides, "timeout": _CLI_TIMEOUT_SECONDS}`
+    really passes the constant. Order decides, so the scan tracks the LAST
+    statically known entry rather than the first.
     """
+    resolved: ast.expr | str | None = None
     for keyword in call.keywords:
         if keyword.arg == "timeout":
-            return keyword.value
+            resolved = keyword.value
+            continue
+        if keyword.arg is not None:
+            continue
         # `**{...}` -- a literal mapping splatted into the call.
-        if keyword.arg is None and isinstance(keyword.value, ast.Dict):
+        if isinstance(keyword.value, ast.Dict):
             for key, value in zip(keyword.value.keys, keyword.value.values):
-                if (
+                if key is None:
+                    # A nested `**something` after a deadline can replace it,
+                    # and cannot be read. Set-but-unverifiable is reported, not
+                    # waved through: this gate is about the VALUE, so a
+                    # deadline it cannot certify is exactly what it must catch.
+                    if resolved is not None:
+                        resolved = _UNRESOLVED
+                elif (
                     isinstance(key, ast.Constant)
                     and key.value == "timeout"
                     and value is not None
                 ):
-                    return value
-    return None
+                    resolved = value
+        elif resolved is not None:
+            # `**kwargs` built elsewhere, after a deadline was set.
+            resolved = _UNRESOLVED
+    return resolved
 
 
 def test_cli_spawns_in_this_file_share_the_deadline() -> None:
@@ -375,10 +400,31 @@ def test_the_detector_recognises_compliant_and_offending_deadlines() -> None:
         )
         == []
     )
-    # A splat of something built elsewhere is genuinely unresolvable; it stays
-    # quiet rather than being reported on a guess.
+    # A splat of something built elsewhere sets no deadline this gate can see,
+    # and no deadline at all is the other gate's business, so it stays quiet
+    # rather than being reported on a guess.
     assert (
         _deadlines_not_using_the_constant(ast.parse("subprocess.run(['x'], **kwargs)"))
+        == []
+    )
+    # Later entries win in a dict literal, so an override AFTER the constant
+    # really does replace it at runtime and must not read as compliant...
+    assert _deadlines_not_using_the_constant(
+        ast.parse(
+            "subprocess.run(['x'], **{'timeout': _CLI_TIMEOUT_SECONDS, **overrides})"
+        )
+    ) == [1]
+    assert _deadlines_not_using_the_constant(
+        ast.parse("subprocess.run(['x'], timeout=_CLI_TIMEOUT_SECONDS, **overrides)")
+    ) == [1]
+    # ...while the same unpacking BEFORE the constant is genuinely fine, because
+    # the explicit key wins. Order decides, not the presence of a splat.
+    assert (
+        _deadlines_not_using_the_constant(
+            ast.parse(
+                "subprocess.run(['x'], **{**overrides, 'timeout': _CLI_TIMEOUT_SECONDS})"
+            )
+        )
         == []
     )
     # No `timeout=` at all is a different gate's business
