@@ -2180,8 +2180,16 @@ class GraphUpdater:
         # stem (util.js -> util.ts) must take the bare qn a clean index gives
         # it, and a re-parse re-registers its own entry (issue #1575).
         qn_to_path = self.factory.definition_processor.module_qn_to_file_path
+        # The qn read back from the graph goes with the map entry, keyed on
+        # the qn the graph RECORDED (a disambiguated `util.py` beside
+        # `util.js`, a `mod.rs` directory), never on the path-derived prefix,
+        # which for a same-stem sibling names the SURVIVOR's qn.
+        # `known_module_paths` would otherwise keep offering the deleted
+        # module to deferred resolution as a live internal target on a
+        # reused updater (issue #1575).
         for qn in [qn for qn, path in qn_to_path.items() if path == file_path]:
             del qn_to_path[qn]
+            self._rehydrated_module_qns.discard(qn)
         # The paths read back from the graph for an earlier incremental run
         # go with the registry entries: `_module_language` falls through to
         # them for a definition qn, and a replacement in another language

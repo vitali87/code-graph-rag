@@ -227,6 +227,37 @@ def test_a_rehydrated_updater_forgets_a_deleted_definitions_language(
     assert after_snapshot == _clean(temp_repo, after, cs.SupportedLanguage.PYTHON)
 
 
+def test_a_rehydrated_updater_forgets_a_deleted_module_qn(temp_repo: Path) -> None:
+    # Module qns read back from the graph on an incremental first run feed
+    # `known_module_paths`, which deferred resolution treats as the set of
+    # live internal modules. Deleting the file must drop its qn from that
+    # set as well, or the reused updater keeps resolving against a module
+    # that no longer exists.
+    root = temp_repo / "proj"
+    before = {
+        "util.py": "def helper():\n    return 1\n",
+        "main.py": "from util import helper\n\n\ndef go():\n    return helper()\n",
+        "other.py": "def x():\n    return 1\n",
+    }
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+    assert "proj.util" in updater._rehydrated_module_qns, "the shape did not rehydrate"
+    assert "proj.util" in updater.known_module_paths()
+
+    (root / "util.py").unlink()
+    (root / "main.py").write_text("def go():\n    return 1\n", encoding="utf-8")
+    _bump(root, "main.py")
+    updater.run(force=False)
+
+    assert "proj.util" not in updater.known_module_paths()
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
