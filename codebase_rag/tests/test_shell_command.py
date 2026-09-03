@@ -1179,6 +1179,21 @@ class TestDangerousRmPath:
         is_dangerous, _ = _is_dangerous_rm_path(["rm", "-rf", target], project_root)
         assert not is_dangerous
 
+    @pytest.mark.parametrize("target", ["absolute", "subdir/.."])
+    def test_project_root_spelling_is_dangerous(
+        self, tmp_path: Path, target: str
+    ) -> None:
+        project_root = (tmp_path / "project").resolve()
+        project_root.mkdir()
+        path_arg = str(project_root) if target == "absolute" else target
+
+        is_dangerous, reason = _is_dangerous_rm_path(
+            ["rm", "-rf", path_arg], project_root
+        )
+
+        assert is_dangerous
+        assert reason == "rm targeting the project root"
+
     def test_dash_prefixed_operand_after_end_of_options_is_checked(
         self, tmp_path: Path
     ) -> None:

@@ -197,6 +197,8 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
             resolved = (project_root / path_arg).resolve()
         except (OSError, ValueError):
             return True, f"rm with invalid path: {path_arg}"
+        if resolved == project_root:
+            return True, "rm targeting the project root"
         resolved_str = str(resolved)
         if resolved == resolved.parent:
             return True, "rm targeting root directory"
