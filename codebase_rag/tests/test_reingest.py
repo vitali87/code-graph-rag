@@ -740,7 +740,9 @@ def test_reingest_skips_paths_the_ignore_rules_exclude(
     )
 
     assert report.skipped == (rel,)
-    assert report.reparsed == () and report.affected == () and report.removed == ()
+    assert report.reparsed == ()
+    assert report.affected == ()
+    assert report.removed == ()
     assert _snapshot(store) == before
     cache = json.loads((fixture_root / cs.HASH_CACHE_FILENAME).read_text())
     assert rel not in cache
