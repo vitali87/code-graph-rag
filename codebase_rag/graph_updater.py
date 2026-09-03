@@ -2313,15 +2313,26 @@ class GraphUpdater:
         # records key by the REGISTERING file's module qn, so a qn recorded
         # under a module this event does not touch survives (issue #1025).
         touched_modules = recorded_qns
-        foreign_qns = {
-            location.qualified_name
-            for (
-                span_module,
-                _line,
-                _col,
-            ), location in self.factory.definition_processor.function_locations.items()
-            if span_module not in touched_modules
-        }
+        foreign_qns = set()
+        # The mirror of foreign_qns, and the reason the prefix sweep is not
+        # sufficient on its own: a definition's qn does not have to sit under
+        # the qn of the file that registered it. A Go method is keyed by its
+        # RECEIVER TYPE's module, so `func (t T) M()` in pkg/methods.go
+        # registers `proj.pkg.types.T.M` when `T` is declared in pkg/types.go.
+        # No prefix of methods.go matches that qn, so the entry survived this
+        # cleanup and the re-parse registered a second Method beside it as
+        # `...T.M@3` (issue #1659). The span records already name the
+        # registering module, which is exactly the ownership this needs.
+        owned_qns = set()
+        for (
+            span_module,
+            _line,
+            _col,
+        ), location in self.factory.definition_processor.function_locations.items():
+            if span_module in touched_modules:
+                owned_qns.add(location.qualified_name)
+            else:
+                foreign_qns.add(location.qualified_name)
         # Frontend registrations (libclang C/C++) have no span records; their
         # ownership is tracked per rel path at registration time.
         touched_rel = relative_path.as_posix()
@@ -2345,8 +2356,8 @@ class GraphUpdater:
                     qn.startswith(f"{prefix}.") or qn == prefix
                     for prefix in module_qn_prefixes
                 )
-                and qn not in foreign_qns
-            ):
+                or qn in owned_qns
+            ) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 

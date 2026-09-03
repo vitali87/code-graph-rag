@@ -582,3 +582,41 @@ def test_a_reused_updater_keeps_a_same_stem_replacements_commonjs_export(
 
     assert ("proj.main.go", "proj.util.helper") in _calls(after), _calls(after)
     assert after == _clean(temp_repo, CJS_AFTER, cs.SupportedLanguage.JS)
+
+
+def _methods(snapshot: Snapshot) -> set[str]:
+    return {uid for (label, uid) in snapshot[0] if label == cs.NodeLabel.METHOD.value}
+
+
+def test_re_parsing_a_go_file_does_not_duplicate_a_sibling_keyed_method(
+    temp_repo: Path,
+) -> None:
+    """A Go method is keyed under its RECEIVER TYPE's module, not its own file.
+
+    `func (t T) M()` in methods.go registers as `proj.pkg.types.T.M`, because
+    `T` is declared in types.go. `remove_file_from_state(methods.go)` sweeps
+    by the qn prefixes methods.go recorded (`proj.pkg.methods`), which that qn
+    does not match, so the first run's Method survives the cleanup and the
+    re-parse registers a second one beside it as `proj.pkg.types.T.M@3`.
+
+    Asserted on Method NODES rather than on CALLS edges: the rename test above
+    compares calls only, and calls alone are satisfied by a graph carrying
+    both the stale and the fresh method (issue #1659).
+    """
+    root = temp_repo / "proj"
+    _materialise(root, GO_BEFORE)
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.GO)
+    updater.run(force=True)
+    # Renaming util.go joins methods.go to the run as a DEPENDENT, so it is
+    # re-parsed. Touching methods.go instead would not do: the hash cache sees
+    # identical content and skips the file, so nothing is re-parsed and the
+    # duplicate never forms -- a green test about a run that did not happen.
+    (root / "pkg" / "util.go").rename(root / "pkg" / "helpers.go")
+    _bump(root, "pkg/helpers.go")
+    updater.run(force=False)
+    after = _snapshot(store, root)
+
+    clean = _clean(temp_repo, GO_AFTER, cs.SupportedLanguage.GO)
+    assert _methods(after) == _methods(clean)
+    assert _methods(after) == {"proj.pkg.types.T.M"}
