@@ -245,6 +245,8 @@ class _StatefulIngestor:
                             cs.KEY_TARGET_LABEL: to_label,
                             cs.KEY_TARGET_QN: _text(to_val),
                             cs.KEY_CALLER_PATH: _text(caller_path),
+                            # The restore re-emits the edge with its own
+                            # properties (its site, issue #1522).
                             cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
                         }
                     )
