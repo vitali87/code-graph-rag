@@ -123,6 +123,13 @@ MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"
 )
+MCP_INCOMPLETE_MARKER_REQUIRED = (
+    "Refusing to index or update {project}: the incomplete-run marker could "
+    "not be written. Without it a crash part way through would leave a "
+    "partial graph that a fresh process cannot recognise, and a later scoped "
+    "reingest would treat it as authoritative. Check the graph store is "
+    "writable and retry."
+)
 MCP_REINGEST_AFTER_FAILED_RUN = (
     "The last index or update of project {project} failed part way, so its "
     "graph is incomplete; run update_repository before reingest"

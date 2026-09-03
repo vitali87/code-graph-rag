@@ -848,7 +848,18 @@ class MCPToolsRegistry:
         # the Project would be destroyed by the very operation whose failure it
         # records. A crash between here and the final flush must still refuse
         # the next process's reingest (#1705 review).
-        self._persist_incomplete(project_name, True)
+        # A failed MARK aborts before anything destructive happens. The marker
+        # is the ONLY protection that survives a restart, so continuing into
+        # the delete and rebuild without it means a crash leaves a partial
+        # graph that a fresh registry cannot tell from a complete one, and it
+        # will happily hydrate a scoped reingest from it. Nothing is lost by
+        # stopping here: no graph state has changed yet. That is the opposite
+        # of a failed CLEAR, which must not fail a run that already succeeded
+        # (#1705 review).
+        if not self._persist_incomplete(project_name, True):
+            raise RuntimeError(
+                cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+            )
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
@@ -926,7 +937,14 @@ class MCPToolsRegistry:
         # exists. An earlier version set a property on the Project with MATCH,
         # which updated zero rows on a first index and left a failed first run
         # unmarked -- the exact case the guard exists for (#1705 review).
-        self._persist_incomplete(project_name, True)
+        #
+        # Aborts on failure for the same reason as the index path: the flush
+        # below commits batches left by earlier calls, so continuing without a
+        # marker risks a partial graph no later process can recognise.
+        if not self._persist_incomplete(project_name, True):
+            raise RuntimeError(
+                cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+            )
         self.ingestor.flush_all()
 
         exclude_paths, unignore_paths = self._ignore_sets()
@@ -963,12 +981,17 @@ class MCPToolsRegistry:
         scoped updater from the partial graph and treating its missing
         definitions as authoritative (issue #1679). The marker survives that.
 
-        Returns whether the write reached the store. Never raises: a store
-        that cannot take the marker must not turn a working update into a
-        failed one. But the caller MUST act on the answer rather than discard
-        it -- a failed CLEAR after a successful run leaves the graph marked
-        incomplete, and reporting the run complete would strand a fresh
-        registry refusing reingest forever (#1705 review).
+        Returns whether the write reached the store, and never raises itself;
+        the CALLER decides what a failure means, because the two directions
+        are not symmetric (#1705 review):
+
+        * A failed MARK must abort before any destructive work. The marker is
+          the only protection that survives a restart, so proceeding without
+          it means a crash leaves a partial graph indistinguishable from a
+          complete one. Nothing is lost by stopping: no state has changed.
+        * A failed CLEAR must NOT fail a run that already succeeded. It
+          leaves the graph marked incomplete, so the local flag follows the
+          durable state and the next update retries the clear.
 
         Logged as well as returned, because a marker that never persists
         degrades this guard back to the old in-process behaviour and only the
@@ -1010,7 +1033,13 @@ class MCPToolsRegistry:
                     project=project_name, error=error
                 )
             )
-            return False
+            # Refuse rather than assume complete. "I cannot tell" and "the
+            # last run finished" are different answers, and only one of them
+            # is safe to act on: treating an unreadable marker as absent
+            # hydrates a scoped reingest from a graph that may be partial,
+            # which is the failure this guard exists to prevent. An
+            # update_repository recovers either way (#1705 review).
+            return True
         return any(bool(row.get("run_incomplete")) for row in rows or [])
 
     def _reingest_sync(
