@@ -387,7 +387,13 @@ DOTNET_SDK_LINE_SEP = " "
 # this moves with it.
 CSHARP_ORACLE_MIN_SDK_MAJOR = 10
 NODE_EVAL_FLAG = "-e"
-NODE_ESM_PROBE = "import('node:path').then(()=>process.exit(0),()=>process.exit(1))"
+# `require()` the oracle's own entry script, which is the call that breaks: a
+# CommonJS script loading an ESM-only package (`@ruby/prism`) on a Node too old
+# for it. A dynamic `import()` probe would pass on that Node and report the
+# toolchain usable, which is worse than no guard at all.
+NODE_REQUIRE_PROBE = 'require("{package}")'
+NODE_PACKAGE_MANIFEST = "package.json"
+NODE_PACKAGE_DEPS_KEY = "dependencies"
 NODE_PROBE_TIMEOUT_S = 30
 NPM_BIN = "npm"
 NPM_INSTALL = "install"

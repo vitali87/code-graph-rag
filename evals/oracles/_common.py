@@ -26,39 +26,81 @@ from ..types_defs import (
 
 # The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
 # out to the same toolchain, so they share one availability probe.
-@lru_cache(maxsize=1)
-def node_oracle_available() -> bool:
-    """Whether the node toolchain can RUN an oracle, not merely whether it exists.
+@lru_cache(maxsize=8)
+def node_oracle_available(oracle_dir: Path | None = None) -> bool:
+    """Whether the node toolchain can RUN this oracle, not merely whether it exists.
 
-    `shutil.which` answers "is this binary on PATH", which is not the question a
-    skip guard needs (issue #1639). Node 18 satisfies it and then cannot
-    `require()` the ESM-only `@ruby/prism` these oracles load, so every
-    node-backed oracle test hard-FAILED on an under-provisioned machine instead
-    of skipping -- 24 failures and 4 errors on a clean main, in tests named as
-    though they were real regressions, which cost a full revert-and-compare run
-    to attribute.
+    `shutil.which` answers "is this binary on PATH", which is not the question
+    a skip guard needs (issue #1639). Node 18 satisfies it and then cannot
+    `require()` the ESM-only `@ruby/prism` that `ruby_ast.js` loads, so the
+    node-backed oracle tests hard-FAILED on an under-provisioned machine
+    instead of skipping: 24 failures and 4 errors on a clean main, in tests
+    named as though they were real regressions.
 
-    So the probe runs node once and asks it to do the thing that breaks. The
-    check is the ESM/CJS interop boundary rather than a parsed version number:
-    it is the CAPABILITY that matters, and a version comparison would need
-    updating for every future incompatibility. Cached because four oracles
-    consult it and the answer cannot change within a run.
+    The probe therefore does the thing that breaks -- `require()` of the
+    oracle's own entry script's dependency, from a CommonJS context, which is
+    exactly the failing call. A dynamic `import()` would NOT do: it has worked
+    since Node 12, so a Node that fails the real oracle passes that probe and
+    the guard is worse than none. Measured against a Node-18-shaped shim
+    (dynamic import fine, `require()` of an ES module refused), an
+    `import()`-based probe reported the toolchain as available.
+
+    `oracle_dir` is required to reach that dependency, because the oracles do
+    not share one: ruby loads `@ruby/prism`, lua `luaparse`, php `php-parser`,
+    ts `typescript`, and only the first is ESM-only. Called with no directory
+    the check degrades to node+npm presence, which is all it can honestly
+    assert without knowing which package to load.
     """
     node = shutil.which(ec.NODE_BIN)
     if node is None or shutil.which(ec.NPM_BIN) is None:
         return False
+    if oracle_dir is None:
+        return True
+    package = _oracle_dependency(oracle_dir)
+    if package is None:
+        return True
     try:
         probe = subprocess.run(
-            [node, ec.NODE_EVAL_FLAG, ec.NODE_ESM_PROBE],
+            [node, ec.NODE_EVAL_FLAG, ec.NODE_REQUIRE_PROBE.format(package=package)],
             capture_output=True,
             text=True,
             encoding=cs.ENCODING_UTF8,
             check=False,
+            cwd=oracle_dir,
             timeout=ec.NODE_PROBE_TIMEOUT_S,
         )
     except (subprocess.TimeoutExpired, OSError):
         return False
     return probe.returncode == 0
+
+
+def _oracle_dependency(oracle_dir: Path) -> str | None:
+    """The package this oracle loads, read from its own `package.json`.
+
+    Read rather than hard-coded so the probe cannot drift from what the oracle
+    actually requires, and per-oracle because they do not share a dependency:
+    ruby loads `@ruby/prism`, lua `luaparse`, php `php-parser`, ts
+    `typescript`, and only the first is ESM-only.
+
+    The DEPENDENCY is the right subject, not the entry script: requiring
+    `ruby_ast.js` runs its main, which prints a usage line and exits non-zero
+    with no arguments, so a working toolchain would be reported broken.
+
+    None when the manifest is missing or deps are not installed yet, so the
+    guard cannot mistake "not fetched" for "toolchain broken" -- that is
+    `ensure_node_deps`'s job and it runs later.
+    """
+    if not (oracle_dir / ec.NODE_MODULES_DIRNAME).is_dir():
+        return None
+    manifest = oracle_dir / ec.NODE_PACKAGE_MANIFEST
+    try:
+        deps = json.loads(manifest.read_text(encoding=cs.ENCODING_UTF8)).get(
+            ec.NODE_PACKAGE_DEPS_KEY, {}
+        )
+    except (OSError, ValueError, AttributeError):
+        return None
+    names = sorted(deps) if isinstance(deps, dict) else []
+    return names[0] if names else None
 
 
 def _node_deps_ready(oracle_dir: Path) -> bool:

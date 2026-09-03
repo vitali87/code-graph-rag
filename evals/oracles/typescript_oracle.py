@@ -20,7 +20,7 @@ _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.va
 
 
 def typescript_available() -> bool:
-    return node_oracle_available()
+    return node_oracle_available(_ORACLE_DIR)
 
 
 def _run_payload(target: Path, suffixes: tuple[str, ...]) -> OraclePayload:

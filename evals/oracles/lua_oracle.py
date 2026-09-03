@@ -20,7 +20,7 @@ _CALLABLE_KINDS = frozenset({cs.NodeLabel.FUNCTION.value})
 
 
 def lua_oracle_available() -> bool:
-    return node_oracle_available()
+    return node_oracle_available(_ORACLE_DIR)
 
 
 def _run_lua_oracle_payload(target: Path) -> OraclePayload:
