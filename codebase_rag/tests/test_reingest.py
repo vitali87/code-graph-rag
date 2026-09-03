@@ -234,6 +234,122 @@ def test_reingest_matches_a_clean_index(
     assert actual == expected, _diff(actual, expected)
 
 
+SIBLING_JS = "export function helper() { return 1; }\n"
+SIBLING_TS = "export function helper2(): number { return 2; }\n"
+SIBLING_MAIN = (
+    "import { helper } from './util';\n\nexport function go() { return helper(); }\n"
+)
+
+
+def _sibling_updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="sib",
+    )
+
+
+def _sibling_clean(root: Path) -> Snapshot:
+    # The on-disk tree already holds the edited state; a fresh store on the
+    # same root gives the graph a clean index of it.
+    store = _StatefulIngestor()
+    _sibling_updater(store, root).run(force=True)
+    return _snapshot(store)
+
+
+@pytest.mark.parametrize("fresh_updater", [False, True], ids=["warm", "fresh"])
+@pytest.mark.parametrize(
+    ("before", "after", "changed", "deleted"),
+    [
+        (
+            {"util.js": SIBLING_JS, "main.js": SIBLING_MAIN},
+            {"util.js": SIBLING_JS, "util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            ["util.ts"],
+            [],
+        ),
+        (
+            {"util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            {"util.js": SIBLING_JS, "util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            ["util.js"],
+            [],
+        ),
+        (
+            {"util.js": SIBLING_JS, "util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            {"util.ts": SIBLING_TS, "main.js": SIBLING_MAIN},
+            [],
+            ["util.js"],
+        ),
+    ],
+    ids=["add_loser", "add_winner", "delete_winner"],
+)
+def test_reingest_gives_same_stem_siblings_their_clean_index_qns(
+    temp_repo: Path,
+    before: dict[str, str],
+    after: dict[str, str],
+    changed: list[str],
+    deleted: list[str],
+    fresh_updater: bool,
+) -> None:
+    # The first same-stem sibling in walk order owns the bare module qn
+    # (issue #1569). Adding the sibling that wins that order, or deleting
+    # the one that held it, changes the survivor's qn, so the scoped path
+    # must re-parse the survivor unseeded, as the batch path does, and a
+    # fresh updater must see the taken qns before it parses anything.
+    root = temp_repo / "sib"
+    root.mkdir()
+    for rel, text in before.items():
+        _write(root, rel, text)
+    store = _StatefulIngestor()
+    updater = _sibling_updater(store, root)
+    updater.run(force=True)
+    for rel in deleted:
+        (root / rel).unlink()
+    for rel in changed:
+        _write(root, rel, after[rel])
+    if fresh_updater:
+        updater = _sibling_updater(store, root)
+
+    updater.reingest(changed, deleted=deleted)
+
+    actual = _snapshot(store)
+    expected = _sibling_clean(root)
+    assert actual == expected, _diff(actual, expected)
+
+
+def test_reingest_reparses_in_walk_order_across_directories(
+    temp_repo: Path,
+) -> None:
+    # The bare module qn goes to the first same-stem sibling the walk
+    # yields; a scoped call must re-parse in that order however its paths
+    # were given, including across directories.
+    root = temp_repo / "order"
+    root.mkdir()
+    layout = ["z.py", "a.py", "sub/b.py", "sub/a.py", "sub/deep/c.py", "b.py"]
+    for rel in layout:
+        _write(root, rel, "def f():\n    return 1\n")
+    store = _StatefulIngestor()
+    updater = _sibling_updater(store, root)
+    updater.run(force=True)
+    walk_order = [key for _fp, key in updater._collect_eligible_files()]
+    seen: list[str] = []
+    real_delete = updater._reingest_delete
+
+    def spy(reparse: dict[str, Path], gone: dict[str, Path], hashes: dict) -> None:
+        seen.extend(reparse)
+        real_delete(reparse, gone, hashes)
+
+    updater._reingest_delete = spy  # type: ignore[method-assign]
+    shuffled = [layout[i] for i in (3, 0, 5, 2, 1, 4)]
+
+    updater.reingest(shuffled)
+
+    assert seen == [key for key in walk_order if key in set(layout)]
+    assert seen != shuffled
+
+
 def test_reingest_reports_dependents_and_removals(fixture_root: Path) -> None:
     store = _StatefulIngestor()
     updater = _updater(store, fixture_root)

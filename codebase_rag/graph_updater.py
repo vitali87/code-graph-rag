@@ -3305,6 +3305,32 @@ class GraphUpdater:
             is_file=True,
         )
 
+    def _reingest_flux_survivors(
+        self, present: dict[str, Path], gone: dict[str, Path], hashes: FileHashCache
+    ) -> tuple[set[str], dict[str, Path]]:
+        # Stems with a same-stem sibling added (a present key the cache has
+        # never seen) or deleted by this call, and the on-disk files that
+        # share them and are not named in the call. Those survivors re-parse
+        # in walk order so the bare module qn goes to the file a clean index
+        # gives it rather than to the file indexed first (issue #1569).
+        flux_stems = {_stem_key(key) for key in present if key not in hashes}
+        flux_stems |= {_stem_key(key) for key in gone}
+        survivors: dict[str, Path] = {}
+        for stem in flux_stems:
+            parent = (self.repo_path / stem).parent
+            if not parent.is_dir():
+                continue
+            for candidate in sorted(parent.iterdir()):
+                if not candidate.is_file():
+                    continue
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if _stem_key(key) != stem or key in present or key in gone:
+                    continue
+                if self._reingest_ignored(candidate):
+                    continue
+                survivors[key] = candidate
+        return flux_stems, survivors
+
     def _reingest_dependents(
         self, present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -3512,8 +3538,20 @@ class GraphUpdater:
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         hashes = _load_hash_cache(cache_path)
 
-        affected = self._reingest_dependents(present, gone)
-        all_keys = sorted({*present, *gone, *affected})
+        # Same-stem reconciliation, as the batch path does it (issue #1569):
+        # a stem with a sibling added or deleted by this call is in flux, its
+        # on-disk survivors re-parse unseeded, and the module-qn map is
+        # seeded from the graph for everything else so the disambiguator
+        # sees the taken qns on a fresh updater.
+        flux_stems, survivors = self._reingest_flux_survivors(present, gone, hashes)
+        graph_paths = set(self._existing_module_paths() or frozenset())
+        self._seed_module_qns_from_graph(graph_paths - set(gone), flux_stems)
+        # A gone file seeds regardless: its map entry is what the state drop
+        # below keys on to free its qn and forget its rehydrated form.
+        self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
+
+        affected = self._reingest_dependents({**present, **survivors}, gone)
+        all_keys = sorted({*present, *gone, *survivors, *affected})
         captured = self._capture_inbound_edges(all_keys)
         self._reparsed_file_keys = set(all_keys)
 
@@ -3523,7 +3561,7 @@ class GraphUpdater:
         # index gives the source.
         reparse = dict(
             sorted(
-                {**present, **affected}.items(),
+                {**present, **survivors, **affected}.items(),
                 key=lambda item: (Path(item[0]).parent.parts, Path(item[0]).name),
             )
         )
