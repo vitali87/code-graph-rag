@@ -545,7 +545,7 @@ def _shape(row: ResultRow) -> _Shape:
     )
 
 
-def _match(
+def _match_duplicate_shapes(
     candidate: _Shape, other: _Shape, threshold: float
 ) -> tuple[str, float] | None:
     if other.qualified_name == candidate.qualified_name:
@@ -582,7 +582,7 @@ def _new_duplicates(
             continue
         best: tuple[float, _Shape, str] | None = None
         for other in shapes:
-            found = _match(candidate, other, threshold)
+            found = _match_duplicate_shapes(candidate, other, threshold)
             # An existing symbol is the original; a fresh one is at best a
             # peer, reported once from the lexically earlier side.
             if found is None or (

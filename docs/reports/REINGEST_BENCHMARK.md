@@ -61,7 +61,8 @@ of the touched files' subgraph and the diff, and reports its own cost as
 |---|---|---|---|---|
 | `codebase_rag/graph_query.py` (hub, 48 dependents) | 2,446 ms | 2,527 ms | 142 ms | 677 ms |
 
-The p95 is the first iteration, before the process has warmed the
+The 200 ms target is a p50 target: the steady-state overhead of the delta
+is what an agent pays per write. The p95 is the first iteration, before the process has warmed the
 symbol-resolution and path caches; every later iteration sits within a few
 milliseconds of the p50. The overhead is dominated by the backward
 test-reach walk (one indexed query per hop, bounded to 12 hops), which is

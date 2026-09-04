@@ -252,11 +252,13 @@ MCP_GET_CODE_SNIPPET = (
 )
 
 _MCP_DELTA_NOTE = (
-    " After the write, the touched files are re-ingested and a structural "
-    "delta is appended to the result: symbols added, removed and renamed, "
-    "callers left dangling, call sites passing too many arguments, signature "
-    "changes with a verdict per call site, new duplicates of existing "
-    "functions, new import cycles, and the tests reaching the edited symbols. "
+    " After a successful write on an indexed project, the touched files are "
+    "re-ingested and a structural delta is appended to the result as JSON: "
+    "symbols added, removed and renamed, callers left dangling, call sites "
+    "passing too many arguments, signature changes with a verdict per call "
+    "site, new duplicates of existing functions, new import cycles, and the "
+    "tests reaching the edited symbols. A project that is not indexed appends "
+    "nothing, and a failed analysis appends an error note instead of a delta. "
     "Read it before the next edit."
 )
 MCP_SURGICAL_REPLACE_CODE = (

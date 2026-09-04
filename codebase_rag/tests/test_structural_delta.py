@@ -446,6 +446,34 @@ async def test_write_on_an_unindexed_project_appends_nothing(temp_repo: Path) ->
     ingestor.fetch_all.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("error", "invalidated"),
+    [(RuntimeError("memgraph went away"), True), (ValueError("bad path"), False)],
+)
+def test_a_failed_write_reingest_invalidates_the_live_graph(
+    temp_repo: Path, error: Exception, invalidated: bool
+) -> None:
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    registry = MCPToolsRegistry(
+        project_root=str(temp_repo), ingestor=MagicMock(), cypher_gen=MagicMock()
+    )
+    updater = MagicMock()
+    updater.project_name = "proj"
+    updater.reingest.side_effect = error
+    registry._live_updater = updater
+    registry._graph_incomplete = False
+    note = registry._delta_after_write(["pkg/app.py"])
+    assert "memgraph" in note or "bad path" in note
+    # A failure after the re-ingest began may have left a partial graph, so
+    # the updater is dropped and the graph marked incomplete; a validation
+    # error raised before any change leaves both as they were.
+    assert (registry._live_updater is None) is invalidated
+    assert registry._graph_incomplete is invalidated
+
+
 def test_check_reports_the_delta_since_a_git_ref(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -486,6 +514,127 @@ def test_check_reports_the_delta_since_a_git_ref(
     assert delta["dangling_callers"][0]["target"] == _qn("pkg.util.helper")
     assert _qn("main.main") in delta["symbols"]["removed"]
     assert delta["symbols"]["added"] == [_qn("pkg.new.fresh")]
+
+
+def test_check_rejects_a_dash_prefixed_base(temp_repo: Path) -> None:
+    from codebase_rag.structural_check import CheckError, changed_since
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    _write(root, "pkg/util.py", FIXTURE["pkg/util.py"] + "\n")
+    # `--cached` would be read by git as its own option and compare the
+    # index, hiding the working-tree edit.
+    with pytest.raises(CheckError):
+        changed_since(root, "--cached")
+    assert changed_since(root, "HEAD") == (["pkg/util.py"], [])
+
+
+def test_check_reads_paths_with_whitespace_in_their_names(temp_repo: Path) -> None:
+    import subprocess
+
+    from codebase_rag.structural_check import changed_since
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    # Git C-quotes such names in its default output; `-z` keeps them raw.
+    _write(root, "pkg/odd\tname.py", "def odd():\n    return 1\n")
+    assert changed_since(root, "HEAD") == (["pkg/odd\tname.py"], [])
+
+
+def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> None:
+    from codebase_rag.structural_check import indexed_scope
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    # No stamp yet: only `.cgrignore` (here, nothing) defines the scope.
+    assert indexed_scope(root, PROJECT) == (None, None)
+    store = _StatefulIngestor()
+    parsers, queries = __import__(
+        "codebase_rag.parser_loader", fromlist=["load_parsers"]
+    ).load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+        exclude_paths=frozenset({"generated_src"}),
+        unignore_paths=frozenset({"build"}),
+    ).run(force=True)
+    # The completed run stamped its CLI-only scope; the check reads it back.
+    assert indexed_scope(root, PROJECT) == (
+        frozenset({"generated_src"}),
+        frozenset({"build"}),
+    )
+    # Another project indexed from the same tree overwrites the stamp; the
+    # check for the first project refuses rather than borrowing that scope.
+    GraphUpdater(
+        ingestor=_StatefulIngestor(),
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="other_project",
+    ).run(force=True)
+    from codebase_rag.structural_check import CheckError
+
+    with pytest.raises(CheckError):
+        indexed_scope(root, PROJECT)
+    assert indexed_scope(root, "other_project") == (None, None)
+
+
+def test_check_keeps_excluded_files_out_of_the_graph(
+    temp_repo: Path,
+) -> None:
+    import subprocess
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_check import run_check
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    _write(root, "generated_src/thing.py", "def vendored():\n    return 1\n")
+    parsers, queries = load_parsers()
+    delta = run_check(
+        root,
+        "HEAD",
+        PROJECT,
+        store,
+        parsers,
+        queries,
+        exclude_paths=frozenset({"generated_src"}),
+    )
+    # The excluded file differs from the base but never enters the graph.
+    assert _qn("generated_src.thing.vendored") not in delta["symbols"]["added"]
+    assert all("generated_src" not in p for p in delta["reparsed"])
 
 
 def test_check_works_when_the_project_is_below_the_git_toplevel(

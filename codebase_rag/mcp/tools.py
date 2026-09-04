@@ -1125,8 +1125,18 @@ class MCPToolsRegistry:
                 lambda: updater.reingest(changed, deleted=deleted),
                 repo_root=root,
             )
-        except Exception as e:
+        except (ValueError, ReingestAborted) as e:
+            # Raised before any graph change (validation, an abort while the
+            # paths are split): the graph is whole and the updater reusable.
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        except Exception as e:
+            # The re-ingest may have deleted a subtree it never rebuilt: the
+            # same invalidation `_reingest_sync` applies, so no later query
+            # or write reuses a partial graph (issue #1525).
+            logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            self._live_updater = None
+            self._graph_incomplete = True
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         return (
             "\n\n"

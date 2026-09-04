@@ -1124,7 +1124,7 @@ def check_command(
         False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
     ),
 ) -> None:
-    from .structural_check import CheckError, run_check
+    from .structural_check import CheckError, indexed_scope, run_check
     from .structural_delta import has_findings
     from .utils.path_utils import derive_project_name
 
@@ -1136,7 +1136,17 @@ def check_command(
             typer.echo(cs.CHECK_NOT_INDEXED.format(project=name), err=True)
             raise typer.Exit(code=1)
         try:
-            delta = run_check(root, base, name, ingestor, parsers, queries)
+            exclude_paths, unignore_paths = indexed_scope(root, name)
+            delta = run_check(
+                root,
+                base,
+                name,
+                ingestor,
+                parsers,
+                queries,
+                exclude_paths=exclude_paths,
+                unignore_paths=unignore_paths,
+            )
         except CheckError as error:
             typer.echo(str(error), err=True)
             raise typer.Exit(code=1) from error
