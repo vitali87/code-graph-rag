@@ -195,8 +195,8 @@ def _dispatch_literals(
     # callable whose literals belong to that callable, not to this edge.
     stack: list[tuple[Node, bool]] = [(root, False)]
     direct: list[Node] = []
-    # name -> the literal whose lookup bound it (`fn = table["name"]`).
-    bound_literal: dict[str, Node] = {}
+    # name -> the literals whose lookups bound it (`fn = table["name"]`).
+    bound_literal: dict[str, list[Node]] = {}
     # Computed names: bound from a non-literal lookup, in the body or in an
     # enclosing scope; a body assignment of any other kind masks an outer one.
     stored_outer: set[str] = set()
@@ -236,14 +236,15 @@ def _dispatch_literals(
             if _is_invoked(lookup):
                 direct.append(node)
             elif (bound := _bound_name(lookup)) is not None:
-                # The traversal is not in source order; the binding that
-                # supplied the called value is the LAST one in the source,
-                # so a later assignment wins over an earlier one.
-                previous = bound_literal.get(bound)
-                if previous is None or node.start_byte > previous.start_byte:
-                    bound_literal[bound] = node
+                # Which of several bindings supplied the value at the call
+                # (order, branches, loops) is data flow the scan does not
+                # do; a name bound from a literal lookup MORE than once is
+                # therefore unlocatable rather than guessed at.
+                bound_literal.setdefault(bound, []).append(node)
         stack.extend((child, inside_caller) for child in node.children)
     computed = stored_inner | (stored_outer - rebound_inner)
     if computed & called:
         return None
-    return direct + [lit for name, lit in bound_literal.items() if name in called]
+    if any(name in called and len(lits) > 1 for name, lits in bound_literal.items()):
+        return None
+    return direct + [lits[0] for name, lits in bound_literal.items() if name in called]

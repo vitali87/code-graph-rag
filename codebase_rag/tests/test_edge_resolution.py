@@ -508,19 +508,24 @@ def test_only_an_invoked_lookup_is_a_dispatch_site(tmp_path: Path) -> None:
     assert locate_dispatch_literal(tmp_path, "direct.py", 1, 2, "target") is not None
 
 
-def test_a_rebound_name_points_at_its_latest_lookup(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Rebound before the call: which binding supplied the value is
+        # order-dependent data flow.
+        '    fn = table["target"]\n    fn = other["target"]\n    return fn()\n',
+        # Rebound after the call: the later binding did not supply it.
+        '    fn = table["target"]\n    fn()\n    fn = other["target"]\n    return 0\n',
+        # Bound in exclusive branches: either could have.
+        '    if table:\n        fn = table["target"]\n    else:\n        fn = other["target"]\n    return fn()\n',
+    ],
+)
+def test_a_name_bound_more_than_once_is_unlocatable(tmp_path: Path, body: str) -> None:
     from codebase_rag.trace.dispatch_site import locate_dispatch_literal
 
-    # `fn` is bound twice from literal lookups; the call after both used
-    # the second binding, so that lookup is the site.
-    (tmp_path / "app.py").write_text(
-        "def run(table, other):\n"
-        '    fn = table["target"]\n'
-        '    fn = other["target"]\n'
-        "    return fn()\n"
-    )
-    site = locate_dispatch_literal(tmp_path, "app.py", 1, 4, "target")
-    assert site is not None and site[cs.KEY_LINE] == 3
+    (tmp_path / "app.py").write_text("def run(table, other):\n" + body)
+    lines = body.count("\n") + 1
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, lines, "target") is None
 
 
 def test_a_local_rebinding_masks_an_enclosing_computed_name(tmp_path: Path) -> None:
