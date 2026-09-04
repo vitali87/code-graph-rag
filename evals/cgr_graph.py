@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
@@ -63,6 +64,27 @@ _DEFINES_RELS = frozenset(
         cs.RelationshipType.DEFINES_METHOD.value,
     }
 )
+# Labels the C# partial-join and Go col-keyed rehydration queries select on.
+_CSHARP_TYPE_LABELS = frozenset(
+    {
+        cs.NodeLabel.CLASS.value,
+        cs.NodeLabel.INTERFACE.value,
+        cs.NodeLabel.ENUM.value,
+    }
+)
+_GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
+    cs.NodeLabel.TYPE.value,
+    cs.NodeLabel.UNION.value,
+}
+# Queries this double deliberately does NOT model, so `case _` can raise for
+# everything else without pretending these are graph reads (issue #1716).
+#
+# `CYPHER_QUERY_EMBEDDINGS` drives Pass 4, which reads function bodies and
+# writes vectors to Qdrant. The double models the graph, not the vector store,
+# and its caller already treats an empty result as "no functions to embed" and
+# returns -- verified at graph_updater's embeddings pass, not assumed. An
+# emulation would invite the double into work it cannot represent.
+_NOT_MODELLED: frozenset[str] = frozenset({cs.CYPHER_QUERY_EMBEDDINGS})
 _MODULE_QN_LABELS = frozenset(
     {
         _MODULE_LABEL,
@@ -106,6 +128,10 @@ _AFFECTED_CALLER_RELS = frozenset(
         cs.RelationshipType.INHERITS.value,
         cs.RelationshipType.IMPLEMENTS.value,
     }
+)
+# Labels CYPHER_PROJECT_ROUTE_HANDLERS selects on.
+_ROUTE_HANDLER_LABELS = frozenset(
+    {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
 )
 _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
@@ -323,6 +349,46 @@ class _StatefulIngestor:
                     }
                     rows.append(row)
                 return rows
+            case gu.CYPHER_PROJECT_MODULES | gu.CYPHER_PROJECT_PY_MODULES:
+                # Route rehydration. These MUST be emulated rather than left to
+                # the refusal below: their readers wrap the call in
+                # `except Exception: return []`, so a raise is caught and
+                # turned straight back into an empty result -- the fail-closed
+                # default defeated one layer down, invisibly (raised on #1716).
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                raw_exts = params.get("extensions") if params else None
+                # CYPHER_PROJECT_MODULES filters on a passed extension list;
+                # the PY variant hardcodes `.py` in its Cypher.
+                suffixes = (
+                    tuple(e for e in raw_exts if isinstance(e, str))
+                    if isinstance(raw_exts, list)
+                    else (".py",)
+                )
+                return [
+                    {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path}
+                    for (label, _uid), props in self.nodes.items()
+                    if label == _MODULE_LABEL
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                    and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(suffixes)
+                ]
+            case gu.CYPHER_PROJECT_ROUTE_HANDLERS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return [
+                    {
+                        cs.KEY_LABELS: [label],
+                        cs.KEY_QUALIFIED_NAME: qn,
+                        "decorators": [d for d in decorators if isinstance(d, str)],
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label in _ROUTE_HANDLER_LABELS
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                    and isinstance(decorators := props.get("decorators"), list)
+                    and decorators
+                ]
             case cs.CYPHER_UNRESOLVED_IMPORTER_PATHS:
                 # Importers whose IMPORTS edge points at an UNRESOLVED target
                 # named after one of the given modules (issue #1682). Emulated
@@ -390,8 +456,132 @@ class _StatefulIngestor:
                         }
                     )
                 return waiter_rows
+            case cs.CYPHER_COUNT_PROJECT_MODULES:
+                # A COUNT query yields exactly ONE row. Falling through to []
+                # was the sharpest of the gaps: its caller reads `rows[0]
+                # ["count"]`, so an empty list raises IndexError, the handler
+                # returns, and the orphaned-hash-cache check never runs at all
+                # (issue #1716).
+                project_name = (
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                )
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                total = sum(
+                    1
+                    for (label, _uid), props in self.nodes.items()
+                    if label == _MODULE_LABEL
+                    and (
+                        (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                        == project_name
+                        or (prefix and qn.startswith(prefix))
+                    )
+                )
+                return [{cs.KEY_COUNT: total}]
+            case cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: qn,
+                        cs.KEY_PATH: path,
+                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label in _CSHARP_TYPE_LABELS
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                    and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(
+                        cs.EXT_CS
+                    )
+                ]
+            case cs.CYPHER_ALL_GO_TYPE_LOCATIONS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return [
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_QUALIFIED_NAME: qn,
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                        cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                        cs.KEY_START_COL: _int(props.get(cs.KEY_START_COL)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label in _GO_TYPE_LABELS
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                ]
+            case cs.CYPHER_ALL_FUNCTION_LOCATIONS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return self._definition_location_rows(
+                    prefix, cs.NodeLabel.FUNCTION.value
+                )
+            case cs.CYPHER_ALL_METHOD_LOCATIONS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return self._definition_location_rows(prefix, cs.NodeLabel.METHOD.value)
             case _:
-                return []
+                if query in _NOT_MODELLED:
+                    return []
+                # Fail CLOSED. An unemulated query answered [] is
+                # indistinguishable from a genuinely empty result, so a test
+                # can pass because a lookup silently returned nothing -- which
+                # is how #1682's waiting-importer path went uncovered for a
+                # whole release (issue #1716). A new query must be emulated
+                # here, or named in _NOT_MODELLED with a reason.
+                raise AssertionError(
+                    f"{type(self).__name__} does not emulate this query, and it "
+                    f"is not in _NOT_MODELLED. Add a case or a reason:\n{query}"
+                )
+
+    def _definition_location_rows(
+        self, prefix: str | None, target_label: str
+    ) -> list[ResultRow]:
+        """Rows for the Function/Method location rehydration queries.
+
+        Both walk Module -[:DEFINES]-> ... to the definition; the Method form
+        has one more hop through its container and returns `container_qn`.
+        Shared so the two cannot drift apart in what counts as "in project".
+        """
+        if not prefix:
+            return []
+        rows: list[ResultRow] = []
+        for from_label, from_val, rel, to_label, to_val in self.edges:
+            if rel != cs.RelationshipType.DEFINES.value:
+                continue
+            if from_label != _MODULE_LABEL:
+                continue
+            module_qn = _text(from_val) or ""
+            if not module_qn.startswith(prefix):
+                continue
+            if target_label == cs.NodeLabel.FUNCTION.value:
+                if to_label != target_label:
+                    continue
+                pairs = [(None, (to_label, to_val))]
+            else:
+                # Module -DEFINES-> container -DEFINES_METHOD-> Method.
+                pairs = [
+                    (to_val, (m_label, m_val))
+                    for (c_label, c_val, m_rel, m_label, m_val) in self.edges
+                    if m_rel == cs.RelationshipType.DEFINES_METHOD.value
+                    and (c_label, c_val) == (to_label, to_val)
+                    and m_label == target_label
+                ]
+            for container_qn, node_id in pairs:
+                props = self.nodes.get(node_id)
+                if props is None:
+                    continue
+                row: ResultRow = {
+                    cs.KEY_LABEL: node_id[0],
+                    cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                    cs.KEY_MODULE_QN: module_qn,
+                    cs.KEY_START_LINE: _int(props.get(cs.KEY_START_LINE)),
+                    cs.KEY_START_COL: _int(props.get(cs.KEY_START_COL)),
+                    cs.KEY_NAME_START_LINE: _int(props.get(cs.KEY_NAME_START_LINE)),
+                    cs.KEY_NAME_START_COL: _int(props.get(cs.KEY_NAME_START_COL)),
+                }
+                if container_qn is not None:
+                    row[cs.KEY_CONTAINER_QN] = _text(container_qn)
+                rows.append(row)
+        return rows
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
