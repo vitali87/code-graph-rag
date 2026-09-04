@@ -555,6 +555,18 @@ RENAME_AMBIGUOUS = (
     "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
 )
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_SITELESS = (
+    "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
+    "so the rename would leave them under the old name"
+)
+RENAME_WRONG_ROOT = (
+    "Project {project} was not indexed from this server's repository; "
+    "rename it from the MCP server rooted at its source tree"
+)
+RENAME_STRUCTURAL_UNLOCATABLE = (
+    "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
+    "carry no rewrite site, so the rename would leave them pointing at the old name"
+)
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 MSG_SURGICAL_FAILED = (
