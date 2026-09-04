@@ -236,7 +236,12 @@ def _dispatch_literals(
             if _is_invoked(lookup):
                 direct.append(node)
             elif (bound := _bound_name(lookup)) is not None:
-                bound_literal[bound] = node
+                # The traversal is not in source order; the binding that
+                # supplied the called value is the LAST one in the source,
+                # so a later assignment wins over an earlier one.
+                previous = bound_literal.get(bound)
+                if previous is None or node.start_byte > previous.start_byte:
+                    bound_literal[bound] = node
         stack.extend((child, inside_caller) for child in node.children)
     computed = stored_inner | (stored_outer - rebound_inner)
     if computed & called:
