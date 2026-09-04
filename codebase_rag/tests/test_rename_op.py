@@ -41,6 +41,7 @@ class RecordedGraph:
                 (str(c.args[0][2]), str(c.args[1]), str(c.args[2][2]), dict(props))
             )
         self.project = project
+        self.root_path: str | None = None
 
     def _node_row(self, qn: str) -> ResultRow:
         n = self.nodes[qn]
@@ -61,14 +62,20 @@ class RecordedGraph:
     ) -> list[ResultRow]:
         p = params or {}
         qn = str(p.get(cs.KEY_QN, ""))
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            return [{cs.KEY_ROOT_PATH: self.root_path}] if self.root_path else []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
-        if query in (cq.CYPHER_GRAPH_CALLERS, cq.CYPHER_GRAPH_REFERENCES):
-            rels = (
-                {"CALLS"}
-                if query == cq.CYPHER_GRAPH_CALLERS
-                else {"REFERENCES", "INSTANTIATES"}
-            )
+        if query in (
+            cq.CYPHER_GRAPH_CALLERS,
+            cq.CYPHER_GRAPH_REFERENCES,
+            cq.CYPHER_GRAPH_TYPE_EDGES,
+        ):
+            rels = {
+                cq.CYPHER_GRAPH_CALLERS: {"CALLS"},
+                cq.CYPHER_GRAPH_REFERENCES: {"REFERENCES", "INSTANTIATES"},
+                cq.CYPHER_GRAPH_TYPE_EDGES: {"INHERITS", "ACCEPTS", "RETURNS"},
+            }[query]
             out: list[ResultRow] = []
             for src, rel, dst, props in self.edges:
                 if dst != qn or rel not in rels or src not in self.nodes:
@@ -144,7 +151,9 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 def _index(root: Path, mock: MagicMock) -> RecordedGraph:
     updater = create_and_run_updater(root, mock)
-    return RecordedGraph(mock, updater.project_name)
+    graph = RecordedGraph(mock, updater.project_name)
+    graph.root_path = str(root.resolve())
+    return graph
 
 
 PY_FILES = {
@@ -244,7 +253,6 @@ def test_python_constant_rename(py_repo: tuple[Path, RecordedGraph]) -> None:
         if "No definition" in str(refused):
             pytest.skip("module constants are not graph definitions in this build")
         raise
-        pytest.skip("module constants are not graph definitions in this build")
     assert report.applied, report.message
     assert "return a + b + CAP" in (root / "pkg" / "util.py").read_text()
     assert "+ CAP\n" in (root / "pkg" / "app.py").read_text()
@@ -492,6 +500,223 @@ def test_rust_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
 
 
 # --- MCP tool and CLI surface ------------------------------------------------------
+
+
+def test_method_rename_leaves_a_same_named_module_symbol_alone(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `Store.get` and the module-level `get` share a name; only the latter
+    # is imported, so the import line and `__all__` must not change.
+    _write(
+        temp_repo, "pkg/__init__.py", 'from pkg.util import get\n\n__all__ = ["get"]\n'
+    )
+    _write(
+        temp_repo,
+        "pkg/util.py",
+        "def get():\n    return 1\n\n\nclass Store:\n    def get(self):\n        return 2\n",
+    )
+    _write(
+        temp_repo,
+        "pkg/app.py",
+        "from pkg.util import get, Store\n\n\ndef run():\n    return get() + Store().get()\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.Store.get",
+        "fetch",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert (temp_repo / "pkg" / "__init__.py").read_text() == (
+        'from pkg.util import get\n\n__all__ = ["get"]\n'
+    )
+    app = (temp_repo / "pkg" / "app.py").read_text()
+    assert "from pkg.util import get, Store" in app
+    assert "return get() + Store().fetch()" in app
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        # The keyword NAME is the callee's parameter, untouched.
+        ("helper(helper=2)", "assist(helper=2)"),
+        # The argument VALUE references the function itself, so it is a
+        # reference site and is renamed along with the callee.
+        ("helper(other=helper)", "assist(other=assist)"),
+        # A nested call of the same function: the outer callee is the site,
+        # and the inner call is its own site, so both are renamed.
+        ("helper(helper(1))", "assist(assist(1))"),
+    ],
+)
+def test_callee_is_renamed_when_an_argument_shares_its_name(
+    temp_repo: Path, mock_ingestor: MagicMock, call: str, expected: str
+) -> None:
+    _write(temp_repo, "pkg/__init__.py", "")
+    _write(
+        temp_repo,
+        "pkg/util.py",
+        "def helper(helper=1, other=None):\n    return helper\n",
+    )
+    _write(
+        temp_repo,
+        "pkg/app.py",
+        f"from pkg.util import helper\n\n\ndef run():\n    return {call}\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    # The callee token, not the keyword or argument that spells the same name.
+    assert f"return {expected}" in (temp_repo / "pkg" / "app.py").read_text()
+
+
+def test_a_graph_known_site_in_a_missing_file_refuses_the_rename(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = py_repo
+    # The graph still knows pkg/app.py's call sites; the file is gone.
+    (root / "pkg" / "app.py").unlink()
+    before = (root / "pkg" / "util.py").read_text()
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.util.helper",
+            "assist",
+        )
+    assert "no rewrite location" in str(refused.value)
+    assert any("missing file" in entry for entry in refused.value.unlocatable)
+    assert (root / "pkg" / "util.py").read_text() == before
+
+
+def test_a_graph_known_call_without_a_site_refuses_the_rename(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = py_repo
+    # A legacy CALLS edge with a path but no coordinates and no resolution:
+    # the graph knows the caller, the planner cannot rewrite it.
+    graph.edges.append(
+        (
+            f"{graph.project}.pkg.app.run",
+            "CALLS",
+            f"{graph.project}.pkg.util.helper",
+            {},
+        )
+    )
+    before = (root / "pkg" / "util.py").read_text()
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.util.helper",
+            "assist",
+        )
+    assert "no rewrite location" in str(refused.value)
+    assert (root / "pkg" / "util.py").read_text() == before
+
+
+@pytest.mark.asyncio
+async def test_mcp_rename_refuses_a_project_indexed_elsewhere(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    root, graph = py_repo
+    ingestor = MagicMock()
+
+    def fetch_all(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            return [{cs.KEY_ROOT_PATH: "/elsewhere/other-checkout"}]
+        return graph.fetch_all(query, params)
+
+    ingestor.fetch_all = fetch_all
+    ingestor.list_projects.return_value = [graph.project]
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    before = (root / "pkg" / "util.py").read_text()
+    payload = await registry.rename(
+        qualified_name=f"{graph.project}.pkg.util.helper",
+        new_name="assist",
+        project=graph.project,
+    )
+    assert isinstance(payload, dict) and "error" in payload, payload
+    assert (root / "pkg" / "util.py").read_text() == before
+
+
+def test_class_rename_refuses_when_a_base_or_annotation_edge_has_no_site(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = py_repo
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.shapes.Base",
+            "Shape",
+        )
+    assert "structural edge" in str(refused.value)
+    assert any(s.kind == "unlocatable" for s in refused.value.ambiguous)
+    # Nothing was written: `class Circle(Base)` still binds.
+    assert "class Circle(Base):" in (root / "pkg" / "shapes.py").read_text()
+
+
+def test_dry_run_returns_the_diff_and_lists_import_sites(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = py_repo
+    before = {p: (root / p).read_bytes() for p in PY_FILES}
+    report = rename(
+        root,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+        dry_run=True,
+    )
+    assert not report.applied
+    assert "-def helper(a,  b):" in report.diff
+    assert "+def assist(a,  b):" in report.diff
+    assert "pkg/__init__.py" in report.files
+    assert {s.kind for s in report.sites} >= {"definition", "call", "import"}
+    assert {p: (root / p).read_bytes() for p in PY_FILES} == before
+
+
+@pytest.mark.asyncio
+async def test_mcp_rename_reingests_the_written_files(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    root, graph = py_repo
+    (root / "tests" / "__init__.py").write_bytes(b"")
+    ingestor = MagicMock()
+    ingestor.fetch_all = graph.fetch_all
+    ingestor.list_projects.return_value = [graph.project]
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    registry._delta_after_write = MagicMock(return_value="delta text")
+    payload = await registry.rename(
+        qualified_name=f"{graph.project}.pkg.util.helper",
+        new_name="assist",
+        project=graph.project,
+    )
+    assert isinstance(payload, dict) and payload["applied"], payload
+    (written,) = registry._delta_after_write.call_args.args
+    assert set(written) >= {"pkg/util.py", "pkg/app.py", "pkg/__init__.py"}
+    assert payload[cs.KEY_STRUCTURAL_DELTA] == "delta text"
 
 
 @pytest.mark.asyncio

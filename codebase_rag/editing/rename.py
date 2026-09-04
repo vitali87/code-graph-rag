@@ -54,6 +54,10 @@ _AMBIGUOUS = frozenset(
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 
+_STRUCTURAL = "structural"
+_SITELESS = "siteless"
+
+
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
 
@@ -150,17 +154,66 @@ def _name_token(
     return None
 
 
-def _last_identifier(
-    source: bytes, line: int, col: int, end_line: int, end_col: int, name: str
+def _callee_span(
+    source: bytes, language: cs.SupportedLanguage | None, line: int, col: int
 ) -> tuple[int, int] | None:
-    """(line, col) of the LAST `name` token inside a site span.
+    """Byte span of the callee expression of the OUTERMOST call at (line, col).
 
-    A call site spans `pkg.helper(1)` or `obj.method(x)`; the token to
-    rename is the rightmost occurrence of the name before the arguments.
+    `helper(helper(1))` and `helper(2).upper()` both start at the same point
+    as an inner call; the site's call is the outermost one, and its callee
+    is everything before its own argument list.
+    """
+    if language is None:
+        return None
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return None
+    root = parser.parse(source).root_node
+    best: Node | None = None
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.start_point == (line - 1, col):
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            if func is not None and (best is None or node.end_byte > best.end_byte):
+                best = node
+        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+            stack.extend(node.children)
+    if best is None:
+        return None
+    func = best.child_by_field_name(cs.FIELD_FUNCTION)
+    assert func is not None
+    return func.start_byte, func.end_byte
+
+
+def _last_identifier(
+    source: bytes,
+    line: int,
+    col: int,
+    end_line: int,
+    end_col: int,
+    name: str,
+    language: cs.SupportedLanguage | None = None,
+) -> tuple[int, int] | None:
+    """(line, col) of the token to rename inside a site span.
+
+    For a call site the token is the rightmost `name` inside the OUTERMOST
+    call's callee expression (`pkg.helper`, `Circle().area`), never inside
+    its arguments; for any other site it is the rightmost `name` in the span.
     """
     start = line_col_to_byte(source, line, col)
     end = line_col_to_byte(source, end_line, end_col)
+    callee = _callee_span(source, language, line, col)
+    if callee is not None and callee[0] == start:
+        start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
+    if callee is None:
+        # No grammar: cut at the last opening parenthesis so the arguments
+        # of a plain call are excluded (`helper(helper=2)`).
+        paren = text.rfind("(")
+        if paren >= 0:
+            text = text[:paren]
     matches = list(re.finditer(_IDENTIFIER_RE % re.escape(name), text))
     if not matches:
         return None
@@ -227,10 +280,30 @@ class Renamer:
         # Calls, references and constructions.
         for row in graph_query.callers(self.fetch_all, self.project, qn):
             self._add_site(sites, unlocatable, "call", row, old_name, patcher)
-        for row in self.fetch_all(
-            cq.CYPHER_GRAPH_REFERENCES,
-            {cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}", cs.KEY_QN: qn},
-        ):
+        params = {
+            cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+            cs.KEY_QN: qn,
+        }
+        for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
+            self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
+        # A base-class list or an annotation names the symbol without a
+        # call; an edge without a site cannot be rewritten and must refuse,
+        # or the applied rename would leave `class Circle(Base)` dangling.
+        for row in self.fetch_all(cq.CYPHER_GRAPH_TYPE_EDGES, params):
+            if not isinstance(row.get("path"), str) or not isinstance(
+                row.get("line"), int
+            ):
+                sites.append(
+                    RenameSite(
+                        "unlocatable",
+                        str(row.get("path") or ""),
+                        0,
+                        0,
+                        str(row.get("qualified_name") or ""),
+                        _STRUCTURAL,
+                    )
+                )
+                continue
             self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
         return sites, unlocatable, old_name, definition["label"]
 
@@ -259,28 +332,31 @@ class Renamer:
                     owner=owner, resolution=resolution_text or "unknown"
                 )
             )
-            if resolution_text in _AMBIGUOUS:
-                # A trace-only or guessed edge with no site: it cannot be
-                # rewritten, so it must refuse like any other guess.
-                sites.append(
-                    RenameSite(
-                        "unlocatable",
-                        path if isinstance(path, str) else "",
-                        0,
-                        0,
-                        owner,
-                        resolution_text,
-                    )
+            # A graph-known edge with no site cannot be rewritten, whatever
+            # bound it: applying anyway would leave that caller under the
+            # old name, so it blocks like a guess does.
+            sites.append(
+                RenameSite(
+                    "unlocatable",
+                    path if isinstance(path, str) else "",
+                    0,
+                    0,
+                    owner,
+                    resolution_text or _SITELESS,
                 )
+            )
             return
         try:
             source = patcher.source(path)
         except PatcherError:
+            # The graph knows this occurrence but its file cannot be read:
+            # renaming around it would leave it under the old name.
             unlocatable.append(
                 cs.RENAME_UNLOCATABLE_SITE.format(
                     owner=owner, resolution="missing file"
                 )
             )
+            sites.append(RenameSite("unlocatable", path, line, col, owner, _SITELESS))
             return
         token = _last_identifier(
             source,
@@ -289,6 +365,7 @@ class Renamer:
             end_line if isinstance(end_line, int) else line,
             end_col if isinstance(end_col, int) else col + len(old_name),
             old_name,
+            get_language_for_extension(Path(path).suffix),
         )
         if token is None:
             # The site spells the symbol under an alias (`h(1, 2)` for
@@ -300,6 +377,11 @@ class Renamer:
     def _import_sites(self, qn: str, old_name: str) -> list[tuple[ImportSite, str]]:
         module_qn, _path = self._module_of(qn)
         out: list[tuple[ImportSite, str]] = []
+        if qn != f"{module_qn}{cs.SEPARATOR_DOT}{old_name}":
+            # Only a module-level member is imported by name; a method or a
+            # nested definition shares its name with nothing an importer
+            # can bind, so `from pkg.util import get` stays as it is.
+            return out
         for row in graph_query.importers(self.fetch_all, self.project, module_qn):
             if (
                 row["imported_name"] != old_name
@@ -365,6 +447,24 @@ class Renamer:
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
+        structural = [s for s in sites if s.resolution == _STRUCTURAL]
+        if structural:
+            raise RenameRefused(
+                cs.RENAME_STRUCTURAL_UNLOCATABLE.format(qn=qn, count=len(structural)),
+                structural,
+                unlocatable,
+            )
+        siteless = [
+            s
+            for s in sites
+            if s.kind == "unlocatable" and s.resolution not in _AMBIGUOUS
+        ]
+        if siteless:
+            raise RenameRefused(
+                cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
+                siteless,
+                unlocatable,
+            )
         ambiguous = [s for s in sites if s.resolution in _AMBIGUOUS]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
@@ -372,13 +472,27 @@ class Renamer:
                 ambiguous,
                 unlocatable,
             )
+        for member in hierarchy:
+            for site, module in self._import_sites(member, old_name):
+                sites.append(
+                    RenameSite(
+                        "import",
+                        site.path,
+                        site.line,
+                        site.col,
+                        module,
+                        cs.EdgeResolution.EXACT,
+                    )
+                )
         return RenameReport(
             qualified_name=qn,
             old_name=old_name,
             new_name=new_name,
             applied=False,
             transaction_id="",
-            files=tuple(sorted({s.path for s in sites})),
+            files=tuple(
+                sorted({s.path for s in sites} | self._all_paths(hierarchy, old_name))
+            ),
             sites=tuple(sites),
             ambiguous=tuple(ambiguous),
             unlocatable=tuple(unlocatable),
@@ -388,17 +502,34 @@ class Renamer:
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )
 
-    def apply(
-        self, qn: str, new_name: str, allow_heuristic: bool = False
-    ) -> RenameReport:
-        """Plan, patch, verify and commit; the tree is untouched on failure."""
-        report = self.plan(qn, new_name, allow_heuristic)
+    def _all_paths(self, hierarchy: list[str], old_name: str) -> set[str]:
+        """Python modules whose `__all__` may list the name: the defining
+        module of each module-level member, plus the modules importing it."""
+        paths: set[str] = set()
+        for member in hierarchy:
+            module_qn, module_path = self._module_of(member)
+            if member != f"{module_qn}{cs.SEPARATOR_DOT}{old_name}":
+                continue
+            if module_path:
+                paths.add(module_path)
+            paths.update(site.path for site, _m in self._import_sites(member, old_name))
+        return {
+            path
+            for path in paths
+            if get_language_for_extension(Path(path).suffix)
+            == cs.SupportedLanguage.PYTHON
+        }
+
+    def _stage(
+        self, report: RenameReport, new_name: str
+    ) -> tuple[EditTransaction, dict[str, object], list[str]]:
+        """Patch every site into a transaction; nothing touches the tree."""
         old_name = report.old_name
         patcher = Patcher(self.repo_root)
         done: set[tuple[str, int, int]] = set()
         for site in report.sites:
             key = (site.path, site.line, site.col)
-            if key in done or site.kind == "unlocatable":
+            if key in done or site.kind in ("unlocatable", "import"):
                 continue
             done.add(key)
             patcher.replace_identifier_at(
@@ -417,21 +548,38 @@ class Renamer:
             ),
         )
         # `__all__` entries live in the defining module and in any Python
-        # module re-exporting the name (a package `__init__`).
-        all_paths = {site.path for site in import_sites}
-        for member in report.hierarchy:
-            _module_qn, module_path = self._module_of(member)
-            if module_path:
-                all_paths.add(module_path)
-        for path in sorted(all_paths):
-            if (
-                get_language_for_extension(Path(path).suffix)
-                == cs.SupportedLanguage.PYTHON
-            ):
-                rewriter.rename_in_all(path, old_name, new_name)
+        # module re-exporting the name (a package `__init__`); only a
+        # module-level member can be listed there.
+        for path in sorted(self._all_paths(list(report.hierarchy), old_name)):
+            rewriter.rename_in_all(path, old_name, new_name)
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
         broken = [key for key, result in results.items() if result.parses is False]
+        return tx, dict(results), broken
+
+    def preview(
+        self, qn: str, new_name: str, allow_heuristic: bool = False
+    ) -> RenameReport:
+        """Plan and stage, return the diff, and leave the tree untouched."""
+        report = self.plan(qn, new_name, allow_heuristic)
+        tx, results, broken = self._stage(report, new_name)
+        try:
+            diff = tx.diff()
+        finally:
+            tx.rollback()
+        message = (
+            cs.RENAME_PARSE_FAILED.format(files=", ".join(broken))
+            if broken
+            else report.message
+        )
+        return report._replace(files=tuple(sorted(results)), diff=diff, message=message)
+
+    def apply(
+        self, qn: str, new_name: str, allow_heuristic: bool = False
+    ) -> RenameReport:
+        """Plan, patch, verify and commit; the tree is untouched on failure."""
+        report = self.plan(qn, new_name, allow_heuristic)
+        tx, results, broken = self._stage(report, new_name)
         if broken:
             tx.rollback()
             return report._replace(
@@ -470,7 +618,7 @@ def rename(
         repo_root, fetch_all, project_name, verify=verify, after_apply=after_apply
     )
     if dry_run:
-        return renamer.plan(qualified_name, new_name, allow_heuristic)
+        return renamer.preview(qualified_name, new_name, allow_heuristic)
     return renamer.apply(qualified_name, new_name, allow_heuristic)
 
 

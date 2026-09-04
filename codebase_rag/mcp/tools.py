@@ -1393,15 +1393,29 @@ class MCPToolsRegistry:
     ) -> object:
         from codebase_rag.editing.rename import RenameRefused, rename, sites_for
 
+        # The selected project's relative paths are meaningful only under
+        # the root it was indexed from; another project's paths must not be
+        # edited beneath this server's repository (issue #1542).
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
         try:
+            delta: list[str] = []
             report = rename(
-                Path(self.project_root),
+                root,
                 self.ingestor.fetch_all,
                 project_name,
                 qualified_name,
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
+                # The graph must follow the tree, as after every other write
+                # tool: re-ingest the touched files and report the delta.
+                after_apply=lambda files: delta.append(self._delta_after_write(files)),
             )
         except RenameRefused as refused:
             return {
@@ -1412,6 +1426,8 @@ class MCPToolsRegistry:
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+        if delta and delta[0]:
+            payload[cs.KEY_STRUCTURAL_DELTA] = delta[0]
         return payload
 
     async def query_code_graph(
