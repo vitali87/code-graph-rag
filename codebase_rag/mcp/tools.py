@@ -486,6 +486,7 @@ class MCPToolsRegistry:
                 self.tests_reaching,
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
+            cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -2562,6 +2563,113 @@ class MCPToolsRegistry:
             handler=self.rename,
             returns_json=True,
         )
+
+    def _change_signature_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.CHANGE_SIGNATURE,
+            description=td.MCP_TOOLS[cs.MCPToolName.CHANGE_SIGNATURE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.NEW_PARAMS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.ARRAY,
+                        description=td.MCP_PARAM_NEW_PARAMS,
+                        items={cs.MCPSchemaField.TYPE: cs.MCPSchemaType.STRING},
+                    ),
+                    cs.MCPParamName.ALLOW_HEURISTIC: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_ALLOW_HEURISTIC
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[cs.MCPParamName.QUALIFIED_NAME, cs.MCPParamName.NEW_PARAMS],
+            ),
+            handler=self.change_signature,
+            returns_json=True,
+        )
+
+    async def change_signature(
+        self,
+        qualified_name: str,
+        new_params: list[str],
+        allow_heuristic: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        # Same lock discipline as rename: the read, the write and the
+        # contract's re-ingest see one generation of the graph.
+        return await self._graph_query(
+            cs.MCPToolName.CHANGE_SIGNATURE,
+            project,
+            lambda name: self._run_change_signature(
+                name, qualified_name, list(new_params), allow_heuristic, dry_run
+            ),
+        )
+
+    def _run_change_signature(
+        self,
+        project_name: str,
+        qualified_name: str,
+        new_params: list[str],
+        allow_heuristic: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.signature import (
+            SignatureRefused,
+            change_signature,
+            sites_for,
+        )
+
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+        try:
+            report = change_signature(
+                root,
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                new_params,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=self._reingest_for_contract(project_name),
+            )
+        except SignatureRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused)}
+        payload = dict(report._asdict())
+        payload[cs.KEY_SITES] = sites_for(report.sites)
+        payload[cs.KEY_UNMAPPED] = sites_for(report.unmapped)
+        if report.verdict is not None:
+            payload[cs.KEY_VERDICT] = report.verdict._asdict()
+        return payload
+
+    def _reingest_for_contract(
+        self, project_name: str
+    ) -> Callable[[list[str]], ReingestReport] | None:
+        """The re-ingest an edit's postcondition contract measures against.
+
+        Delegates to `_guarded_rename_reingest`, which returns None for a
+        project with no graph to measure (issue #1531) and wraps the callback
+        in the incomplete-run marker. Passing the raw callback here would
+        reopen the failure Greptile caught on PR #1547: a process death part
+        way through the re-ingest leaves a partial graph that a restarted
+        server reads as complete.
+        """
+        return self._guarded_rename_reingest(project_name)
 
     async def rename(
         self,

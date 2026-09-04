@@ -195,6 +195,7 @@ TS_AWAIT_EXPRESSION = "await_expression"
 # tree-sitter parses comments as named children, so the flow walk filters them
 # out before indexing arguments or reading a single sub-expression.
 TS_COMMENT = "comment"
+TS_SPREAD_ELEMENT = "spread_element"
 # `(expr)` wraps its value in a parenthesized_expression; the flow walk unwraps
 # it (like await) to reach the inner source/tainted expression.
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
