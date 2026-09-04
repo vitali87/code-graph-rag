@@ -272,6 +272,72 @@ def should_skip_rel_file(
     return has_ignored_dir_part(dir_parts)
 
 
+# Longest first, so `.d.ts` is tried before the `.ts` it ends with. Derived
+# from the language set rather than restated, so an extension added there
+# cannot silently fall through to the single-suffix rule below (issue #1720).
+_MODULE_EXTS_LONGEST_FIRST: tuple[str, ...] = tuple(
+    sorted(cs.JS_TS_MODULE_EXTENSIONS, key=str.__len__, reverse=True)
+)
+
+
+def module_stem(filename: str) -> str:
+    """The filename with its MODULE extension removed, compound ones included.
+
+    ``Path.with_suffix("")`` strips one dot-segment, which is right for `.py`
+    and wrong for `.d.ts`: TypeScript declaration files carry a two-segment
+    extension that the language treats as a unit, and every other part of cgr
+    already does too -- ``JS_TS_MODULE_EXTENSIONS`` lists `.d.ts`, and the
+    JS/TS resolver looks up `pkg/index.d.ts` as the `pkg` entry point. Only the
+    qn derivation disagreed, storing it as `proj.pkg.index.d`, a name no
+    importer ever asks for, so its definitions were unreachable (issue #1720).
+
+    Extensions outside the language set keep the single-suffix behaviour:
+    `archive.tar.gz` is not a module named `archive`, and a `.d` in some other
+    language is not a declaration marker.
+    """
+    for ext in _MODULE_EXTS_LONGEST_FIRST:
+        if filename.endswith(ext) and len(filename) > len(ext):
+            return filename[: -len(ext)]
+    return Path(filename).stem
+
+
+_DECLARATION_EXTS: tuple[str, ...] = tuple(
+    ext
+    for ext in _MODULE_EXTS_LONGEST_FIRST
+    if ext.startswith(cs.DECLARATION_EXT_PREFIX)
+)
+_IMPLEMENTATION_EXTS: tuple[str, ...] = tuple(
+    ext for ext in _MODULE_EXTS_LONGEST_FIRST if ext not in _DECLARATION_EXTS
+)
+
+
+def declaration_extension(filename: str) -> str | None:
+    """The TYPE-ONLY module extension this file carries, if any.
+
+    Partitioned from the one language set rather than listed again, so a
+    declaration form added to ``JS_TS_MODULE_EXTENSIONS`` is classified here
+    without a second edit.
+    """
+    for ext in _DECLARATION_EXTS:
+        if filename.endswith(ext) and len(filename) > len(ext):
+            return ext
+    return None
+
+
+def has_implementation_sibling(path: Path) -> bool:
+    """Does a same-stem file with a NON-declaration module extension exist?
+
+    Asked of the filesystem rather than of the parse registry deliberately.
+    The registry answers "has one been seen yet", which depends on walk order;
+    the disk answers "does one exist", which does not. The distinction is the
+    whole point -- a `.d.ts` sorts before its `.ts` in an ascending walk, so a
+    registry-based tie-break hands the shared name to the stub every time
+    (issue #1720, and the regression that closed PR #1721).
+    """
+    stem = module_stem(path.name)
+    return any((path.parent / f"{stem}{ext}").is_file() for ext in _IMPLEMENTATION_EXTS)
+
+
 def base_module_qn(rel_path: Path, project_name: str) -> str:
     """The module qualified name for a file, BEFORE collision disambiguation.
 
@@ -286,7 +352,7 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
     if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
         parts = rel_path.parent.parts
     else:
-        parts = rel_path.with_suffix("").parts
+        parts = (*rel_path.parent.parts, module_stem(rel_path.name))
     return cs.SEPARATOR_DOT.join([project_name, *parts])
 
 

@@ -27,6 +27,8 @@ from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
     cached_resolve_posix,
+    declaration_extension,
+    has_implementation_sibling,
 )
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
@@ -315,6 +317,26 @@ class DefinitionProcessor(
         self._func_class_captures_cache = func_class_captures_cache
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # A TypeScript declaration file and its implementation strip to the
+        # SAME module qn once `.d.ts` is treated as one extension (#1720), and
+        # the rule below would award it to whichever is walked first. That is
+        # the stub: `"foo.d.ts" < "foo.ts"` in the ascending within-directory
+        # walk. The type-only file would own the name every importer resolves
+        # to while the callable definitions sat under `proj.foo.ts`, which
+        # nothing asks for -- the regression that closed PR #1721.
+        #
+        # So a declaration yields whenever an implementation EXISTS ON DISK,
+        # which is a fact about the repository rather than about parse order.
+        # A declaration with no implementation still takes the bare name: for
+        # `@types/*` packages and for a compiled library shipped beside its
+        # types, that file IS the module, and an unconditional yield would put
+        # it back under a name nothing resolves to.
+        if (declaration := declaration_extension(file_path.name)) and (
+            has_implementation_sibling(file_path)
+        ):
+            suffix = declaration.lstrip(cs.SEPARATOR_DOT)
+            return f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"
+
         # Two files that share a basename but differ by extension (foo.py /
         # foo.cpp) strip to the same module qn. Append the extension to the
         # later one so their module nodes and all derived class/method qns stay

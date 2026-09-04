@@ -168,6 +168,11 @@ JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".cjs",
     ".js",
 )
+# What marks a member of the set above as TYPE-ONLY. A declaration file and its
+# implementation strip to the same module qn, and the implementation is the one
+# holding the callable definitions, so it must own the name importers resolve
+# to (issue #1720). Kept here so the two are read from one place.
+DECLARATION_EXT_PREFIX = ".d."
 TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.json",
     "tsconfig.base.json",
