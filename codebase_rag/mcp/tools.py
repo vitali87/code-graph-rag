@@ -930,14 +930,14 @@ class MCPToolsRegistry:
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
-    def _updater_for_reingest(self) -> GraphUpdater:
+    def _updater_for_reingest(self, project_name: str | None = None) -> GraphUpdater:
         updater = self._live_updater
         if updater is None:
             # A scoped re-ingest completes a graph; it cannot stand in for
             # the first index. After delete_project or wipe_database the
             # project is gone, and hydrating from nothing would leave every
             # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
+            project_name = project_name or derive_project_name(Path(self.project_root))
             if self._graph_incomplete:
                 raise ValueError(
                     cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
@@ -1404,7 +1404,17 @@ class MCPToolsRegistry:
                 cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
             }
         try:
-            delta: list[str] = []
+            # The applied rename is held to its postcondition contract through
+            # the scoped re-ingest (issue #1531); a project that is not indexed
+            # has no graph to measure against and skips it.
+            # The selected project was verified to be indexed from this
+            # root above, so its own updater measures its own graph.
+            reingest = (
+                self._updater_for_reingest(project_name).reingest
+                if self._live_updater is not None
+                or project_name in self.ingestor.list_projects()
+                else None
+            )
             report = rename(
                 root,
                 self.ingestor.fetch_all,
@@ -1413,9 +1423,7 @@ class MCPToolsRegistry:
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
-                # The graph must follow the tree, as after every other write
-                # tool: re-ingest the touched files and report the delta.
-                after_apply=lambda files: delta.append(self._delta_after_write(files)),
+                reingest=reingest,
             )
         except RenameRefused as refused:
             return {
@@ -1423,11 +1431,15 @@ class MCPToolsRegistry:
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
             }
+        if getattr(report, "graph_incomplete", False):
+            # The rollback's re-ingest failed: the same invalidation the
+            # scoped re-ingest applies, so no later call reuses a partial graph.
+            self._live_updater = None
+            self._graph_incomplete = True
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
-        if delta and delta[0]:
-            payload[cs.KEY_STRUCTURAL_DELTA] = delta[0]
+        payload["verdict"] = report.verdict._asdict() if report.verdict else None
         return payload
 
     async def query_code_graph(
