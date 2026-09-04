@@ -394,6 +394,19 @@ class _StatefulIngestor:
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
         targets = self._graph_node_ids(qn)
+        if query == cq.CYPHER_GRAPH_SIGNATURE:
+            for label, uid in targets:
+                props = self.nodes[(label, uid)]
+                return [
+                    {
+                        cs.KEY_POSITIONAL_PARAMS: _result(
+                            props.get(cs.KEY_POSITIONAL_PARAMS)
+                        ),
+                        cs.KEY_PARAM_TYPES: _result(props.get(cs.KEY_PARAM_TYPES)),
+                        cs.KEY_RETURN_TYPE: _result(props.get(cs.KEY_RETURN_TYPE)),
+                    }
+                ]
+            return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             for label, uid in targets:
                 props = self.nodes[(label, uid)]
@@ -544,6 +557,7 @@ class _StatefulIngestor:
                 | cq.CYPHER_GRAPH_TYPE_EDGES
                 | cq.CYPHER_GRAPH_OVERRIDES
                 | cq.CYPHER_GRAPH_IMPORTERS
+                | cq.CYPHER_GRAPH_SIGNATURE
             ):
                 return self._graph_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:

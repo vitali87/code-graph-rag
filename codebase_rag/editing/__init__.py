@@ -21,6 +21,13 @@ from .patcher import (
     formatter_check,
     line_col_to_byte,
 )
+from .signature import (
+    ParamSpec,
+    SignatureRefused,
+    SignatureReport,
+    change_signature,
+    parse_param_spec,
+)
 from .transaction import (
     EditTransaction,
     StagedFile,
@@ -36,6 +43,11 @@ from .transaction import (
 
 __all__ = [
     "Expectation",
+    "ParamSpec",
+    "SignatureRefused",
+    "SignatureReport",
+    "change_signature",
+    "parse_param_spec",
     "Verdict",
     "change_signature_expectation",
     "measure",
