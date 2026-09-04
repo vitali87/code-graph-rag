@@ -354,6 +354,13 @@ def _publish_hash_cache(
             f.flush()
             if observed_at is not None:
                 os.utime(f.fileno(), (observed_at, observed_at))
+            # `flush` only pushes the bytes to the OS. Without the fsync a
+            # power loss after `os.replace` can expose a cache file whose
+            # contents were never written -- and a truncated or empty cache is
+            # worse than none, because `_is_already_in_sync` trusts whatever
+            # is there. Sync after the utime so the timestamp is durable too,
+            # then take the inode: write, sync, then publish (#1701 review).
+            os.fsync(f.fileno())
             created = os.fstat(f.fileno())
         # A cheap refusal, not the security boundary. The boundary is the
         # threat model, and it is worth stating because "there is still a

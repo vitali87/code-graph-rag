@@ -1950,15 +1950,20 @@ class TestHashCachePublishSymlinkSafety:
                 seen.add(os.path.basename(name))
             return real_open(path, flags, mode, **kwargs)
 
+        # The SAME cache path both times. Publishing to cache0/cache1 would
+        # yield two distinct temporary names from any scheme at all, including
+        # a fixed `.tmp` suffix, so it could not tell an unpredictable name
+        # from a derived one (#1701 review).
+        cache_path = tmp_path / "cache.json"
         with patch.object(os, "open", _record):
-            for index in range(2):
+            for _ in range(2):
                 graph_updater_module._publish_hash_cache(
-                    tmp_path / f"cache{index}.json", {"a.py": "x"}, None
+                    cache_path, {"a.py": "x"}, None
                 )
 
-        assert len(seen) == 2, f"expected two distinct temporary names, saw {seen}"
-        assert not any(str(os.getpid()) in name for name in seen), (
-            f"the temporary name still embeds the pid, so it stays guessable: {seen}"
+        assert len(seen) == 2, (
+            "two publishes to the SAME cache path reused one temporary name, "
+            f"so the name is derived rather than unpredictable: {seen}"
         )
 
     def test_a_symlink_swapped_in_after_creation_is_refused(
