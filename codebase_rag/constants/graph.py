@@ -55,6 +55,8 @@ KEY_UNLOCATABLE = "unlocatable"
 KEY_SITES = "sites"
 KEY_AMBIGUOUS = "ambiguous"
 KEY_STRUCTURAL_DELTA = "structural_delta"
+KEY_UNMAPPED = "unmapped"
+KEY_VERDICT = "verdict"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
