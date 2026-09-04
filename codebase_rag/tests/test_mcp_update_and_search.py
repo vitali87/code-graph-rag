@@ -1232,7 +1232,7 @@ class TestIncompleteMarkerInvariant:
             project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
         )
 
-    @pytest.mark.parametrize("path", ["index", "update", "delete"])
+    @pytest.mark.parametrize("path", ["index", "update", "delete", "reingest"])
     @pytest.mark.parametrize("failure", ["mark", "clear"])
     async def test_a_marker_failure_never_reports_success(
         self, temp_project_root: Path, path: str, failure: str
@@ -1254,8 +1254,16 @@ class TestIncompleteMarkerInvariant:
                 result = str(await registry.index_repository())
             elif path == "update":
                 result = str(await registry.update_repository())
-            else:
+            elif path == "delete":
                 result = str(await registry.delete_project(project))
+            else:
+                # The fresh-reingest path: no retained updater, so it
+                # hydrates, marks before its constraint migration, and must
+                # clear on success. Its clear was hand-written rather than
+                # routed through the helper and kept reporting success on a
+                # failed clear after every other path was fixed (#1705 r5).
+                registry._live_updater = None
+                result = str(await registry.reingest(["a.py"]))
 
         assert "Error" in result or "error" in result, (
             f"{path} with a failing {failure} reported success: {result}"

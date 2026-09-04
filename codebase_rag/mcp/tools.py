@@ -1166,11 +1166,19 @@ class MCPToolsRegistry:
             self._graph_incomplete = True
             raise
         if marked_here is not None:
-            # The hydration above marked before its destructive migration;
-            # a completed reingest must lift that, or this path refuses every
-            # later call. The local flag follows the durable state, as
-            # everywhere else (#1705 review, round 3).
-            self._graph_incomplete = not self._persist_incomplete(marked_here, False)
+            # Invariant (b), same as every other path: the hydration above
+            # marked before its destructive migration, so a completed reingest
+            # must lift that or this path refuses every later call -- and if
+            # the clear FAILS, this is a retryable failure, not a success with
+            # the marker retained.
+            #
+            # This site was hand-written in round 3 rather than routed through
+            # the helper, and that is exactly why it kept the old
+            # report-success-anyway behaviour when every other path had been
+            # fixed. Going through `_require_marker_cleared` is the point of
+            # having the helper (#1705 review, round 5).
+            if (stuck := self._require_marker_cleared(marked_here)) is not None:
+                raise RuntimeError(stuck)
         return ReingestToolResult(
             reparsed=list(report.reparsed),
             affected=list(report.affected),
