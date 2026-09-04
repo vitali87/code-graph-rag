@@ -866,6 +866,24 @@ MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
+# The incomplete-run marker (issue #1679). Both are warnings rather than
+# errors: the run itself is unaffected, but the cross-process guard silently
+# degrades to the in-process flag, which an operator can only notice here.
+MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT = (
+    "[GraphCode MCP] A scoped reingest for {project} stopped before writing "
+    "anything, but its incomplete-run marker could not be cleared. Later "
+    "scoped reingests will refuse until an update_repository clears it, even "
+    "though this run changed nothing."
+)
+MCP_INCOMPLETE_MARKER_FAILED = (
+    "[GraphCode MCP] Could not persist the incomplete-run marker for "
+    "{project} (incomplete={incomplete}): {error}. A crash from here would "
+    "leave the next process unable to tell the update did not finish."
+)
+MCP_INCOMPLETE_MARKER_UNREADABLE = (
+    "[GraphCode MCP] Could not read the incomplete-run marker for {project}: "
+    "{error}. Treating the previous run as complete."
+)
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (

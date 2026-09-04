@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from rich.console import Console
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag import graph_query
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
@@ -775,9 +776,20 @@ class MCPToolsRegistry:
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
         self._graph_incomplete = True
+        # Invariant (a). Nothing has been touched yet, so refusing costs
+        # nothing; proceeding would leave a half-removed graph a fresh
+        # registry cannot tell from a completed delete.
+        if (refusal := self._require_marker(project_name)) is not None:
+            return DeleteProjectErrorResult(success=False, error=refusal)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
-        self._graph_incomplete = False
+        # Invariant (b). The marker sits on its own node so `delete_project`
+        # cannot reach it -- which is what lets it survive an index's
+        # delete-then-rebuild -- so a deliberate delete must remove it. The
+        # data is gone either way; reporting success while the marker remains
+        # blocks every later reingest for a project that no longer exists.
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            return DeleteProjectErrorResult(success=False, error=stuck)
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -842,6 +854,21 @@ class MCPToolsRegistry:
         # whatever partial graph a failure left behind.
         self._live_updater = None
         self._graph_incomplete = True
+        # Persisted BEFORE the delete, and on a node the delete cannot reach:
+        # this path removes the Project and rebuilds it, so a marker stored on
+        # the Project would be destroyed by the very operation whose failure it
+        # records. A crash between here and the final flush must still refuse
+        # the next process's reingest (#1705 review).
+        # A failed MARK aborts before anything destructive happens. The marker
+        # is the ONLY protection that survives a restart, so continuing into
+        # the delete and rebuild without it means a crash leaves a partial
+        # graph that a fresh registry cannot tell from a complete one, and it
+        # will happily hydrate a scoped reingest from it. Nothing is lost by
+        # stopping here: no graph state has changed yet. That is the opposite
+        # of a failed CLEAR, which must not fail a run that already succeeded
+        # (#1705 review).
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
@@ -860,7 +887,17 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
-        self._graph_incomplete = False
+        # Cleared only after the flush: the marker must outlive any failure
+        # that leaves batches uncommitted.
+        #
+        # The in-process flag follows the DURABLE state, not the intention. If
+        # the clear failed, the graph still says incomplete, and reporting this
+        # run complete would leave a fresh registry refusing reingest forever
+        # while this one believed all was well. Staying incomplete locally
+        # keeps the two in agreement and makes the next update retry the clear
+        # (#1705 review).
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            raise RuntimeError(stuck)
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -905,6 +942,23 @@ class MCPToolsRegistry:
         # the partial graph would be no better.
         self._live_updater = None
         self._graph_incomplete = True
+        # The marker goes down BEFORE ensure_constraints, not after.
+        # `ensure_constraints` runs `_migrate_legacy_path_keys`, which drops
+        # constraints and can run purge queries -- autocommitted, destructive
+        # work. Writing the marker after it left a window where a crash
+        # during migration produced a damaged graph with nothing recording
+        # that a run had started (#1705 review, round 2).
+        #
+        # It MERGEs its own node, so it works before any Project exists: an
+        # earlier version set a property on the Project with MATCH, which
+        # updated zero rows on a first index and left a failed first run
+        # unmarked.
+        #
+        # Aborts on failure because the marker is the only protection that
+        # survives a restart; nothing has been touched yet, so stopping costs
+        # nothing.
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
@@ -920,59 +974,294 @@ class MCPToolsRegistry:
         )
         updater.run()
         self.ingestor.flush_all()
-        self._graph_incomplete = False
+        # Cleared only after the flush: the marker must outlive any failure
+        # that leaves batches uncommitted.
+        #
+        # The in-process flag follows the DURABLE state, not the intention. If
+        # the clear failed, the graph still says incomplete, and reporting this
+        # run complete would leave a fresh registry refusing reingest forever
+        # while this one believed all was well. Staying incomplete locally
+        # keeps the two in agreement and makes the next update retry the clear
+        # (#1705 review).
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            raise RuntimeError(stuck)
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    # The incomplete-run invariant, stated once and applied by every mutating
+    # path (#1705 review, round 4). Three rounds of review each found the same
+    # shape next to the previous fix, because the rule was being re-derived per
+    # call site instead of written down:
+    #
+    #   (a) No destructive step starts unless the durable marker was
+    #       persisted. A failed persist aborts BEFORE any cleanup, embedding
+    #       purge, constraint migration or delete_project, and reports a
+    #       retryable failure. Nothing has changed yet, so aborting is free.
+    #   (b) Success is reported only after the marker is durably cleared. A
+    #       failed clear after a successful operation is a retryable failure,
+    #       never success with the marker retained -- that state blocks every
+    #       later reingest and the user cannot see why.
+    #   (c) The fresh scoped-reingest path is a destructive step too: its
+    #       `ensure_constraints` runs the same migration that drops
+    #       constraints and can purge, so it marks first like the others.
+    #
+    # `_require_marker` and `_require_marker_cleared` are the only two places
+    # that decide what a marker failure means; call sites choose the failure
+    # VALUE, not the policy.
+
+    def _persist_incomplete(self, project_name: str, incomplete: bool) -> bool:
+        """Record (or clear) the incomplete-run marker on its own node.
+
+        `_graph_incomplete` lives on this registry, so it only ever covered
+        the process that ran the failed update. A crash or an MCP restart
+        left a fresh registry seeing a project that looks whole, hydrating a
+        scoped updater from the partial graph and treating its missing
+        definitions as authoritative (issue #1679). The marker survives that.
+
+        Returns whether the write reached the store, and never raises itself;
+        the CALLER decides what a failure means, because the two directions
+        are not symmetric (#1705 review):
+
+        * A failed MARK must abort before any destructive work. The marker is
+          the only protection that survives a restart, so proceeding without
+          it means a crash leaves a partial graph indistinguishable from a
+          complete one. Nothing is lost by stopping: no state has changed.
+        * A failed CLEAR must NOT fail a run that already succeeded. It
+          leaves the graph marked incomplete, so the local flag follows the
+          durable state and the next update retries the clear.
+
+        Logged as well as returned, because a marker that never persists
+        degrades this guard back to the old in-process behaviour and only the
+        log would show it.
+        """
+        query = (
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            if incomplete
+            else cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
+        )
+        try:
+            self.ingestor.execute_write(query, {cs.KEY_PROJECT_NAME: project_name})
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                    project=project_name, incomplete=incomplete, error=error
+                )
+            )
+            return False
+        return True
+
+    def _require_marker(self, project_name: str) -> str | None:
+        """Invariant (a): mark before destructive work, or refuse to start.
+
+        Returns None when the marker is down, or the message to fail with.
+        """
+        if self._persist_incomplete(project_name, True):
+            return None
+        return cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+
+    def _require_marker_cleared(self, project_name: str) -> str | None:
+        """Invariant (b): a run is complete only once its marker is gone.
+
+        Also syncs the in-process flag to the durable state, so this process
+        and the next agree. Returns None on success, or the failure message.
+        """
+        cleared = self._persist_incomplete(project_name, False)
+        self._graph_incomplete = not cleared
+        if cleared:
+            return None
+        return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+
+    def _persisted_incomplete(self, project_name: str) -> bool:
+        """Whether a previous process left this project mid-update.
+
+        An absent property means complete, so a project indexed before this
+        marker existed reads exactly like one whose run finished and no
+        migration is needed. A store that cannot answer returns False rather
+        than blocking every reingest on an unreadable graph; the not-indexed
+        guard and the in-process flag both still apply.
+        """
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                    project=project_name, error=error
+                )
+            )
+            # Refuse rather than assume complete. "I cannot tell" and "the
+            # last run finished" are different answers, and only one of them
+            # is safe to act on: treating an unreadable marker as absent
+            # hydrates a scoped reingest from a graph that may be partial,
+            # which is the failure this guard exists to prevent. An
+            # update_repository recovers either way (#1705 review).
+            return True
+        return any(bool(row.get("run_incomplete")) for row in rows or [])
+
+    @staticmethod
+    def _reingest_mutated(updater: object, exc: BaseException) -> bool:
+        """Whether a failed reingest got as far as writing.
+
+        Classifies by WHAT HAPPENED rather than by exception type: the updater
+        sets `reingest_mutated` at the exact point its read-only prologue
+        ends, so a future abort raised mid-run is still classified as partial
+        (#1705 review). Split out of `_reingest_sync` to keep that function
+        under the cognitive-complexity limit.
+        """
+        flag = getattr(updater, "reingest_mutated", None)
+        if isinstance(flag, bool):
+            return flag
+        # No usable flag (an updater predating it, or a test double). Fall
+        # back to the exception type, which carries the same information less
+        # precisely: `GraphUpdater.reingest` converts EVERY prologue failure to
+        # `ReingestAborted` and rejects bad paths with `ValueError` before
+        # touching anything, so any other exception means writing had begun.
+        #
+        # `isinstance` on the flag rather than `getattr(..., True)`: any
+        # attribute of a MagicMock is a truthy child mock, which would classify
+        # every failure as mutated (measured).
+        return not isinstance(exc, ValueError | ReingestAborted)
+
+    def _hydrate_reingest_updater(self, project_name: str) -> GraphUpdater:
+        """Build a scoped updater when none is retained.
+
+        Split out of `_reingest_sync` to keep it under the
+        cognitive-complexity limit; the guards and their reasoning are
+        unchanged. Raises rather than returning on a refusal, exactly as
+        it did inline.
+        """
+        # A scoped re-ingest completes a graph; it cannot stand in for
+        # the first index. After delete_project or wipe_database the
+        # project is gone, and hydrating from nothing would leave every
+        # unrelated definition missing.
+        # The persisted marker is what makes this survive the process
+        # that earned it: with no retained updater this may be a fresh
+        # registry after a crash, where `_graph_incomplete` is False
+        # because nothing in THIS process failed (issue #1679).
+        if self._graph_incomplete or self._persisted_incomplete(project_name):
+            raise ValueError(
+                cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+            )
+        if project_name not in self.ingestor.list_projects():
+            raise ValueError(cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name))
+        # Marked after the guards above -- they ask whether a PREVIOUS run
+        # left the graph partial, so marking first would make every
+        # reingest refuse on its own marker -- and before
+        # `ensure_constraints`, which runs the same destructive migration
+        # the index and update paths mark before. Invariant (c).
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
+        self.ingestor.ensure_constraints()
+        # The same exclusion set the index and update paths use, or an
+        # agent-named path under a CLI-excluded directory would be
+        # indexed here and kept by every later update.
+        exclude_paths, unignore_paths = self._ignore_sets()
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
+            project_name=project_name,
+        )
+        self._live_updater = updater
+        return updater
 
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
         updater = self._live_updater
+        # Invariant (a) for EVERY reingest, before either branch does anything.
+        # Both branches reach `updater.reingest` below, which mutates, and the
+        # hydrating branch additionally runs `ensure_constraints` -- the same
+        # destructive migration the index and update paths mark before. The
+        # mark used to live INSIDE `if updater is None:`, so a reingest through
+        # a retained updater ran entirely unmarked and an interruption left a
+        # partial graph a restarted process could not tell from a complete one
+        # (#1705 review, round 6).
+        #
+        # Marking here rather than in each branch is the same lesson as the
+        # helpers: enumerate the paths once, at the point they share.
+        # The refusal guard must run BEFORE this call marks anything: it asks
+        # whether a PREVIOUS run left the graph partial, and marking first
+        # would make every reingest refuse on its own marker.
+        project_name = derive_project_name(Path(self.project_root))
+        marked_here: str | None = None
         if updater is None:
-            # A scoped re-ingest completes a graph; it cannot stand in for
-            # the first index. After delete_project or wipe_database the
-            # project is gone, and hydrating from nothing would leave every
-            # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
-            if self._graph_incomplete:
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            if project_name not in self.ingestor.list_projects():
-                raise ValueError(
-                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
-                )
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
+            updater = self._hydrate_reingest_updater(project_name)
+            marked_here = project_name
+        else:
+            # The RETAINED-updater branch reaches the same mutating call below
+            # but skipped every marker step, because the mark lived inside the
+            # hydration branch. An interruption here left a partially mutated
+            # graph a restarted process could not tell from a complete one
+            # (#1705 review, round 6). Same invariant, fifth path.
+            if (refusal := self._require_marker(project_name)) is not None:
+                raise RuntimeError(refusal)
+            marked_here = project_name
         try:
             report = updater.reingest(paths, deleted=deleted)
-        except (ValueError, ReingestAborted):
-            # A refusal (a path outside the repository, a directory) is
-            # raised while the paths are split, and an abort while the call
-            # was still reading the graph; neither touched anything, so the
-            # updater is still valid and the call may simply be retried.
+        except Exception as exc:
+            # One classification for every failure, by WHAT HAPPENED rather
+            # than by exception type (#1705 review, round 7):
+            #
+            #   nothing written -> the graph is exactly as it was, so the
+            #     marker this call created is a lie about a run that changed
+            #     nothing. Clear it, or a fresh process refuses scoped
+            #     reingests against a complete graph until someone runs a
+            #     full update.
+            #   something written -> the graph may be partial. The marker
+            #     stays, and the retained updater goes, because it describes
+            #     a graph that no longer exists.
+            #
+            # `reingest_mutated` is set inside `GraphUpdater.reingest` at the
+            # exact point its read-only prologue ends. Classifying on
+            # ReingestAborted instead would misread a future abort raised
+            # mid-run as "nothing changed" and clear a marker that is
+            # protecting a partial graph.
+            mutated = self._reingest_mutated(updater, exc)
+            if mutated:
+                self._live_updater = None
+                self._graph_incomplete = True
+            elif marked_here is not None:
+                # Nothing was written, so the marker this call created is a
+                # lie about a run that changed nothing and must come off.
+                #
+                # The caller's real error (a bad path, an abort) stays
+                # primary -- replacing it with a marker error would hide why
+                # the reingest actually failed. But a FAILED clear cannot be
+                # discarded either: it leaves the project marked incomplete,
+                # so every later scoped reingest is refused until a full
+                # update runs, for a run that touched nothing (#1705 review).
+                #
+                # `_require_marker_cleared` already syncs `_graph_incomplete`
+                # to the durable state, so this process stops believing the
+                # graph is clean; the warning it logs is what tells an
+                # operator why later reingests refuse.
+                if self._require_marker_cleared(marked_here) is not None:
+                    logger.warning(
+                        lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(
+                            project=marked_here
+                        )
+                    )
             raise
-        except Exception:
-            # The run may have deleted the affected subtrees and never
-            # rebuilt them: the retained updater describes a graph that no
-            # longer exists, and the next scoped call must not reuse it
-            # over that partial state. update_repository is the recovery.
-            self._live_updater = None
-            self._graph_incomplete = True
-            raise
+        if marked_here is not None:
+            # Invariant (b), same as every other path: the hydration above
+            # marked before its destructive migration, so a completed reingest
+            # must lift that or this path refuses every later call -- and if
+            # the clear FAILS, this is a retryable failure, not a success with
+            # the marker retained.
+            #
+            # This site was hand-written in round 3 rather than routed through
+            # the helper, and that is exactly why it kept the old
+            # report-success-anyway behaviour when every other path had been
+            # fixed. Going through `_require_marker_cleared` is the point of
+            # having the helper (#1705 review, round 5).
+            if (stuck := self._require_marker_cleared(marked_here)) is not None:
+                raise RuntimeError(stuck)
         return ReingestToolResult(
             reparsed=list(report.reparsed),
             affected=list(report.affected),

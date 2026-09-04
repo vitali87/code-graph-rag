@@ -507,6 +507,11 @@ class GraphUpdater:
         self._configured_unignore_paths = unignore_paths
         self._delombok_overlay: dict[str, bytes] = {}
         self._delombok_state_changed = False
+        # Whether the LAST `reingest` call got past its read-only prologue
+        # into deletes and writes. Callers persisting recovery state use it to
+        # tell "nothing changed, retry freely" from "partial, needs recovery"
+        # (#1705 review, round 7).
+        self.reingest_mutated = False
         self._delombok_stale_keys: set[str] = set()
         self._delombok_state_candidate: dict = _EMPTY_DELOMBOK_STATE.copy()
         self.exclude_paths = exclude_paths
@@ -4056,6 +4061,9 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # Per call: a caller holding this updater across many events must see
+        # THIS call's answer, not the last one's.
+        self.reingest_mutated = False
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
@@ -4101,6 +4109,13 @@ class GraphUpdater:
             captured = self._capture_inbound_edges(all_keys)
         except Exception as exc:
             raise ReingestAborted(str(exc)) from exc
+        # Past this point the run WILL issue deletes and writes. Callers that
+        # persist recovery state need to know whether a failure left the graph
+        # untouched or partial, and classifying by exception TYPE is not
+        # enough: a future abort raised mid-run would be misread as "nothing
+        # changed" and clear a marker that is protecting a partial graph
+        # (#1705 review, round 7). This flag records what actually happened.
+        self.reingest_mutated = True
         self._reparsed_file_keys = set(all_keys)
 
         # Walk order, as the batch path re-parses (issue #1569): the first

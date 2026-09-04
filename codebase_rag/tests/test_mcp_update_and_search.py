@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -862,3 +863,678 @@ class TestReingest:
             result = await mcp_registry.wipe_database(confirm=True)
             assert "rror" in result
             assert mcp_registry._live_updater is None
+
+
+class TestIncompleteMarkerSurvivesTheProcess:
+    """The refusal must outlive the process that earned it (issue #1679)."""
+
+    @staticmethod
+    def _store() -> MagicMock:
+        """An ingestor whose marker property persists across registries.
+
+        Backed by a dict rather than a canned return value: the point of the
+        fix is that the SECOND registry reads what the FIRST one wrote, and a
+        static return value would satisfy the assertion without any write
+        having happened.
+        """
+        store: dict[str, bool] = {}
+        ingestor = MagicMock()
+
+        # A plain dict, never an attribute on the MagicMock: `getattr` on a
+        # MagicMock returns a truthy child mock for ANY name, so a
+        # `getattr(ingestor, "_fail_clear", False)` switch is permanently on.
+        failing: set[str] = set()
+
+        def _write(query: str, params: dict | None = None) -> None:
+            name = str((params or {}).get(cs.KEY_PROJECT_NAME))
+            if "clear" in failing and "DELETE m" in query:
+                raise RuntimeError("clear write refused")
+            if "mark" in failing and "SET m.run_incomplete" in query:
+                raise RuntimeError("mark write refused")
+            # MERGE creates the node when absent; MATCH does not, and a
+            # MATCH-based mark therefore writes NOTHING on a first run. The
+            # fake has to honour that difference or it answers the question
+            # the code is supposed to answer: with a branch keyed only on
+            # "SET m.run_incomplete", reverting MERGE to MATCH left every
+            # test green (#1705 review).
+            if "SET m.run_incomplete" in query:
+                if query.lstrip().startswith("MERGE") or name in store:
+                    store[name] = True
+            elif "DELETE m" in query:
+                store.pop(name, None)
+
+        def _read(query: str, params: dict | None = None) -> list[dict]:
+            if "run_incomplete" not in query:
+                return []
+            if "read" in failing:
+                raise RuntimeError("marker read refused")
+            name = str((params or {}).get(cs.KEY_PROJECT_NAME))
+            # A real MATCH returns NO ROWS when the marker node is absent, not
+            # a row saying false. Modelling the empty result matters: code that
+            # reads rows[0] would pass against a canned false and fail here.
+            return [{"run_incomplete": True}] if store.get(name) else []
+
+        def _delete_project(name: str) -> None:
+            # Models CYPHER_DELETE_PROJECT: it detaches the Project and
+            # everything it CONTAINS. A marker kept ON the Project would go
+            # with it; one on its own unconnected node must survive.
+            store.pop(f"__project_anchored__{name}", None)
+
+        ingestor.execute_write.side_effect = _write
+        ingestor.fetch_all.side_effect = _read
+        ingestor.delete_project.side_effect = _delete_project
+        ingestor._marker_store = store
+        ingestor._failing = failing
+        return ingestor
+
+    def _registry(self, root: Path, ingestor: MagicMock) -> MCPToolsRegistry:
+        """A registry sharing `ingestor` but nothing else.
+
+        Each call is a separate process as far as `_graph_incomplete` is
+        concerned, which is precisely the case the persisted marker exists
+        for; `cypher_gen` is per-registry because nothing here queries it.
+        """
+        return MCPToolsRegistry(
+            project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+        )
+
+    async def test_a_fresh_registry_refuses_reingest_after_a_crashed_update(
+        self, temp_project_root: Path
+    ) -> None:
+        """A new process must still refuse, which is the whole gap.
+
+        `_graph_incomplete` lives on the registry, so the ORIGINAL process
+        refuses correctly. The defect was that a crash or an MCP restart
+        produced a registry whose flag is False, which then hydrated a scoped
+        updater from the partial graph and treated its missing definitions as
+        authoritative.
+
+        The second registry here shares only the store, never the flag, which
+        is exactly what a restarted server has.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("update died")
+            assert "Error" in await first.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "the failed update left no persisted marker, so a fresh process "
+            "has nothing to read"
+        )
+
+        # The crash: a brand new registry over the same store.
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        assert second._graph_incomplete is False, (
+            "fixture guard: the new registry must NOT carry the in-process "
+            "flag, or this test cannot tell the persisted marker apart from it"
+        )
+
+        refused = await second.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            "a fresh registry hydrated a scoped updater from the partial "
+            f"graph left by a crashed update; got {refused}"
+        )
+
+    async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
+        self, temp_project_root: Path
+    ) -> None:
+        """The marker must be CLEARED, not merely set.
+
+        Without this the fix would be indistinguishable from one that refuses
+        every reingest forever, which also passes the test above.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await first.update_repository()
+
+        assert project not in ingestor._marker_store, (
+            "a completed update left the marker set, so every later reingest "
+            "would refuse for a run that actually finished"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            result = await second.reingest(["a.py"])
+        assert "error" not in result, f"a completed run must not refuse: {result}"
+
+    async def test_a_failed_first_index_leaves_a_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A FIRST index has no Project node yet, and must still mark.
+
+        The marker used to be a property set on the Project with `MATCH`,
+        which updates zero rows when no Project exists. `GraphUpdater.run()`
+        is what creates it, so a first index that failed left no marker at
+        all -- precisely the run the guard exists to catch (#1705 review).
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        project = derive_project_name(Path(first.project_root))
+        # No list_projects entry: nothing has ever been indexed.
+        ingestor.list_projects.return_value = []
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("first index died")
+            assert "Error" in await first.index_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "a failed FIRST index left no marker, so a fresh process cannot "
+            "tell the graph is partial"
+        )
+
+    async def test_the_marker_survives_the_project_delete_an_index_performs(
+        self, temp_project_root: Path
+    ) -> None:
+        """`index_repository` deletes the Project before rebuilding it.
+
+        A marker stored on the Project would be destroyed by the very
+        operation whose failure it records, so it lives on its own
+        unconnected node instead (#1705 review). The fake's delete_project
+        drops Project-anchored keys, so a regression to that storage fails
+        here rather than passing quietly.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("rebuild died")
+            assert "Error" in await registry.index_repository()
+
+        ingestor.delete_project.assert_called_once()
+        assert ingestor._marker_store.get(project) is True, (
+            "the project delete removed the marker it was supposed to outlive"
+        )
+
+    async def test_a_failed_clear_does_not_report_the_run_complete(
+        self, temp_project_root: Path
+    ) -> None:
+        """A clear that never reached the store must not read as complete.
+
+        Otherwise this process believes the run finished while the graph
+        still says incomplete, and a fresh registry refuses reingest forever
+        with nothing to explain it (#1705 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = await registry.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must actually have failed, or this test "
+            "proves nothing"
+        )
+        # Invariant (b): a run whose marker could not be cleared is a
+        # RETRYABLE FAILURE, not a success. Reporting success would leave the
+        # marker blocking every later reingest with nothing to show the user
+        # why (#1705 review, round 4). This assertion was inverted before that
+        # round: it required the run to report success, which is precisely the
+        # state the invariant now forbids.
+        assert "Error" in result, (
+            f"a run that left its marker stuck must report a failure: {result}"
+        )
+        assert registry._graph_incomplete is True, (
+            "the local flag reported complete while the graph still says "
+            "incomplete; a fresh registry would refuse reingest forever"
+        )
+
+    async def test_an_unwritable_marker_aborts_before_destructive_work(
+        self, temp_project_root: Path
+    ) -> None:
+        """A mark that cannot be stored must stop the run, not proceed.
+
+        The marker is the only protection that survives a restart. Indexing
+        on without it means a crash leaves a partial graph a fresh process
+        cannot distinguish from a complete one, and a scoped reingest then
+        treats it as authoritative. Nothing is lost by refusing: no graph
+        state has changed yet (#1705 review).
+
+        Asserts the DELETE never happened, not merely that an error was
+        returned: an abort that still wiped the project would satisfy an
+        error-message assertion while doing the exact damage this prevents.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("mark")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            result = await registry.index_repository()
+
+        assert "Error" in result, "an unstorable marker must fail the run"
+        (
+            ingestor.delete_project.assert_not_called(),
+            (
+                "the run destroyed the existing graph despite having no marker "
+                "to record that it had started"
+            ),
+        )
+        updater_cls.assert_not_called()
+
+    async def test_an_unreadable_marker_refuses_reingest(
+        self, temp_project_root: Path
+    ) -> None:
+        """ "Cannot tell" must not be read as "the last run finished".
+
+        Returning False on a failed read hydrates a scoped reingest from a
+        graph that may be partial, which is precisely the failure the marker
+        exists to prevent. An update_repository recovers either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("read")
+
+        refused = await registry.reingest(["a.py"])
+
+        assert "failed part way" in refused.get("error", ""), (
+            f"an unreadable marker was treated as a completed run; got {refused}"
+        )
+
+    async def test_the_marker_precedes_constraint_migration(
+        self, temp_project_root: Path
+    ) -> None:
+        """`ensure_constraints` is destructive, so the marker must precede it.
+
+        It runs `_migrate_legacy_path_keys`, which drops constraints and can
+        run purge queries -- autocommitted work. Marking after it left a
+        window where a crash during migration produced a damaged graph with
+        nothing recording that a run had started (#1705 review, round 2).
+
+        Asserts the ORDER of calls rather than the end state: after a
+        successful run both have happened either way, so only the sequence
+        distinguishes the fixed code from the broken code.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        order: list[str] = []
+        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
+        real_write = ingestor.execute_write.side_effect
+
+        def _tracking_write(query: str, params: dict | None = None) -> None:
+            if "SET m.run_incomplete" in query:
+                order.append("mark")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _tracking_write
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.update_repository()
+
+        assert "mark" in order, f"fixture guard: the mark must run, saw {order}"
+        assert "constraints" in order, (
+            f"fixture guard: the migration must run, saw {order}"
+        )
+        assert order.index("mark") < order.index("constraints"), (
+            "the constraint migration ran before the marker was written, so a "
+            f"crash during it would leave no record of the run: {order}"
+        )
+
+    async def test_deleting_a_project_clears_its_durable_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """An intentional delete must not strand the marker.
+
+        The marker lives on its own node so `delete_project` cannot reach it,
+        which is what lets it survive an index's delete-then-rebuild. The
+        consequence is that a deliberate deletion leaves it behind, and a
+        fresh registry then refuses reingest forever for a project the user
+        removed on purpose (#1705 review, round 2).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        result = await registry.delete_project(project)
+
+        assert result.get("success"), f"the delete itself must succeed: {result}"
+        assert project not in ingestor._marker_store, (
+            "the deleted project kept its incomplete-run marker, so a fresh "
+            "registry would refuse reingest for a project that is gone"
+        )
+
+
+class TestIncompleteMarkerInvariant:
+    """The invariant, over every mutating path and both failure points.
+
+    Stated once in `tools.py` and asserted once here, because three review
+    rounds each found the same shape next to the previous fix -- the rule was
+    being re-derived per call site instead of written down (#1705 round 4):
+
+      (a) no destructive step starts unless the marker was persisted
+      (b) success is reported only after the marker is durably cleared
+      (c) the fresh scoped-reingest path marks before its constraint migration
+    """
+
+    @staticmethod
+    def _store() -> MagicMock:
+        return TestIncompleteMarkerSurvivesTheProcess._store()
+
+    def _registry(self, root: Path, ingestor: MagicMock) -> MCPToolsRegistry:
+        return MCPToolsRegistry(
+            project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+        )
+
+    @pytest.mark.parametrize("path", ["index", "update", "delete", "reingest"])
+    @pytest.mark.parametrize("failure", ["mark", "clear"])
+    async def test_a_marker_failure_never_reports_success(
+        self, temp_project_root: Path, path: str, failure: str
+    ) -> None:
+        """Every path, both failure points: a failure is reported, never success.
+
+        The `mark` case additionally pins invariant (a) by asserting the
+        destructive call never happened -- an abort that still deleted the
+        project would satisfy an error-message assertion while doing the exact
+        damage the marker exists to prevent.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add(failure)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            if path == "index":
+                result = str(await registry.index_repository())
+            elif path == "update":
+                result = str(await registry.update_repository())
+            elif path == "delete":
+                result = str(await registry.delete_project(project))
+            else:
+                # The fresh-reingest path: no retained updater, so it
+                # hydrates, marks before its constraint migration, and must
+                # clear on success. Its clear was hand-written rather than
+                # routed through the helper and kept reporting success on a
+                # failed clear after every other path was fixed (#1705 r5).
+                registry._live_updater = None
+                result = str(await registry.reingest(["a.py"]))
+
+        assert "Error" in result or "error" in result, (
+            f"{path} with a failing {failure} reported success: {result}"
+        )
+        if failure == "mark":
+            assert not ingestor.delete_project.called, (
+                f"{path} began destructive work despite failing to persist "
+                "the marker, so a crash would leave nothing recording it"
+            )
+
+    async def test_a_retained_updater_reingest_is_marked_too(
+        self, temp_project_root: Path
+    ) -> None:
+        """The fifth mutating path: reingest through a RETAINED updater.
+
+        Both branches of `_reingest_sync` reach `updater.reingest`, which
+        mutates, but the marker was established only inside the hydrating
+        branch. A reingest through a retained updater therefore ran entirely
+        unmarked, and an interruption left a partially mutated graph a
+        restarted process could not tell from a complete one (#1705 round 6).
+
+        Drives the retained path by leaving `_live_updater` set, which is the
+        state a previous successful call leaves behind.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        retained = MagicMock()
+        retained.reingest.return_value = SimpleNamespace(
+            reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+        )
+        registry._live_updater = retained
+
+        marked_during: list[bool] = []
+        retained.reingest.side_effect = lambda *a, **k: (
+            marked_during.append(ingestor._marker_store.get(project) is True)
+            or SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+        )
+
+        await registry.reingest(["a.py"])
+
+        assert marked_during == [True], (
+            "the retained-updater reingest mutated the graph without the "
+            "durable marker set, so an interruption would leave no record"
+        )
+        assert project not in ingestor._marker_store, (
+            "the marker must be cleared once the reingest completes"
+        )
+
+    async def test_a_fresh_scoped_reingest_marks_before_migrating(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (c): the third `ensure_constraints` caller, easy to miss.
+
+        The index and update paths were fixed first; this one was found a
+        round later, still running the migration that drops constraints and
+        can purge with nothing recording the run. Asserts the ORDER, because
+        after a success both have happened either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        order: list[str] = []
+        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
+        real_write = ingestor.execute_write.side_effect
+
+        def _tracking(query: str, params: dict | None = None) -> None:
+            if "SET m.run_incomplete" in query:
+                order.append("mark")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _tracking
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            await registry.reingest(["a.py"])
+
+        assert order[:2] == ["mark", "constraints"], (
+            "the fresh scoped reingest ran its destructive constraint "
+            f"migration before recording the run: {order}"
+        )
+
+    async def test_an_abort_before_mutation_releases_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Nothing written means nothing to recover: the marker must come off.
+
+        The reingest path marks BEFORE the mutating call, so an abort raised
+        in the read-only prologue would otherwise leave durable state claiming
+        a run was interrupted -- and a fresh process would refuse scoped
+        reingests against a graph that is perfectly complete, until someone
+        ran a full update (#1705 review, round 7).
+
+        The second reingest on a FRESH registry is the real assertion: it is
+        the process that would have been wrongly blocked.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        aborting = MagicMock()
+        aborting.reingest_mutated = False
+        aborting.reingest.side_effect = ReingestAborted("graph read failed")
+        first._live_updater = aborting
+
+        aborted = await first.reingest(["a.py"])
+        assert "error" in aborted, "the abort must still surface to the caller"
+        assert project not in ingestor._marker_store, (
+            "an abort that wrote nothing left its marker behind, which blocks "
+            "every later scoped reingest on a graph that is complete"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        retained = MagicMock()
+        retained.reingest_mutated = False
+        retained.reingest.return_value = SimpleNamespace(
+            reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+        )
+        second._live_updater = retained
+        assert "error" not in await second.reingest(["a.py"]), (
+            "a fresh registry refused a scoped reingest after an abort that "
+            "changed nothing"
+        )
+
+    async def test_a_failure_after_the_first_write_keeps_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Partial means recoverable state must survive.
+
+        The mirror of the case above, and the reason the classification is on
+        WHAT HAPPENED rather than the exception type: a failure once writing
+        has begun leaves a graph that may be half-rewritten, so the marker
+        stays and a fresh process refuses until a full update recovers it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        mutating = MagicMock()
+        mutating.reingest_mutated = True
+        mutating.reingest.side_effect = RuntimeError("died after the delete")
+        registry._live_updater = mutating
+
+        failed = await registry.reingest(["a.py"])
+        assert "error" in failed
+        assert ingestor._marker_store.get(project) is True, (
+            "a failure after the first write cleared its marker, so a fresh "
+            "process would treat a partially rewritten graph as complete"
+        )
+        assert registry._live_updater is None, (
+            "the retained updater describes a graph that no longer exists"
+        )
+
+    async def test_the_updater_itself_reports_whether_it_mutated(
+        self, temp_project_root: Path
+    ) -> None:
+        """Drives the REAL `GraphUpdater`, not a mock with the flag preset.
+
+        The three tests above set `reingest_mutated` by hand on a double, so
+        they pin the MCP handler's classification but say nothing about
+        whether `GraphUpdater` sets the flag in the right place. Mutating the
+        production line that sets it left every one of them green (measured),
+        which is exactly the gap this closes (#1705 review, round 7).
+
+        A prologue failure must leave the flag False: `_hydrate_for_reingest`
+        raising is converted to `ReingestAborted` before any delete or write.
+        """
+        from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.tests.conftest import _MockIngestor
+
+        (temp_project_root / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.reingest_mutated = True  # stale value from a previous call
+
+        with patch.object(
+            updater, "_hydrate_for_reingest", side_effect=RuntimeError("read failed")
+        ):
+            with pytest.raises(ReingestAborted):
+                updater.reingest(["mod.py"])
+
+        assert updater.reingest_mutated is False, (
+            "a failure in the read-only prologue left the mutation flag set, "
+            "so the caller would keep a marker for a run that changed nothing"
+        )
+
+        # And the other direction, which is the half that actually pins the
+        # production line: a run that gets PAST the prologue must report True.
+        # Asserting only the False case above cannot distinguish the real code
+        # from one that never sets the flag at all -- both leave it False, so
+        # mutating `reingest_mutated = True` to False left this test green
+        # (measured, #1705 review round 7).
+        fresh = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        fresh.reingest(["mod.py"])
+        assert fresh.reingest_mutated is True, (
+            "a reingest that got past the read-only prologue and issued writes "
+            "reported that it had not mutated, so a failure afterwards would "
+            "clear the marker protecting a partial graph"
+        )
+
+    async def test_a_failed_clear_on_an_abort_is_not_silently_swallowed(
+        self, temp_project_root: Path
+    ) -> None:
+        """An abort that wrote nothing must not leave the project stuck quietly.
+
+        The clear on this path is best effort so a marker error cannot replace
+        the caller's real exception. But discarding its RESULT left the project
+        marked incomplete after a run that changed nothing, refusing every
+        later scoped reingest until a full update ran (#1705 review).
+
+        Asserts the in-process flag follows the durable state, which is what
+        stops this process believing the graph is clean, and that the caller's
+        original error still surfaces rather than being replaced.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        aborting = MagicMock()
+        aborting.reingest_mutated = False
+        aborting.reingest.side_effect = ReingestAborted("graph read failed")
+        registry._live_updater = aborting
+
+        # loguru, not stdlib logging, so `caplog` sees nothing: capture via a
+        # sink, the same way conftest's pass-failure watcher does.
+        from loguru import logger
+
+        logged: list[str] = []
+        sink = logger.add(lambda m: logged.append(m.record["message"]), level="WARNING")
+        try:
+            result = await registry.reingest(["a.py"])
+        finally:
+            logger.remove(sink)
+
+        assert "graph read failed" in result.get("error", ""), (
+            "the caller's real error must stay primary, not be replaced by a "
+            f"marker error: {result}"
+        )
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must actually have failed, or this test "
+            "proves nothing"
+        )
+        assert registry._graph_incomplete is True, (
+            "the local flag reported clean while the durable marker is still "
+            "set, so this process would not know later reingests will refuse"
+        )
+        # The flag alone does NOT discriminate: `_require_marker_cleared` sets
+        # it as a side effect whether or not the caller inspects the result,
+        # so a version that swallowed the failure passed this test until the
+        # log assertion below was added (measured).
+        assert any("could not be cleared" in m for m in logged), (
+            "a stuck marker after a no-op abort was not reported, so an "
+            f"operator has nothing explaining why reingests refuse: {logged}"
+        )
