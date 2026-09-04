@@ -369,8 +369,18 @@ def _publish_hash_cache(
             # worse than none, because `_is_already_in_sync` trusts whatever
             # is there. Sync after the utime so the timestamp is durable too,
             # then take the inode: write, sync, then publish (#1701 review).
-            os.fsync(f.fileno())
+            # `fstat` BEFORE `fsync`, not after. On Windows the fsync path
+            # goes through `_commit()`, which can leave the descriptor
+            # unusable, and the following `fstat` then raised
+            # "[Errno 9] Bad file descriptor" -- every hash-cache publish
+            # failed with it and 39 tests went red on that platform while
+            # ubuntu and macOS stayed green (#1701 review, measured in CI).
+            #
+            # Order is safe either way: the inode identifies the same file
+            # before and after the sync, and nothing between them can change
+            # which file this descriptor refers to.
             created = os.fstat(f.fileno())
+            os.fsync(f.fileno())
         # A cheap refusal, not the security boundary. The boundary is the
         # threat model, and it is worth stating because "there is still a
         # window between this check and the rename" is true and does not
@@ -394,7 +404,24 @@ def _publish_hash_cache(
         # The check stays because it costs one lstat and turns a swap into a
         # refusal rather than a silent publish.
         current = os.lstat(tmp_path)
-        if (current.st_ino, current.st_dev) != (created.st_ino, created.st_dev):
+        # Skipped where the identity comparison is not meaningful. On Windows
+        # `st_ino` is a file INDEX rather than an inode: it can be 0 on some
+        # filesystems, and `fstat` and `lstat` are not guaranteed to agree, so
+        # comparing them there would refuse every publish rather than detect a
+        # swap (#1701 review, decision (a)).
+        #
+        # The premise that makes this acceptable on that platform is the one
+        # already argued for the fallback stamp: creating a symlink on Windows
+        # requires privilege in the default configuration, and an attacker who
+        # can write to the cache directory can rewrite the cache outright
+        # without any race. The O_EXCL creation and the fsync stay on every
+        # platform; only this comparison is conditional.
+        identity_is_meaningful = (
+            os.name != "nt" and created.st_ino != 0 and current.st_ino != 0
+        )
+        if identity_is_meaningful and (
+            (current.st_ino, current.st_dev) != (created.st_ino, created.st_dev)
+        ):
             raise OSError(
                 f"temporary cache path {tmp_path} was replaced after creation"
             )
