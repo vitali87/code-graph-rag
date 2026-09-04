@@ -1104,15 +1104,27 @@ class MCPToolsRegistry:
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
         updater = self._live_updater
-        # Only set when THIS call marked the project, so the success path
-        # clears its own marker and never one an earlier failure left behind.
+        # Invariant (a) for EVERY reingest, before either branch does anything.
+        # Both branches reach `updater.reingest` below, which mutates, and the
+        # hydrating branch additionally runs `ensure_constraints` -- the same
+        # destructive migration the index and update paths mark before. The
+        # mark used to live INSIDE `if updater is None:`, so a reingest through
+        # a retained updater ran entirely unmarked and an interruption left a
+        # partial graph a restarted process could not tell from a complete one
+        # (#1705 review, round 6).
+        #
+        # Marking here rather than in each branch is the same lesson as the
+        # helpers: enumerate the paths once, at the point they share.
+        # The refusal guard must run BEFORE this call marks anything: it asks
+        # whether a PREVIOUS run left the graph partial, and marking first
+        # would make every reingest refuse on its own marker.
+        project_name = derive_project_name(Path(self.project_root))
         marked_here: str | None = None
         if updater is None:
             # A scoped re-ingest completes a graph; it cannot stand in for
             # the first index. After delete_project or wipe_database the
             # project is gone, and hydrating from nothing would leave every
             # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
             # The persisted marker is what makes this survive the process
             # that earned it: with no retained updater this may be a fresh
             # registry after a crash, where `_graph_incomplete` is False
@@ -1125,12 +1137,11 @@ class MCPToolsRegistry:
                 raise ValueError(
                     cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
                 )
-            # `ensure_constraints` runs the same destructive migration here
-            # as on the index and update paths -- it drops constraints and can
-            # purge -- so it needs the same marker in front of it. This is the
-            # THIRD caller; fixing the other two and leaving this one meant a
-            # fresh scoped reingest could still fail mid-migration and leave a
-            # partial graph nothing recorded (#1705 review, round 3).
+            # Marked after the guards above -- they ask whether a PREVIOUS run
+            # left the graph partial, so marking first would make every
+            # reingest refuse on its own marker -- and before
+            # `ensure_constraints`, which runs the same destructive migration
+            # the index and update paths mark before. Invariant (c).
             if (refusal := self._require_marker(project_name)) is not None:
                 raise RuntimeError(refusal)
             marked_here = project_name
@@ -1149,6 +1160,15 @@ class MCPToolsRegistry:
                 project_name=project_name,
             )
             self._live_updater = updater
+        else:
+            # The RETAINED-updater branch reaches the same mutating call below
+            # but skipped every marker step, because the mark lived inside the
+            # hydration branch. An interruption here left a partially mutated
+            # graph a restarted process could not tell from a complete one
+            # (#1705 review, round 6). Same invariant, fifth path.
+            if (refusal := self._require_marker(project_name)) is not None:
+                raise RuntimeError(refusal)
+            marked_here = project_name
         try:
             report = updater.reingest(paths, deleted=deleted)
         except (ValueError, ReingestAborted):
