@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import posixpath
+import secrets
 import sys
 import time
 from collections import defaultdict
@@ -268,7 +269,45 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
             json.dump(hashes, f, indent=2)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
     except OSError as e:
-        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
+
+
+# Bounded so a directory that somehow rejects every candidate ends the publish
+# instead of spinning; with 8 random bytes a collision is already vanishingly
+# unlikely, so more than a few attempts would only mask a real filesystem
+# problem.
+_TEMP_NAME_ATTEMPTS = 8
+
+
+def _open_exclusive_temp(cache_path: Path) -> tuple[int, str]:
+    """Create a fresh temporary file beside `cache_path`, never following a link.
+
+    `O_EXCL` fails rather than reusing an existing path and `O_NOFOLLOW`
+    fails rather than opening a symlink's target, so neither a guessed name
+    nor a planted link can redirect the write. The name is random, which
+    means an attacker cannot plant the link in the first place; the flags
+    are what make that a guarantee rather than a probability.
+
+    `O_NOFOLLOW` is POSIX; on platforms lacking it the flag is 0 and the
+    random name plus `O_EXCL` still prevent reuse of a planted path.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(_TEMP_NAME_ATTEMPTS):
+        candidate = cache_path.with_name(
+            f"{cache_path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        try:
+            return os.open(candidate, flags, 0o600), str(candidate)
+        except FileExistsError:
+            continue
+    raise OSError(f"could not create a temporary file beside {cache_path}")
 
 
 def _publish_hash_cache(
@@ -294,18 +333,172 @@ def _publish_hash_cache(
     left untouched, which is the safe direction: a cache that is one run out
     of date costs a rescan, while a mis-stamped one loses an edit.
     """
-    tmp_path = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+    # The temporary name is unpredictable and the file is created with
+    # O_EXCL|O_NOFOLLOW, so a local process that can write to the repository
+    # directory cannot pre-place a symlink here and have this truncate the
+    # link's target with cache JSON. A PID-derived name opened with
+    # `Path.open("w")` did exactly that: the name was guessable and the open
+    # followed the link (issue #1700). O_EXCL also means an existing path is
+    # a publish FAILURE rather than something to unlink and retry -- removing
+    # it would be the same race one step later.
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with tmp_path.open("w", encoding="utf-8") as f:
+        fd, tmp_name = _open_exclusive_temp(cache_path)
+        tmp_path = Path(tmp_name)
+    except OSError as e:
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
+        return False
+    try:
+        # Everything below acts on the DESCRIPTOR, never the pathname. The
+        # exclusive no-follow open protects only creation: a local writer can
+        # unlink the temporary between then and here and drop a symlink in its
+        # place, after which a path-based `os.utime` rewrites the link
+        # target's timestamp and `os.replace` publishes the link itself as the
+        # cache -- with this function still reporting success. Verified
+        # exploitable before this change (#1701 review).
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hashes, f, indent=2)
-        if observed_at is not None:
-            os.utime(tmp_path, (observed_at, observed_at))
+            f.flush()
+            # Stamping through the DESCRIPTOR where the platform allows it,
+            # because a path-based utime can follow a symlink swapped in after
+            # creation. Windows does not: `os.utime` is absent from
+            # `os.supports_fd` there, so passing a descriptor raises
+            # "TypeError: utime: path should be string, bytes or os.PathLike,
+            # not int" and every hash-cache publish fails with it. This host is
+            # POSIX, so the fd branch is the only one exercised locally and the
+            # break was invisible until CI's Windows job ran (#1701 review).
+            stamp_by_fd = os.utime in os.supports_fd
+            if observed_at is not None and stamp_by_fd:
+                os.utime(f.fileno(), (observed_at, observed_at))
+            # `flush` only pushes the bytes to the OS. Without the fsync a
+            # power loss after `os.replace` can expose a cache file whose
+            # contents were never written -- and a truncated or empty cache is
+            # worse than none, because `_is_already_in_sync` trusts whatever
+            # is there. Sync after the utime so the timestamp is durable too,
+            # then take the inode: write, sync, then publish (#1701 review).
+            # `fstat` BEFORE `fsync`, not after. On Windows the fsync path
+            # goes through `_commit()`, which can leave the descriptor
+            # unusable, and the following `fstat` then raised
+            # "[Errno 9] Bad file descriptor" -- every hash-cache publish
+            # failed with it and 39 tests went red on that platform while
+            # ubuntu and macOS stayed green (#1701 review, measured in CI).
+            #
+            # Order is safe either way: the inode identifies the same file
+            # before and after the sync, and nothing between them can change
+            # which file this descriptor refers to.
+            created = os.fstat(f.fileno())
+        # `fsync` AFTER the writer is closed, not inside it. On Windows the
+        # sync goes through `_commit()` on a descriptor owned by the buffered
+        # text wrapper, and it raised "[Errno 9] Bad file descriptor" there --
+        # 39 tests red on Windows while ubuntu and macOS stayed green, twice
+        # in a row, because reordering fstat and fsync inside the block was
+        # not enough (#1701 review, measured in CI both times).
+        #
+        # Reopened with O_NOFOLLOW, so a link swapped in between the close and
+        # here cannot redirect the sync; the inode check below still refuses a
+        # swapped path before anything is published.
+        sync_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        sync_fd = os.open(tmp_path, sync_flags)
+        try:
+            os.fsync(sync_fd)
+        finally:
+            os.close(sync_fd)
+        # A cheap refusal, not the security boundary. The boundary is the
+        # threat model, and it is worth stating because "there is still a
+        # window between this check and the rename" is true and does not
+        # matter (#1701 review):
+        #
+        # The temporary is always a SIBLING of the cache (`with_name`), and
+        # `rename(2)` moves directory ENTRIES without following symlinks on
+        # either name -- measured: renaming a symlink over a file leaves the
+        # link's target untouched. So once `O_EXCL|O_NOFOLLOW` closes the
+        # open-time follow, which was the only path that could write OUTSIDE
+        # this directory, a post-creation swap can at worst leave the cache
+        # entry pointing at a link the attacker chose.
+        #
+        # Doing that needs WRITE on the directory, and anyone with directory
+        # write can unlink the cache and replace it outright without racing
+        # anything. The window grants no capability its own precondition does
+        # not already grant. The one directory shape writable by others is
+        # world-writable-plus-sticky, and the sticky bit forbids renaming or
+        # unlinking another user's entries, so the swap fails there too.
+        #
+        # The check stays because it costs one lstat and turns a swap into a
+        # refusal rather than a silent publish.
+        current = os.lstat(tmp_path)
+        # Skipped where the identity comparison is not meaningful. On Windows
+        # `st_ino` is a file INDEX rather than an inode: it can be 0 on some
+        # filesystems, and `fstat` and `lstat` are not guaranteed to agree, so
+        # comparing them there would refuse every publish rather than detect a
+        # swap (#1701 review, decision (a)).
+        #
+        # The premise that makes this acceptable on that platform is the one
+        # already argued for the fallback stamp: creating a symlink on Windows
+        # requires privilege in the default configuration, and an attacker who
+        # can write to the cache directory can rewrite the cache outright
+        # without any race. The O_EXCL creation and the fsync stay on every
+        # platform; only this comparison is conditional.
+        identity_is_meaningful = (
+            os.name != "nt" and created.st_ino != 0 and current.st_ino != 0
+        )
+        if identity_is_meaningful and (
+            (current.st_ino, current.st_dev) != (created.st_ino, created.st_dev)
+        ):
+            raise OSError(
+                f"temporary cache path {tmp_path} was replaced after creation"
+            )
+        if observed_at is not None and not stamp_by_fd:
+            # The path branch, for platforms whose `os.utime` takes no
+            # descriptor (Windows). It has to run AFTER the inode check: a
+            # stamp before it would follow a symlink swapped in after
+            # creation and rewrite the link target's timestamp, which is
+            # measured and was the whole point of the descriptor-based stamp.
+            #
+            # Durability is then restored by re-opening and syncing, rather
+            # than by moving the stamp earlier: a crash between the utime and
+            # the replace would otherwise publish a cache carrying its write
+            # time instead of `observed_at`, and `_is_already_in_sync` trusts
+            # that mtime, so it would skip edits made during the run (#1701
+            # review). O_NOFOLLOW again, for the same reason as the first
+            # open.
+            # `follow_symlinks=False` closes the finding directly rather than
+            # by argument: if a link is swapped in between the inode check and
+            # here, the stamp lands on the LINK, not on whatever it points at,
+            # so no external file's metadata can be touched (#1701 review).
+            #
+            # Guarded because the flag is not universal; where it is
+            # unsupported the threat-model argument still applies -- the swap
+            # needs write permission on this directory, which already allows
+            # rewriting the cache outright.
+            if os.utime in os.supports_follow_symlinks:
+                os.utime(tmp_path, (observed_at, observed_at), follow_symlinks=False)
+            else:
+                os.utime(tmp_path, (observed_at, observed_at))
+            sync_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            sync_fd = os.open(tmp_path, sync_flags)
+            try:
+                os.fsync(sync_fd)
+            finally:
+                os.close(sync_fd)
         os.replace(tmp_path, cache_path)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
         return True
     except OSError as e:
-        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError as cleanup_error:

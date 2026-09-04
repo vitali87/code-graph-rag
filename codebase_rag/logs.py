@@ -881,7 +881,15 @@ MCP_HTTP_SERVER_READY = (
 HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
-HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+# `errno` and `strerror` as well as the message: a publish failure names a
+# path and a bare message otherwise, which is not enough to tell WHICH
+# syscall refused on a platform the developer cannot reproduce on. A bare
+# `OSError("...")` carries errno None, so the value also distinguishes a
+# real syscall failure from one this module raised itself.
+HASH_CACHE_SAVE_FAILED = (
+    "Failed to save hash cache to {path}: {error} "
+    "(errno={errno} strerror={strerror} failing_path={failing_path})"
+)
 # A scoped re-ingest backdates the hash cache to the instant it observed
 # (`_reingest_update_hashes`); these name that step, distinct from the
 # atomic publish's own temporary-file cleanup below.

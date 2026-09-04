@@ -646,6 +646,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         )
 
         real_open = Path.open
+        real_os_open = os.open
         real_utime = os.utime
         real_replace = os.replace
         refused: set[str] = set()
@@ -661,6 +662,17 @@ class TestCrashBetweenCacheSaveAndFlush:
                 raise OSError(errno.EROFS, "Read-only file system")
             return real_open(self, *args, **kwargs)
 
+        # The publish creates its temporary through `os.open` with
+        # O_EXCL|O_NOFOLLOW rather than `Path.open` (issue #1700), so the
+        # read-only filesystem has to be simulated at that call too. Patching
+        # only `Path.open` left the write unrefused, which the `"write" in
+        # refused` assertion below catches rather than passing vacuously.
+        def _refuse_os_open(path, flags, mode=0o777, **kwargs):  # type: ignore[no-untyped-def]
+            if _is_cache_temp(Path(os.fspath(path))):
+                refused.add("write")
+                raise OSError(errno.EROFS, "Read-only file system")
+            return real_os_open(path, flags, mode, **kwargs)
+
         def _refuse_utime(path, times=None, **kwargs):  # type: ignore[no-untyped-def]
             if _is_cache_temp(Path(path)):
                 refused.add("utime")
@@ -674,6 +686,7 @@ class TestCrashBetweenCacheSaveAndFlush:
             return real_replace(src, dst, **kwargs)
 
         monkeypatch.setattr(Path, "open", _refuse_open)
+        monkeypatch.setattr(graph_updater_module.os, "open", _refuse_os_open)
         monkeypatch.setattr(graph_updater_module.os, "utime", _refuse_utime)
         monkeypatch.setattr(graph_updater_module.os, "replace", _refuse_replace)
         # Must COMPLETE: a cache that cannot be written is not a failed run.
@@ -685,6 +698,7 @@ class TestCrashBetweenCacheSaveAndFlush:
         ).run()
         monkeypatch.setattr(graph_updater_module.os, "replace", real_replace)
         monkeypatch.setattr(graph_updater_module.os, "utime", real_utime)
+        monkeypatch.setattr(graph_updater_module.os, "open", real_os_open)
         monkeypatch.setattr(Path, "open", real_open)
 
         assert "write" in refused, (
@@ -1876,3 +1890,184 @@ def test_a_pre_parse_failure_leaves_the_old_subtrees_in_place(
         updater.run()
 
     assert _deleted_module_paths(mock_ingestor) == set()
+
+
+class TestHashCachePublishSymlinkSafety:
+    """The publish must not write through a link planted at its temp path."""
+
+    def test_a_planted_symlink_at_the_predictable_path_is_not_followed(
+        self, tmp_path: Path
+    ) -> None:
+        """A pre-placed link at the OLD predictable name must be inert.
+
+        The temporary name used to be `<cache>.<pid>.tmp` and was opened with
+        `Path.open("w")`, which follows a symlink: a local process able to
+        write to the repository directory could point that name at any file
+        the publisher could write and have it truncated and replaced with
+        cache JSON (issue #1700).
+
+        The victim is asserted BY CONTENT rather than by mtime or size: the
+        overwrite leaves a perfectly well-formed file, so only the bytes
+        distinguish "untouched" from "replaced with someone else's data".
+        """
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        original = "precious contents that must survive\n"
+        victim.write_text(original, encoding="utf-8")
+
+        planted = cache_path.with_name(f"{cache_path.name}.{os.getpid()}.tmp")
+        planted.symlink_to(victim)
+
+        published = graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "deadbeef"}, None
+        )
+
+        assert victim.read_text(encoding="utf-8") == original, (
+            "the publish followed a symlink planted at its temporary path and "
+            "overwrote the link's target with cache JSON"
+        )
+        assert published, "the publish must still succeed around a planted link"
+        assert json.loads(cache_path.read_text(encoding="utf-8")) == {
+            "a.py": "deadbeef"
+        }, "the cache itself must be written correctly"
+
+    def test_the_temporary_name_is_not_derived_from_the_pid(
+        self, tmp_path: Path
+    ) -> None:
+        """Two publishes must not reuse one predictable temporary name.
+
+        Pins the unpredictability directly. Asserting only that the planted
+        link survives would still pass if the name were merely CHANGED to
+        another fixed string, which an attacker reads out of the source just
+        as easily.
+        """
+        seen: set[str] = set()
+        real_open = os.open
+
+        def _record(path, flags, mode=0o777, **kwargs):  # type: ignore[no-untyped-def]
+            name = os.fspath(path)
+            if name.endswith(".tmp"):
+                seen.add(os.path.basename(name))
+            return real_open(path, flags, mode, **kwargs)
+
+        # The SAME cache path both times. Publishing to cache0/cache1 would
+        # yield two distinct temporary names from any scheme at all, including
+        # a fixed `.tmp` suffix, so it could not tell an unpredictable name
+        # from a derived one (#1701 review).
+        cache_path = tmp_path / "cache.json"
+        with patch.object(os, "open", _record):
+            for _ in range(2):
+                graph_updater_module._publish_hash_cache(
+                    cache_path, {"a.py": "x"}, None
+                )
+
+        assert len(seen) == 2, (
+            "two publishes to the SAME cache path reused one temporary name, "
+            f"so the name is derived rather than unpredictable: {seen}"
+        )
+
+    def test_a_symlink_swapped_in_after_creation_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exclusive open guards creation only; the rest must use the fd.
+
+        A local writer able to modify the cache directory can unlink the
+        temporary between its creation and the calls that follow, then drop a
+        symlink at the same name. A path-based `os.utime` then rewrites the
+        LINK TARGET's timestamp and `os.replace` publishes the link itself as
+        the hash cache, with the publish still reporting success (#1701
+        review, verified exploitable).
+
+        Both assertions are needed and neither implies the other: stamping
+        through the descriptor stops the timestamp write, and the inode check
+        stops the symlink being published. A fix doing only the first still
+        installs the link.
+        """
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        before = victim.stat().st_mtime
+
+        real_open = graph_updater_module._open_exclusive_temp
+
+        def _swap_after_create(path: Path) -> tuple[int, str]:
+            fd, name = real_open(path)
+            os.unlink(name)
+            os.symlink(victim, name)
+            return fd, name
+
+        monkeypatch.setattr(
+            graph_updater_module, "_open_exclusive_temp", _swap_after_create
+        )
+
+        published = graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "deadbeef"}, 1_000_000.0
+        )
+
+        assert victim.stat().st_mtime == before, (
+            "the stamp followed a symlink swapped in after creation and "
+            "rewrote the victim's timestamp"
+        )
+        assert not cache_path.is_symlink(), (
+            "a symlink swapped in after creation was published as the cache"
+        )
+        assert not published, (
+            "a publish that could not use the file it created must report "
+            "failure, not success over whatever replaced it"
+        )
+
+    def test_the_path_stamp_branch_stamps_and_stays_safe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulates the platform where `os.utime` takes no descriptor.
+
+        Windows has no `os.utime` in `os.supports_fd`, so passing a file
+        descriptor raises `TypeError` and every hash-cache publish fails with
+        it. This host is POSIX and always takes the fd branch, so that break
+        was invisible locally until CI's Windows job ran (#1701 review).
+
+        Asserts BOTH properties of the fallback, because the two orderings
+        that satisfy them are different and I traded one for the other once:
+        the stamp must land (durability, and `_is_already_in_sync` reads that
+        mtime), and it must not follow a symlink swapped in after creation
+        (safety, which requires it to run after the inode check).
+        """
+        monkeypatch.setattr(
+            os, "supports_fd", frozenset(x for x in os.supports_fd if x is not os.utime)
+        )
+        assert os.utime not in os.supports_fd, "fixture guard: branch not forced"
+
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        before = victim.stat().st_mtime
+
+        real_open = graph_updater_module._open_exclusive_temp
+
+        def _swap_after_create(path: Path) -> tuple[int, str]:
+            fd, name = real_open(path)
+            os.unlink(name)
+            os.symlink(victim, name)
+            return fd, name
+
+        # First: the ordinary path, which must stamp.
+        assert graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "x"}, 1_000_000.0
+        )
+        assert int(cache_path.stat().st_mtime) == 1_000_000, (
+            "the fallback branch did not apply the timestamp, so a later run "
+            "reads the write time and may skip edits made during this one"
+        )
+
+        # Then: the same branch under the post-creation swap.
+        monkeypatch.setattr(
+            graph_updater_module, "_open_exclusive_temp", _swap_after_create
+        )
+        published = graph_updater_module._publish_hash_cache(
+            tmp_path / "cache2.json", {"a.py": "y"}, 2_000_000.0
+        )
+        assert victim.stat().st_mtime == before, (
+            "the fallback stamp ran before the inode check and rewrote a "
+            "swapped symlink target's timestamp"
+        )
+        assert not published, "a publish over a swapped path must refuse"
