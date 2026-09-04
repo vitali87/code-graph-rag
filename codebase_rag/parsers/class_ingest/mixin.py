@@ -190,6 +190,7 @@ class ClassIngestMixin:
     rust_impl_method_traits: dict[str, str]
     rust_inherent_impl_methods: set[str]
     cpp_module_interfaces: set[str]
+    cpp_interfaces_parsed_this_run: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
     rust_function_modules: dict[str, str]
@@ -313,6 +314,7 @@ class ClassIngestMixin:
         module_qn: str,
         file_path: Path,
     ) -> None:
+        before = set(self.cpp_module_interfaces)
         cpp_modules.ingest_cpp_module_declarations(
             root_node,
             module_qn,
@@ -323,6 +325,10 @@ class ClassIngestMixin:
             self.cpp_module_interfaces,
             self._deferred_cpp_module_impls,
         )
+        # Remember what this parse added, so rehydration can rebuild the
+        # graph-derived entries without dropping an interface whose node
+        # write has not been flushed yet.
+        self.cpp_interfaces_parsed_this_run |= self.cpp_module_interfaces - before
 
     def resolve_deferred_cpp_module_impls(self) -> int:
         """Emit ModuleImplementation IMPLEMENTS edges for interfaces that exist.

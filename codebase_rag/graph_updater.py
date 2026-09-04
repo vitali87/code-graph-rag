@@ -1163,6 +1163,10 @@ class GraphUpdater:
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
+        # Per-run for the same reason: the set records what THIS run parsed,
+        # so a reused updater must not treat a previous run's interfaces as
+        # unflushed writes that rehydration has to preserve.
+        self.factory.definition_processor.cpp_interfaces_parsed_this_run.clear()
         # Per-run for the same reason: set on the in-sync early return below
         # and previously cleared only in `__init__`, so a reused instance kept
         # reporting a previous run's skip. `cli.py` reads it to decide what to
@@ -1840,6 +1844,20 @@ class GraphUpdater:
         # verification as a live target. Cleared only now that the rows are
         # in hand, so a failed query above leaves the previous set intact.
         self._rehydrated_module_qns.clear()
+        # Same rebuild for the interface set the loop below fills from these
+        # same rows. A stale entry defeats the membership check in
+        # resolve_deferred_cpp_module_impls, which is what stops an IMPLEMENTS
+        # edge being minted to a ModuleInterface the graph no longer holds.
+        #
+        # Interfaces THIS run parsed are put back: their node writes may still
+        # be in the ingestor's buffer and so absent from the rows just
+        # fetched, and dropping one loses the IMPLEMENTS edge for an interface
+        # and implementation added together. That is not hypothetical -- an
+        # earlier attempt at this cleared the set outright and did exactly
+        # that.
+        dp = self.factory.definition_processor
+        dp.cpp_module_interfaces.clear()
+        dp.cpp_module_interfaces |= dp.cpp_interfaces_parsed_this_run
         for row in module_rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)

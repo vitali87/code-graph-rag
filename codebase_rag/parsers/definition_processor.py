@@ -278,6 +278,12 @@ class DefinitionProcessor(
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.
         self.cpp_module_interfaces: set[str] = set()
+        # The subset of the above that THIS run's parsing registered, as
+        # opposed to entries read back from the graph. Rehydration rebuilds
+        # the graph-derived part and must not drop these: a just-parsed
+        # interface's node write is still in the ingestor's buffer, so it is
+        # absent from the rows rehydration fetches.
+        self.cpp_interfaces_parsed_this_run: set[str] = set()
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.

@@ -359,6 +359,95 @@ def test_a_failed_module_query_leaves_the_rehydrated_set_intact(
     assert "proj.stale" in updater._rehydrated_module_qns
 
 
+class _BufferingIngestor(_StatefulIngestor):
+    # Production batches node writes and flushes at batch_size, so a module
+    # parsed in the current run is NOT visible to a query issued mid-run. A
+    # write-through fake hides every bug that depends on that.
+    def __init__(self) -> None:
+        super().__init__()
+        self._pending: list[tuple[str, dict[str, object]]] = []
+
+    def ensure_node_batch(self, label: str, properties: dict[str, object]) -> None:
+        self._pending.append((label, properties))
+
+    def flush_all(self) -> None:
+        for label, properties in self._pending:
+            super().ensure_node_batch(label, properties)
+        self._pending = []
+
+
+def test_a_cpp_interface_parsed_this_run_survives_rehydration(
+    temp_repo: Path,
+) -> None:
+    # cpp_module_interfaces is rebuilt from the graph, but an interface this
+    # run parsed is still unflushed when rehydration reads, so rebuilding
+    # without it drops the IMPLEMENTS edge for an interface and an
+    # implementation added together. An earlier attempt at this fix did
+    # exactly that.
+    root = temp_repo / "proj"
+    _materialise(root, {"other.cpp": "int x() { return 1; }\n"})
+    store = _BufferingIngestor()
+    first = _updater(store, root, cs.SupportedLanguage.CPP)
+    if cs.SupportedLanguage.CPP not in first.parsers:
+        pytest.skip("cpp parser not available")
+    first.run(force=True)
+    store.flush_all()
+
+    (root / "iface.cppm").write_text(
+        "export module M;\nexport int f();\n", encoding="utf-8"
+    )
+    (root / "impl.cpp").write_text(
+        "module M;\nint f() { return 1; }\n", encoding="utf-8"
+    )
+    _bump(root, "iface.cppm")
+    _bump(root, "impl.cpp")
+
+    _updater(store, root, cs.SupportedLanguage.CPP).run(force=False)
+    store.flush_all()
+
+    implements = [
+        edge for edge in store.edges if edge[2] == cs.RelationshipType.IMPLEMENTS.value
+    ]
+    assert implements, "the interface was dropped before its impl resolved"
+
+
+def test_a_cpp_interface_the_graph_lost_is_forgotten(temp_repo: Path) -> None:
+    # The mirror case: an interface another writer deleted must not linger,
+    # or resolve_deferred_cpp_module_impls mints an IMPLEMENTS edge to a
+    # ModuleInterface the graph no longer holds.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "iface.cppm": "export module M;\nexport int f();\n",
+            "other.cpp": "int x() { return 1; }\n",
+        },
+    )
+    store = _StatefulIngestor()
+    first = _updater(store, root, cs.SupportedLanguage.CPP)
+    if cs.SupportedLanguage.CPP not in first.parsers:
+        pytest.skip("cpp parser not available")
+    first.run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.CPP)
+    (root / "other.cpp").write_text("int x() { return 2; }\n", encoding="utf-8")
+    _bump(root, "other.cpp")
+    updater.run(force=False)
+    interfaces = updater.factory.definition_processor.cpp_module_interfaces
+    assert "proj.M" in interfaces, "the shape did not rehydrate"
+
+    removed = [key for key in store.nodes if key[0] == "ModuleInterface"]
+    assert removed, "expected a ModuleInterface node to delete"
+    for key in removed:
+        del store.nodes[key]
+
+    (root / "other.cpp").write_text("int x() { return 3; }\n", encoding="utf-8")
+    _bump(root, "other.cpp")
+    updater.run(force=False)
+
+    assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
