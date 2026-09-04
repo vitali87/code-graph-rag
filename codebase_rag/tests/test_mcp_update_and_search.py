@@ -1351,3 +1351,133 @@ class TestIncompleteMarkerInvariant:
             "the fresh scoped reingest ran its destructive constraint "
             f"migration before recording the run: {order}"
         )
+
+    async def test_an_abort_before_mutation_releases_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Nothing written means nothing to recover: the marker must come off.
+
+        The reingest path marks BEFORE the mutating call, so an abort raised
+        in the read-only prologue would otherwise leave durable state claiming
+        a run was interrupted -- and a fresh process would refuse scoped
+        reingests against a graph that is perfectly complete, until someone
+        ran a full update (#1705 review, round 7).
+
+        The second reingest on a FRESH registry is the real assertion: it is
+        the process that would have been wrongly blocked.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        aborting = MagicMock()
+        aborting.reingest_mutated = False
+        aborting.reingest.side_effect = ReingestAborted("graph read failed")
+        first._live_updater = aborting
+
+        aborted = await first.reingest(["a.py"])
+        assert "error" in aborted, "the abort must still surface to the caller"
+        assert project not in ingestor._marker_store, (
+            "an abort that wrote nothing left its marker behind, which blocks "
+            "every later scoped reingest on a graph that is complete"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        retained = MagicMock()
+        retained.reingest_mutated = False
+        retained.reingest.return_value = SimpleNamespace(
+            reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+        )
+        second._live_updater = retained
+        assert "error" not in await second.reingest(["a.py"]), (
+            "a fresh registry refused a scoped reingest after an abort that "
+            "changed nothing"
+        )
+
+    async def test_a_failure_after_the_first_write_keeps_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Partial means recoverable state must survive.
+
+        The mirror of the case above, and the reason the classification is on
+        WHAT HAPPENED rather than the exception type: a failure once writing
+        has begun leaves a graph that may be half-rewritten, so the marker
+        stays and a fresh process refuses until a full update recovers it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        mutating = MagicMock()
+        mutating.reingest_mutated = True
+        mutating.reingest.side_effect = RuntimeError("died after the delete")
+        registry._live_updater = mutating
+
+        failed = await registry.reingest(["a.py"])
+        assert "error" in failed
+        assert ingestor._marker_store.get(project) is True, (
+            "a failure after the first write cleared its marker, so a fresh "
+            "process would treat a partially rewritten graph as complete"
+        )
+        assert registry._live_updater is None, (
+            "the retained updater describes a graph that no longer exists"
+        )
+
+    async def test_the_updater_itself_reports_whether_it_mutated(
+        self, temp_project_root: Path
+    ) -> None:
+        """Drives the REAL `GraphUpdater`, not a mock with the flag preset.
+
+        The three tests above set `reingest_mutated` by hand on a double, so
+        they pin the MCP handler's classification but say nothing about
+        whether `GraphUpdater` sets the flag in the right place. Mutating the
+        production line that sets it left every one of them green (measured),
+        which is exactly the gap this closes (#1705 review, round 7).
+
+        A prologue failure must leave the flag False: `_hydrate_for_reingest`
+        raising is converted to `ReingestAborted` before any delete or write.
+        """
+        from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.tests.conftest import _MockIngestor
+
+        (temp_project_root / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.reingest_mutated = True  # stale value from a previous call
+
+        with patch.object(
+            updater, "_hydrate_for_reingest", side_effect=RuntimeError("read failed")
+        ):
+            with pytest.raises(ReingestAborted):
+                updater.reingest(["mod.py"])
+
+        assert updater.reingest_mutated is False, (
+            "a failure in the read-only prologue left the mutation flag set, "
+            "so the caller would keep a marker for a run that changed nothing"
+        )
+
+        # And the other direction, which is the half that actually pins the
+        # production line: a run that gets PAST the prologue must report True.
+        # Asserting only the False case above cannot distinguish the real code
+        # from one that never sets the flag at all -- both leave it False, so
+        # mutating `reingest_mutated = True` to False left this test green
+        # (measured, #1705 review round 7).
+        fresh = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        fresh.reingest(["mod.py"])
+        assert fresh.reingest_mutated is True, (
+            "a reingest that got past the read-only prologue and issued writes "
+            "reported that it had not mutated, so a failure afterwards would "
+            "clear the marker protecting a partial graph"
+        )

@@ -1171,19 +1171,49 @@ class MCPToolsRegistry:
             marked_here = project_name
         try:
             report = updater.reingest(paths, deleted=deleted)
-        except (ValueError, ReingestAborted):
-            # A refusal (a path outside the repository, a directory) is
-            # raised while the paths are split, and an abort while the call
-            # was still reading the graph; neither touched anything, so the
-            # updater is still valid and the call may simply be retried.
-            raise
-        except Exception:
-            # The run may have deleted the affected subtrees and never
-            # rebuilt them: the retained updater describes a graph that no
-            # longer exists, and the next scoped call must not reuse it
-            # over that partial state. update_repository is the recovery.
-            self._live_updater = None
-            self._graph_incomplete = True
+        except Exception as exc:
+            # One classification for every failure, by WHAT HAPPENED rather
+            # than by exception type (#1705 review, round 7):
+            #
+            #   nothing written -> the graph is exactly as it was, so the
+            #     marker this call created is a lie about a run that changed
+            #     nothing. Clear it, or a fresh process refuses scoped
+            #     reingests against a complete graph until someone runs a
+            #     full update.
+            #   something written -> the graph may be partial. The marker
+            #     stays, and the retained updater goes, because it describes
+            #     a graph that no longer exists.
+            #
+            # `reingest_mutated` is set inside `GraphUpdater.reingest` at the
+            # exact point its read-only prologue ends. Classifying on
+            # ReingestAborted instead would misread a future abort raised
+            # mid-run as "nothing changed" and clear a marker that is
+            # protecting a partial graph.
+            flag = getattr(updater, "reingest_mutated", None)
+            if isinstance(flag, bool):
+                # The updater told us directly: set at the exact point its
+                # read-only prologue ends.
+                mutated = flag
+            else:
+                # No usable flag (an updater predating it, or a test double).
+                # Fall back to the exception type, which carries the same
+                # information less precisely: `GraphUpdater.reingest` converts
+                # EVERY prologue failure to `ReingestAborted` and rejects bad
+                # paths with `ValueError` before touching anything, so any
+                # other exception means the write phase had begun.
+                #
+                # `isinstance` on the flag rather than `getattr(..., True)`:
+                # any attribute of a MagicMock is a truthy child mock, which
+                # would classify every failure as mutated (measured -- it
+                # broke the retained-updater tests).
+                mutated = not isinstance(exc, ValueError | ReingestAborted)
+            if mutated:
+                self._live_updater = None
+                self._graph_incomplete = True
+            elif marked_here is not None:
+                # Best effort: a failing clear must not replace the caller's
+                # real error (a bad path, an abort) with a marker error.
+                self._require_marker_cleared(marked_here)
             raise
         if marked_here is not None:
             # Invariant (b), same as every other path: the hydration above
