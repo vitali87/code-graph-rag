@@ -1100,6 +1100,76 @@ class MCPToolsRegistry:
             return True
         return any(bool(row.get("run_incomplete")) for row in rows or [])
 
+    @staticmethod
+    def _reingest_mutated(updater: object, exc: BaseException) -> bool:
+        """Whether a failed reingest got as far as writing.
+
+        Classifies by WHAT HAPPENED rather than by exception type: the updater
+        sets `reingest_mutated` at the exact point its read-only prologue
+        ends, so a future abort raised mid-run is still classified as partial
+        (#1705 review). Split out of `_reingest_sync` to keep that function
+        under the cognitive-complexity limit.
+        """
+        flag = getattr(updater, "reingest_mutated", None)
+        if isinstance(flag, bool):
+            return flag
+        # No usable flag (an updater predating it, or a test double). Fall
+        # back to the exception type, which carries the same information less
+        # precisely: `GraphUpdater.reingest` converts EVERY prologue failure to
+        # `ReingestAborted` and rejects bad paths with `ValueError` before
+        # touching anything, so any other exception means writing had begun.
+        #
+        # `isinstance` on the flag rather than `getattr(..., True)`: any
+        # attribute of a MagicMock is a truthy child mock, which would classify
+        # every failure as mutated (measured).
+        return not isinstance(exc, ValueError | ReingestAborted)
+
+    def _hydrate_reingest_updater(self, project_name: str) -> GraphUpdater:
+        """Build a scoped updater when none is retained.
+
+        Split out of `_reingest_sync` to keep it under the
+        cognitive-complexity limit; the guards and their reasoning are
+        unchanged. Raises rather than returning on a refusal, exactly as
+        it did inline.
+        """
+        # A scoped re-ingest completes a graph; it cannot stand in for
+        # the first index. After delete_project or wipe_database the
+        # project is gone, and hydrating from nothing would leave every
+        # unrelated definition missing.
+        # The persisted marker is what makes this survive the process
+        # that earned it: with no retained updater this may be a fresh
+        # registry after a crash, where `_graph_incomplete` is False
+        # because nothing in THIS process failed (issue #1679).
+        if self._graph_incomplete or self._persisted_incomplete(project_name):
+            raise ValueError(
+                cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+            )
+        if project_name not in self.ingestor.list_projects():
+            raise ValueError(cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name))
+        # Marked after the guards above -- they ask whether a PREVIOUS run
+        # left the graph partial, so marking first would make every
+        # reingest refuse on its own marker -- and before
+        # `ensure_constraints`, which runs the same destructive migration
+        # the index and update paths mark before. Invariant (c).
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
+        self.ingestor.ensure_constraints()
+        # The same exclusion set the index and update paths use, or an
+        # agent-named path under a CLI-excluded directory would be
+        # indexed here and kept by every later update.
+        exclude_paths, unignore_paths = self._ignore_sets()
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+            unignore_paths=unignore_paths,
+            exclude_paths=exclude_paths,
+            project_name=project_name,
+        )
+        self._live_updater = updater
+        return updater
+
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
@@ -1121,45 +1191,8 @@ class MCPToolsRegistry:
         project_name = derive_project_name(Path(self.project_root))
         marked_here: str | None = None
         if updater is None:
-            # A scoped re-ingest completes a graph; it cannot stand in for
-            # the first index. After delete_project or wipe_database the
-            # project is gone, and hydrating from nothing would leave every
-            # unrelated definition missing.
-            # The persisted marker is what makes this survive the process
-            # that earned it: with no retained updater this may be a fresh
-            # registry after a crash, where `_graph_incomplete` is False
-            # because nothing in THIS process failed (issue #1679).
-            if self._graph_incomplete or self._persisted_incomplete(project_name):
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            if project_name not in self.ingestor.list_projects():
-                raise ValueError(
-                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
-                )
-            # Marked after the guards above -- they ask whether a PREVIOUS run
-            # left the graph partial, so marking first would make every
-            # reingest refuse on its own marker -- and before
-            # `ensure_constraints`, which runs the same destructive migration
-            # the index and update paths mark before. Invariant (c).
-            if (refusal := self._require_marker(project_name)) is not None:
-                raise RuntimeError(refusal)
+            updater = self._hydrate_reingest_updater(project_name)
             marked_here = project_name
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
         else:
             # The RETAINED-updater branch reaches the same mutating call below
             # but skipped every marker step, because the mark lived inside the
@@ -1189,24 +1222,7 @@ class MCPToolsRegistry:
             # ReingestAborted instead would misread a future abort raised
             # mid-run as "nothing changed" and clear a marker that is
             # protecting a partial graph.
-            flag = getattr(updater, "reingest_mutated", None)
-            if isinstance(flag, bool):
-                # The updater told us directly: set at the exact point its
-                # read-only prologue ends.
-                mutated = flag
-            else:
-                # No usable flag (an updater predating it, or a test double).
-                # Fall back to the exception type, which carries the same
-                # information less precisely: `GraphUpdater.reingest` converts
-                # EVERY prologue failure to `ReingestAborted` and rejects bad
-                # paths with `ValueError` before touching anything, so any
-                # other exception means the write phase had begun.
-                #
-                # `isinstance` on the flag rather than `getattr(..., True)`:
-                # any attribute of a MagicMock is a truthy child mock, which
-                # would classify every failure as mutated (measured -- it
-                # broke the retained-updater tests).
-                mutated = not isinstance(exc, ValueError | ReingestAborted)
+            mutated = self._reingest_mutated(updater, exc)
             if mutated:
                 self._live_updater = None
                 self._graph_incomplete = True

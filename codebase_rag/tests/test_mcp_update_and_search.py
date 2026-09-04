@@ -1179,8 +1179,9 @@ class TestIncompleteMarkerSurvivesTheProcess:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             await registry.update_repository()
 
-        assert "mark" in order and "constraints" in order, (
-            f"fixture guard: both steps must run, saw {order}"
+        assert "mark" in order, f"fixture guard: the mark must run, saw {order}"
+        assert "constraints" in order, (
+            f"fixture guard: the migration must run, saw {order}"
         )
         assert order.index("mark") < order.index("constraints"), (
             "the constraint migration ran before the marker was written, so a "
