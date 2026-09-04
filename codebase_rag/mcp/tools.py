@@ -9,6 +9,7 @@ from pydantic_ai import Agent
 from rich.console import Console
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_query
 from codebase_rag import logs as lg
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
@@ -244,6 +245,62 @@ class MCPToolsRegistry:
                 ),
                 handler=self.reingest,
                 returns_json=True,
+            ),
+            cs.MCPToolName.RESOLVE: self._graph_tool(
+                cs.MCPToolName.RESOLVE,
+                {cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET},
+                [cs.MCPParamName.TARGET],
+                self.resolve,
+            ),
+            cs.MCPToolName.DEFINITION: self._graph_tool(
+                cs.MCPToolName.DEFINITION,
+                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.definition,
+            ),
+            cs.MCPToolName.CALLERS: self._graph_tool(
+                cs.MCPToolName.CALLERS,
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.callers,
+                integer_params={cs.MCPParamName.DEPTH},
+            ),
+            cs.MCPToolName.CALLEES: self._graph_tool(
+                cs.MCPToolName.CALLEES,
+                {
+                    cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME,
+                    cs.MCPParamName.DEPTH: td.MCP_PARAM_DEPTH,
+                },
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.callees,
+                integer_params={cs.MCPParamName.DEPTH},
+            ),
+            cs.MCPToolName.IMPLEMENTORS: self._graph_tool(
+                cs.MCPToolName.IMPLEMENTORS,
+                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.implementors,
+            ),
+            cs.MCPToolName.OVERRIDES: self._graph_tool(
+                cs.MCPToolName.OVERRIDES,
+                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.overrides,
+            ),
+            cs.MCPToolName.IMPORTERS: self._graph_tool(
+                cs.MCPToolName.IMPORTERS,
+                {cs.MCPParamName.MODULE_QN: td.MCP_PARAM_MODULE_QN},
+                [cs.MCPParamName.MODULE_QN],
+                self.importers,
+            ),
+            cs.MCPToolName.TESTS_REACHING: self._graph_tool(
+                cs.MCPToolName.TESTS_REACHING,
+                {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
+                [cs.MCPParamName.QUALIFIED_NAME],
+                self.tests_reaching,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
@@ -1044,6 +1101,169 @@ class MCPToolsRegistry:
         except Exception as e:
             logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
             return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
+
+    # --- deterministic graph queries (issue #1523) -------------------------------
+
+    def _graph_tool(
+        self,
+        name: cs.MCPToolName,
+        params: dict[str, str],
+        required: list[str],
+        handler: MCPHandlerType,
+        integer_params: set[str] | None = None,
+    ) -> ToolMetadata:
+        properties = {
+            key: MCPInputSchemaProperty(
+                type=cs.MCPSchemaType.INTEGER
+                if integer_params and key in integer_params
+                else cs.MCPSchemaType.STRING,
+                description=description,
+            )
+            for key, description in params.items()
+        }
+        properties[cs.MCPParamName.PROJECT] = MCPInputSchemaProperty(
+            type=cs.MCPSchemaType.STRING, description=td.MCP_PARAM_PROJECT
+        )
+        return ToolMetadata(
+            name=name,
+            description=td.MCP_TOOLS[name],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT, properties=properties, required=required
+            ),
+            handler=handler,
+            returns_json=True,
+        )
+
+    async def _graph_query(
+        self,
+        tool: cs.MCPToolName,
+        project: str | None,
+        run: Callable[[str], object],
+    ) -> object:
+        # Every path that reads the graph, the project check included, runs
+        # under the ingestor lock so an index/update rebuild cannot tear the
+        # read (issue #1471). A typo in `project` would otherwise read as a
+        # genuine empty result; the default is the project this server's
+        # root derives to.
+        try:
+            async with self._ingestor_lock:
+                if project is not None:
+                    known = await asyncio.to_thread(self.ingestor.list_projects)
+                    if project not in known:
+                        return {
+                            cs.DICT_KEY_ERROR: cs.MCP_UNKNOWN_PROJECT.format(
+                                project=project,
+                                known=cs.SEPARATOR_COMMA_SPACE.join(known),
+                            )
+                        }
+                project_name = project or derive_project_name(Path(self.project_root))
+                return await asyncio.to_thread(run, project_name)
+        except Exception as e:
+            logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
+            return {
+                cs.DICT_KEY_ERROR: cs.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e)
+            }
+
+    @staticmethod
+    def _depth(depth: int | None) -> int:
+        return max(1, min(int(depth or 1), cs.GRAPH_QUERY_MAX_DEPTH))
+
+    async def resolve(self, target: str, project: str | None = None) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.RESOLVE,
+            project,
+            lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
+        )
+
+    def _source_root_for(self, project_name: str) -> Path | None:
+        # Source is read from disk only when the selected project was indexed
+        # from this server's repository (its Project node's stored root):
+        # another project's definition carries a relative path that may also
+        # exist here and would read the wrong file, and a matching name alone
+        # does not prove the root, so its span is answered without source.
+        return graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+
+    async def definition(
+        self, qualified_name: str, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.DEFINITION,
+            project,
+            lambda name: graph_query.definition(
+                self.ingestor.fetch_all,
+                name,
+                qualified_name,
+                self._source_root_for(name),
+            ),
+        )
+
+    async def callers(
+        self, qualified_name: str, depth: int | None = None, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.CALLERS,
+            project,
+            lambda name: graph_query.callers(
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+            ),
+        )
+
+    async def callees(
+        self, qualified_name: str, depth: int | None = None, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.CALLEES,
+            project,
+            lambda name: graph_query.callees(
+                self.ingestor.fetch_all, name, qualified_name, self._depth(depth)
+            ),
+        )
+
+    async def implementors(
+        self, qualified_name: str, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.IMPLEMENTORS,
+            project,
+            lambda name: graph_query.implementors(
+                self.ingestor.fetch_all, name, qualified_name
+            ),
+        )
+
+    async def overrides(
+        self, qualified_name: str, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.OVERRIDES,
+            project,
+            lambda name: graph_query.overrides(
+                self.ingestor.fetch_all, name, qualified_name
+            ),
+        )
+
+    async def importers(
+        self, module_qualified_name: str, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.IMPORTERS,
+            project,
+            lambda name: graph_query.importers(
+                self.ingestor.fetch_all, name, module_qualified_name
+            ),
+        )
+
+    async def tests_reaching(
+        self, qualified_name: str, project: str | None = None
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.TESTS_REACHING,
+            project,
+            lambda name: graph_query.tests_reaching(
+                self.ingestor.fetch_all, name, qualified_name
+            ),
+        )
 
     async def query_code_graph(
         self, natural_language_query: str, project: str | None = None

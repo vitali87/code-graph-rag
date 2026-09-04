@@ -18,6 +18,7 @@ class CLICommandName(StrEnum):
     WORKSPACE = "workspace"
     TRACE = "trace"
     EDITS = "edits"
+    GRAPH = "graph"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -93,6 +94,26 @@ HELP_EDITS_REPO_PATH = (
     "Repository root holding .cgr-edit-history.json (default: current directory)."
 )
 HELP_EDITS_DIFF = "Print each transaction's unified diff."
+CMD_GRAPH = "Deterministic graph queries (resolve, definition, callers, callees, implementors, overrides, importers, tests-reaching) as JSON, no LLM."
+CMD_GRAPH_GROUP = CMD_GRAPH
+CMD_GRAPH_RESOLVE = "Resolve a name, dotted suffix, or path:line to qualified names."
+CMD_GRAPH_DEFINITION = "File, span, docstring and source of one definition."
+CMD_GRAPH_CALLERS = "Call sites that invoke a qualified name, one row per site."
+CMD_GRAPH_CALLEES = "Call sites inside a qualified name, one row per site."
+CMD_GRAPH_IMPLEMENTORS = "Types that inherit from or implement a type."
+CMD_GRAPH_OVERRIDES = "Methods overriding a method, and the method it overrides."
+CMD_GRAPH_IMPORTERS = (
+    "Modules importing a module, with each import statement's location."
+)
+CMD_GRAPH_TESTS_REACHING = (
+    "Tests from which a qualified name is reachable, with distance."
+)
+EPILOG_GRAPH = "Run 'cgr help graph COMMAND' for command-specific help."
+HELP_GRAPH_PROJECT = "Project name in the graph (default: derived from --repo-path)."
+HELP_GRAPH_REPO_PATH = (
+    "Repository root the project name derives from and source is read from."
+)
+HELP_GRAPH_DEPTH = "How many hops to follow (1 to 5)."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -407,6 +428,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.DAEMON: CMD_DAEMON,
     CLICommandName.TRACE: CMD_TRACE,
     CLICommandName.EDITS: CMD_EDITS,
+    CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
