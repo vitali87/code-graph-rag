@@ -331,11 +331,15 @@ class DefinitionProcessor(
         # `@types/*` packages and for a compiled library shipped beside its
         # types, that file IS the module, and an unconditional yield would put
         # it back under a name nothing resolves to.
+        # Note this REWRITES the candidate rather than returning it: the
+        # yielded name is itself a qn like any other and can collide with a
+        # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
+        # to go through the check below rather than skip it.
         if (declaration := declaration_extension(file_path.name)) and (
             has_implementation_sibling(file_path)
         ):
             suffix = declaration.lstrip(cs.SEPARATOR_DOT)
-            return f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"
+            module_qn = f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"
 
         # Two files that share a basename but differ by extension (foo.py /
         # foo.cpp) strip to the same module qn. Append the extension to the
