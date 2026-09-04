@@ -481,6 +481,12 @@ WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
+# The declared parameter shape of one definition (issues #1527, #1533).
+CYPHER_GRAPH_SIGNATURE = """MATCH (n:Function|Method)
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+RETURN n.positional_params AS positional_params, n.param_types AS param_types,
+       n.return_type AS return_type
+LIMIT 1"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
 WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_prefix
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,

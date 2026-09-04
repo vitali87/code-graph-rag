@@ -1212,7 +1212,68 @@ def rename_command(
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
-    payload["verdict"] = report.verdict._asdict() if report.verdict else None
+    if report.verdict is not None:
+        payload[cs.KEY_VERDICT] = report.verdict._asdict()
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
+    name=ch.CLICommandName.CHANGE_SIGNATURE,
+    help=ch.CMD_CHANGE_SIGNATURE,
+    short_help=ch.CMD_CHANGE_SIGNATURE,
+    epilog=ch.EXAMPLES_CHANGE_SIGNATURE,
+    rich_help_panel=ch.PANEL_USE,
+)
+def change_signature_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_SIGNATURE_QN),
+    param: list[str] = typer.Option([], "--param", "-p", help=ch.HELP_SIGNATURE_PARAM),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    allow_heuristic: bool = typer.Option(
+        False, "--allow-heuristic", help=ch.HELP_RENAME_ALLOW_HEURISTIC
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.signature import SignatureRefused, change_signature, sites_for
+    from .graph_cli import _project_and_fetch
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=ingestor,  # type: ignore[arg-type]
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
+        try:
+            report = change_signature(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                param,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+                reingest=updater.reingest,
+            )
+        except SignatureRefused as refused:
+            typer.echo(str(refused), err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    payload[cs.KEY_SITES] = sites_for(report.sites)
+    payload[cs.KEY_UNMAPPED] = sites_for(report.unmapped)
+    if report.verdict is not None:
+        payload[cs.KEY_VERDICT] = report.verdict._asdict()
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)

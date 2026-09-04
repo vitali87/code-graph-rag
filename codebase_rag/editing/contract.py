@@ -81,12 +81,15 @@ def rename_expectation(
     )
 
 
-def change_signature_expectation(unmapped: Iterable[str]) -> Expectation:
+def change_signature_expectation(
+    unmapped: Iterable[str], heuristic_allowed: bool = False
+) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_CHANGE_SIGNATURE,
         unmapped=tuple(sorted(set(unmapped))),
         # A parameter added with a default changes no caller count.
         caller_count_unchanged=True,
+        heuristic_allowed=heuristic_allowed,
     )
 
 
