@@ -379,22 +379,29 @@ class TestUnresolvedSpecifierWaiters:
         assert updater._unresolved_importer_keys(["index.js"]) == []
         assert updater._unresolved_importer_keys(["sub/index.js"]) == ["sub/main.js"]
 
-    def test_a_re_parse_clears_a_specifier_whose_target_now_exists(
+    def test_a_reused_updater_clears_a_specifier_whose_target_now_exists(
         self, tmp_path: Path
     ) -> None:
         """Recording is only half of it; a stale specifier nominates for ever.
 
-        The fresh-index control above never exercises this, because there the
-        specifier is never recorded in the first place. This one records it,
-        creates the target, re-parses, and requires the property to go EMPTY
-        rather than merely to stop matching -- `SET n += props` cannot remove
-        a property, so the empty list has to be written explicitly.
+        The updater is REUSED across both runs, which is the watcher's shape
+        and the only one that exercises the clearing at all: a fresh updater
+        builds a fresh ImportProcessor whose specifier map starts empty, so it
+        writes `[]` whether or not the previous entry is ever retracted.
+        Measured -- with a fresh updater here, deleting the retraction leaves
+        every test in this file green.
+
+        The property must go EMPTY rather than merely stop matching, because
+        `SET n += props` can update a property but never remove one.
         """
         root = tmp_path / "proj"
         root.mkdir()
-        store = self._index(
-            root, {"main.js": "import { go } from './index';\nexport const r = go;\n"}
+        (root / "main.js").write_text(
+            "import { go } from './index';\nexport const r = go;\n", encoding="utf-8"
         )
+        store = _StatefulIngestor()
+        updater = self._updater_on(root, store)
+        updater.run(force=True)
         assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
             "./index"
         ]
@@ -402,9 +409,7 @@ class TestUnresolvedSpecifierWaiters:
         (root / "index.js").write_text(
             "export function go() { return 1; }\n", encoding="utf-8"
         )
-        self._updater_on(root, store).run(force=True)
+        updater.run(force=True)
 
         assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
-        assert (
-            self._updater_on(root, store)._unresolved_importer_keys(["index.js"]) == []
-        )
+        assert updater._unresolved_importer_keys(["index.js"]) == []
