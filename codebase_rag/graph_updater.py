@@ -1832,6 +1832,14 @@ class GraphUpdater:
                 raise
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return
+        # Rebuild rather than accumulate. A reused updater runs this on every
+        # incremental pass, and remove_file_from_state only discards the qns
+        # this updater removed itself; a Module deleted from the graph by
+        # anything else (a second updater, delete_project then a re-index)
+        # would linger here and keep being offered to deferred import
+        # verification as a live target. Cleared only now that the rows are
+        # in hand, so a failed query above leaves the previous set intact.
+        self._rehydrated_module_qns.clear()
         for row in module_rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
