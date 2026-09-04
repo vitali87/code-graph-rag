@@ -131,6 +131,68 @@ class TestTheQnMapWalksInIndexerOrder:
         assert list(qn_map) == _indexer_order(tmp_path, unignore_paths=rescues)
 
 
+class TestTheQnMapAssignsTheSAMEQnsNotJustTheSameOrder:
+    """Order parity is not qn parity once the tie-break stops being order.
+
+    ``build_module_qn_map`` says it mirrors ``_disambiguate_module_qn``, and
+    every existing check of that claim compares WALK ORDER or the SET of file
+    keys. Both are satisfied by two implementations that hand the same files
+    different qualified names, which is the #1025 failure exactly: one module,
+    two nodes, no error.
+
+    That gap was latent while both sides broke ties on "first walked". The
+    declaration rule (#1720) makes the indexer break one tie on the filesystem
+    instead, so the mirror is now a claim about behaviour that nothing checked.
+    This compares the assignments themselves.
+
+    The map walks EVERY eligible file, not only C++ ones -- it shares the
+    indexer's walk by construction -- so a `.d.ts` is in it and can claim a
+    base qn out from under another file.
+    """
+
+    @staticmethod
+    def _indexer_qns(repo: Path) -> dict[str, str]:
+        """What the tree-sitter pass would name each file, in walk order."""
+        proc = DefinitionProcessor.__new__(DefinitionProcessor)
+        proc.module_qn_to_file_path = {}
+        proc.repo_path = repo
+        proc.exclude_paths = None
+        proc.unignore_paths = None
+        assigned: dict[str, str] = {}
+        for _dirpath, _fname, rel in walk_eligible_files(repo):
+            path = repo / rel
+            qn = proc._disambiguate_module_qn(base_module_qn(Path(rel), PROJECT), path)
+            proc.module_qn_to_file_path[qn] = path
+            assigned[rel] = qn
+        return assigned
+
+    def test_a_declaration_beside_its_implementation_agrees(
+        self, tmp_path: Path
+    ) -> None:
+        # `"foo.d.ts" < "foo.ts"`, so a first-walked-wins map gives the stub
+        # `proj.foo` while the indexer now gives it to the implementation.
+        _write(tmp_path, "foo.d.ts", "export declare const a: number;\n")
+        _write(tmp_path, "foo.ts", "export const a = 1;\n")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+    def test_a_lone_declaration_agrees(self, tmp_path: Path) -> None:
+        # The control: with no implementation the declaration keeps the bare
+        # qn on BOTH sides, so a map that simply never yielded would pass the
+        # test above by matching a rule the indexer does not have.
+        _write(tmp_path, "foo.d.ts", "export declare const a: number;\n")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+    def test_a_plain_extension_collision_agrees(self, tmp_path: Path) -> None:
+        # And the pre-existing rule is unaffected: foo.cpp/foo.h still go to
+        # the first walked, on both sides.
+        _write(tmp_path, "foo.cpp")
+        _write(tmp_path, "foo.h")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+
 class TestTheBaseModuleQnIsSharedNotMirrored:
     """``__init__.py``/``mod.rs`` name their package, not themselves.
 
