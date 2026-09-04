@@ -7,7 +7,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
 from loguru import logger
@@ -2137,6 +2137,84 @@ class GraphUpdater:
             }
         )
 
+    def _module_names_for(self, keys: list[str]) -> list[str]:
+        """Import spellings a file could be named by, from its relative path.
+
+        `pkg/util.py` can be imported as `pkg.util` or, from a sibling, as
+        `util`, and the unresolved edge records whichever the source wrote.
+        Both are offered so either spelling matches.
+        """
+        names: set[str] = set()
+        for key in keys:
+            path = PurePosixPath(key)
+            parts = list(path.parent.parts)
+            stem = path.stem
+            directory_stem = cs.DIRECTORY_MODULE_STEM_BY_EXT.get(path.suffix)
+            if not stem or (directory_stem is not None and stem == directory_stem):
+                # A directory-module entry point is named by its DIRECTORY:
+                # `pkg`, and `a.b.pkg` from the root -- never `pkg.pkg`, which
+                # is what keeping the stem in the dotted form produces.
+                #
+                # Matched WITH the extension: `index.py` and `mod.py` are
+                # ordinary Python modules imported by those names, and treating
+                # every `index`/`mod` stem as a directory module leaves them
+                # with no importable name at all.
+                if not parts:
+                    # The directory-module rule needs a DIRECTORY. At the
+                    # repository root there is none, so the file is an
+                    # ordinary module named by its own stem: a sibling writes
+                    # `./index`, and that spelling is what an unresolved edge
+                    # records. Dropping it left a root-level entry point with
+                    # no name at all, so a waiter on it was never re-parsed --
+                    # the exact failure this lookup exists to close.
+                    #
+                    # Offering a name nothing waits on costs one redundant
+                    # re-parse; withholding one costs the unresolved edge
+                    # forever, so the tie breaks towards offering it.
+                    if stem:
+                        names.add(stem)
+                    continue
+                stem = parts.pop()
+            names.add(stem)
+            dotted = cs.SEPARATOR_DOT.join([*parts, stem])
+            if dotted:
+                names.add(dotted)
+        return sorted(names)
+
+    def _unresolved_importer_keys(self, present_keys: list[str]) -> list[str]:
+        """Files whose UNRESOLVED import names one of `present_keys`.
+
+        The inbound-edge lookup cannot see these: a file created by this call
+        has no inbound edges, so an importer that referenced its path before it
+        existed keeps a dangling IMPORTS edge and is never re-parsed, leaving
+        the scoped path diverging from a clean index (issue #1682).
+
+        A failed read degrades to the previous behaviour, never worse.
+        """
+        if not present_keys or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        module_names = self._module_names_for(present_keys)
+        if not module_names:
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_UNRESOLVED_IMPORTER_PATHS,
+                {
+                    cs.CYPHER_PARAM_MODULE_NAMES: module_names,
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved importers")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -3602,7 +3680,13 @@ class GraphUpdater:
         # graph's own edges) plus any file whose delombok overlay changed.
         keys = sorted({*present, *gone})
         affected: dict[str, Path] = {}
-        for caller_key in self._affected_caller_keys(keys):
+        # Inbound edges find dependents of files that already existed; the
+        # unresolved-import lookup finds importers of files this call CREATED,
+        # which by construction have no inbound edges yet (issue #1682).
+        for caller_key in (
+            *self._affected_caller_keys(keys),
+            *self._unresolved_importer_keys(sorted(present)),
+        ):
             caller_path = self.repo_path / caller_key
             if (
                 caller_key not in present

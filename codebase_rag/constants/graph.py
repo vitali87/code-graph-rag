@@ -601,6 +601,23 @@ CYPHER_AFFECTED_CALLER_PATHS = (
 # of the concrete implementer because _protocol_classes() is empty. Ordered by
 # base_index so multiple-inheritance base order matches the original source,
 # which method resolution and override attribution depend on.
+# A file CREATED by a scoped re-ingest has no inbound edges yet, so
+# CYPHER_AFFECTED_CALLER_PATHS cannot find the importer that referenced it
+# before it existed -- `main.py` importing `./util` written before `util.ts`.
+# That importer's IMPORTS edge points at an UNRESOLVED target (one outside the
+# project prefix) whose name is the new module, so it is findable from the
+# target side instead (issue #1682). Self-selecting: once the module exists and
+# the importer has been re-parsed the edge resolves into the project prefix and
+# stops matching, so this returns nothing for files that are not new.
+CYPHER_UNRESOLVED_IMPORTER_PATHS = (
+    "MATCH (importer)-[:IMPORTS]->(target) "
+    "WHERE importer.path IS NOT NULL "
+    "AND importer.qualified_name STARTS WITH $project_prefix "
+    "AND NOT target.qualified_name STARTS WITH $project_prefix "
+    "AND ANY(name IN $module_names WHERE target.qualified_name = name "
+    "OR target.qualified_name STARTS WITH name + '.') "
+    "RETURN DISTINCT importer.path AS caller_path"
+)
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
@@ -654,6 +671,7 @@ KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
 
 CYPHER_PARAM_PATHS = "paths"
+CYPHER_PARAM_MODULE_NAMES = "module_names"
 KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
