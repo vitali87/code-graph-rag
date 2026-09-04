@@ -424,21 +424,40 @@ KEY_OVERRIDES_EXTERNAL = "overrides_external"
 
 CYPHER_DEFAULT_LIMIT = 50
 
-_CYPHER_EMBEDDING_BASE = """
+_CYPHER_EMBEDDING_DIRECT = """
 MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
   AND m.qualified_name STARTS WITH ($project_name + '.')
 """
 
-CYPHER_QUERY_EMBEDDINGS = (
-    _CYPHER_EMBEDDING_BASE
-    + """RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
+_CYPHER_EMBEDDING_CLASS_METHOD = """
+MATCH (m:Module)-[:DEFINES]->(:Class)-[:DEFINES_METHOD]->(n:Method)
+WHERE m.qualified_name STARTS WITH ($project_name + '.')
+"""
+
+_CYPHER_EMBEDDING_COLUMNS = """RETURN id(n) AS node_id,
+       n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
 """
+
+CYPHER_QUERY_EMBEDDINGS = (
+    _CYPHER_EMBEDDING_DIRECT
+    + _CYPHER_EMBEDDING_COLUMNS
+    + "UNION\n"
+    + _CYPHER_EMBEDDING_CLASS_METHOD
+    + _CYPHER_EMBEDDING_COLUMNS
 )
 
-CYPHER_QUERY_PROJECT_NODE_IDS = _CYPHER_EMBEDDING_BASE + "RETURN id(n) AS node_id\n"
+_CYPHER_EMBEDDING_NODE_ID = "RETURN id(n) AS node_id\n"
+
+CYPHER_QUERY_PROJECT_NODE_IDS = (
+    _CYPHER_EMBEDDING_DIRECT
+    + _CYPHER_EMBEDDING_NODE_ID
+    + "UNION\n"
+    + _CYPHER_EMBEDDING_CLASS_METHOD
+    + _CYPHER_EMBEDDING_NODE_ID
+)
 
 PAYLOAD_NODE_ID = "node_id"
 PAYLOAD_QUALIFIED_NAME = "qualified_name"
