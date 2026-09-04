@@ -397,9 +397,10 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
     solo = locate_dispatch_literal(tmp_path, "app.py", 1, 7, "solo")
     assert solo is not None
     assert (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (5, 17)
-    # An earlier same-named dict key and the getattr argument cannot be told
-    # apart, so `twice` is unlocatable rather than pointed at the wrong one.
-    assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "twice") is None
+    # The dict key `{"twice": 1}` is never invoked, so it is not a candidate;
+    # the invoked `getattr(obj, "twice")()` is the one site.
+    twice = locate_dispatch_literal(tmp_path, "app.py", 1, 7, "twice")
+    assert twice is not None and twice[cs.KEY_LINE] == 7
     # A literal outside the span never counts.
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "elsewhere") is None
 
@@ -453,7 +454,7 @@ def test_a_computed_callable_captured_from_an_enclosing_scope_is_computed(
         "        return fn\n"
         "\n"
         "    def inner():\n"
-        '        getattr(other, "target")\n'
+        '        getattr(other, "target")()\n'
         "        return other.fn()\n"
         "\n"
         "    return first() or inner()\n"
@@ -481,6 +482,53 @@ def test_a_constructor_fan_out_is_labelled_overload(
     )
 
 
+def test_only_an_invoked_lookup_is_a_dispatch_site(tmp_path: Path) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # A literal that is merely present (a dict key, a lookup never called)
+    # did not dispatch anything; a lookup called directly, or bound to a
+    # name that is called, did.
+    # Each present-but-not-invoked shape alone, so a scan that accepted a
+    # merely present literal would record it as the sole site.
+    for name, body in (
+        ("key.py", '    registry = {"target": 1}\n'),
+        ("sub.py", '    unused = table["target"]\n'),
+        ("attr.py", '    getattr(obj, "target")\n'),
+    ):
+        (tmp_path / name).write_text(f"def run(obj, table):\n{body}    return 0\n")
+        assert locate_dispatch_literal(tmp_path, name, 1, 3, "target") is None, name
+    (tmp_path / "bound.py").write_text(
+        'def run(table):\n    fn = table["target"]\n    return fn()\n'
+    )
+    bound = locate_dispatch_literal(tmp_path, "bound.py", 1, 3, "target")
+    assert bound is not None and bound[cs.KEY_LINE] == 2
+    (tmp_path / "direct.py").write_text(
+        'def run(obj):\n    return getattr(obj, "target")()\n'
+    )
+    assert locate_dispatch_literal(tmp_path, "direct.py", 1, 2, "target") is not None
+
+
+def test_a_local_rebinding_masks_an_enclosing_computed_name(tmp_path: Path) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # The enclosing `fn = registry[key]` is computed, but the nested caller
+    # rebinds `fn` to something of its own before calling it, so its one
+    # invoked literal is a genuine site.
+    (tmp_path / "app.py").write_text(
+        "def run(registry, key, obj):\n"
+        "    fn = registry[key]\n"
+        "\n"
+        "    def inner():\n"
+        "        fn = lambda: 0\n"
+        '        getattr(obj, "target")()\n'
+        "        return fn()\n"
+        "\n"
+        "    return fn() + inner()\n"
+    )
+    site = locate_dispatch_literal(tmp_path, "app.py", 4, 7, "target")
+    assert site is not None and site[cs.KEY_LINE] == 6
+
+
 def test_a_nested_callers_literal_is_its_own_and_siblings_do_not_leak(
     tmp_path: Path,
 ) -> None:
@@ -506,8 +554,9 @@ def test_a_nested_callers_literal_is_its_own_and_siblings_do_not_leak(
     first = locate_dispatch_literal(tmp_path, "app.py", 2, 3, "target")
     assert first is not None
     assert (first[cs.KEY_LINE], first[cs.KEY_COL]) == (3, 26)
-    # `second` holds two candidates of its own: unlocatable, not the sibling's.
-    assert locate_dispatch_literal(tmp_path, "app.py", 5, 7, "target") is None
+    # `second`'s dict key is never invoked; its one invoked lookup is the site.
+    second = locate_dispatch_literal(tmp_path, "app.py", 5, 7, "target")
+    assert second is not None and second[cs.KEY_LINE] == 7
     # `third` holds none: the siblings' literals must not leak in.
     assert locate_dispatch_literal(tmp_path, "app.py", 9, 10, "target") is None
     # The outer function owns no nested body's literal.
@@ -529,12 +578,12 @@ def test_a_computed_dispatch_in_the_body_makes_the_edge_unlocatable(
     (tmp_path / "app.py").write_text(
         "def run(obj, name):\n"
         f"    {computed}\n"
-        '    getattr(obj, "hidden")\n'
+        '    getattr(obj, "hidden")()\n'
         '    TABLE["keyed"]()\n'
     )
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 5, "hidden") is None
     (tmp_path / "plain.py").write_text(
-        'def run(obj, name):\n    getattr(obj, "hidden")\n    TABLE["keyed"]()\n'
+        'def run(obj, name):\n    getattr(obj, "hidden")()\n    TABLE["keyed"]()\n'
     )
     assert locate_dispatch_literal(tmp_path, "plain.py", 1, 3, "hidden") is not None
 

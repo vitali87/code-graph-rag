@@ -2,14 +2,17 @@
 
 A trace-only edge has no call expression in the caller's source; the call
 went through `getattr(obj, "name")`, a registry keyed by `"name"`, or
-something the static pass cannot see. When the callee's name appears as a
-string literal inside the caller's own body in one of those shapes, its site
-is what a rewrite would have to touch, so the dynamic edge records it. A
-nested `def`/`class`/`lambda` is another callable's body and is not searched, and two
-candidate literals cannot be told apart statically (an unrelated `d["name"]`
-looks exactly like a registry lookup), so the site is recorded only when the
-candidate is unique and the body holds no computed dispatch that could have
-carried the call instead; otherwise the edge is marked unlocatable.
+something the static pass cannot see. The invariant, stated once: a
+literal is the site of a dynamic edge only when its lookup expression is
+INVOKED in the caller's body, either directly (`getattr(obj, "name")()`,
+`table["name"]()`) or through a name bound from it and called later
+(`fn = table["name"]; fn()`). A literal that is merely present (a dict key,
+a lookup never called) is not a site. A nested `def`/`class`/`lambda` is
+another callable's body and is not searched. Two candidate sites cannot be
+told apart statically, and a computed dispatch (`getattr(obj, attr)`,
+`table[key]()`, or a name bound from one and called, including one captured
+from an enclosing scope unless the caller rebinds that name) could have
+carried the call itself; in either case the edge is marked unlocatable.
 """
 
 from __future__ import annotations
@@ -24,7 +27,6 @@ from ..parser_loader import load_parsers
 from ..parsers.utils import node_site_properties, safe_decode_text
 from ..types_defs import PropertyDict
 
-_LITERAL_PARENTS = frozenset({cs.TS_ARGUMENT_LIST, cs.TS_PY_PAIR, cs.TS_PY_SUBSCRIPT})
 # A lambda counts as another callable's body too: the trace resolver drops
 # `<lambda>` frames as synthetic, so a call made inside one is never
 # attributed to the enclosing function and its literals cannot be that
@@ -43,17 +45,45 @@ def _literal_text(node: Node) -> str | None:
     return None
 
 
-def _is_dispatch_literal(node: Node) -> bool:
-    parent = node.parent
-    if parent is None or parent.type not in _LITERAL_PARENTS:
-        return False
+def _lookup_of(literal: Node) -> Node | None:
+    """The lookup expression a dispatch-shaped literal keys: the `getattr`
+    call it is the second argument of, or the subscript it indexes."""
+    parent = literal.parent
+    if parent is None:
+        return None
     if parent.type == cs.TS_ARGUMENT_LIST:
         call = parent.parent
         func = call.child_by_field_name(cs.FIELD_FUNCTION) if call is not None else None
-        return func is not None and safe_decode_text(func) == cs.PY_BUILTIN_GETATTR
-    if parent.type == cs.TS_PY_PAIR:
-        return parent.child_by_field_name(cs.FIELD_KEY) == node
-    return True
+        if func is None or safe_decode_text(func) != cs.PY_BUILTIN_GETATTR:
+            return None
+        named = parent.named_children
+        return call if len(named) >= 2 and named[1] == literal else None
+    if parent.type == cs.TS_PY_SUBSCRIPT:
+        key = parent.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+        return parent if key == literal else None
+    return None
+
+
+def _is_invoked(expr: Node) -> bool:
+    """`expr` is the function of a call: `expr(...)`."""
+    parent = expr.parent
+    return (
+        parent is not None
+        and parent.type == cs.TS_PY_CALL
+        and parent.child_by_field_name(cs.FIELD_FUNCTION) == expr
+    )
+
+
+def _bound_name(expr: Node) -> str | None:
+    """`name` when `expr` is the whole right side of `name = expr`."""
+    parent = expr.parent
+    if parent is None or parent.type != cs.TS_PY_ASSIGNMENT:
+        return None
+    left = parent.child_by_field_name(cs.FIELD_LEFT)
+    right = parent.child_by_field_name(cs.FIELD_RIGHT)
+    if left is None or right != expr or left.type != cs.TS_PY_IDENTIFIER:
+        return None
+    return safe_decode_text(left)
 
 
 def _computed_lookup_target(node: Node) -> str | None:
@@ -155,7 +185,7 @@ def _python_root(file_path: Path) -> Node | None:
 def _dispatch_literals(
     root: Node, start_line: int, end_line: int, callee_name: str
 ) -> list[Node] | None:
-    """Dispatch-shaped literals naming `callee_name` in the caller's own body.
+    """The invoked dispatch literals naming `callee_name` in the caller's body.
 
     None when the body holds a computed dispatch, which could have carried
     the call itself.
@@ -164,10 +194,14 @@ def _dispatch_literals(
     # span is the caller itself; any definition met below it is a nested
     # callable whose literals belong to that callable, not to this edge.
     stack: list[tuple[Node, bool]] = [(root, False)]
-    found: list[Node] = []
-    # A computed lookup stored in a name (`fn = registry[key]`) and called
-    # later (`fn()`) is a computed dispatch too, just split in two.
-    stored: set[str] = set()
+    direct: list[Node] = []
+    # name -> the literal whose lookup bound it (`fn = table["name"]`).
+    bound_literal: dict[str, Node] = {}
+    # Computed names: bound from a non-literal lookup, in the body or in an
+    # enclosing scope; a body assignment of any other kind masks an outer one.
+    stored_outer: set[str] = set()
+    stored_inner: set[str] = set()
+    rebound_inner: set[str] = set()
     called: set[str] = set()
     while stack:
         node, inside_caller = stack.pop()
@@ -177,12 +211,11 @@ def _dispatch_literals(
         if outside:
             # A sibling scope's body is another callable's; an enclosing
             # scope's statements are visible to the caller, so a computed
-            # callable captured from there (`fn = registry[key]` above a
-            # nested `def`) still counts as stored.
+            # callable captured from there still counts as stored.
             if node.type in _NESTED_SCOPES:
                 continue
             if (target := _computed_lookup_target(node)) is not None:
-                stored.add(target)
+                stored_outer.add(target)
             stack.extend((child, inside_caller) for child in node.children)
             continue
         if node.type in _NESTED_SCOPES and node.start_point[0] + 1 >= start_line:
@@ -192,12 +225,20 @@ def _dispatch_literals(
         if _is_computed_dispatch(node):
             return None
         if (target := _computed_lookup_target(node)) is not None:
-            stored.add(target)
+            stored_inner.add(target)
+        elif node.type == cs.TS_PY_ASSIGNMENT:
+            left = node.child_by_field_name(cs.FIELD_LEFT)
+            if left is not None and left.type == cs.TS_PY_IDENTIFIER:
+                rebound_inner.add(safe_decode_text(left) or "")
         if (name := _called_identifier(node)) is not None:
             called.add(name)
-        if _literal_text(node) == callee_name and _is_dispatch_literal(node):
-            found.append(node)
+        if _literal_text(node) == callee_name and (lookup := _lookup_of(node)):
+            if _is_invoked(lookup):
+                direct.append(node)
+            elif (bound := _bound_name(lookup)) is not None:
+                bound_literal[bound] = node
         stack.extend((child, inside_caller) for child in node.children)
-    if stored & called:
+    computed = stored_inner | (stored_outer - rebound_inner)
+    if computed & called:
         return None
-    return found
+    return direct + [lit for name, lit in bound_literal.items() if name in called]
