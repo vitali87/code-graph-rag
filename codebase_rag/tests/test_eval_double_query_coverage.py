@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -76,7 +77,7 @@ class TestTheDoubleAnswersWithRealRows:
         rows = python_store.fetch_all(cs.CYPHER_ALL_FUNCTION_LOCATIONS, PREFIX)
 
         by_qn = {row[cs.KEY_QUALIFIED_NAME]: row for row in rows}
-        assert "proj.util.helper" in by_qn, sorted(by_qn)
+        assert "proj.util.helper" in by_qn, sorted(map(str, by_qn))
         helper = by_qn["proj.util.helper"]
         assert helper[cs.KEY_MODULE_QN] == "proj.util"
         assert helper[cs.KEY_LABEL] == cs.NodeLabel.FUNCTION.value
@@ -89,7 +90,7 @@ class TestTheDoubleAnswersWithRealRows:
         rows = python_store.fetch_all(cs.CYPHER_ALL_METHOD_LOCATIONS, PREFIX)
 
         by_qn = {row[cs.KEY_QUALIFIED_NAME]: row for row in rows}
-        assert "proj.app.Widget.draw" in by_qn, sorted(by_qn)
+        assert "proj.app.Widget.draw" in by_qn, sorted(map(str, by_qn))
         draw = by_qn["proj.app.Widget.draw"]
         assert draw[cs.KEY_CONTAINER_QN] == "proj.app.Widget"
         assert draw[cs.KEY_MODULE_QN] == "proj.app"
@@ -173,11 +174,98 @@ class TestTheDoubleAnswersWithRealRows:
         rows = store.fetch_all(cs.CYPHER_ALL_GO_TYPE_LOCATIONS, PREFIX)
 
         by_qn = {row[cs.KEY_QUALIFIED_NAME]: row for row in rows}
-        assert "proj.pkg.types.T" in by_qn, sorted(by_qn)
+        assert "proj.pkg.types.T" in by_qn, sorted(map(str, by_qn))
         assert by_qn["proj.pkg.types.T"][cs.KEY_LABEL] in {
             cs.NodeLabel.CLASS.value,
             cs.NodeLabel.TYPE.value,
         }
+
+
+class TestQueriesWhoseCallersSwallowExceptions:
+    """Some readers catch the refusal, so for them emulation is not optional.
+
+    `case _` raising only helps when the exception reaches the test. The three
+    route-rehydration queries are read inside `except Exception: return []`
+    (`graph_updater.py`), so a raise is caught and turned straight back into an
+    empty result — the fail-closed default defeated one layer down, invisibly.
+    Emulating them is the only thing that works for these (raised on #1716).
+
+    Asserted by CONTENT, not by "did not raise": a refusal converted to `[]` by
+    the caller and a faithful empty answer are indistinguishable from the
+    outside, which is the whole problem.
+    """
+
+    def test_project_modules_returns_the_matching_modules(
+        self, python_store: _StatefulIngestor
+    ) -> None:
+        rows = python_store.fetch_all(
+            gu.CYPHER_PROJECT_MODULES,
+            {cs.KEY_PROJECT_PREFIX: "proj.", "extensions": [".py"]},
+        )
+
+        assert {row[cs.KEY_QUALIFIED_NAME] for row in rows} == {
+            "proj.util",
+            "proj.app",
+        }
+
+    def test_project_modules_honours_the_extension_filter(
+        self, python_store: _StatefulIngestor
+    ) -> None:
+        """The control. Ignoring `$extensions` would still look right above,
+        because every module in that fixture is Python."""
+        rows = python_store.fetch_all(
+            gu.CYPHER_PROJECT_MODULES,
+            {cs.KEY_PROJECT_PREFIX: "proj.", "extensions": [".ts"]},
+        )
+
+        assert rows == []
+
+    def test_project_py_modules_returns_python_modules(
+        self, python_store: _StatefulIngestor
+    ) -> None:
+        rows = python_store.fetch_all(
+            gu.CYPHER_PROJECT_PY_MODULES, {cs.KEY_PROJECT_PREFIX: "proj."}
+        )
+
+        assert {row[cs.KEY_QUALIFIED_NAME] for row in rows} == {
+            "proj.util",
+            "proj.app",
+        }
+
+    def test_route_handlers_returns_only_decorated_definitions(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = _indexed(
+            root,
+            {
+                "api.py": (
+                    "def route(path):\n"
+                    "    def deco(fn):\n"
+                    "        return fn\n"
+                    "    return deco\n"
+                    "\n"
+                    "@route('/x')\n"
+                    "def handler():\n"
+                    "    return 1\n"
+                    "\n"
+                    "def plain():\n"
+                    "    return 2\n"
+                ),
+            },
+        )
+
+        rows = store.fetch_all(
+            gu.CYPHER_PROJECT_ROUTE_HANDLERS, {cs.KEY_PROJECT_PREFIX: "proj."}
+        )
+
+        qns = {row[cs.KEY_QUALIFIED_NAME] for row in rows}
+        assert "proj.api.handler" in qns, qns
+        # The undecorated sibling must be absent: the query selects on
+        # `f.decorators IS NOT NULL`, and returning every function would make
+        # a stale-route sweep touch definitions that never exposed a route.
+        assert "proj.api.plain" not in qns, qns
 
 
 class TestTheDoubleRefusesWhatItDoesNotModel:

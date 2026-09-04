@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
@@ -127,6 +128,10 @@ _AFFECTED_CALLER_RELS = frozenset(
         cs.RelationshipType.INHERITS.value,
         cs.RelationshipType.IMPLEMENTS.value,
     }
+)
+# Labels CYPHER_PROJECT_ROUTE_HANDLERS selects on.
+_ROUTE_HANDLER_LABELS = frozenset(
+    {cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value}
 )
 _INHERITS_REL = cs.RelationshipType.INHERITS.value
 
@@ -344,6 +349,46 @@ class _StatefulIngestor:
                     }
                     rows.append(row)
                 return rows
+            case gu.CYPHER_PROJECT_MODULES | gu.CYPHER_PROJECT_PY_MODULES:
+                # Route rehydration. These MUST be emulated rather than left to
+                # the refusal below: their readers wrap the call in
+                # `except Exception: return []`, so a raise is caught and
+                # turned straight back into an empty result -- the fail-closed
+                # default defeated one layer down, invisibly (raised on #1716).
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                raw_exts = params.get("extensions") if params else None
+                # CYPHER_PROJECT_MODULES filters on a passed extension list;
+                # the PY variant hardcodes `.py` in its Cypher.
+                suffixes = (
+                    tuple(e for e in raw_exts if isinstance(e, str))
+                    if isinstance(raw_exts, list)
+                    else (".py",)
+                )
+                return [
+                    {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path}
+                    for (label, _uid), props in self.nodes.items()
+                    if label == _MODULE_LABEL
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                    and (path := _text(props.get(cs.KEY_PATH)) or "").endswith(suffixes)
+                ]
+            case gu.CYPHER_PROJECT_ROUTE_HANDLERS:
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return [
+                    {
+                        cs.KEY_LABELS: [label],
+                        cs.KEY_QUALIFIED_NAME: qn,
+                        "decorators": [d for d in decorators if isinstance(d, str)],
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label in _ROUTE_HANDLER_LABELS
+                    and (qn := _text(props.get(cs.KEY_QUALIFIED_NAME)) or "")
+                    and prefix
+                    and qn.startswith(prefix)
+                    and isinstance(decorators := props.get("decorators"), list)
+                    and decorators
+                ]
             case cs.CYPHER_UNRESOLVED_IMPORTER_PATHS:
                 # Importers whose IMPORTS edge points at an UNRESOLVED target
                 # named after one of the given modules (issue #1682). Emulated
