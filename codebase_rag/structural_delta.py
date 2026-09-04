@@ -136,6 +136,13 @@ class TestReach(TypedDict):
     through: str
 
 
+class SiteCounts(TypedDict):
+    """CALLS sites into the touched files' definitions, before and after."""
+
+    before: int
+    after: int
+
+
 class SymbolDelta(TypedDict):
     added: list[str]
     removed: list[str]
@@ -155,6 +162,7 @@ class StructuralDelta(TypedDict):
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
     tests_reaching: list[TestReach]
+    call_sites: SiteCounts
     reingest_ms: float
     delta_ms: float
 
@@ -304,6 +312,7 @@ def _renames(
             by_name_shape.setdefault(
                 (definition.name, definition.fingerprint), []
             ).append(qn)
+    still_unpaired: list[str] = []
     for qn in unpaired:
         definition = before.definitions[qn]
         candidates = by_name_shape.get((definition.name, definition.fingerprint))
@@ -311,6 +320,69 @@ def _renames(
             new = candidates.pop(0)
             by_shape[(after.definitions[new].path, definition.fingerprint)].remove(new)
             renames.append(RenameFinding(old=qn, new=new, path=definition.path))
+        else:
+            still_unpaired.append(qn)
+    # A class carries no fingerprint of its own, so a renamed class reads as
+    # removed plus added; its methods do carry one and were paired above.
+    # When every renamed descendant of a removed container lands under the
+    # same added container, the container moved with them.
+    paired_new = {r["new"] for r in renames}
+    for qn in still_unpaired:
+        definition = before.definitions[qn]
+        if definition.fingerprint:
+            continue
+        prefix = qn + cs.SEPARATOR_DOT
+        targets = {
+            r["new"][: len(r["new"]) - (len(r["old"]) - len(qn))]
+            for r in renames
+            if r["old"].startswith(prefix)
+        }
+        if len(targets) != 1:
+            continue
+        (target,) = targets
+        candidate = after.definitions.get(target)
+        if (
+            candidate is None
+            or candidate.fingerprint
+            or candidate.label != definition.label
+            or target in paired_new
+            or target not in added
+        ):
+            continue
+        renames.append(RenameFinding(old=qn, new=target, path=definition.path))
+        paired_new.add(target)
+    # An EMPTY container has no descendants to carry it; when exactly one
+    # fingerprint-less container of a label disappeared from a file and
+    # exactly one appeared, the pairing is unambiguous.
+    lone_removed = [
+        qn
+        for qn in still_unpaired
+        if not before.definitions[qn].fingerprint
+        and not any(r["old"] == qn for r in renames)
+    ]
+    lone_added = [
+        qn
+        for qn in added
+        if qn not in paired_new and not after.definitions[qn].fingerprint
+    ]
+    for qn in lone_removed:
+        definition = before.definitions[qn]
+        matches = [
+            other
+            for other in lone_added
+            if after.definitions[other].path == definition.path
+            and after.definitions[other].label == definition.label
+        ]
+        peers = [
+            other
+            for other in lone_removed
+            if before.definitions[other].path == definition.path
+            and before.definitions[other].label == definition.label
+        ]
+        if len(matches) == 1 and len(peers) == 1:
+            renames.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
+            paired_new.add(matches[0])
+            lone_added.remove(matches[0])
     return renames
 
 
@@ -784,6 +856,15 @@ def _tests_reaching(
 # --- the delta ----------------------------------------------------------------
 
 
+def _inbound_calls(snap: Snapshot) -> int:
+    return sum(
+        1
+        for site in snap.sites
+        if site.rel == cs.RelationshipType.CALLS.value
+        and site.callee in snap.definitions
+    )
+
+
 def structural_delta(
     fetch_all: QueryFn,
     project_name: str,
@@ -817,6 +898,9 @@ def structural_delta(
         tests_reaching=_tests_reaching(fetch_all, project_name, touched)
         if touched
         else [],
+        call_sites=SiteCounts(
+            before=_inbound_calls(before), after=_inbound_calls(after)
+        ),
         reingest_ms=round(report.elapsed_ms, 1) if report else 0.0,
         delta_ms=round((time.perf_counter() - started) * 1000, 1),
     )

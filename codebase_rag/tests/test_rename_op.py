@@ -694,29 +694,45 @@ def test_dry_run_returns_the_diff_and_lists_import_sites(
 
 
 @pytest.mark.asyncio
-async def test_mcp_rename_reingests_the_written_files(
-    py_repo: tuple[Path, RecordedGraph],
-) -> None:
+async def test_mcp_rename_reingests_the_written_files(temp_repo: Path) -> None:
+    from codebase_rag import graph_query
+    from codebase_rag.graph_updater import GraphUpdater
     from codebase_rag.mcp.tools import MCPToolsRegistry
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.utils.path_utils import derive_project_name
+    from evals.cgr_graph import _StatefulIngestor
 
-    root, graph = py_repo
-    (root / "tests" / "__init__.py").write_bytes(b"")
-    ingestor = MagicMock()
-    ingestor.fetch_all = graph.fetch_all
-    ingestor.list_projects.return_value = [graph.project]
+    for rel, text in PY_FILES.items():
+        _write(temp_repo, rel, text)
+    (temp_repo / "tests" / "__init__.py").write_bytes(b"")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    project = derive_project_name(temp_repo)
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=temp_repo,
+        parsers=parsers,
+        queries=queries,
+        project_name=project,
+    )
+    updater.run(force=True)
+    store.list_projects = lambda: [project]  # type: ignore[attr-defined]
     registry = MCPToolsRegistry(
-        project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+        project_root=str(temp_repo), ingestor=store, cypher_gen=MagicMock()
     )
-    registry._delta_after_write = MagicMock(return_value="delta text")
+    registry._live_updater = updater
     payload = await registry.rename(
-        qualified_name=f"{graph.project}.pkg.util.helper",
-        new_name="assist",
-        project=graph.project,
+        qualified_name=f"{project}.pkg.util.helper", new_name="assist", project=project
     )
-    assert isinstance(payload, dict) and payload["applied"], payload
-    (written,) = registry._delta_after_write.call_args.args
-    assert set(written) >= {"pkg/util.py", "pkg/app.py", "pkg/__init__.py"}
-    assert payload[cs.KEY_STRUCTURAL_DELTA] == "delta text"
+    assert isinstance(payload, dict), payload
+    assert payload.get("applied"), payload
+    # The graph followed the tree: the new name is a definition, the old is gone.
+    assert graph_query.definition(
+        store.fetch_all, project, f"{project}.pkg.util.assist", None
+    )["found"]
+    assert not graph_query.definition(
+        store.fetch_all, project, f"{project}.pkg.util.helper", None
+    )["found"]
 
 
 @pytest.mark.asyncio

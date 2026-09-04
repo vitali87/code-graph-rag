@@ -1183,6 +1183,14 @@ def rename_command(
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:  # type: ignore[attr-defined]
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=ingestor,  # type: ignore[arg-type]
+            repo_path=repo_path.resolve(),
+            parsers=parsers,
+            queries=queries,
+            project_name=name,
+        )
         try:
             report = rename(
                 repo_path.resolve(),
@@ -1192,6 +1200,7 @@ def rename_command(
                 new_name,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
+                reingest=updater.reingest,
             )
         except RenameRefused as refused:
             typer.echo(str(refused), err=True)
@@ -1203,6 +1212,7 @@ def rename_command(
     payload = dict(report._asdict())
     payload[cs.KEY_SITES] = sites_for(report.sites)
     payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+    payload["verdict"] = report.verdict._asdict() if report.verdict else None
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
     if not report.applied and not dry_run:
         raise typer.Exit(code=1)
