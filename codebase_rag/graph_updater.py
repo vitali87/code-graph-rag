@@ -380,7 +380,22 @@ def _publish_hash_cache(
             # before and after the sync, and nothing between them can change
             # which file this descriptor refers to.
             created = os.fstat(f.fileno())
-            os.fsync(f.fileno())
+        # `fsync` AFTER the writer is closed, not inside it. On Windows the
+        # sync goes through `_commit()` on a descriptor owned by the buffered
+        # text wrapper, and it raised "[Errno 9] Bad file descriptor" there --
+        # 39 tests red on Windows while ubuntu and macOS stayed green, twice
+        # in a row, because reordering fstat and fsync inside the block was
+        # not enough (#1701 review, measured in CI both times).
+        #
+        # Reopened with O_NOFOLLOW, so a link swapped in between the close and
+        # here cannot redirect the sync; the inode check below still refuses a
+        # swapped path before anything is published.
+        sync_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        sync_fd = os.open(tmp_path, sync_flags)
+        try:
+            os.fsync(sync_fd)
+        finally:
+            os.close(sync_fd)
         # A cheap refusal, not the security boundary. The boundary is the
         # threat model, and it is worth stating because "there is still a
         # window between this check and the rename" is true and does not
@@ -439,7 +454,19 @@ def _publish_hash_cache(
             # that mtime, so it would skip edits made during the run (#1701
             # review). O_NOFOLLOW again, for the same reason as the first
             # open.
-            os.utime(tmp_path, (observed_at, observed_at))
+            # `follow_symlinks=False` closes the finding directly rather than
+            # by argument: if a link is swapped in between the inode check and
+            # here, the stamp lands on the LINK, not on whatever it points at,
+            # so no external file's metadata can be touched (#1701 review).
+            #
+            # Guarded because the flag is not universal; where it is
+            # unsupported the threat-model argument still applies -- the swap
+            # needs write permission on this directory, which already allows
+            # rewriting the cache outright.
+            if os.utime in os.supports_follow_symlinks:
+                os.utime(tmp_path, (observed_at, observed_at), follow_symlinks=False)
+            else:
+                os.utime(tmp_path, (observed_at, observed_at))
             sync_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
             sync_fd = os.open(tmp_path, sync_flags)
             try:
