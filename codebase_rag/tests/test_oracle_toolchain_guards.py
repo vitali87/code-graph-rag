@@ -22,6 +22,7 @@ import pytest
 from evals import constants as ec
 from evals.oracles import _common
 from evals.oracles._common import (
+    NodeOracleUnavailable,
     _node_require_stderr,
     _oracle_dependency,
     node_oracle_available,
@@ -320,7 +321,8 @@ class TestSkipReasons:
     ) -> None:
         monkeypatch.setenv("PATH", str(tmp_path))
         reason = csharp_oracle_skip_reason()
-        assert reason is not None and ec.DOTNET_BIN in reason
+        assert reason is not None
+        assert ec.DOTNET_BIN in reason
 
     def test_a_node_reason_carries_the_require_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -368,9 +370,12 @@ class TestPostInstallRecheck:
         ERR_REQUIRE_ESM -- an evaluation FAILURE standing in for an
         unavailable toolchain, which is the whole defect.
 
-        Asserting on the SKIP specifically: a raise reaches the report as an
-        error and an empty payload grades every node as missing, and both are
-        the misdiagnosis this issue is about.
+        Asserting on the specific exception: an empty payload would grade
+        every node as missing, and an unhandled error is the misdiagnosis this
+        issue is about. `conftest.pytest_runtest_call` turns this into a skip
+        for the ~24 real call sites; a standalone eval script sees an ordinary
+        exception it can report, which `pytest.skip` in library code could not
+        give it.
         """
         binaries = tmp_path / "bin"
         binaries.mkdir()
@@ -390,8 +395,8 @@ class TestPostInstallRecheck:
         # capability is re-checked once it has happened.
         monkeypatch.setattr(_common, "ensure_node_deps", lambda _dir: None)
 
-        with pytest.raises(BaseException) as raised:
+        with pytest.raises(NodeOracleUnavailable) as raised:
             _common.run_node_oracle_payload(oracle, script, ())
-        assert "Skipped" in type(raised.value).__name__, (
-            f"expected a skip, got {type(raised.value).__name__}"
-        )
+        # The reason travels with it, so the skip line names the real
+        # obstacle rather than restating the guard.
+        assert "@ruby/prism" in str(raised.value)

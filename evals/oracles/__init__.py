@@ -1,3 +1,4 @@
+from ._common import NodeOracleUnavailable
 from .cpp_oracle import (
     cpp_available,
     run_c_call_oracle,
@@ -42,6 +43,7 @@ from .typescript_oracle import (
 )
 
 __all__ = [
+    "NodeOracleUnavailable",
     "cpp_available",
     "run_c_call_oracle",
     "run_cpp_call_oracle",

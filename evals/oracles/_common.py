@@ -7,8 +7,6 @@ import time
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
-import pytest
-
 from codebase_rag import constants as cs
 
 from .. import constants as ec
@@ -28,6 +26,25 @@ from ..types_defs import (
 
 # The node-backed oracles (Lua, PHP, Ruby, TypeScript/JavaScript) all shell
 # out to the same toolchain, so they share one availability probe.
+class NodeOracleUnavailable(RuntimeError):
+    """This node toolchain cannot run the oracle, learned after installing.
+
+    A real exception rather than `pytest.skip`, which the oracle runner used
+    to raise directly. That made every caller a pytest caller: the four
+    standalone eval scripts (`evals/ts_l1.py`, `php_l1.py`, `lua_l1.py`,
+    `inheritance.py`) would have died on pytest's private control-flow
+    exception instead of reporting an unavailable toolchain.
+
+    `__test__ = False` and the `outcome` attribute let pytest translate this
+    into a SKIP at the call sites, so the test-suite behaviour is unchanged:
+    an unavailable toolchain must not surface as an ERROR (a misdiagnosis) or
+    as an empty payload (which grades every node as missing), which is the
+    defect issue #1639 is about.
+    """
+
+    __test__ = False
+
+
 def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
     """Why the node oracle cannot run here, or None when it can (issue #1639).
 
@@ -217,12 +234,7 @@ def run_node_oracle_payload(
     # FAILURE, which is the whole defect issue #1639 is about.
     reason = node_oracle_skip_reason(oracle_dir)
     if reason is not None:
-        # `pytest.skip` rather than a raise or an empty payload. An empty
-        # payload grades every node as missing, which reads as a real
-        # regression; a bare raise reaches the report as an ERROR, which is
-        # the same misdiagnosis #1639 is about. Skipping here needs no change
-        # at the ~24 call sites and cannot be forgotten at a new one.
-        pytest.skip(reason)
+        raise NodeOracleUnavailable(reason)
     proc = subprocess.run(
         [node, str(script), *args],
         capture_output=True,
