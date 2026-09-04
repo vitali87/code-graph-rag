@@ -1626,12 +1626,23 @@ class ImportProcessor:
         potential_module = cs.SEPARATOR_DOT.join(parts[:-1])
         relative_path = cs.SEPARATOR_SLASH.join(parts[1:-1])
 
-        for ext in (cs.EXT_JS, cs.EXT_TS, cs.EXT_JSX, cs.EXT_TSX):
-            if (self.repo_path / f"{relative_path}{ext}").is_file():
-                return potential_module
-            index_path = self.repo_path / relative_path / f"{cs.INDEX_INDEX}{ext}"
-            if index_path.is_file():
-                return potential_module
+        # Where the module ends and the imported symbol begins is decided by
+        # asking whether the shorter path names a module ON DISK. That question
+        # already has an owner, and this site used to answer it again with a
+        # restated `(.js, .ts, .jsx, .tsx)` -- a four-element subset of the ten
+        # in `JS_TS_MODULE_EXTENSIONS`. For a module written in any of the
+        # other six the probe found nothing, the symbol segment was never
+        # stripped, and the unstripped `proj.pkg.go` reached verification,
+        # matched no Module node and was dropped: the IMPORTS edge vanished
+        # silently. `.d.ts` is how it was found (#1720), but `.mjs`, `.cjs`,
+        # `.mts` and `.cts` were broken by the same omission and have nothing
+        # to do with declarations.
+        #
+        # Same shape as the `.mts`/`.cts` gap in `DIRECTORY_MODULE_STEM_BY_EXT`
+        # from the #1682 review: a canonical set restated at a second site and
+        # drifting from it. Delegating is what stops it recurring here.
+        if self._js_module_rel_on_disk(relative_path) is not None:
+            return potential_module
 
         return full_name
 

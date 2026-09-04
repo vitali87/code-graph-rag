@@ -27,6 +27,8 @@ from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
     cached_resolve_posix,
+    declaration_extension,
+    has_implementation_sibling,
 )
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
@@ -68,6 +70,8 @@ class DefinitionProcessor(
         func_class_captures_cache: dict[Path, dict] | None = None,
         *,
         flow_capture_enabled: bool = False,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -78,6 +82,11 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.flow_capture_enabled = flow_capture_enabled
+        # The indexer's eligibility policy, needed by the declaration
+        # tie-break: a declaration must yield only to an implementation that
+        # will actually be indexed, not merely one that exists on disk.
+        self.exclude_paths = exclude_paths
+        self.unignore_paths = unignore_paths
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
@@ -315,6 +324,35 @@ class DefinitionProcessor(
         self._func_class_captures_cache = func_class_captures_cache
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # A TypeScript declaration file and its implementation strip to the
+        # SAME module qn once `.d.ts` is treated as one extension (#1720), and
+        # the rule below would award it to whichever is walked first. That is
+        # the stub: `"foo.d.ts" < "foo.ts"` in the ascending within-directory
+        # walk. The type-only file would own the name every importer resolves
+        # to while the callable definitions sat under `proj.foo.ts`, which
+        # nothing asks for -- the regression that closed PR #1721.
+        #
+        # So a declaration yields whenever an implementation EXISTS ON DISK,
+        # which is a fact about the repository rather than about parse order.
+        # A declaration with no implementation still takes the bare name: for
+        # `@types/*` packages and for a compiled library shipped beside its
+        # types, that file IS the module, and an unconditional yield would put
+        # it back under a name nothing resolves to.
+        # Note this REWRITES the candidate rather than returning it: the
+        # yielded name is itself a qn like any other and can collide with a
+        # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
+        # to go through the check below rather than skip it.
+        if (declaration := declaration_extension(file_path.name)) and (
+            has_implementation_sibling(
+                file_path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            )
+        ):
+            suffix = declaration.lstrip(cs.SEPARATOR_DOT)
+            module_qn = f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"
+
         # Two files that share a basename but differ by extension (foo.py /
         # foo.cpp) strip to the same module qn. Append the extension to the
         # later one so their module nodes and all derived class/method qns stay

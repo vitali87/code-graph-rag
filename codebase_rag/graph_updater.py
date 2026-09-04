@@ -2966,10 +2966,12 @@ class GraphUpdater:
         resolved = combined if combined else None
         self.unignore_paths = resolved
         # The factory-owned processors hold their own copies for structure
-        # traversal and import-time walks; they must prune identically or a
-        # sweep could read files the indexer skipped (issue #1088 invariant).
-        self.factory.import_processor.unignore_paths = resolved
-        self.factory.structure_processor.unignore_paths = resolved
+        # traversal, import-time walks and the declaration tie-break; they must
+        # prune identically or a sweep could read files the indexer skipped
+        # (issue #1088 invariant). The factory derives that set from its own
+        # slots rather than taking a list from here, because a list here failed
+        # open when a third consumer was added (#1720).
+        self.factory.propagate_unignore_paths(resolved)
         if roots:
             logger.info(ls.GENERATED_SOURCES_REGISTERED, count=len(roots))
         # Delombok overlay (issue #1140 tier 1): rebuilt per run so a jar or
