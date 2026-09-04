@@ -269,7 +269,14 @@ def _save_hash_cache(cache_path: Path, hashes: FileHashCache) -> None:
             json.dump(hashes, f, indent=2)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
     except OSError as e:
-        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
 
 
 # Bounded so a directory that somehow rejects every candidate ends the publish
@@ -339,7 +346,14 @@ def _publish_hash_cache(
         fd, tmp_name = _open_exclusive_temp(cache_path)
         tmp_path = Path(tmp_name)
     except OSError as e:
-        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
         return False
     try:
         # Everything below acts on the DESCRIPTOR, never the pathname. The
@@ -477,7 +491,14 @@ def _publish_hash_cache(
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
         return True
     except OSError as e:
-        logger.warning(ls.HASH_CACHE_SAVE_FAILED, path=cache_path, error=e)
+        logger.warning(
+            ls.HASH_CACHE_SAVE_FAILED,
+            path=cache_path,
+            error=e,
+            errno=getattr(e, "errno", None),
+            strerror=getattr(e, "strerror", None),
+            failing_path=getattr(e, "filename", None),
+        )
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError as cleanup_error:
