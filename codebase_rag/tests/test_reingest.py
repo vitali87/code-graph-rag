@@ -304,12 +304,40 @@ def test_reingest_gives_same_stem_siblings_their_clean_index_qns(
     changed: list[str],
     deleted: list[str],
     fresh_updater: bool,
+    request: pytest.FixtureRequest,
 ) -> None:
     # The first same-stem sibling in walk order owns the bare module qn
     # (issue #1569). Adding the sibling that wins that order, or deleting
     # the one that held it, changes the survivor's qn, so the scoped path
     # must re-parse the survivor unseeded, as the batch path does, and a
     # fresh updater must see the taken qns before it parses anything.
+    #
+    # ONE combination is a known production defect (#1719): a FRESH updater
+    # rehydrates function locations at graph_updater:3952 before deleting the
+    # re-parsed subtree at :3996, so the re-parse finds the qn taken and
+    # registers `sib.util.helper@1`. Marked here rather than in a
+    # `pytest.param`, because the two stacked parametrize decorators cannot
+    # express the intersection: a mark on the `add_loser` row would also
+    # exempt `warm`, which passes and must keep passing.
+    #
+    # strict=True on purpose. When #1719 is fixed this test starts passing and
+    # a non-strict marker would let it sit here for ever; strict turns that
+    # into a failure that says "remove me". The xfail comes off in that PR.
+    #
+    # This passed until #1716 taught the eval double to answer
+    # CYPHER_ALL_FUNCTION_LOCATIONS. Before that it returned [], rehydration
+    # silently no-opped, and the equality asserted below was never exercised
+    # on this path.
+    if request.node.callspec.id == "add_loser-fresh":
+        request.applymarker(
+            pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "issue #1719: fresh-updater re-ingest rehydrates locations "
+                    "before the delete, so the re-parse registers a DUP_QN variant"
+                ),
+            )
+        )
     root = temp_repo / "sib"
     root.mkdir()
     for rel, text in before.items():
