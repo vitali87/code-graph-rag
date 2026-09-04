@@ -4,6 +4,7 @@
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
 # later sync against a different parser warns loudly until a clean rebuild.
+import inspect
 from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
@@ -19,6 +20,7 @@ from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
 
@@ -92,6 +94,41 @@ class TestComputeParserFingerprint:
         before = compute_parser_fingerprint(pkg)
         source.write_text("A = 2\n")
         assert compute_parser_fingerprint(pkg) != before
+
+    def test_changes_when_the_module_qn_rule_changes(self, tmp_path: Path) -> None:
+        """`base_module_qn` decides every module's identity, so a change to it
+        must re-key the graph.
+
+        It lives in `utils/path_utils.py`, which was in NEITHER the directory
+        globs (`parsers`, `constants`) nor the file list, so a change touching
+        only that file left existing indexes on their old module names with no
+        staleness warning — the graph silently disagreeing with the code that
+        built it (issue #1720 review).
+        """
+        assert "utils/path_utils.py" in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        pkg = tmp_path / "pkg"
+        (pkg / "utils").mkdir(parents=True)
+        source = pkg / "utils" / "path_utils.py"
+        source.write_text("A = 1\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("A = 2\n")
+        assert compute_parser_fingerprint(pkg) != before
+
+    def test_every_module_qn_deriving_source_is_a_fingerprint_input(self) -> None:
+        """The forcing function the case above cannot provide.
+
+        That test names the file I already know about. This one asks the
+        question from the other end: whoever defines `base_module_qn` must be
+        a fingerprint input, so moving or splitting it cannot silently drop
+        the graph's identity rule out of the staleness check.
+        """
+        module = Path(inspect.getsourcefile(base_module_qn) or "")
+        package_root = Path(cs.__file__).resolve().parent.parent
+        rel = module.resolve().relative_to(package_root).as_posix()
+        covered = rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
+            tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+        )
+        assert covered, f"{rel} defines base_module_qn but is not a fingerprint input"
 
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
