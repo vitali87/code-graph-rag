@@ -15,6 +15,7 @@ the case the guards were written for.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,8 @@ import pytest
 from evals import constants as ec
 from evals.oracles import _common
 from evals.oracles._common import (
+    _REQUIRE_OK,
     NodeOracleUnavailable,
-    _node_require_stderr,
     _oracle_dependency,
     node_oracle_available,
     node_oracle_skip_reason,
@@ -50,13 +51,21 @@ def _stub(directory: Path, name: str, body: str) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _clear_guard_caches() -> None:
-    # Both guards are lru_cached, so a verdict from one test would otherwise
-    # answer for the next one's PATH. Clearing before each test is what makes
-    # the stubs below decide the outcome.
-    # `node_oracle_available` is deliberately NOT cached (a pre-install answer
-    # must not freeze); the real verdict cache lives on `_node_require_stderr`.
-    _node_require_stderr.cache_clear()
+def _clear_guard_caches() -> Iterator[None]:
+    """Clear both guard caches BEFORE and AFTER each test.
+
+    Teardown matters as much as setup: `csharp_oracle_skip_reason` is cached
+    with no arguments, so a verdict cached under a test's temporary PATH would
+    answer for the next test, and for production code in the same process,
+    long after `monkeypatch` restored the environment.
+
+    `_REQUIRE_OK` holds only POSITIVE verdicts (rule 1 in
+    `node_oracle_available`), so it is a set rather than an lru_cache.
+    """
+    _REQUIRE_OK.clear()
+    csharp_oracle_skip_reason.cache_clear()
+    yield
+    _REQUIRE_OK.clear()
     csharp_oracle_skip_reason.cache_clear()
 
 
@@ -146,6 +155,10 @@ class TestNodeGuard:
     def _oracle(tmp_path: Path, package: str) -> Path:
         oracle = tmp_path / "oracle"
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        # The MARKER, not just the directory: npm creates node_modules before
+        # populating it, so the guard treats a marker-less tree as "installing"
+        # and declines to probe it (rule 2).
+        (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
         (oracle / "oracle_ast.js").write_text(
             f'const fs = require("fs");\nconst p = require("{package}");\n',
             encoding="utf-8",
@@ -270,6 +283,54 @@ class TestOracleDependency:
 
 
 class TestGuardCacheLifecycle:
+    def test_a_failed_probe_is_never_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 1: only a POSITIVE verdict is remembered.
+
+        Same node, same directory, same package, but the require becomes
+        loadable between two calls -- which is exactly what an install does.
+        Caching the first answer makes the second wrong for the rest of the
+        process. No other test here probes twice across a state change, so
+        without this the rule is unpinned: verified by mutation, re-enabling
+        negative caching left the whole suite green.
+        """
+        binaries = tmp_path / "bin"
+        binaries.mkdir()
+        node = binaries / "node"
+        node.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        node.chmod(0o755)
+        _stub(binaries, "npm", "exit 0")
+        monkeypatch.setenv("PATH", str(binaries))
+
+        oracle = tmp_path / "oracle"
+        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
+        (oracle / "oracle_ast.js").write_text(
+            'const p = require("pkg");\n', encoding="utf-8"
+        )
+
+        assert node_oracle_available(oracle) is False
+        # The failure must not be remembered under the probe key. Caching it
+        # makes the NEXT call read the cache as a hit and report "available",
+        # which is worse than the original defect: an unusable toolchain now
+        # reports usable. Asserting the second call still says False (with the
+        # node still refusing) is what catches that -- asserting it flips to
+        # True instead would ACCEPT the poisoned cache, since a cache hit
+        # yields exactly that.
+        assert node_oracle_available(oracle) is False, (
+            "a failed probe was cached, so the second call read the cache as "
+            "a success and reported an unusable toolchain as available"
+        )
+        assert not _REQUIRE_OK, f"a failure was remembered: {_REQUIRE_OK}"
+
+        # And a real success IS remembered, or rule 1 would be satisfied by
+        # caching nothing at all.
+        node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        node.chmod(0o755)
+        assert node_oracle_available(oracle) is True
+        assert _REQUIRE_OK, "a successful probe was not cached"
+
     def test_a_pre_install_answer_is_not_cached(self, tmp_path: Path) -> None:
         """Issue #1639: the provisional "ask again" must not become a verdict.
 
@@ -286,9 +347,22 @@ class TestGuardCacheLifecycle:
         )
         assert node_oracle_available(oracle) is True
 
-        # ensure_node_deps installs them; the guard must now actually probe.
+        # ensure_node_deps installs them AND writes the completion marker;
+        # only then does the guard probe (rule 2), and it must now actually do
+        # so rather than reuse the pre-install answer (rule 1).
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir()
+        (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
         assert node_oracle_available(oracle) is False
+
+        # A marker-less tree is "installing", never "unavailable": probing it
+        # measures a half-written directory, and caching that False is the
+        # third variant of this defect.
+        half = tmp_path / "half"
+        (half / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (half / "oracle_ast.js").write_text(
+            'const p = require("definitely-not-installed");\n', encoding="utf-8"
+        )
+        assert node_oracle_available(half) is True
 
 
 class TestSkipReasons:
@@ -341,6 +415,7 @@ class TestSkipReasons:
         monkeypatch.setenv("PATH", str(binaries))
         oracle = tmp_path / "oracle"
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
         (oracle / "oracle_ast.js").write_text(
             'const p = require("@ruby/prism");\n', encoding="utf-8"
         )
@@ -388,12 +463,23 @@ class TestPostInstallRecheck:
         monkeypatch.setenv("PATH", str(binaries))
 
         oracle = tmp_path / "oracle"
-        (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
+        oracle.mkdir()
         script = oracle / "oracle_ast.js"
         script.write_text('const p = require("@ruby/prism");\n', encoding="utf-8")
-        # The install itself is not under test; what matters is that the
-        # capability is re-checked once it has happened.
-        monkeypatch.setattr(_common, "ensure_node_deps", lambda _dir: None)
+
+        # Start WITHOUT the deps and let the patched installer create them, so
+        # this distinguishes pre-install from post-install probing. With
+        # node_modules already present, a regression that probed too early
+        # would still see a complete tree and pass.
+        def _install(_dir: Path) -> None:
+            (oracle / ec.NODE_MODULES_DIRNAME).mkdir(exist_ok=True)
+            (oracle / ec.NODE_DEPS_MARKER).write_text("ok", encoding="utf-8")
+
+        monkeypatch.setattr(_common, "ensure_node_deps", _install)
+        # Rule 2: before the marker exists the guard says "cannot tell yet",
+        # never "unavailable". Caching a False here is what poisoned the
+        # post-install check.
+        assert node_oracle_skip_reason(oracle) is None
 
         with pytest.raises(NodeOracleUnavailable) as raised:
             _common.run_node_oracle_payload(oracle, script, ())

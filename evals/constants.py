@@ -393,6 +393,13 @@ DOTNET_SKIP_BUILD_INCOMPLETE = (
     "past the timeout)"
 )
 DOTNET_PROBE_TIMEOUT_S = 30
+# The build restores packages, so it needs far longer than the version probe;
+# bounded all the same, because an unreachable feed otherwise blocks forever.
+DOTNET_BUILD_TIMEOUT_S = 600
+DOTNET_SKIP_BUILD_TIMEOUT = (
+    "the C# oracle build did not finish within {seconds}s (an unreachable "
+    "package feed will do this); skipping rather than blocking the run"
+)
 DOTNET_SDK_LINE_SEP = " "
 # Oracle.csproj targets net10.0, so an older SDK cannot build it (NETSDK1045).
 # Kept beside the guard that reads it: if the csproj's TargetFramework moves,
@@ -412,6 +419,7 @@ NODE_ORACLE_SCRIPT_GLOB = "*.js"
 # there, and the oracle dies on ERR_REQUIRE_ESM. The stderr is truncated
 # because a full node stack trace buries the one line that explains the skip.
 NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
+NODE_SKIP_INSTALL_FAILED = "npm install failed for this oracle: {stderr}"
 NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
 SKIP_REASON_STDERR_CHARS = 400
 # The oracle's own `require("pkg")` calls: the authoritative statement of what

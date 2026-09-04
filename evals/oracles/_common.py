@@ -4,7 +4,6 @@ import json
 import shutil
 import subprocess
 import time
-from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from codebase_rag import constants as cs
@@ -48,11 +47,11 @@ class NodeOracleUnavailable(RuntimeError):
 def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
     """Why the node oracle cannot run here, or None when it can (issue #1639).
 
-    The fixed strings the call sites print today ("node/npm toolchain not
-    available") are wrong in the case that matters: on the reporting machine
-    node IS available, and the reason the oracle fails is an ERR_REQUIRE_ESM
-    from a Node too old for the ESM-only parser. The issue asks for the
-    captured stderr so a developer can see WHY it skipped instead of guessing.
+    None also covers "cannot tell yet": see rule 2 in `node_oracle_available`.
+    The fixed strings the call sites used to print ("node/npm toolchain not
+    available") were wrong in the case that matters -- node IS available on the
+    reporting machine, and the oracle dies on ERR_REQUIRE_ESM -- so the reason
+    carries the captured stderr instead.
     """
     node = shutil.which(ec.NODE_BIN)
     if node is None:
@@ -60,6 +59,11 @@ def node_oracle_skip_reason(oracle_dir: Path | None = None) -> str | None:
     if shutil.which(ec.NPM_BIN) is None:
         return ec.NODE_SKIP_NO_BINARY.format(binary=ec.NPM_BIN)
     if oracle_dir is None:
+        return None
+    # Rule 2: the MARKER, not the directory. npm creates node_modules before
+    # populating it, so a bare directory means "maybe mid-install", and
+    # probing it measures a half-written tree.
+    if not _node_deps_ready(oracle_dir):
         return None
     package = _oracle_dependency(oracle_dir)
     if package is None:
@@ -76,51 +80,47 @@ def node_oracle_available(oracle_dir: Path | None = None) -> bool:
     """Whether the node toolchain can RUN this oracle, not merely whether it exists.
 
     `shutil.which` answers "is this binary on PATH", which is not the question
-    a skip guard needs (issue #1639). Node 18 satisfies it and then cannot
-    `require()` the ESM-only `@ruby/prism` that `ruby_ast.js` loads, so the
-    node-backed oracle tests hard-FAILED on an under-provisioned machine
-    instead of skipping: 24 failures and 4 errors on a clean main, in tests
-    named as though they were real regressions.
+    a skip guard needs (issue #1639): Node 18 satisfies it and then cannot
+    `require()` the ESM-only `@ruby/prism`, so the oracle tests hard-FAILED
+    instead of skipping. The probe therefore performs the call that breaks --
+    `require()` of the oracle's own dependency from a CommonJS context. A
+    dynamic `import()` will not do: it has worked since Node 12, so it passes
+    on the very Node that fails the oracle.
 
-    The probe therefore does the thing that breaks -- `require()` of the
-    oracle's own entry script's dependency, from a CommonJS context, which is
-    exactly the failing call. A dynamic `import()` would NOT do: it has worked
-    since Node 12, so a Node that fails the real oracle passes that probe and
-    the guard is worse than none. Measured against a Node-18-shaped shim
-    (dynamic import fine, `require()` of an ES module refused), an
-    `import()`-based probe reported the toolchain as available.
+    THE INVARIANT, which three separate bugs here were each a variant of:
 
-    `oracle_dir` is required to reach that dependency, because the oracles do
-    not share one: ruby loads `@ruby/prism`, lua `luaparse`, php `php-parser`,
-    ts `typescript`, and only the first is ESM-only. Called with no directory
-    the check degrades to node+npm presence, which is all it can honestly
-    assert without knowing which package to load.
+    1. The only value ever CACHED is a positive verdict, "this node can
+       require package X in dir Y". A failed probe is never cached, so any
+       later call re-probes. A negative cached before the state it depends on
+       has settled poisons every later answer.
+    2. Before the completion marker exists the guard answers "unknown, install
+       first" (True), never "unavailable". A bare `node_modules` can exist
+       while npm is mid-install or after a failed one, and probing then
+       measures a half-written tree.
+    3. The post-install re-check probes FRESH, because only then is the state
+       it depends on settled.
+
+    Each rule exists because breaking it produced a real defect: a stale True
+    from before installation, a negative cached from a marker-less tree, and a
+    verdict reused after the tree changed underneath it.
     """
-    node = shutil.which(ec.NODE_BIN)
-    if node is None or shutil.which(ec.NPM_BIN) is None:
-        return False
-    if oracle_dir is None:
-        return True
-    package = _oracle_dependency(oracle_dir)
-    if package is None:
-        # Deps not installed yet, or nothing to load: `ensure_node_deps` runs
-        # later and fixes the former. NOT cached, deliberately -- this is "ask
-        # again", not "yes". Caching it locked in a provisional answer taken
-        # before installation, so on a clean checkout the real probe never ran
-        # at all and an incompatible Node reached the oracle anyway.
-        return True
-    return _node_require_stderr(node, str(oracle_dir), package) is None
+    return node_oracle_skip_reason(oracle_dir) is None
 
 
-@lru_cache(maxsize=16)
+_REQUIRE_OK: set[tuple[str, str, str]] = set()
+
+
 def _node_require_stderr(node: str, oracle_dir: str, package: str) -> str | None:
     """None when the require succeeds, else the stderr explaining why not.
 
-    Cached on the full triple, and only ever on a REAL verdict: the answer
-    cannot change within a process, whereas "are the deps installed" can and
-    must not be memoised alongside it (that is why the caller decides the
-    uninstalled case before reaching here).
+    Rule 1: only the SUCCESS is remembered. A failure is re-probed every time,
+    because the thing it depends on -- a fully installed dependency tree -- can
+    become true between two calls in one process, and a cached "no" from before
+    that point is wrong forever after.
     """
+    key = (node, oracle_dir, package)
+    if key in _REQUIRE_OK:
+        return None
     try:
         probe = subprocess.run(
             [node, ec.NODE_EVAL_FLAG, ec.NODE_REQUIRE_PROBE.format(package=package)],
@@ -133,7 +133,10 @@ def _node_require_stderr(node: str, oracle_dir: str, package: str) -> str | None
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         return str(e)
-    return None if probe.returncode == 0 else (probe.stderr or probe.stdout)
+    if probe.returncode == 0:
+        _REQUIRE_OK.add(key)
+        return None
+    return probe.stderr or probe.stdout
 
 
 def _oracle_dependency(oracle_dir: Path) -> str | None:
@@ -214,6 +217,16 @@ def ensure_node_deps(oracle_dir: Path) -> None:
                 check=True,
             )
             marker.touch()
+    except subprocess.CalledProcessError as e:
+        # A failed `npm install` is an unavailable toolchain, not a test error:
+        # its stderr is the most useful thing a developer can be shown here.
+        raise NodeOracleUnavailable(
+            ec.NODE_SKIP_INSTALL_FAILED.format(
+                stderr=((e.stderr or e.stdout or "").strip())[
+                    : ec.SKIP_REASON_STDERR_CHARS
+                ]
+            )
+        ) from e
     finally:
         lock.rmdir()
 
@@ -232,6 +245,9 @@ def run_node_oracle_payload(
     # this an incompatible runtime reaches the oracle and dies with
     # ERR_REQUIRE_ESM, turning an unavailable toolchain into an evaluation
     # FAILURE, which is the whole defect issue #1639 is about.
+    # Rule 3: probe fresh here. This is the first moment the dependency tree is
+    # settled, so it is the first moment the question can be answered at all;
+    # rule 1 guarantees no earlier failure was cached to short-circuit it.
     reason = node_oracle_skip_reason(oracle_dir)
     if reason is not None:
         raise NodeOracleUnavailable(reason)

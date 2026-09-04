@@ -67,6 +67,8 @@ def csharp_oracle_skip_reason() -> str | None:
         return ec.DOTNET_SKIP_BUILD_FAILED.format(
             stderr=((e.stderr or e.stdout or "").strip())[: ec.SKIP_REASON_STDERR_CHARS]
         )
+    except subprocess.TimeoutExpired as e:
+        return ec.DOTNET_SKIP_BUILD_TIMEOUT.format(seconds=e.timeout)
     except (OSError, subprocess.SubprocessError) as e:
         return ec.DOTNET_SKIP_BUILD_FAILED.format(stderr=str(e))
     return None
@@ -134,6 +136,10 @@ def _ensure_built(dotnet: str) -> bool:
                 text=True,
                 encoding=cs.ENCODING_UTF8,
                 check=True,
+                # Bounded: an unreachable NuGet feed makes `dotnet build`
+                # block indefinitely, and the guard calls this, so a stalled
+                # restore would hang the whole run instead of skipping it.
+                timeout=ec.DOTNET_BUILD_TIMEOUT_S,
                 env={**os.environ, **_DOTNET_ENV},
             )
     finally:
