@@ -426,6 +426,61 @@ def test_a_stored_computed_lookup_called_later_makes_the_edge_unlocatable(
     assert locate_dispatch_literal(tmp_path, "plain.py", 1, 3, "target") is not None
 
 
+def test_a_computed_callable_captured_from_an_enclosing_scope_is_computed(
+    tmp_path: Path,
+) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # `fn` is bound from a computed lookup in the enclosing function and
+    # called inside the nested one; the nested body's sole literal naming
+    # the callee is not its site.
+    (tmp_path / "app.py").write_text(
+        "def run(registry, name, other):\n"
+        "    fn = registry[name]\n"
+        "\n"
+        "    def inner():\n"
+        '        getattr(other, "target")\n'
+        "        return fn()\n"
+        "\n"
+        "    return inner()\n"
+    )
+    assert locate_dispatch_literal(tmp_path, "app.py", 4, 6, "target") is None
+    # A sibling scope's assignment is not visible to `inner`.
+    (tmp_path / "sib.py").write_text(
+        "def run(registry, name, other):\n"
+        "    def first():\n"
+        "        fn = registry[name]\n"
+        "        return fn\n"
+        "\n"
+        "    def inner():\n"
+        '        getattr(other, "target")\n'
+        "        return other.fn()\n"
+        "\n"
+        "    return first() or inner()\n"
+    )
+    assert locate_dispatch_literal(tmp_path, "sib.py", 6, 8, "target") is not None
+
+
+def test_a_constructor_fan_out_is_labelled_overload(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Java `new Svc(1)` takes an edge to every declared constructor because
+    # argument types are not used to pick one: several candidates, one call.
+    (temp_repo / "Svc.java").write_text(
+        "public class Svc {\n    public Svc() {}\n    public Svc(int a) {}\n}\n"
+    )
+    (temp_repo / "Main.java").write_text(
+        "public class Main {\n    void run() {\n        new Svc(1);\n    }\n}\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="java")
+    by_callee = _resolutions(mock_ingestor, ".Main.run()")
+    ctor_labels = {k: v for k, v in by_callee.items() if k.startswith("Svc(")}
+    assert ctor_labels, by_callee
+    assert all(v == {cs.EdgeResolution.OVERLOAD} for v in ctor_labels.values()), (
+        ctor_labels
+    )
+
+
 def test_a_nested_callers_literal_is_its_own_and_siblings_do_not_leak(
     tmp_path: Path,
 ) -> None:

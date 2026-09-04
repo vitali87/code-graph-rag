@@ -3988,13 +3988,21 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
-                    for ctor_type, ctor_qn in sorted(
-                        resolver.java_constructor_targets(callee_qn)
-                    ):
-                        for variant in resolver.function_registry.variants(ctor_qn):
-                            ensure_rel(
-                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
-                            )
+                    ctor_edges = [
+                        (ctor_type, variant)
+                        for ctor_type, ctor_qn in sorted(
+                            resolver.java_constructor_targets(callee_qn)
+                        )
+                        for variant in resolver.function_registry.variants(ctor_qn)
+                    ]
+                    if len(ctor_edges) > 1:
+                        # Every declared constructor takes an edge because
+                        # argument-type selection is not attempted: one call,
+                        # several candidates, which is what `overload` means
+                        # (issue #1526).
+                        self._resolution = cs.EdgeResolution.OVERLOAD
+                    for ctor_type, variant in ctor_edges:
+                        ensure_rel(caller_spec, calls_rel, (ctor_type, qn_key, variant))
                     continue
                 # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
                 # `constructor`, not Python's `__init__`); redirect the CALLS

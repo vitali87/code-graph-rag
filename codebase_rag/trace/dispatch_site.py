@@ -171,7 +171,19 @@ def _dispatch_literals(
     called: set[str] = set()
     while stack:
         node, inside_caller = stack.pop()
-        if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
+        outside = (
+            node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line
+        )
+        if outside:
+            # A sibling scope's body is another callable's; an enclosing
+            # scope's statements are visible to the caller, so a computed
+            # callable captured from there (`fn = registry[key]` above a
+            # nested `def`) still counts as stored.
+            if node.type in _NESTED_SCOPES:
+                continue
+            if (target := _computed_lookup_target(node)) is not None:
+                stored.add(target)
+            stack.extend((child, inside_caller) for child in node.children)
             continue
         if node.type in _NESTED_SCOPES and node.start_point[0] + 1 >= start_line:
             if inside_caller:
