@@ -670,6 +670,43 @@ def test_a_forced_run_also_prunes_the_seeded_map(temp_repo: Path) -> None:
     assert "proj.other" in pruned
 
 
+def test_a_stale_qn_is_pruned_even_though_its_file_still_exists(
+    temp_repo: Path,
+) -> None:
+    # The issue's own scenario: another writer deletes the Module while the
+    # FILE stays on disk and this run does not re-parse it. The exemption is
+    # "this run parsed it", not "the file exists" -- exempting on existence
+    # is a plausible-looking fix that leaves exactly this entry behind, and
+    # every other test here uses a ghost whose file is absent, so none of
+    # them can tell the two apart.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "util.py": "def helper():\n    return 1\n",
+            "other.py": "def x():\n    return 1\n",
+        },
+    )
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    updater.run(force=True)
+    assert "proj.util" in updater.factory.definition_processor.module_qn_to_file_path
+
+    removed = [key for key in store.nodes if key[1] == "proj.util"]
+    assert removed, "expected a proj.util node to delete"
+    for key in removed:
+        del store.nodes[key]
+    assert (root / "util.py").exists(), "the file must survive for this shape"
+
+    (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+
+    pruned = updater.factory.definition_processor.module_qn_to_file_path
+    assert "proj.util" not in pruned
+    assert "proj.other" in pruned
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
