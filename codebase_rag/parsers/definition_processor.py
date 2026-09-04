@@ -70,6 +70,8 @@ class DefinitionProcessor(
         func_class_captures_cache: dict[Path, dict] | None = None,
         *,
         flow_capture_enabled: bool = False,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -80,6 +82,11 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.flow_capture_enabled = flow_capture_enabled
+        # The indexer's eligibility policy, needed by the declaration
+        # tie-break: a declaration must yield only to an implementation that
+        # will actually be indexed, not merely one that exists on disk.
+        self.exclude_paths = exclude_paths
+        self.unignore_paths = unignore_paths
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
@@ -336,7 +343,12 @@ class DefinitionProcessor(
         # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
         # to go through the check below rather than skip it.
         if (declaration := declaration_extension(file_path.name)) and (
-            has_implementation_sibling(file_path)
+            has_implementation_sibling(
+                file_path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            )
         ):
             suffix = declaration.lstrip(cs.SEPARATOR_DOT)
             module_qn = f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"

@@ -112,6 +112,8 @@ class ProcessorFactory:
                 flow_capture_enabled=(
                     RelationshipType.FLOWS_TO in self.capture.enabled_rels
                 ),
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
             )
         return self._definition_processor
 

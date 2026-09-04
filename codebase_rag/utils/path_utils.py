@@ -324,8 +324,13 @@ def declaration_extension(filename: str) -> str | None:
     return None
 
 
-def has_implementation_sibling(path: Path) -> bool:
-    """Does a same-stem file with a NON-declaration module extension exist?
+def has_implementation_sibling(
+    path: Path,
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Will a same-stem NON-declaration module actually be INDEXED?
 
     Asked of the filesystem rather than of the parse registry deliberately.
     The registry answers "has one been seen yet", which depends on walk order;
@@ -333,9 +338,33 @@ def has_implementation_sibling(path: Path) -> bool:
     whole point -- a `.d.ts` sorts before its `.ts` in an ascending walk, so a
     registry-based tie-break hands the shared name to the stub every time
     (issue #1720, and the regression that closed PR #1721).
+
+    But existence alone is too permissive, and the gap is not hypothetical: an
+    excluded `foo.ts` is on disk and will never be a node, so yielding
+    `proj.foo` to it leaves NOTHING owning the name imports of `./foo` resolve
+    to -- #1720 reintroduced by its own fix, under a configuration the first
+    version of this predicate could not see (Greptile P1 on PR #1728).
+
+    So candidates are filtered through `should_skip_path`, the same predicate
+    the repository walk prunes with. Sharing it is what stops this from
+    disagreeing with the indexer about which files exist (issue #1088); asking
+    the question a second way here is how the two would drift apart.
     """
     stem = module_stem(path.name)
-    return any((path.parent / f"{stem}{ext}").is_file() for ext in _IMPLEMENTATION_EXTS)
+    for ext in _IMPLEMENTATION_EXTS:
+        candidate = path.parent / f"{stem}{ext}"
+        if not candidate.is_file():
+            continue
+        if should_skip_path(
+            candidate,
+            repo_path,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        ):
+            continue
+        return True
+    return False
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:

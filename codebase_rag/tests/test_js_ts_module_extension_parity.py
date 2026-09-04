@@ -45,7 +45,9 @@ IMPL = "export function go() { return 1; }\n"
 DECL = "export declare function go(): number;\n"
 
 
-def _index(files: dict[str, str]) -> _StatefulIngestor:
+def _index(
+    files: dict[str, str], exclude_paths: frozenset[str] | None = None
+) -> _StatefulIngestor:
     root = Path(tempfile.mkdtemp()) / "proj"
     root.mkdir(parents=True)
     for rel, text in files.items():
@@ -60,6 +62,7 @@ def _index(files: dict[str, str]) -> _StatefulIngestor:
         parsers=parsers,
         queries=queries,
         project_name="proj",
+        exclude_paths=exclude_paths,
     ).run(force=True)
     return store
 
@@ -116,6 +119,59 @@ class TestEveryModuleExtensionBindsANamedImport:
         assert _imports(store) == [
             ("Module", "proj.main", "IMPORTS", "Module", "proj.util")
         ], f"{ext}: {_imports(store)}"
+
+    def test_a_declaration_does_not_yield_to_an_excluded_implementation(self) -> None:
+        """A declaration yields only to an implementation that WILL be indexed.
+
+        Greptile P1 on this PR, and correct. `has_implementation_sibling` asked
+        the disk "does a same-stem implementation exist", but the question the
+        tie-break needs answered is "will one be INDEXED". Those differ exactly
+        when the indexer's exclude/unignore policy removes the implementation:
+        `foo.ts` excluded, `foo.d.ts` still eligible, and the declaration
+        yielded `proj.foo` to a file that never enters the graph. Nothing then
+        owns the name imports of `./foo` resolve to -- which is #1720 again,
+        reintroduced by the fix for it under a configuration I had not tested.
+
+        Driven end-to-end through `GraphUpdater(exclude_paths=...)` rather than
+        against the predicate directly, so it also pins the WIRING: the policy
+        has to reach `_disambiguate_module_qn`, and a correct predicate that
+        nothing passes the exclude set to would still fail here.
+        """
+        store = _index(
+            {
+                "main.ts": "import { go } from './foo';\nexport const r = go;\n",
+                "foo.ts": IMPL,
+                "foo.d.ts": DECL,
+            },
+            exclude_paths=frozenset({"foo.ts"}),
+        )
+
+        modules = _modules(store)
+        # The precondition: the exclude really took, so a green result below
+        # cannot come from the implementation having been indexed after all.
+        assert "proj.foo.ts" not in modules, modules
+        assert "proj.foo" in modules, modules
+
+    def test_a_declaration_still_yields_when_the_implementation_is_indexed(
+        self,
+    ) -> None:
+        """The control for the test above: same fixture, no exclude.
+
+        Without this, "declarations never yield" would satisfy the exclusion
+        test, and the walk-order fix in `test_qn_walk_order_parity.py` would be
+        the only thing holding the other direction.
+        """
+        store = _index(
+            {
+                "main.ts": "import { go } from './foo';\nexport const r = go;\n",
+                "foo.ts": IMPL,
+                "foo.d.ts": DECL,
+            }
+        )
+
+        modules = _modules(store)
+        assert "proj.foo" in modules, modules
+        assert "proj.foo.d.ts" in modules, modules
 
     def test_an_import_of_a_directory_with_no_entry_point_binds_nothing(self) -> None:
         store = _index({"main.ts": MAIN, "pkg/other.ts": IMPL})

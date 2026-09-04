@@ -222,9 +222,14 @@ class TestADeclarationNeverStealsTheImplementationsName:
     order, which is why both parametrisations below must pass.
     """
 
-    def _processor(self) -> DefinitionProcessor:
+    def _processor(self, repo: Path) -> DefinitionProcessor:
         proc = DefinitionProcessor.__new__(DefinitionProcessor)
         proc.module_qn_to_file_path = {}
+        # The declaration tie-break consults the indexer's eligibility policy,
+        # so the processor needs the repo root and the (here empty) filters.
+        proc.repo_path = repo
+        proc.exclude_paths = None
+        proc.unignore_paths = None
         return proc
 
     def _assign(self, proc: DefinitionProcessor, repo: Path, path: Path) -> str:
@@ -244,7 +249,7 @@ class TestADeclarationNeverStealsTheImplementationsName:
         impl.write_text("export const a = 1;\n", encoding="utf-8")
         order = [decl, impl] if declaration_first else [impl, decl]
 
-        proc = self._processor()
+        proc = self._processor(tmp_path)
         qns = {path.name: self._assign(proc, tmp_path, path) for path in order}
 
         assert qns["foo.ts"] == f"{PROJECT}.foo", qns
@@ -264,7 +269,7 @@ class TestADeclarationNeverStealsTheImplementationsName:
         decl = tmp_path / "foo.d.ts"
         decl.write_text("export declare const a: number;\n", encoding="utf-8")
 
-        proc = self._processor()
+        proc = self._processor(tmp_path)
 
         assert self._assign(proc, tmp_path, decl) == f"{PROJECT}.foo"
 
@@ -277,7 +282,7 @@ class TestADeclarationNeverStealsTheImplementationsName:
         decl.write_text("export declare const a: number;\n", encoding="utf-8")
         other.write_text("export const b = 2;\n", encoding="utf-8")
 
-        proc = self._processor()
+        proc = self._processor(tmp_path)
 
         assert self._assign(proc, tmp_path, decl) == f"{PROJECT}.foo"
 
@@ -295,7 +300,7 @@ class TestADeclarationNeverStealsTheImplementationsName:
         first.write_text("int x;\n", encoding="utf-8")
         second.write_text("x = 1\n", encoding="utf-8")
 
-        proc = self._processor()
+        proc = self._processor(tmp_path)
         qns = {p.name: self._assign(proc, tmp_path, p) for p in (first, second)}
 
         assert qns["foo.cpp"] == f"{PROJECT}.foo", qns
