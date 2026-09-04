@@ -353,6 +353,61 @@ def _stem_key(file_key: str) -> str:
     return Path(file_key).with_suffix("").as_posix()
 
 
+# Longest first, so `index.d.ts` loses `.d.ts` whole rather than being cut back
+# to `index.d` the way a single-suffix strip does.
+_MODULE_EXTS_LONGEST_FIRST: tuple[str, ...] = tuple(
+    # `str.__len__` rather than `len`: the bare builtin makes the inferred
+    # element type `Sized`, which does not satisfy `tuple[str, ...]`, while a
+    # lambda trips PLW0108. This spelling passes both gates.
+    sorted(cs.JS_TS_MODULE_EXTENSIONS, key=str.__len__, reverse=True)
+)
+
+
+def _module_key(path: str) -> str:
+    """A path with any JS/TS module extension removed.
+
+    Applied to BOTH sides of the waiter match, which is the point: a source
+    writing `./foo.js` records the extension, while the created file arrives
+    as the key `foo.js`. Normalising only one side left them as `foo.js` and
+    `foo` and they never met, so an importer using an explicit extension was
+    never re-parsed (raised on #1717).
+
+    `PurePosixPath.with_suffix("")` is not enough on its own -- it strips one
+    suffix, turning `index.d.ts` into `index.d` rather than `index`.
+    """
+    for ext in _MODULE_EXTS_LONGEST_FIRST:
+        if path.endswith(ext):
+            return path[: -len(ext)]
+    return PurePosixPath(path).with_suffix("").as_posix()
+
+
+def _specifier_wanted_keys(present_keys: Iterable[str]) -> set[str]:
+    """Extension-free names a created file can be imported by."""
+    wanted: set[str] = set()
+    for key in present_keys:
+        module_key = _module_key(key)
+        wanted.add(module_key)
+        # A created `pkg/index.ts` also satisfies `./pkg`, the directory form.
+        as_path = PurePosixPath(module_key)
+        parent = as_path.parent.as_posix()
+        if as_path.name == cs.JS_INDEX_STEM and parent not in (
+            cs.PATH_CURRENT_DIR,
+            "",
+        ):
+            wanted.add(parent)
+    return wanted
+
+
+def _specifier_targets(caller: str, specifiers: Iterable[object]) -> set[str]:
+    """What each recorded specifier names, relative to its importer."""
+    base = PurePosixPath(caller).parent
+    return {
+        _module_key(posixpath.normpath((base / specifier).as_posix()))
+        for specifier in specifiers
+        if isinstance(specifier, str)
+    }
+
+
 def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
     if not cache_path.is_file():
         return {}
@@ -2304,14 +2359,7 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved specifiers")
             return set()
-        wanted = {PurePosixPath(key).with_suffix("").as_posix() for key in present_keys}
-        # A created `pkg/index.ts` also satisfies `./pkg`, the directory form.
-        wanted |= {
-            parent
-            for key in present_keys
-            if (p := PurePosixPath(key)).stem == cs.JS_INDEX_STEM
-            and (parent := p.parent.as_posix()) not in (cs.PATH_CURRENT_DIR, "")
-        }
+        wanted = _specifier_wanted_keys(present_keys)
         waiters: set[str] = set()
         for row in rows:
             caller = row.get(cs.KEY_CALLER_PATH)
@@ -2320,14 +2368,8 @@ class GraphUpdater:
                 continue
             if not isinstance(specifiers, list):
                 continue
-            base = PurePosixPath(caller).parent
-            for specifier in specifiers:
-                if not isinstance(specifier, str):
-                    continue
-                target = posixpath.normpath((base / specifier).as_posix())
-                if target in wanted:
-                    waiters.add(caller)
-                    break
+            if not wanted.isdisjoint(_specifier_targets(caller, specifiers)):
+                waiters.add(caller)
         return waiters
 
     def _package_paths(self) -> set[str] | None:

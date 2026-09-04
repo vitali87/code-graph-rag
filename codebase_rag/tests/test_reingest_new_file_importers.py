@@ -430,6 +430,54 @@ class TestUnresolvedSpecifierWaiters:
 
         assert keys == []
 
+    def test_a_specifier_written_with_an_explicit_extension_still_matches(
+        self, tmp_path: Path
+    ) -> None:
+        """`./foo.js` records the extension; the created file arrives as
+        `foo.js`. Normalising only one side left them as `foo` and `foo.js`,
+        which never met, so the importer was never re-parsed (raised on the
+        #1717 review and reproduced before fixing)."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './foo.js';\nexport const r = go;\n"}
+        )
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./foo.js"
+        ]
+        (root / "foo.js").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.js"])
+
+        assert keys == ["main.js"]
+
+    def test_a_declaration_file_normalises_past_both_of_its_suffixes(
+        self, tmp_path: Path
+    ) -> None:
+        """`index.d.ts` must reduce to `index`, not `index.d`.
+
+        A single-suffix strip leaves `index.d`, so a created declaration entry
+        point would not satisfy `./pkg` either. Found while fixing the
+        explicit-extension case rather than reported.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.ts": "import { go } from './pkg';\nexport const r = go;\n"}
+        )
+        (root / "pkg").mkdir()
+        (root / "pkg" / "index.d.ts").write_text(
+            "export declare function go(): number;\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(
+            ["pkg/index.d.ts"]
+        )
+
+        assert keys == ["main.ts"]
+
     def test_a_reused_updater_clears_a_specifier_whose_target_now_exists(
         self, tmp_path: Path
     ) -> None:
