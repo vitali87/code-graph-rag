@@ -287,6 +287,22 @@ REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: 
 TYPE_EDGES_EMITTED = "Emitted {count} RETURNS/ACCEPTS edges from type annotations"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
 WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
+# A refusal and an abort leave the graph untouched; anything else may have
+# deleted the affected subtrees without rebuilding them, so the retained
+# updater describes a graph that no longer exists (issue #1681).
+WATCHER_REINGEST_FAILED = (
+    "Re-ingest FAILED for {path}: {error}. The graph may be partial, so the "
+    "next change triggers a full re-index before any scoped update."
+)
+WATCHER_REBUILD_FAILED = (
+    "Re-index after a failed re-ingest also FAILED: {error}. The graph is still "
+    "partial; the next change will try again. Run 'cgr start --update-graph' if "
+    "this persists."
+)
+WATCHER_REBUILDING_AFTER_FAILURE = (
+    "Re-indexing the whole repository before this change, because the last "
+    "re-ingest failed part way through."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"

@@ -23,7 +23,7 @@ from codebase_rag.constants import (
     WATCHER_SLEEP_INTERVAL,
     EventType,
 )
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.utils.path_utils import (
@@ -80,6 +80,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # loaded runners (issue #1005). Production always uses threading.Timer.
         self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
+        # Set when a scoped re-ingest fails after it may have written, so the
+        # next change re-indexes the whole repository before touching it
+        # (issue #1681).
+        self._needs_full_rebuild = False
 
         self.debounce_seconds = debounce_seconds
         self.max_wait_seconds = max_wait_seconds
@@ -105,6 +109,29 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             )
         else:
             logger.info(logs.WATCHER_ACTIVE)
+
+    def _rebuild_after_failure(self) -> bool:
+        """Re-index everything after a partial re-ingest. True when the graph is whole.
+
+        `force=True` is required, not tidiness: an incremental run skips files
+        whose hashes are unchanged, and after a re-ingest that deleted subtrees
+        without rebuilding them the FILES on disk are unchanged. A plain
+        `run()` would therefore skip exactly the files whose nodes are missing
+        and report success over a graph that is still partial.
+
+        A rebuild that itself fails must not escape either. This runs from a
+        watchdog callback, so an exception here ends the dispatcher and the
+        watcher goes silently deaf -- the same failure this recovery exists to
+        prevent, one level up. The flag stays set so the next change retries.
+        """
+        logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
+        try:
+            self.updater.run(force=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
+            return False
+        self._needs_full_rebuild = False
+        return True
 
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
@@ -287,16 +314,36 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
+        # A previous scoped re-ingest died part way through, so the graph may be
+        # missing the subtrees it deleted and never rebuilt. Resolving this
+        # change against that state would compound the damage, so restore a
+        # whole graph first (issue #1681).
+        if self._needs_full_rebuild and not self._rebuild_after_failure():
+            # The rebuild failed too, so the graph is still partial. Skip the
+            # scoped work rather than resolve this change against it; the flag
+            # stays set and the next change tries again.
+            return
         try:
             if event.event_type == EventType.DELETED:
                 self.updater.reingest((), deleted=(path,))
             else:
                 self.updater.reingest((path,))
-        except ValueError as exc:
-            # A path reingest refuses (a symlink resolving outside the repo,
-            # a directory where a file was expected) must not end the
-            # callback: the refusal is logged and later events still run.
+        except (ValueError, ReingestAborted) as exc:
+            # A refusal (a symlink resolving outside the repo, a directory where
+            # a file was expected) is raised while the paths are split, and an
+            # abort while the call was still READING the graph. Neither wrote
+            # anything, so the updater is still valid and later events run.
             logger.warning(logs.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            # Anything else may have deleted the affected subtrees and never
+            # rebuilt them. Letting it escape would end this callback with the
+            # updater retained, so every later event resolves against a graph
+            # that no longer matches its registry. Mirrors the MCP tool's
+            # posture (`_reingest_sync`), adapted for a long-lived watcher:
+            # recover on the next event rather than refusing for ever.
+            logger.error(logs.WATCHER_REINGEST_FAILED.format(path=path, error=exc))
+            self._needs_full_rebuild = True
             return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
