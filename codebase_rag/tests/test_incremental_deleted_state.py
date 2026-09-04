@@ -594,6 +594,50 @@ def test_a_failed_module_read_does_not_prune_the_seeded_map(
     assert updater.factory.definition_processor.module_qn_to_file_path == before
 
 
+def test_a_file_parsed_this_run_survives_a_read_that_cannot_see_it(
+    temp_repo: Path,
+) -> None:
+    # Production buffers node writes until a flush, so a file added this run
+    # has no Module in the graph when the prune reads. Its entry must survive
+    # on the strength of having been parsed, and keep its real PATH: the
+    # pathless form loses the Rust sub-scope arbitration.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "util.py": "def helper():\n    return 1\n",
+            "other.py": "def x():\n    return 1\n",
+        },
+    )
+    store = _StatefulIngestor()
+    _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "fresh.py").write_text("def z():\n    return 1\n", encoding="utf-8")
+    _bump(root, "fresh.py")
+
+    original = store.fetch_all
+
+    def _hide_fresh(
+        query: str, *args: object, **kwargs: object
+    ) -> list[dict[str, object]]:
+        rows = original(query, *args, **kwargs)
+        if query is cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
+            # What an unflushed write looks like from the prune's read.
+            return [r for r in rows if r.get(cs.KEY_QUALIFIED_NAME) != "proj.fresh"]
+        return rows
+
+    store.fetch_all = _hide_fresh  # type: ignore[method-assign]
+    try:
+        updater.run(force=False)
+    finally:
+        store.fetch_all = original  # type: ignore[method-assign]
+
+    qn_to_path = updater.factory.definition_processor.module_qn_to_file_path
+    assert "proj.fresh" in qn_to_path, "a file parsed this run was pruned"
+    assert updater.known_module_paths()["proj.fresh"].endswith("fresh.py")
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"

@@ -2001,6 +2001,12 @@ class GraphUpdater:
         Not folded into the seed helper: `reingest` calls that twice with
         different path sets, the second covering only the gone files, so a
         prune running inside it would delete what the first call seeded.
+
+        `reingest` therefore never prunes, since it does not go through
+        `run()`: a retained updater that indexes once and then only makes
+        scoped re-ingest calls (the MCP server's `_live_updater`) still
+        accumulates. That is the same class of bug in a path this fix does
+        not reach, not something it closes.
         """
         if not isinstance(self.ingestor, QueryProtocol):
             return
