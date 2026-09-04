@@ -266,7 +266,7 @@ CYPHER_DEAD_CODE_RELS = f"""MATCH (a:{_DEAD_CODE_NODE_LABELS})-[r:{_DEAD_CODE_RE
 WHERE a.qualified_name STARTS WITH $project_prefix
 RETURN labels(a)[0] AS from_label, a.qualified_name AS from_qn,
        type(r) AS rel_type, labels(b)[0] AS to_label,
-       b.qualified_name AS to_qn"""
+       b.qualified_name AS to_qn, r.resolution AS resolution"""
 
 
 # Duplicate-detection fetch. Grouping and overlap scoring run client-side in
@@ -405,12 +405,14 @@ CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
 RETURN labels(caller)[0] AS label, caller.qualified_name AS qualified_name,
        caller.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
+       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
+       r.resolution AS resolution"""
 CYPHER_GRAPH_CALLEES = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE caller.qualified_name = $qn AND callee.qualified_name STARTS WITH $project_prefix
 RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
        callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
-       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
+       r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
+       r.resolution AS resolution"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,
@@ -424,3 +426,16 @@ WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_pref
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
        r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
        r.alias AS alias, r.imported_name AS imported_name"""
+
+# Trace write-back (issue #1526): a static edge the runtime observed is
+# upgraded in place, on every site it has, so the upgrade never creates a
+# site-less duplicate beside the located ones.
+# Only the static edge(s) of the pair are confirmed: a trace-only edge from
+# an earlier run can sit beside a static one on the same pair and must keep
+# its `dynamic` label.
+CYPHER_TRACE_CONFIRM_CALLS = """
+MATCH (a)-[r:CALLS]->(b)
+WHERE a.qualified_name = $from_qn AND b.qualified_name = $to_qn
+  AND coalesce(r.static_missed, false) = false
+SET r.resolution = $resolution
+"""

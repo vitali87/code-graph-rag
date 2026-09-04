@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
-from typing import NamedTuple
+from typing import Concatenate, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -661,6 +661,33 @@ def call_site_properties(node: Node) -> PropertyDict:
     return props
 
 
+_RESOLVED_RELS = frozenset(
+    {
+        cs.RelationshipType.CALLS,
+        cs.RelationshipType.REFERENCES,
+        cs.RelationshipType.INSTANTIATES,
+    }
+)
+
+
+def _preserves_verdict[**P, R](
+    fn: Callable[Concatenate[CallProcessor, P], R],
+) -> Callable[Concatenate[CallProcessor, P], R]:
+    # The resolver's verdict belongs to the call node being emitted; the
+    # passes that resolve a call's ARGUMENTS (callable flow, function
+    # references, callable parameters) go through the resolver too and would
+    # otherwise overwrite it before the edge reads it back (issue #1526).
+    @wraps(fn)
+    def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
+        saved = self._resolver.last_resolution
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            self._resolver.last_resolution = saved
+
+    return wrapper
+
+
 def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Restore the processor's current edge-site node when the pass returns.
 
@@ -674,10 +701,12 @@ def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
         self = args[0]
         assert isinstance(self, CallProcessor)
         prev = self._site_node
+        prev_resolution = self._resolution
         try:
             return fn(*args, **kwargs)
         finally:
             self._site_node = prev
+            self._resolution = prev_resolution
 
     return wrapper
 
@@ -993,6 +1022,7 @@ class CallProcessor:
     __slots__ = (
         "ingestor",
         "_site_node",
+        "_resolution",
         "_site_cache",
         "repo_path",
         "project_name",
@@ -1049,6 +1079,9 @@ class CallProcessor:
         # `_site_scoped` restores it on exit. The cache keeps the variant
         # fan-out of one site from re-deriving the same property dict.
         self._site_node: Node | None = None
+        # Confidence of the edges emitted next (issue #1526); the main call
+        # loop sets it from the resolver, fan-outs mark overloads.
+        self._resolution: str = cs.EdgeResolution.EXACT
         # Keyed by the node OBJECT, not Node.id: tree-sitter recycles ids
         # across trees, and holding the node keeps its id from being reused.
         self._site_cache: tuple[Node, PropertyDict] | None = None
@@ -1154,6 +1187,8 @@ class CallProcessor:
                 cached = (site, call_site_properties(site))
                 self._site_cache = cached
             properties = {**cached[1], **properties} if properties else dict(cached[1])
+        if rel_type in _RESOLVED_RELS:
+            properties = {**(properties or {}), cs.KEY_RESOLUTION: self._resolution}
         if properties:
             self.ingestor.ensure_relationship_batch(
                 from_spec, rel_type, to_spec, properties=properties
@@ -3282,6 +3317,13 @@ class CallProcessor:
 
         for call_node in call_nodes:
             self._site_node = call_node
+            self._resolution = cs.EdgeResolution.EXACT
+            # A callee bound by a language frontend (Jedi, the Java and C#
+            # engines, the Go frontend, a typed C++ operator) never enters
+            # resolve_function_call, which is where the resolver resets its
+            # verdict; without this reset such an edge would inherit the
+            # label the previous call node left behind (issue #1526).
+            resolver.last_resolution = cs.EdgeResolution.EXACT
             node_id = _id(call_node)
             if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
@@ -3906,7 +3948,13 @@ class CallProcessor:
                 # ALSO redirect a CALLS edge to it (the constructor runs); when
                 # it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
                 # the only edge.
-                for class_variant in resolver.function_registry.variants(callee_qn):
+                class_variants = resolver.function_registry.variants(callee_qn)
+                self._resolution = (
+                    cs.EdgeResolution.OVERLOAD
+                    if len(class_variants) > 1
+                    else resolver.last_resolution
+                )
+                for class_variant in class_variants:
                     # A duplicate-suffixed variant may be a DIFFERENT kind
                     # of node (a merged TS namespace registers as a class,
                     # a colliding function as a Function); only class-typed
@@ -3940,13 +3988,21 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
-                    for ctor_type, ctor_qn in sorted(
-                        resolver.java_constructor_targets(callee_qn)
-                    ):
-                        for variant in resolver.function_registry.variants(ctor_qn):
-                            ensure_rel(
-                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
-                            )
+                    ctor_edges = [
+                        (ctor_type, variant)
+                        for ctor_type, ctor_qn in sorted(
+                            resolver.java_constructor_targets(callee_qn)
+                        )
+                        for variant in resolver.function_registry.variants(ctor_qn)
+                    ]
+                    if len(ctor_edges) > 1:
+                        # Every declared constructor takes an edge because
+                        # argument-type selection is not attempted: one call,
+                        # several candidates, which is what `overload` means
+                        # (issue #1526).
+                        self._resolution = cs.EdgeResolution.OVERLOAD
+                    for ctor_type, variant in ctor_edges:
+                        ensure_rel(caller_spec, calls_rel, (ctor_type, qn_key, variant))
                     continue
                 # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
                 # `constructor`, not Python's `__init__`); redirect the CALLS
@@ -3975,6 +4031,11 @@ class CallProcessor:
                 # hedge that fans an ambiguous callee onto its twins would
                 # cross the block boundary here (issue #1061).
                 targets = [callee_qn]
+            # The resolver's verdict on this callee, then one edge per
+            # same-named candidate when the callee fans out (issue #1526).
+            self._resolution = resolver.last_resolution
+            if len(targets) > 1:
+                self._resolution = cs.EdgeResolution.OVERLOAD
             for target_qn in targets:
                 # A duplicate-suffixed variant may be a DIFFERENT kind of
                 # node (a TS namespace merged onto a function registers as
@@ -4066,6 +4127,10 @@ class CallProcessor:
                             calls_rel,
                             (cs.NodeLabel.FUNCTION, qn_key, variant),
                         )
+        # Edges the later passes emit (decorators, property reads, operator
+        # dispatch) are exact bindings; they must not carry the verdict the
+        # last call node of this loop left behind.
+        self._resolution = cs.EdgeResolution.EXACT
 
     @_site_scoped
     def _ingest_operator_dispatch_calls(
@@ -5870,6 +5935,7 @@ class CallProcessor:
                 module_qn, target_module
             )
 
+    @_preserves_verdict
     def _ingest_callable_param_calls(
         self,
         call_node: Node,
@@ -5902,6 +5968,7 @@ class CallProcessor:
                     caller_qn,
                 )
 
+    @_preserves_verdict
     def _collect_callable_flow(
         self,
         call_node: Node,
@@ -6095,6 +6162,7 @@ class CallProcessor:
                     (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    @_preserves_verdict
     def _ingest_higher_order_builtin_calls(
         self,
         call_node: Node,
@@ -6119,6 +6187,7 @@ class CallProcessor:
                 caller_qn,
             )
 
+    @_preserves_verdict
     def _ingest_argument_function_references(
         self,
         call_node: Node,
