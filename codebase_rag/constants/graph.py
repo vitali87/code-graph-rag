@@ -431,7 +431,7 @@ WHERE (n:Function OR n:Method)
 """
 
 _CYPHER_EMBEDDING_CLASS_METHOD = """
-MATCH (m:Module)-[:DEFINES]->(:Class)-[:DEFINES_METHOD]->(n:Method)
+MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(n:Method)
 WHERE m.qualified_name STARTS WITH ($project_name + '.')
 """
 

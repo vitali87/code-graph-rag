@@ -74,11 +74,10 @@ class TestCypherQueryEmbeddingsStructure:
         "query",
         [cs.CYPHER_QUERY_EMBEDDINGS, cs.CYPHER_QUERY_PROJECT_NODE_IDS],
     )
-    def test_includes_nested_class_methods(self, query: str) -> None:
-        assert (
-            "MATCH (m:Module)-[:DEFINES]->(:Class)"
-            "-[:DEFINES_METHOD]->(n:Method)" in query
-        )
+    def test_includes_methods_from_any_module_defined_container(
+        self, query: str
+    ) -> None:
+        assert "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(n:Method)" in query
         assert query.count("STARTS WITH ($project_name + '.')") == 2
 
 
