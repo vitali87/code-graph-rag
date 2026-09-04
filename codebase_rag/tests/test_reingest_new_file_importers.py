@@ -11,22 +11,24 @@ for exactly the create-then-import order an agent commonly uses.
 waiting importer's IMPORTS edge points at an unresolved target named after the
 new module, which is findable even with no inbound edge.
 
-SCOPE OF THESE TESTS. The `#1682` classes drive the query layer with a stubbed
-`fetch_all`, which is what can be verified without a live graph: that the right
-question is asked, that the answer is wired into the dependent set, and that a
-failure degrades rather than raising. The end-to-end claim for THAT path -- that
-a real create-then-reingest matches a clean index -- needs the integration suite
-against Memgraph and is NOT asserted here. A mock ingestor answers no dependents
-query at all, so an end-to-end assertion written against one passes or fails for
-reasons unrelated to this change.
+SCOPE OF THESE TESTS. `TestUnresolvedImporterLookup` drives the query layer with
+a stubbed `fetch_all`: that the right question is asked, that the answer is
+wired into the dependent set, and that a failure degrades rather than raising.
+A MagicMock cannot show more, so an end-to-end assertion written against one
+passes or fails for reasons unrelated to the code.
 
-`TestUnresolvedSpecifierWaiters` (#1714) is different and does run end to end,
-against the stateful in-memory double rather than a stub, because its claim is
-that a property is WRITTEN during an ordinary parse and READ back by the lookup
--- neither of which a stub can show. The double had to learn the new query for
-that to mean anything: an unanswered query returns `[]` there, which is
-indistinguishable from "no waiters" and would have let these pass against a
-lookup that never ran.
+`TestUnresolvedSpecifierWaiters` runs end to end against the stateful in-memory
+double, covering BOTH halves of the mechanism: the persisted-row path (#1682,
+`import util` records the external-looking target `util`) and the recorded-
+specifier path (#1714, a relative `./index` records no row at all). That became
+possible only once the double answered these two queries. It previously fell
+through to `case _: return []` for both, which reads as "no waiters" and is
+indistinguishable from a lookup that never ran -- which is why this file could
+originally cover the query layer alone.
+
+Still NOT asserted here: that a real scoped re-ingest against Memgraph produces
+the same graph as a clean index. The double is faithful to the queries cgr
+issues, not to the database.
 """
 
 from __future__ import annotations
@@ -378,6 +380,55 @@ class TestUnresolvedSpecifierWaiters:
 
         assert updater._unresolved_importer_keys(["index.js"]) == []
         assert updater._unresolved_importer_keys(["sub/index.js"]) == ["sub/main.js"]
+
+    def test_a_python_waiter_is_found_through_its_persisted_unresolved_edge(
+        self, tmp_path: Path
+    ) -> None:
+        """The #1682 row path, driven end to end rather than through a stub.
+
+        This was previously unassertable: the stateful double did not answer
+        `CYPHER_UNRESOLVED_IMPORTER_PATHS` and fell through to `[]`, so the
+        lookup reported no waiters for reasons unrelated to the code. With the
+        double answering it, the two halves of the mechanism can be told
+        apart -- this one keeps a persisted IMPORTS row (`import util` records
+        the external-looking target `util`), where the JS/TS cases above keep
+        none at all.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.py": "import util\n\ndef run():\n    return util.helper()\n"}
+        )
+        # The premise: an unresolved row exists here, unlike the JS/TS case.
+        assert [edge for edge in store.edges if edge[2] == "IMPORTS"]
+
+        (root / "util.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+
+        assert keys == ["main.py"]
+
+    def test_a_resolved_import_is_not_reported_as_a_waiter(
+        self, tmp_path: Path
+    ) -> None:
+        """The control for the row path: only UNRESOLVED targets count.
+
+        Without it, a double that returned every importer of anything would
+        satisfy the test above.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {
+                "main.py": "import util\n\ndef run():\n    return util.helper()\n",
+                "util.py": "def helper():\n    return 1\n",
+            },
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+
+        assert keys == []
 
     def test_a_reused_updater_clears_a_specifier_whose_target_now_exists(
         self, tmp_path: Path
