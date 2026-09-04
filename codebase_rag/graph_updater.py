@@ -1356,6 +1356,13 @@ class GraphUpdater:
         # method name-token locations Pass 2 registered.
         self._run_java_frontend()
 
+        # Before known_module_paths is built from the map: the seed pass only
+        # ever adds, so a reused updater carries qns whose Module another
+        # writer has since deleted. A full build re-parses everything and
+        # rebuilds the map from scratch, so it needs no prune.
+        if not force:
+            self._prune_stale_seeded_module_qns()
+
         known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
 
         logger.info(ls.FOUND_FUNCTIONS, count=len(self.function_registry))
@@ -1975,6 +1982,43 @@ class GraphUpdater:
             if _stem_key(path) in flux_stems:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
+
+    def _prune_stale_seeded_module_qns(self) -> None:
+        """Drop map entries for modules the graph no longer holds.
+
+        `_seed_module_qns_from_graph` only ever adds, so on a reused updater
+        (the watcher, the MCP server) a qn whose Module was deleted by another
+        writer -- a second updater, `delete_project` then a re-index, a run in
+        another clone -- stays in the map for the life of the process and keeps
+        being offered by `known_module_paths`, where it carries a real path and
+        so wins the Rust sub-scope arbitration outright.
+
+        An entry absent from the graph is dropped unless this run parsed its
+        file: a re-parsed file writes its own entry directly and its Module
+        node may not be flushed yet, so the graph read cannot see it. Anything
+        else the next run that parses the file re-adds.
+
+        Not folded into the seed helper: `reingest` calls that twice with
+        different path sets, the second covering only the gone files, so a
+        prune running inside it would delete what the first call seeded.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        dp = self.factory.definition_processor
+        module_map = dp.module_qn_to_file_path
+        if not module_map:
+            return
+        in_graph: set[str] = set()
+        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if isinstance(qn, str):
+                in_graph.add(qn)
+        parsed_this_run = {path for path, _lang in self._parsed_files}
+        for qn in [qn for qn in module_map if qn not in in_graph]:
+            # A file this run parsed writes its own entry and its Module node
+            # may still be unflushed, so the read above cannot see it.
+            if module_map[qn] not in parsed_this_run:
+                del module_map[qn]
 
     def _rehydrate_class_inheritance_from_graph(self) -> None:
         # Incremental runs rebuild class_inheritance only from re-parsed files.

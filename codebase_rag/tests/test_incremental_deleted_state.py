@@ -485,6 +485,48 @@ def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> No
     assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
 
 
+def test_seeded_module_qns_are_pruned_when_the_graph_loses_them(
+    temp_repo: Path,
+) -> None:
+    # `_seed_module_qns_from_graph` only ever adds, so on a reused updater a
+    # qn whose Module another writer deleted -- a second updater, a
+    # delete_project then re-index, a run in another clone -- stayed in
+    # module_qn_to_file_path for the life of the process. Unlike a rehydrated
+    # qn it carries a real path, so it wins the Rust sub-scope arbitration.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "util.py": "def helper():\n    return 1\n",
+            "other.py": "def x():\n    return 1\n",
+        },
+    )
+    store = _StatefulIngestor()
+    _updater(store, root, cs.SupportedLanguage.PYTHON).run(force=True)
+
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    (root / "other.py").write_text("def x():\n    return 2\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+    qn_to_path = updater.factory.definition_processor.module_qn_to_file_path
+    assert "proj.util" in qn_to_path, "the shape did not seed"
+
+    # A qn the graph does not hold and whose file was never parsed here: what
+    # an entry left over from an earlier project state looks like.
+    qn_to_path["proj.ghost"] = root / "ghost.py"
+
+    (root / "other.py").write_text("def x():\n    return 3\n", encoding="utf-8")
+    _bump(root, "other.py")
+    updater.run(force=False)
+
+    pruned = updater.factory.definition_processor.module_qn_to_file_path
+    assert "proj.ghost" not in pruned
+    assert "proj.ghost" not in updater.known_module_paths()
+    # Entries the graph still holds survive.
+    assert "proj.util" in pruned
+    assert "proj.other" in pruned
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
