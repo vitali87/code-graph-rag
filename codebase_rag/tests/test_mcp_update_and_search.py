@@ -1482,3 +1482,59 @@ class TestIncompleteMarkerInvariant:
             "reported that it had not mutated, so a failure afterwards would "
             "clear the marker protecting a partial graph"
         )
+
+    async def test_a_failed_clear_on_an_abort_is_not_silently_swallowed(
+        self, temp_project_root: Path
+    ) -> None:
+        """An abort that wrote nothing must not leave the project stuck quietly.
+
+        The clear on this path is best effort so a marker error cannot replace
+        the caller's real exception. But discarding its RESULT left the project
+        marked incomplete after a run that changed nothing, refusing every
+        later scoped reingest until a full update ran (#1705 review).
+
+        Asserts the in-process flag follows the durable state, which is what
+        stops this process believing the graph is clean, and that the caller's
+        original error still surfaces rather than being replaced.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        aborting = MagicMock()
+        aborting.reingest_mutated = False
+        aborting.reingest.side_effect = ReingestAborted("graph read failed")
+        registry._live_updater = aborting
+
+        # loguru, not stdlib logging, so `caplog` sees nothing: capture via a
+        # sink, the same way conftest's pass-failure watcher does.
+        from loguru import logger
+
+        logged: list[str] = []
+        sink = logger.add(lambda m: logged.append(m.record["message"]), level="WARNING")
+        try:
+            result = await registry.reingest(["a.py"])
+        finally:
+            logger.remove(sink)
+
+        assert "graph read failed" in result.get("error", ""), (
+            "the caller's real error must stay primary, not be replaced by a "
+            f"marker error: {result}"
+        )
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must actually have failed, or this test "
+            "proves nothing"
+        )
+        assert registry._graph_incomplete is True, (
+            "the local flag reported clean while the durable marker is still "
+            "set, so this process would not know later reingests will refuse"
+        )
+        # The flag alone does NOT discriminate: `_require_marker_cleared` sets
+        # it as a side effect whether or not the caller inspects the result,
+        # so a version that swallowed the failure passed this test until the
+        # log assertion below was added (measured).
+        assert any("could not be cleared" in m for m in logged), (
+            "a stuck marker after a no-op abort was not reported, so an "
+            f"operator has nothing explaining why reingests refuse: {logged}"
+        )
