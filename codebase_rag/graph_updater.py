@@ -321,6 +321,36 @@ def _publish_hash_cache(
         return False
 
 
+def _trustworthy_cache_mtime(cache_path: Path) -> float:
+    """The cache mtime to compare files against, or 0.0 if it cannot be trusted.
+
+    Both readers use this instant as a watermark: "every file at or below it is
+    already accounted for". A stamp AHEAD of the wall clock makes that true of
+    EVERY file on disk however recently edited, so nothing is re-hashed, the
+    edit never reaches the graph, and no later run corrects it because the
+    stamp stays ahead (issue #1665). The causes are ordinary -- an NTP step
+    backwards, VM suspend and resume, `cp -p` or `rsync -t` from a host whose
+    clock ran ahead, a restored backup or a copied container image.
+
+    Returning 0.0 rather than clamping to `time.time()`: clamping is not
+    enough, because "now" is never older than an edit made now, so a file
+    written in the same instant still satisfies `mtime <= now` and is skipped
+    for the wrong reason. 0.0 disables the shortcut entirely and defers to the
+    HASH comparison, which is the authority the watermark is only an
+    optimisation over. The cost is one re-hash pass on a tree whose cache is
+    misstamped; the alternative is losing edits silently and permanently.
+
+    Shared by both readers on purpose. They answer the same question, and a
+    guard applied to one of two predicates is the shape that let the indexer
+    and the watcher disagree in issue #1636.
+    """
+    try:
+        stamped = cache_path.stat().st_mtime
+    except OSError:
+        return 0.0
+    return 0.0 if stamped > time.time() else stamped
+
+
 def _load_parser_fingerprint(stamp_path: Path) -> str | None:
     try:
         return stamp_path.read_text(encoding="utf-8").strip() or None
@@ -2907,7 +2937,7 @@ class GraphUpdater:
         # incidentally, by being an indexed and hashed file itself.
         if not self._exclusions_match_last_run():
             return False
-        cache_mtime = cache_path.stat().st_mtime
+        cache_mtime = _trustworthy_cache_mtime(cache_path)
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = (
             {} if self._cache_discarded_in_memory else _load_hash_cache(cache_path)
@@ -3075,7 +3105,9 @@ class GraphUpdater:
             old_hashes.pop(stale_key, None)
         is_full_build = (force or not old_hashes) and self._single_file is None
         self._is_full_build = is_full_build
-        cache_mtime = cache_path.stat().st_mtime if cache_path.is_file() else 0.0
+        cache_mtime = (
+            _trustworthy_cache_mtime(cache_path) if cache_path.is_file() else 0.0
+        )
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
 
@@ -3516,7 +3548,15 @@ class GraphUpdater:
             # write time -- LATER than this run's instant, so it makes the
             # trap worse rather than closing it. `cache_mtime` was read at the
             # top of this method, before anything wrote to the cache.
-            self._pending_cache_observed_at = cache_mtime or None
+            #
+            # `or 0.0`, never `or None`: `cache_mtime` is 0.0 when the previous
+            # stamp was distrusted for being in the future (issue #1665), and
+            # 0.0 is falsy, so `or None` would take exactly the branch the
+            # paragraph above warns against. The epoch vouches for nothing,
+            # which is the honest claim for a run whose predecessor's stamp
+            # could not be trusted; None vouches for now, and loses a sibling
+            # edited before this run, permanently.
+            self._pending_cache_observed_at = cache_mtime or 0.0
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
