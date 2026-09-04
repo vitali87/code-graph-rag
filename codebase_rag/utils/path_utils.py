@@ -282,11 +282,29 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
 
     ``__init__.py`` and ``mod.rs`` name their PACKAGE rather than themselves,
     so they drop their own filename segment.
+
+    A TypeScript declaration file loses its COMPOUND suffix: ``.d.ts`` is one
+    extension, not ``.ts`` after a ``.d`` segment. Stripping only the final one
+    stored ``pkg/index.d.ts`` as ``proj.pkg.index.d`` while the JS/TS resolver
+    treated it as the ``./pkg`` entry point and asked for ``proj.pkg``, so the
+    module was keyed under a name nothing looked up and its IMPORTS edge was
+    dropped (issue #1720). The narrower rule is deliberate: only extensions the
+    language set NAMES are compound, so ``archive.tar.gz`` still keeps
+    ``archive.tar``.
     """
     if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
         parts = rel_path.parent.parts
     else:
-        parts = rel_path.with_suffix("").parts
+        name = rel_path.name
+        declaration = next(
+            (ext for ext in cs.JS_TS_DECLARATION_EXTENSIONS if name.endswith(ext)),
+            None,
+        )
+        parts = (
+            (*rel_path.parent.parts, name[: -len(declaration)])
+            if declaration
+            else rel_path.with_suffix("").parts
+        )
     return cs.SEPARATOR_DOT.join([project_name, *parts])
 
 

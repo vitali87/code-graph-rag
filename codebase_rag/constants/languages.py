@@ -159,6 +159,8 @@ JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".d.mts",
     ".d.cts",
     ".d.ts",
+    # (declaration forms above; JS_TS_DECLARATION_EXTENSIONS is derived from
+    # this tuple below, so adding one here cannot leave the qn rule behind)
     ".tsx",
     ".mts",
     ".cts",
@@ -167,6 +169,16 @@ JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".mjs",
     ".cjs",
     ".js",
+)
+# TypeScript declaration suffixes, DERIVED from the set above rather than
+# retyped: `.d.ts` is one extension, not `.ts` preceded by a `.d` segment, so
+# the module qn must lose the whole thing. Stripping only the final suffix
+# stored `pkg/index.d.ts` as `proj.pkg.index.d` while the resolver looked for
+# `proj.pkg`, and the IMPORTS edge was dropped for want of a matching node
+# (issue #1720). Derived so a `.d.*` added above cannot leave the qn rule
+# behind -- a second hand-written list is exactly how the two drifted apart.
+JS_TS_DECLARATION_EXTENSIONS: tuple[str, ...] = tuple(
+    ext for ext in JS_TS_MODULE_EXTENSIONS if ext.startswith(".d.")
 )
 TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.json",

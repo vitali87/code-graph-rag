@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
 from codebase_rag.utils.path_utils import (
@@ -148,6 +149,45 @@ class TestTheBaseModuleQnIsSharedNotMirrored:
             base_module_qn(Path("dir.with.dots/f.py"), PROJECT)
             == f"{PROJECT}.dir.with.dots.f"
         )
+
+    def test_a_declaration_file_loses_its_whole_compound_suffix(self) -> None:
+        """`.d.ts` is ONE extension, not `.ts` after a `.d` segment.
+
+        The single-suffix rule indexed `pkg/index.d.ts` as `proj.pkg.index.d`,
+        while `JS_TS_MODULE_EXTENSIONS` lists `.d.ts` and the JS/TS resolver
+        treats that file as the `./pkg` entry point and looks for `proj.pkg`.
+        The file was therefore stored under a name nothing ever asks for, and
+        deferred verification dropped its IMPORTS edge (issue #1720).
+
+        Every `.d.*` in the language set is covered, not just `.d.ts`: the
+        parametrisation below enumerates what I thought of, and the set-driven
+        test after it is what catches the one I did not.
+        """
+        assert base_module_qn(Path("pkg/index.d.ts"), PROJECT) == f"{PROJECT}.pkg.index"
+        assert base_module_qn(Path("t/util.d.mts"), PROJECT) == f"{PROJECT}.t.util"
+        assert base_module_qn(Path("t/util.d.cts"), PROJECT) == f"{PROJECT}.t.util"
+
+    def test_every_declaration_extension_is_stripped_whole(self) -> None:
+        """The forcing function: a `.d.*` added to the language set later must
+        not quietly fall back to the single-suffix rule and reintroduce #1720.
+        """
+        leftovers = {
+            ext: base_module_qn(Path(f"pkg/m{ext}"), PROJECT)
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+            if ext.startswith(".d.")
+        }
+        assert leftovers, "no declaration extensions in the language set to check"
+        assert all(qn == f"{PROJECT}.pkg.m" for qn in leftovers.values()), leftovers
+
+    def test_a_non_module_dotted_name_still_keeps_its_stem(self) -> None:
+        """The control. Stripping compound suffixes generally would cut
+        `archive.tar.gz` to `archive`, which the rule above deliberately does
+        not do -- only extensions the language set names are compound.
+        """
+        assert (
+            base_module_qn(Path("archive.tar.gz"), PROJECT) == f"{PROJECT}.archive.tar"
+        )
+        assert base_module_qn(Path("a.b.py"), PROJECT) == f"{PROJECT}.a.b"
 
 
 class TestOneUnignorePatternIsEnoughToRescue:
