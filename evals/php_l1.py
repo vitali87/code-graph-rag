@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_php_graph
 from .l1_eval import run_l1_eval
-from .oracles import php_oracle_available, run_php_oracle
+from .oracles import php_oracle_available, php_oracle_skip_reason, run_php_oracle
 
 _TITLE = "cgr L1 structure eval (PHP vs php-parser)"
 
@@ -28,6 +28,7 @@ def main(
         project_name,
         out_dir,
         available=php_oracle_available,
+        skip_reason=php_oracle_skip_reason,
         oracle_missing=ls.PHP_ORACLE_MISSING,
         extract_cgr=extract_cgr_php_graph,
         run_oracle=run_php_oracle,

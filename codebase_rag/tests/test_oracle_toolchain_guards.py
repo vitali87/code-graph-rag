@@ -20,6 +20,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import typer
+from loguru import logger
 
 from evals import constants as ec
 from evals.oracles import _common
@@ -528,3 +530,95 @@ class TestPostInstallRecheck:
         # The reason travels with it, so the skip line names the real
         # obstacle rather than restating the guard.
         assert "@ruby/prism" in str(raised.value)
+
+
+class TestStandaloneL1Runner:
+    """A standalone eval must REPORT an unavailable toolchain, not crash.
+
+    The four L1 scripts (`evals/lua_l1.py`, `ts_l1.py`, `php_l1.py`) call the
+    oracle outside pytest, so an exception escaping the shared runner reaches
+    the operator as a traceback rather than as the command's result.
+    """
+
+    @staticmethod
+    def _run(**overrides: object) -> int:
+        from evals import l1_eval
+        from evals.types_defs import GraphData
+
+        kwargs: dict[str, object] = {
+            "available": lambda: True,
+            "oracle_missing": "fixed message for {binary}",
+            "extract_cgr": lambda _t, _p: GraphData(nodes=[], edges=[], name_edges=[]),
+            "run_oracle": lambda _t: GraphData(nodes=[], edges=[], name_edges=[]),
+            "oracle_binary": "node",
+            "scored_node_kinds": frozenset(),
+            "extracting_cgr": "x {target} {project}",
+            "cgr_done": "y {count}",
+            "extracting_oracle": "z {binary} {target}",
+            "oracle_done": "w {count}",
+            "scores_filename": "s.csv",
+            "diff_filename": "d.json",
+            "title": "t",
+        }
+        kwargs.update(overrides)
+        with pytest.raises(typer.Exit) as exit_info:
+            l1_eval.run_l1_eval(Path("."), "", Path("."), **kwargs)  # type: ignore[arg-type]
+        return int(exit_info.value.exit_code)
+
+    def test_a_post_install_failure_exits_rather_than_raising(self) -> None:
+        """The path `available()` cannot cover.
+
+        On a clean checkout the guard runs before the deps exist, so it
+        honestly says "cannot tell yet"; the verdict only arrives inside
+        `run_oracle`, once `ensure_node_deps` has fetched them.
+        """
+
+        def _unavailable(_target: Path) -> object:
+            raise NodeOracleUnavailable("this node cannot require(luaparse): boom")
+
+        # Caught HERE rather than left to propagate. `conftest`'s
+        # `pytest_runtest_call` hook turns a leaked NodeOracleUnavailable into
+        # a SKIP, so a runner that stopped catching it would make this test
+        # vanish rather than fail -- verified by mutation: removing the
+        # try/except gave "30 passed, 1 skipped". A skipped test is not a
+        # passing one, but it is not a failing one either, and this must fail.
+        try:
+            assert self._run(run_oracle=_unavailable) == 1
+        except NodeOracleUnavailable as leaked:  # pragma: no cover - the defect
+            raise AssertionError(
+                f"the L1 runner let the exception escape: {leaked}"
+            ) from leaked
+
+    def test_the_reason_replaces_the_false_fixed_message(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ "not found on PATH" is false when the binary is present.
+
+        Asserting the fixed string is ABSENT as well as the reason present:
+        checking only for the reason would pass for a runner that logged both.
+        """
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="ERROR")
+        try:
+            assert (
+                self._run(
+                    available=lambda: False,
+                    skip_reason=lambda: "this node cannot require(luaparse): boom",
+                )
+                == 1
+            )
+        finally:
+            logger.remove(sink)
+        joined = "\n".join(messages)
+        assert "cannot require(luaparse)" in joined
+        assert "fixed message" not in joined, joined
+
+    def test_an_oracle_without_a_reason_probe_keeps_the_fixed_message(self) -> None:
+        """The fallback must survive: not every oracle has a reason probe."""
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="ERROR")
+        try:
+            assert self._run(available=lambda: False) == 1
+        finally:
+            logger.remove(sink)
+        assert "fixed message for node" in "\n".join(messages)
