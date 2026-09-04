@@ -1175,6 +1175,65 @@ class TestFastPathInSync:
         )
         assert updater._is_already_in_sync() is False
 
+    def test_a_cache_stamped_in_the_future_does_not_skip_an_edit(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """Issue #1665: a future mtime makes every file look unchanged.
+
+        `_is_already_in_sync` and the hashing loop both fast-path a file whose
+        mtime is at or below the cache's. A cache stamped ahead of the wall
+        clock satisfies that for EVERY file on disk, however recently edited,
+        so nothing is re-indexed and the graph silently stops tracking the
+        tree. It does not self-correct: the stamp stays ahead, so every later
+        run skips too.
+
+        The causes are ordinary rather than exotic -- an NTP correction
+        backwards, VM suspend/resume, `cp -p` or `rsync -t` from a host whose
+        clock ran ahead, a restored backup or copied image.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
+        ahead = time.time() + 3600
+        os.utime(cache, (ahead, ahead))
+
+        # Edited AFTER the stamp, so its mtime is older than the cache's while
+        # being newer than the content the cache describes -- the exact shape
+        # the comparison cannot distinguish.
+        (py_project / "module_a.py").write_text(
+            "def edited_after_the_stamp():\n    return 2\n", encoding="utf-8"
+        )
+
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "a cache stamped in the future reported the tree as in sync, so "
+            "the edit is never indexed and no later run corrects it"
+        )
+
+        # Only `_is_already_in_sync` is pinned here, deliberately. The hashing
+        # loop reads the same stamp for the same shortcut, and is guarded the
+        # same way, but reverting ONLY that reader leaves the suite green and
+        # the edit still indexed: once the sync check declines, the loop's
+        # `old_hashes` comparison catches the changed content whatever the
+        # mtime says, because the hash is the authority and the mtime is only
+        # an optimisation over it. Measured, not assumed -- with that reader
+        # reverted the run still re-indexed the edited file and rewrote the
+        # cache with a sane stamp. The guard stays on both readers so they
+        # cannot diverge (issue #1636's shape), but the second one has no
+        # failing case to pin.
+
     def test_changed_cli_exclusion_disables_fast_path(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
