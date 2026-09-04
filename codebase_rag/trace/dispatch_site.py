@@ -91,7 +91,17 @@ def locate_dispatch_literal(
     dispatch in the body (`getattr(obj, name)`, `table[key]()`) could have
     carried the call itself, so it makes the edge unlocatable too.
     """
-    file_path = repo_root / path
+    root = _python_root(repo_root / path)
+    if root is None:
+        return None
+    found = _dispatch_literals(root, start_line, end_line, callee_name)
+    if found is None or len(found) != 1:
+        return None
+    return node_site_properties(found[0])
+
+
+def _python_root(file_path: Path) -> Node | None:
+    """Parsed root of a Python file, or None when it is not one or unreadable."""
     if get_language_for_extension(file_path.suffix) != cs.SupportedLanguage.PYTHON:
         return None
     try:
@@ -102,7 +112,17 @@ def locate_dispatch_literal(
     parser = parsers.get(cs.SupportedLanguage.PYTHON)
     if parser is None:
         return None
-    root = parser.parse(source).root_node
+    return parser.parse(source).root_node
+
+
+def _dispatch_literals(
+    root: Node, start_line: int, end_line: int, callee_name: str
+) -> list[Node] | None:
+    """Dispatch-shaped literals naming `callee_name` in the caller's own body.
+
+    None when the body holds a computed dispatch, which could have carried
+    the call itself.
+    """
     # (node, inside_caller): the first definition that begins inside the
     # span is the caller itself; any definition met below it is a nested
     # callable whose literals belong to that callable, not to this edge.
@@ -121,6 +141,4 @@ def locate_dispatch_literal(
         if _literal_text(node) == callee_name and _is_dispatch_literal(node):
             found.append(node)
         stack.extend((child, inside_caller) for child in node.children)
-    if len(found) != 1:
-        return None
-    return node_site_properties(found[0])
+    return found

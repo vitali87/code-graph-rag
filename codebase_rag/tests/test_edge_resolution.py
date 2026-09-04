@@ -327,7 +327,8 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
         ],
     )
     summary = ingest_trace(trace, graph, repo, PROJECT)
-    assert summary.confirmed_static == 1 and summary.static_missed == 3
+    assert summary.confirmed_static == 1
+    assert summary.static_missed == 3
 
     # The observed static edge is upgraded in place, on every site.
     assert graph.writes == [
@@ -350,7 +351,8 @@ def test_trace_upgrades_observed_edges_and_tags_dynamic_ones(tmp_path: Path) -> 
     assert cs.KEY_UNLOCATABLE not in hidden
     # REGISTRY['keyed']: a subscript key literal counts too.
     keyed = by_callee["keyed"]
-    assert keyed[cs.KEY_DISPATCH_LITERAL] is True and keyed[cs.KEY_LINE] == 4
+    assert keyed[cs.KEY_DISPATCH_LITERAL] is True
+    assert keyed[cs.KEY_LINE] == 4
     # No literal names `ghost`: the edge says so.
     ghost = by_callee["ghost"]
     assert ghost[cs.KEY_RESOLUTION] == "dynamic"
@@ -377,7 +379,8 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
     # (the trace never attributes their frames to `run`), so `solo` has one
     # site in `run`'s own body and that site is recorded.
     solo = locate_dispatch_literal(tmp_path, "app.py", 1, 7, "solo")
-    assert solo is not None and (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (5, 17)
+    assert solo is not None
+    assert (solo[cs.KEY_LINE], solo[cs.KEY_COL]) == (5, 17)
     # An earlier same-named dict key and the getattr argument cannot be told
     # apart, so `twice` is unlocatable rather than pointed at the wrong one.
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "twice") is None

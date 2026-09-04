@@ -37,7 +37,7 @@ from .resolution import (
 
 if TYPE_CHECKING:
     from ..flow_verdict import QueryFn
-    from ..types_defs import PropertyValue, ResultRow
+    from ..types_defs import PropertyDict, PropertyValue, ResultRow
     from .records import FramePoint, TraceHeader
     from .resolution import ResolvedFrame
 
@@ -200,43 +200,15 @@ def ingest_trace(
         properties = _edge_properties(stats, static_missed, header.sampled)
         if static_missed:
             summary.static_missed += 1
-            # A call only the runtime saw: locate the literal it dispatched
-            # through so a rewrite can find it, or say plainly that it
-            # cannot be located (issue #1526).
-            properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.DYNAMIC
-            caller_node = callables_by_qn.get(caller.qualified_name)
-            literal = (
-                locate_dispatch_literal(
-                    repo_root,
-                    caller_node.path,
-                    caller_node.start_line,
-                    caller_node.end_line,
-                    callee.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1],
-                )
-                if caller_node is not None
-                and caller_node.start_line is not None
-                and caller_node.end_line is not None
-                else None
+            _mark_dynamic(
+                properties,
+                repo_root,
+                callables_by_qn.get(caller.qualified_name),
+                callee,
             )
-            if literal is None:
-                properties[cs.KEY_UNLOCATABLE] = True
-            else:
-                properties.update(literal)
-                properties[cs.KEY_DISPATCH_LITERAL] = True
         else:
             summary.confirmed_static += 1
-            # The static edge(s) for this pair are upgraded in place, on every
-            # site they have; the trace decoration below merges onto the
-            # site-less carrier as before.
-            properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.TRACE_CONFIRMED
-            ingestor.execute_write(
-                CYPHER_TRACE_CONFIRM_CALLS,
-                {
-                    cs.KEY_FROM_QN: caller.qualified_name,
-                    cs.KEY_TO_QN: callee.qualified_name,
-                    cs.KEY_RESOLUTION: cs.EdgeResolution.TRACE_CONFIRMED,
-                },
-            )
+            _confirm_static(ingestor, caller, callee, properties)
         summary.edges += 1
         ingestor.ensure_relationship_batch(
             (caller.label, cs.KEY_QUALIFIED_NAME, caller.qualified_name),
@@ -255,3 +227,51 @@ def ingest_trace(
         )
     )
     return summary
+
+
+def _mark_dynamic(
+    properties: PropertyDict,
+    repo_root: Path,
+    caller_node: CallableNode | None,
+    callee: ResolvedFrame,
+) -> None:
+    """A call only the runtime saw: record the literal it dispatched through,
+    or say plainly that it cannot be located (issue #1526)."""
+    properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.DYNAMIC
+    literal = None
+    if (
+        caller_node is not None
+        and caller_node.start_line is not None
+        and caller_node.end_line is not None
+    ):
+        literal = locate_dispatch_literal(
+            repo_root,
+            caller_node.path,
+            caller_node.start_line,
+            caller_node.end_line,
+            callee.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1],
+        )
+    if literal is None:
+        properties[cs.KEY_UNLOCATABLE] = True
+    else:
+        properties.update(literal)
+        properties[cs.KEY_DISPATCH_LITERAL] = True
+
+
+def _confirm_static(
+    ingestor: TraceGraphProtocol,
+    caller: ResolvedFrame,
+    callee: ResolvedFrame,
+    properties: PropertyDict,
+) -> None:
+    """Upgrade the pair's static edge(s) in place, on every site they have;
+    the trace decoration merges onto the site-less carrier as before."""
+    properties[cs.KEY_RESOLUTION] = cs.EdgeResolution.TRACE_CONFIRMED
+    ingestor.execute_write(
+        CYPHER_TRACE_CONFIRM_CALLS,
+        {
+            cs.KEY_FROM_QN: caller.qualified_name,
+            cs.KEY_TO_QN: callee.qualified_name,
+            cs.KEY_RESOLUTION: cs.EdgeResolution.TRACE_CONFIRMED,
+        },
+    )
