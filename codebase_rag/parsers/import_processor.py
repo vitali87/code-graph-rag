@@ -493,6 +493,7 @@ class ImportProcessor:
         "_cpp_module_qn_map",
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
+        "unresolved_specifiers",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -558,6 +559,14 @@ class ImportProcessor:
         # IMPORTS edges held back until every file is parsed, so internal
         # targets verify against the full module registry (issue #652).
         self._deferred_import_edges: list[DeferredImportEdge] = []
+        # Per module qn: the LITERAL relative specifiers ("./index") that named
+        # no file on disk when this module was parsed. A relative JS/TS import
+        # of a path that does not exist yet has its IMPORTS edge dropped at
+        # flush as an unverifiable internal target, so the target-side lookup
+        # that finds waiting importers has no row to match and the waiter is
+        # never re-parsed when the file is finally created (issue #1714).
+        # Recorded here so the importer stays findable from the path alone.
+        self.unresolved_specifiers: dict[str, set[str]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -902,6 +911,11 @@ class ImportProcessor:
         # leave the old namespace bound to this module.
         self.php_module_namespaces.pop(module_qn, None)
         self.js_ts_bare_imports.pop(module_qn, None)
+        # A re-parse re-derives these from the current source, so the previous
+        # run's specifiers must not survive: an import the edit removed, or one
+        # whose target now exists, would otherwise keep nominating this file
+        # for ever (issue #1714).
+        self.unresolved_specifiers.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -3060,6 +3074,7 @@ class ImportProcessor:
                         source_module = self._resolve_js_module_path(
                             source_text, module_qn
                         )
+                        self._note_unresolved_js_specifier(module_qn, source_text)
                         break
 
                 if not source_module:
@@ -3114,17 +3129,7 @@ class ImportProcessor:
                 cs.PATH_PARENT_DIR
             ):
                 continue
-            module_rel: str | None = None
-            if any(
-                (self.repo_path / f"{normalized}{ext}").is_file()
-                for ext in cs.JS_TS_MODULE_EXTENSIONS
-            ):
-                module_rel = normalized
-            elif (self.repo_path / normalized).is_dir() and any(
-                (self.repo_path / normalized / f"{cs.JS_INDEX_STEM}{ext}").is_file()
-                for ext in cs.JS_TS_MODULE_EXTENSIONS
-            ):
-                module_rel = f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
+            module_rel = self._js_module_rel_on_disk(normalized)
             if module_rel is None:
                 continue
             dotted = module_rel.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
@@ -3142,6 +3147,52 @@ class ImportProcessor:
             if import_path.endswith(ext) and len(import_path) > len(ext):
                 return import_path[: -len(ext)]
         return import_path
+
+    def _js_module_rel_on_disk(self, normalized: str) -> str | None:
+        """The repo-relative module this path names on disk, or None.
+
+        A JS/TS specifier names either the file itself (with any of the module
+        extensions) or a directory holding an `index` entry point. Shared by
+        the tsconfig-alias resolver and the unresolved-specifier probe so the
+        two cannot disagree about what "exists" means.
+        """
+        if any(
+            (self.repo_path / f"{normalized}{ext}").is_file()
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+        ):
+            return normalized
+        directory = self.repo_path / normalized
+        if directory.is_dir() and any(
+            (directory / f"{cs.JS_INDEX_STEM}{ext}").is_file()
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+        ):
+            return f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
+        return None
+
+    def _note_unresolved_js_specifier(self, module_qn: str, specifier: str) -> None:
+        """Record a RELATIVE specifier that names nothing on disk (issue #1714).
+
+        Only relative ones: a bare specifier (`lodash`) is an external package
+        and becomes a real IMPORTS edge to an ExternalModule, which the
+        target-side lookup can already find. A relative path that resolves
+        nowhere is the case with no persisted row at all.
+
+        The literal text is stored, not the derived qn: the qn is what the
+        dropped edge would have used, while the specifier is what the source
+        wrote and what a later-created file must be matched against.
+        """
+        if not specifier.startswith(cs.PATH_CURRENT_DIR):
+            return
+        resolved = self._resolve_js_module_path(specifier, module_qn)
+        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not resolved.startswith(prefix):
+            # Escapes the project (`../../outside`), so no file this repo can
+            # create would ever satisfy it.
+            return
+        rel = resolved[len(prefix) :].replace(cs.SEPARATOR_DOT, cs.SEPARATOR_SLASH)
+        if self._js_module_rel_on_disk(rel) is not None:
+            return
+        self.unresolved_specifiers.setdefault(module_qn, set()).add(specifier)
 
     def _resolve_js_module_path(
         self, import_path: str, current_module: str, require: bool = False
@@ -3271,9 +3322,11 @@ class ImportProcessor:
                 continue
             # A CommonJS `require()` reads a dual-package exports map from
             # the require side.
+            require_text = safe_decode_with_fallback(arg).strip("'\"")
             resolved_module = self._resolve_js_module_path(
-                safe_decode_with_fallback(arg).strip("'\""), current_module, True
+                require_text, current_module, True
             )
+            self._note_unresolved_js_specifier(current_module, require_text)
             if name_node.type == cs.TS_IDENTIFIER:
                 # `const fs = require('fs')`: bind the whole module.
                 var_name = safe_decode_with_fallback(name_node)
@@ -3297,6 +3350,7 @@ class ImportProcessor:
                 source_module = self._resolve_js_module_path(
                     source_text, current_module
                 )
+                self._note_unresolved_js_specifier(current_module, source_text)
                 break
 
         if not source_module:

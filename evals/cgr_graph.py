@@ -323,6 +323,73 @@ class _StatefulIngestor:
                     }
                     rows.append(row)
                 return rows
+            case cs.CYPHER_UNRESOLVED_IMPORTER_PATHS:
+                # Importers whose IMPORTS edge points at an UNRESOLVED target
+                # named after one of the given modules (issue #1682). Emulated
+                # for the same reason as the specifier query below: falling
+                # through returned [], which reads as "no waiters" and is why
+                # that issue's tests could only cover the query layer.
+                names = params.get(cs.CYPHER_PARAM_MODULE_NAMES) if params else None
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                wanted_names = (
+                    [n for n in names if isinstance(n, str)]
+                    if isinstance(names, list)
+                    else []
+                )
+                importer_rows: list[ResultRow] = []
+                if not wanted_names or not prefix:
+                    return importer_rows
+                seen_paths: set[str] = set()
+                for from_label, from_val, rel_type, _to_label, to_val in self.edges:
+                    if rel_type != cs.RelationshipType.IMPORTS.value:
+                        continue
+                    importer = self.nodes.get((from_label, from_val))
+                    if importer is None:
+                        continue
+                    importer_path = _text(importer.get(cs.KEY_PATH))
+                    importer_qn = _text(importer.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    if not importer_path or not importer_qn.startswith(prefix):
+                        continue
+                    target_qn = _text(to_val) or ""
+                    # The target must be UNRESOLVED: a first-party one is a
+                    # real module and its importer is found by the inbound
+                    # edge lookup instead.
+                    if target_qn.startswith(prefix):
+                        continue
+                    if any(
+                        target_qn == name
+                        or target_qn.startswith(f"{name}{cs.SEPARATOR_DOT}")
+                        for name in wanted_names
+                    ):
+                        if importer_path not in seen_paths:
+                            seen_paths.add(importer_path)
+                            importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
+                return importer_rows
+            case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
+                # Modules carrying a dropped relative specifier (issue #1714).
+                # Emulated rather than left to fall through: an unanswered
+                # query returns [] here, which is indistinguishable from "no
+                # waiters" and would let an end-to-end test pass against a
+                # lookup that never ran.
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                waiter_rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    specifiers = props.get(cs.KEY_UNRESOLVED_SPECIFIERS)
+                    if not path or not (prefix and qn.startswith(prefix)):
+                        continue
+                    if not isinstance(specifiers, list) or not specifiers:
+                        continue
+                    waiter_rows.append(
+                        {
+                            cs.KEY_CALLER_PATH: path,
+                            cs.CYPHER_KEY_SPECIFIERS: list(specifiers),
+                        }
+                    )
+                return waiter_rows
             case _:
                 return []
 

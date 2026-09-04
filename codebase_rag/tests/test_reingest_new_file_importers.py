@@ -11,14 +11,24 @@ for exactly the create-then-import order an agent commonly uses.
 waiting importer's IMPORTS edge points at an unresolved target named after the
 new module, which is findable even with no inbound edge.
 
-SCOPE OF THESE TESTS. They drive the query layer with a stubbed `fetch_all`,
-which is what can be verified without a live graph: that the right question is
-asked, that the answer is wired into the dependent set, and that a failure
-degrades rather than raising. The end-to-end claim -- that a real create-then-
-reingest now matches a clean index -- needs the integration suite against
-Memgraph and is NOT asserted here. A mock ingestor answers no dependents query
-at all, so an end-to-end assertion written against one passes or fails for
-reasons unrelated to this change.
+SCOPE OF THESE TESTS. `TestUnresolvedImporterLookup` drives the query layer with
+a stubbed `fetch_all`: that the right question is asked, that the answer is
+wired into the dependent set, and that a failure degrades rather than raising.
+A MagicMock cannot show more, so an end-to-end assertion written against one
+passes or fails for reasons unrelated to the code.
+
+`TestUnresolvedSpecifierWaiters` runs end to end against the stateful in-memory
+double, covering BOTH halves of the mechanism: the persisted-row path (#1682,
+`import util` records the external-looking target `util`) and the recorded-
+specifier path (#1714, a relative `./index` records no row at all). That became
+possible only once the double answered these two queries. It previously fell
+through to `case _: return []` for both, which reads as "no waiters" and is
+indistinguishable from a lookup that never ran -- which is why this file could
+originally cover the query layer alone.
+
+Still NOT asserted here: that a real scoped re-ingest against Memgraph produces
+the same graph as a clean index. The double is faithful to the queries cgr
+issues, not to the database.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _StatefulIngestor
 
 
 class _QueryingIngestor:
@@ -155,8 +166,12 @@ class TestUnresolvedImporterLookup:
 
         assert updater._unresolved_importer_keys(["util.py"]) == ["main.py"]
 
-        query, params = ingestor.queries[-1]
-        assert query == cs.CYPHER_UNRESOLVED_IMPORTER_PATHS
+        # Selected by identity rather than by position: the lookup now issues
+        # a second query for specifier-recorded waiters (issue #1714), so
+        # `queries[-1]` names that one and would assert nothing about this.
+        params = next(
+            p for q, p in ingestor.queries if q == cs.CYPHER_UNRESOLVED_IMPORTER_PATHS
+        )
         assert params[cs.CYPHER_PARAM_MODULE_NAMES] == ["util"]
         assert params[cs.KEY_PROJECT_PREFIX] == "proj."
 
@@ -200,3 +215,398 @@ class TestWiredIntoTheDependentSet:
             present={"util.py": tmp_path / "util.py"}, gone={}
         )
         assert dependents == {}
+
+
+class TestUnresolvedSpecifierWaiters:
+    """The relative JS/TS case the row-based lookup cannot see (issue #1714).
+
+    `main.js` importing a missing `./index` persists NO IMPORTS edge -- it is
+    dropped at flush as an unverifiable internal target -- so the target-side
+    query has no row to match. Measured on the parent branch:
+
+        main.js  import { go } from './index'  ->  IMPORTS edges: []
+        main.py  import util                   ->  [('proj.main', 'util')]
+
+    The importer records the literal specifier on its Module node instead.
+    Driven through a real index against the stateful double rather than a
+    stubbed `fetch_all`, because the claim is that the property is WRITTEN
+    during a normal parse, which a stub cannot show.
+    """
+
+    @staticmethod
+    def _index(root: Path, files: dict[str, str]) -> _StatefulIngestor:
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        store = _StatefulIngestor()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).run(force=True)
+        return store
+
+    @staticmethod
+    def _module(store: _StatefulIngestor, path: str) -> dict[str, Any]:
+        return next(
+            dict(props)
+            for (label, _uid), props in store.nodes.items()
+            if label == cs.NodeLabel.MODULE.value and props.get(cs.KEY_PATH) == path
+        )
+
+    @staticmethod
+    def _updater_on(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+        parsers, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        )
+
+    def test_the_dropped_specifier_is_recorded_on_the_importer(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './index';\nexport const r = go;\n"}
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./index"
+        ]
+        # The premise, asserted rather than assumed: there is genuinely no
+        # IMPORTS row for the existing lookup to find.
+        assert not [edge for edge in store.edges if edge[2] == "IMPORTS"]
+
+    def test_a_specifier_whose_target_exists_is_not_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """The control that stops this from nominating everything for ever.
+
+        A probe that recorded every relative specifier would pass the test
+        above and still be useless, so this drives the same import with the
+        target present.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {
+                "main.js": "import { go } from './index';\nexport const r = go;\n",
+                "index.js": "export function go() { return 1; }\n",
+            },
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
+
+    def test_the_waiter_is_nominated_when_the_file_is_created(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './index';\nexport const r = go;\n"}
+        )
+        (root / "index.js").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["index.js"])
+
+        assert keys == ["main.js"]
+
+    def test_a_directory_entry_point_satisfies_the_directory_specifier(
+        self, tmp_path: Path
+    ) -> None:
+        # `./pkg` is satisfied by creating `pkg/index.js`, which is the form a
+        # bare directory import resolves to.
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './pkg';\nexport const r = go;\n"}
+        )
+        (root / "pkg").mkdir()
+        (root / "pkg" / "index.js").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["pkg/index.js"])
+
+        assert keys == ["main.js"]
+
+    def test_an_unrelated_creation_does_not_nominate_the_waiter(
+        self, tmp_path: Path
+    ) -> None:
+        """The specifier must be MATCHED, not merely present.
+
+        Without this, a lookup that returned every module carrying any
+        unresolved specifier would pass every test above.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './index';\nexport const r = go;\n"}
+        )
+        (root / "other.js").write_text("export const x = 1;\n", encoding="utf-8")
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["other.js"])
+
+        assert keys == []
+
+    def test_a_specifier_is_resolved_against_the_importers_own_directory(
+        self, tmp_path: Path
+    ) -> None:
+        """`./index` in `sub/main.js` means `sub/index.js`, not `index.js`.
+
+        A match on the specifier text alone would bind the root file, which is
+        why the resolution happens against `importer.path` rather than in the
+        query.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {"sub/main.js": ("import { go } from './index';\nexport const r = go;\n")},
+        )
+        (root / "index.js").write_text("export const x = 1;\n", encoding="utf-8")
+        updater = self._updater_on(root, store)
+
+        assert updater._unresolved_importer_keys(["index.js"]) == []
+        assert updater._unresolved_importer_keys(["sub/index.js"]) == ["sub/main.js"]
+
+    def test_a_python_waiter_is_found_through_its_persisted_unresolved_edge(
+        self, tmp_path: Path
+    ) -> None:
+        """The #1682 row path, driven end to end rather than through a stub.
+
+        This was previously unassertable: the stateful double did not answer
+        `CYPHER_UNRESOLVED_IMPORTER_PATHS` and fell through to `[]`, so the
+        lookup reported no waiters for reasons unrelated to the code. With the
+        double answering it, the two halves of the mechanism can be told
+        apart -- this one keeps a persisted IMPORTS row (`import util` records
+        the external-looking target `util`), where the JS/TS cases above keep
+        none at all.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.py": "import util\n\ndef run():\n    return util.helper()\n"}
+        )
+        # The premise: an unresolved row exists here, unlike the JS/TS case.
+        assert [edge for edge in store.edges if edge[2] == "IMPORTS"]
+
+        (root / "util.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+
+        assert keys == ["main.py"]
+
+    def test_a_resolved_import_is_not_reported_as_a_waiter(
+        self, tmp_path: Path
+    ) -> None:
+        """The control for the row path: only UNRESOLVED targets count.
+
+        Without it, a double that returned every importer of anything would
+        satisfy the test above.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {
+                "main.py": "import util\n\ndef run():\n    return util.helper()\n",
+                "util.py": "def helper():\n    return 1\n",
+            },
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.py"])
+
+        assert keys == []
+
+    def test_a_specifier_written_with_an_explicit_extension_still_matches(
+        self, tmp_path: Path
+    ) -> None:
+        """`./foo.js` records the extension; the created file arrives as
+        `foo.js`. Normalising only one side left them as `foo` and `foo.js`,
+        which never met, so the importer was never re-parsed (raised on the
+        #1717 review and reproduced before fixing)."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.js": "import { go } from './foo.js';\nexport const r = go;\n"}
+        )
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./foo.js"
+        ]
+        (root / "foo.js").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.js"])
+
+        assert keys == ["main.js"]
+
+    def test_a_declaration_file_normalises_past_both_of_its_suffixes(
+        self, tmp_path: Path
+    ) -> None:
+        """`index.d.ts` must reduce to `index`, not `index.d`.
+
+        A single-suffix strip leaves `index.d`, so a created declaration entry
+        point would not satisfy `./pkg` either. Found while fixing the
+        explicit-extension case rather than reported.
+
+        SCOPE. This asserts NOMINATION -- that the waiting importer is selected
+        for re-parsing -- which is the mechanism this file covers. It does not
+        assert that the resulting IMPORTS edge lands, and for a declaration
+        file today it does not: `base_module_qn` indexes `pkg/index.d.ts` as
+        `proj.pkg.index.d` while the resolver looks for `proj.pkg`, so the edge
+        is dropped downstream. That is issue #1720, pre-existing and far wider
+        than this file (it affects every `.d.ts` in every project). Stated here
+        because a reader would otherwise take a green test as proof that
+        declaration entry points work end to end.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root, {"main.ts": "import { go } from './pkg';\nexport const r = go;\n"}
+        )
+        (root / "pkg").mkdir()
+        (root / "pkg" / "index.d.ts").write_text(
+            "export declare function go(): number;\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(
+            ["pkg/index.d.ts"]
+        )
+
+        assert keys == ["main.ts"]
+
+    def test_a_dotted_basename_is_not_cut_in_half(self, tmp_path: Path) -> None:
+        """`./foo.test` must not lose `.test`, which is not a module extension.
+
+        The fallback used to strip whatever suffix a path carried, so the
+        specifier became `foo` while the created `foo.test.ts` became
+        `foo.test` -- the same asymmetry the normalisation exists to remove,
+        reintroduced by the branch that handles everything else (raised on
+        #1717).
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {"main.ts": "import { go } from './foo.test';\nexport const r = go;\n"},
+        )
+        (root / "foo.test.ts").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.test.ts"])
+
+        assert keys == ["main.ts"]
+
+    def test_a_commonjs_require_of_a_missing_target_is_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """`require('./util')` drops its edge exactly as `import` does.
+
+        The recording hung off the import-statement branch alone, so CommonJS
+        importers were never nominated -- and `require` is the older half of
+        the JS corpus, not an edge case (raised on #1717).
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {
+                "main.js": "const { go } = require('./util');\nmodule.exports = { go };\n"
+            },
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./util"
+        ]
+
+        (root / "util.js").write_text(
+            "function go() { return 1; }\nmodule.exports = { go };\n",
+            encoding="utf-8",
+        )
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.js"])
+
+        assert keys == ["main.js"]
+
+    def test_a_re_export_from_a_missing_target_is_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """`export ... from './util'` takes its own parse branch."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(root, {"main.ts": "export { go } from './util';\n"})
+
+        assert self._module(store, "main.ts")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./util"
+        ]
+
+        (root / "util.ts").write_text(
+            "export function go(): number { return 1; }\n", encoding="utf-8"
+        )
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.ts"])
+
+        assert keys == ["main.ts"]
+
+    def test_a_bare_require_of_a_package_is_not_recorded(self, tmp_path: Path) -> None:
+        """The control for the two above: only RELATIVE specifiers qualify.
+
+        A bare `require('lodash')` becomes a real edge to an ExternalModule,
+        which the row-based lookup already finds; recording it here would
+        nominate the importer on every unrelated creation.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {"main.js": "const _ = require('lodash');\nmodule.exports = { _ };\n"},
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
+
+    def test_a_reused_updater_clears_a_specifier_whose_target_now_exists(
+        self, tmp_path: Path
+    ) -> None:
+        """Recording is only half of it; a stale specifier nominates for ever.
+
+        The updater is REUSED across both runs, which is the watcher's shape
+        and the only one that exercises the clearing at all: a fresh updater
+        builds a fresh ImportProcessor whose specifier map starts empty, so it
+        writes `[]` whether or not the previous entry is ever retracted.
+        Measured -- with a fresh updater here, deleting the retraction leaves
+        every test in this file green.
+
+        The property must go EMPTY rather than merely stop matching, because
+        `SET n += props` can update a property but never remove one.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "main.js").write_text(
+            "import { go } from './index';\nexport const r = go;\n", encoding="utf-8"
+        )
+        store = _StatefulIngestor()
+        updater = self._updater_on(root, store)
+        updater.run(force=True)
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./index"
+        ]
+
+        (root / "index.js").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+        updater.run(force=True)
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
+        assert updater._unresolved_importer_keys(["index.js"]) == []

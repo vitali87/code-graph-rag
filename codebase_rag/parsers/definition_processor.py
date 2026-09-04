@@ -465,6 +465,24 @@ class DefinitionProcessor(
                 self._ingest_missing_import_patterns(
                     root_node, module_qn, language, queries
                 )
+                # Written AFTER parse_imports, which is what fills the set, and
+                # unconditionally rather than only when non-empty: the node
+                # already exists from the batch above, so the flush MERGEs and
+                # `SET n += props`, which updates a property but never removes
+                # one. Writing the empty list is therefore the only way a
+                # re-parse can CLEAR specifiers whose target now exists
+                # (issue #1714).
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.MODULE,
+                    {
+                        cs.KEY_QUALIFIED_NAME: module_qn,
+                        cs.KEY_UNRESOLVED_SPECIFIERS: sorted(
+                            self.import_processor.unresolved_specifiers.get(
+                                module_qn, ()
+                            )
+                        ),
+                    },
+                )
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
                 CppTypeInferenceEngine().collect_type_aliases(

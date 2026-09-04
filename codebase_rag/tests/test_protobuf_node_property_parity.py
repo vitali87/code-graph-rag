@@ -41,7 +41,23 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),
-    "Module": frozenset({"absolute_path", "end_line", "start_line"}),
+    # `unresolved_specifiers` (issue #1714) is the second entry added with a
+    # known cost rather than as a record of the past. It records the literal
+    # relative specifiers an importer is waiting on, so a file created later at
+    # that path can nominate it for re-parsing. A graph round-tripped through
+    # protobuf loses them, so a scoped re-ingest against an IMPORTED graph does
+    # not re-parse those waiters and diverges from a clean index exactly as
+    # #1714 describes -- for imported graphs only.
+    #
+    # The degradation is safe by construction and self-healing: an absent
+    # property reads as "no specifiers", which yields no nomination rather than
+    # a wrong one, and the next parse of the importing module rewrites the list.
+    # Exporting it needs a proto field plus regenerated bindings, which needs
+    # protoc; neither protoc nor grpc_tools is available in this environment,
+    # and #1490 carries that question for the whole set.
+    "Module": frozenset(
+        {"absolute_path", "end_line", "start_line", "unresolved_specifiers"}
+    ),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
     # `positional_params` (issue #227) is the one entry here added with a
     # known cost rather than as a record of the past: a graph round-tripped
