@@ -2156,10 +2156,10 @@ class GraphUpdater:
     ) -> int:
         restored = 0
         for row in rows:
-            module_qn = row.get("module_qn")
+            module_qn = row.get(cs.KEY_MODULE_QN)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             label = row.get(cs.KEY_LABEL)
-            container = row.get("container_qn")
+            container = row.get(cs.KEY_CONTAINER_QN)
             start_line = _persisted_int(row.get(cs.KEY_START_LINE))
             start_col = _persisted_int(row.get(cs.KEY_START_COL))
             name_line = _persisted_int(row.get(cs.KEY_NAME_START_LINE))
@@ -2812,7 +2812,7 @@ class GraphUpdater:
         try:
             # count() always yields exactly one row; anything else means the
             # sink did not really answer and cannot invalidate the cache.
-            count = int(rows[0]["count"])
+            count = int(rows[0][cs.KEY_COUNT])
         except (KeyError, IndexError, TypeError, ValueError):
             return
         if count:

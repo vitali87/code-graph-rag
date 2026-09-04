@@ -689,6 +689,12 @@ CYPHER_ALL_METHOD_LOCATIONS = (
 KEY_CHILD_QN = "child_qn"
 KEY_BASE_QN = "base_qn"
 KEY_BASE_INDEX = "base_index"
+# Result columns of the location-rehydration and module-count queries. Named
+# so the readers and the eval double cannot drift apart on the spelling, which
+# is the failure these queries were already prone to (issue #1716).
+KEY_MODULE_QN = "module_qn"
+KEY_CONTAINER_QN = "container_qn"
+KEY_COUNT = "count"
 
 CYPHER_PARAM_PATHS = "paths"
 CYPHER_PARAM_MODULE_NAMES = "module_names"
