@@ -2341,6 +2341,7 @@ class GraphUpdater:
             for module in definers
             if (key := key_for_module.get(module)) is not None and key not in gone
         }
+
     def _specifier_waiter_keys(self, present_keys: list[str]) -> set[str]:
         """Importers whose recorded relative specifier names one of these files.
 

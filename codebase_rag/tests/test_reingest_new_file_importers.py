@@ -461,6 +461,16 @@ class TestUnresolvedSpecifierWaiters:
         A single-suffix strip leaves `index.d`, so a created declaration entry
         point would not satisfy `./pkg` either. Found while fixing the
         explicit-extension case rather than reported.
+
+        SCOPE. This asserts NOMINATION -- that the waiting importer is selected
+        for re-parsing -- which is the mechanism this file covers. It does not
+        assert that the resulting IMPORTS edge lands, and for a declaration
+        file today it does not: `base_module_qn` indexes `pkg/index.d.ts` as
+        `proj.pkg.index.d` while the resolver looks for `proj.pkg`, so the edge
+        is dropped downstream. That is issue #1720, pre-existing and far wider
+        than this file (it affects every `.d.ts` in every project). Stated here
+        because a reader would otherwise take a green test as proof that
+        declaration entry points work end to end.
         """
         root = tmp_path / "proj"
         root.mkdir()
