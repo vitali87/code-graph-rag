@@ -2570,7 +2570,18 @@ class GraphUpdater:
         # they are never re-registered because it is not re-parsed. The span
         # records key by the REGISTERING file's module qn, so a qn recorded
         # under a module this event does not touch survives (issue #1025).
-        touched_modules = recorded_qns
+        # Uses the same set the prefix sweep uses, INCLUDING its path-derived
+        # fallback. `recorded_qns` is filled only when a file is parsed
+        # (`DefinitionProcessor.process_file`), so on a FRESH updater doing a
+        # scoped re-ingest it is empty -- and an empty `touched_modules` makes
+        # every rehydrated span foreign, which protects the whole graph from a
+        # sweep that then removes nothing. The re-parse re-registers a qn the
+        # rehydrated registry still holds and lands on a `@1` DUP_QN variant
+        # instead of the clean name (issue #1719). The prefix sweep already
+        # falls back to the path-derived qn for exactly this case; ownership
+        # has to fall back with it, or the two disagree about which modules
+        # this event touches.
+        touched_modules = module_qn_prefixes
         foreign_qns = set()
         # The mirror of foreign_qns, and the reason the prefix sweep is not
         # sufficient on its own: a definition's qn does not have to sit under
