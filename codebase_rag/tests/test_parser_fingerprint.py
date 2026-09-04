@@ -4,7 +4,9 @@
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
 # later sync against a different parser warns loudly until a clean rebuild.
+import ast
 import inspect
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
@@ -118,17 +120,55 @@ class TestComputeParserFingerprint:
         """The forcing function the case above cannot provide.
 
         That test names the file I already know about. This one asks the
-        question from the other end: whoever defines `base_module_qn` must be
-        a fingerprint input, so moving or splitting it cannot silently drop
-        the graph's identity rule out of the staleness check.
+        question from the other end, and follows the rule rather than one
+        file: `base_module_qn` AND every package-internal module or callable
+        it references must be a fingerprint input.
+
+        Checking only the defining file would pass a SPLIT refactor -- the
+        wrapper stays in `utils/path_utils.py` while the arithmetic moves to
+        an unlisted helper, and edits to the helper then leave existing graphs
+        on stale identities with the guard still green (raised on #1722). The
+        property is "everything the identity rule depends on", not "the file
+        it currently lives in".
         """
-        module = Path(inspect.getsourcefile(base_module_qn) or "")
         package_root = Path(cs.__file__).resolve().parent.parent
-        rel = module.resolve().relative_to(package_root).as_posix()
-        covered = rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
-            tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+
+        def _rel(obj: object) -> str | None:
+            try:
+                source = inspect.getsourcefile(obj)  # type: ignore[arg-type]
+            except TypeError:
+                return None
+            if not source:
+                return None
+            path = Path(source).resolve()
+            if not path.is_relative_to(package_root):
+                return None  # stdlib and third-party are not ours to fingerprint
+            return path.relative_to(package_root).as_posix()
+
+        def _covered(rel: str) -> bool:
+            return rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
+                tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+            )
+
+        defining_module = inspect.getmodule(base_module_qn)
+        assert defining_module is not None
+        tree = ast.parse(textwrap.dedent(inspect.getsource(base_module_qn)))
+        referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        # The definition itself, plus every package-internal name its body
+        # actually reaches for (`cs` resolves to the constants package, which
+        # the directory glob already covers).
+        subjects = {base_module_qn} | {
+            obj
+            for name in referenced
+            if (obj := getattr(defining_module, name, None)) is not None
+        }
+        uncovered = sorted(
+            rel for obj in subjects if (rel := _rel(obj)) and not _covered(rel)
         )
-        assert covered, f"{rel} defines base_module_qn but is not a fingerprint input"
+        assert not uncovered, (
+            "the module-qn rule depends on these files, and a change to any of "
+            f"them would not refresh the parser fingerprint: {uncovered}"
+        )
 
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
