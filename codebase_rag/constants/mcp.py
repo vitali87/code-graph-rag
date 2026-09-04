@@ -119,6 +119,9 @@ MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
 MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
 MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
+# Structural delta appended to write tools (issue #1525).
+MCP_DELTA_HEADER = "Structural delta:"
+MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"

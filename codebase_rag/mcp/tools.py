@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -11,6 +12,7 @@ from rich.console import Console
 from codebase_rag import constants as cs
 from codebase_rag import graph_query
 from codebase_rag import logs as lg
+from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
@@ -51,6 +53,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
     ReingestToolResult,
+    StructuralReplaceChange,
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
@@ -128,8 +131,10 @@ class MCPToolsRegistry:
         self._structural_search_tool = create_structural_search_tool(
             service=self.ast_grep_service
         )
+        # Files the last structural_replace wrote, for the structural delta.
+        self._structural_written: list[str] = []
         self._structural_editor_tool = create_structural_editor_tool(
-            service=self.ast_grep_service
+            service=self.ast_grep_service, on_changes=self._note_structural_changes
         )
         self._structural_available = has_ast_grep()
 
@@ -924,9 +929,7 @@ class MCPToolsRegistry:
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
 
-    def _reingest_sync(
-        self, paths: list[str], deleted: list[str]
-    ) -> ReingestToolResult:
+    def _updater_for_reingest(self) -> GraphUpdater:
         updater = self._live_updater
         if updater is None:
             # A scoped re-ingest completes a graph; it cannot stand in for
@@ -957,6 +960,12 @@ class MCPToolsRegistry:
                 project_name=project_name,
             )
             self._live_updater = updater
+        return updater
+
+    def _reingest_sync(
+        self, paths: list[str], deleted: list[str]
+    ) -> ReingestToolResult:
+        updater = self._updater_for_reingest()
         try:
             report = updater.reingest(paths, deleted=deleted)
         except (ValueError, ReingestAborted):
@@ -1076,10 +1085,65 @@ class MCPToolsRegistry:
         language: str | None = None,
         dry_run: bool = True,
     ) -> str:
-        result = await self._structural_editor_tool.function(
-            pattern=pattern, rewrite=rewrite, language=language, dry_run=dry_run
+        # The write and the re-ingest that follows it share the lock, so a
+        # rebuild cannot land between the two (issue #1525).
+        async with self._ingestor_lock:
+            self._structural_written = []
+            result = await self._structural_editor_tool.function(
+                pattern=pattern, rewrite=rewrite, language=language, dry_run=dry_run
+            )
+            written = list(self._structural_written)
+            if dry_run or not written:
+                return str(result)
+            return str(result) + await asyncio.to_thread(
+                self._delta_after_write, written
+            )
+
+    def _note_structural_changes(self, changes: list[StructuralReplaceChange]) -> None:
+        self._structural_written = [c["file"] for c in changes if c["applied"]]
+
+    def _delta_after_write(self, paths: list[str]) -> str:
+        """The structural delta of a write, as text to append to its result.
+
+        Never fails the write: a project that is not indexed yields nothing,
+        and any other failure is reported in place of the delta.
+        """
+        root = Path(self.project_root)
+        relative = sd.normalise_paths(paths, root)
+        try:
+            if self._live_updater is None and (
+                derive_project_name(root) not in self.ingestor.list_projects()
+            ):
+                return ""
+            updater = self._updater_for_reingest()
+            deleted = [p for p in relative if not (root / p).exists()]
+            changed = [p for p in relative if p not in deleted]
+            delta = sd.observe(
+                self.ingestor.fetch_all,
+                updater.project_name,
+                relative,
+                lambda: updater.reingest(changed, deleted=deleted),
+                repo_root=root,
+            )
+        except (ValueError, ReingestAborted) as e:
+            # Raised before any graph change (validation, an abort while the
+            # paths are split): the graph is whole and the updater reusable.
+            logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        except Exception as e:
+            # The re-ingest may have deleted a subtree it never rebuilt: the
+            # same invalidation `_reingest_sync` applies, so no later query
+            # or write reuses a partial graph (issue #1525).
+            logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            self._live_updater = None
+            self._graph_incomplete = True
+            return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        return (
+            "\n\n"
+            + cs.MCP_DELTA_HEADER
+            + "\n"
+            + json.dumps(delta, indent=cs.MCP_JSON_INDENT)
         )
-        return str(result)
 
     async def ask_agent(self, question: str) -> dict[str, str]:
         logger.info(lg.MCP_ASK_AGENT.format(question=question))
@@ -1357,12 +1421,16 @@ class MCPToolsRegistry:
     ) -> str:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         try:
-            result = await self._file_editor_tool.function(
-                file_path=file_path,
-                target_code=target_code,
-                replacement_code=replacement_code,
-            )
-            return str(result)
+            async with self._ingestor_lock:
+                result = await self._file_editor_tool.function(
+                    file_path=file_path,
+                    target_code=target_code,
+                    replacement_code=replacement_code,
+                )
+                if str(result) != cs.MSG_SURGICAL_SUCCESS.format(path=file_path):
+                    return str(result)
+                delta = await asyncio.to_thread(self._delta_after_write, [file_path])
+                return str(result) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
@@ -1396,12 +1464,14 @@ class MCPToolsRegistry:
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         try:
-            result = await self._file_writer_tool.function(
-                file_path=file_path, content=content
-            )
-            if result.success:
-                return cs.MCP_WRITE_SUCCESS.format(path=file_path)
-            return te.ERROR_WRAPPER.format(message=result.error_message)
+            async with self._ingestor_lock:
+                result = await self._file_writer_tool.function(
+                    file_path=file_path, content=content
+                )
+                if not result.success:
+                    return te.ERROR_WRAPPER.format(message=result.error_message)
+                delta = await asyncio.to_thread(self._delta_after_write, [file_path])
+                return cs.MCP_WRITE_SUCCESS.format(path=file_path) + delta
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)

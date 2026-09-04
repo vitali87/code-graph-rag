@@ -50,6 +50,25 @@ guarantee that the graph after `reingest` equals a clean index, which
 `codebase_rag/tests/test_reingest.py` checks over a set of single and
 composite edits.
 
+## Structural delta overhead
+
+The structural delta (issue #1525) wraps the same re-ingest in two reads
+of the touched files' subgraph and the diff, and reports its own cost as
+`delta_ms`. Same harness, `--iterations 10`, editing the hub
+`codebase_rag/graph_query.py` (48 dependents re-parsed):
+
+| Edited file | reingest p50 | reingest p95 | delta overhead p50 | delta overhead p95 |
+|---|---|---|---|---|
+| `codebase_rag/graph_query.py` (hub, 48 dependents) | 2,446 ms | 2,527 ms | 142 ms | 677 ms |
+
+The 200 ms target is a p50 target: the steady-state overhead of the delta
+is what an agent pays per write. The p95 is the first iteration, before the process has warmed the
+symbol-resolution and path caches; every later iteration sits within a few
+milliseconds of the p50. The overhead is dominated by the backward
+test-reach walk (one indexed query per hop, bounded to 12 hops), which is
+why the delta walks from the edited symbols instead of building the
+project's reverse call graph: that alone cost about 900 ms here.
+
 ## Where the time goes
 
 Profiled on the typical case (`cProfile`, so absolute numbers are inflated):

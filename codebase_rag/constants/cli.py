@@ -141,6 +141,17 @@ CLI_STATS_TOTAL_NODES = "Total Nodes"
 CLI_STATS_TOTAL_RELS = "Total Relationships"
 CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
+# `cgr check` (issue #1525).
+CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
+CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
+CHECK_SCOPE_OF_OTHER_PROJECT = (
+    "The exclusion scope stamped in this repository belongs to project {other}, "
+    "not {project}; re-index {project} (or check {other}) before running the check"
+)
+CHECK_NOT_INDEXED = (
+    "Project {project} is not indexed; run 'cgr start --update-graph' at the "
+    "base ref first."
+)
 
 CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
