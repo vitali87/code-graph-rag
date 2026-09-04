@@ -2015,3 +2015,59 @@ class TestHashCachePublishSymlinkSafety:
             "a publish that could not use the file it created must report "
             "failure, not success over whatever replaced it"
         )
+
+    def test_the_path_stamp_branch_stamps_and_stays_safe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulates the platform where `os.utime` takes no descriptor.
+
+        Windows has no `os.utime` in `os.supports_fd`, so passing a file
+        descriptor raises `TypeError` and every hash-cache publish fails with
+        it. This host is POSIX and always takes the fd branch, so that break
+        was invisible locally until CI's Windows job ran (#1701 review).
+
+        Asserts BOTH properties of the fallback, because the two orderings
+        that satisfy them are different and I traded one for the other once:
+        the stamp must land (durability, and `_is_already_in_sync` reads that
+        mtime), and it must not follow a symlink swapped in after creation
+        (safety, which requires it to run after the inode check).
+        """
+        monkeypatch.setattr(
+            os, "supports_fd", frozenset(x for x in os.supports_fd if x is not os.utime)
+        )
+        assert os.utime not in os.supports_fd, "fixture guard: branch not forced"
+
+        cache_path = tmp_path / "cache.json"
+        victim = tmp_path / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        before = victim.stat().st_mtime
+
+        real_open = graph_updater_module._open_exclusive_temp
+
+        def _swap_after_create(path: Path) -> tuple[int, str]:
+            fd, name = real_open(path)
+            os.unlink(name)
+            os.symlink(victim, name)
+            return fd, name
+
+        # First: the ordinary path, which must stamp.
+        assert graph_updater_module._publish_hash_cache(
+            cache_path, {"a.py": "x"}, 1_000_000.0
+        )
+        assert int(cache_path.stat().st_mtime) == 1_000_000, (
+            "the fallback branch did not apply the timestamp, so a later run "
+            "reads the write time and may skip edits made during this one"
+        )
+
+        # Then: the same branch under the post-creation swap.
+        monkeypatch.setattr(
+            graph_updater_module, "_open_exclusive_temp", _swap_after_create
+        )
+        published = graph_updater_module._publish_hash_cache(
+            tmp_path / "cache2.json", {"a.py": "y"}, 2_000_000.0
+        )
+        assert victim.stat().st_mtime == before, (
+            "the fallback stamp ran before the inode check and rewrote a "
+            "swapped symlink target's timestamp"
+        )
+        assert not published, "a publish over a swapped path must refuse"

@@ -400,12 +400,25 @@ def _publish_hash_cache(
             )
         if observed_at is not None and not stamp_by_fd:
             # The path branch, for platforms whose `os.utime` takes no
-            # descriptor. Safe here specifically because it runs AFTER the
-            # inode check above: the name has just been confirmed to still be
-            # the file the O_EXCL|O_NOFOLLOW open created, in a directory
-            # whose write permission already grants an attacker the same
-            # outcome without a race (see the argument above `current`).
+            # descriptor (Windows). It has to run AFTER the inode check: a
+            # stamp before it would follow a symlink swapped in after
+            # creation and rewrite the link target's timestamp, which is
+            # measured and was the whole point of the descriptor-based stamp.
+            #
+            # Durability is then restored by re-opening and syncing, rather
+            # than by moving the stamp earlier: a crash between the utime and
+            # the replace would otherwise publish a cache carrying its write
+            # time instead of `observed_at`, and `_is_already_in_sync` trusts
+            # that mtime, so it would skip edits made during the run (#1701
+            # review). O_NOFOLLOW again, for the same reason as the first
+            # open.
             os.utime(tmp_path, (observed_at, observed_at))
+            sync_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            sync_fd = os.open(tmp_path, sync_flags)
+            try:
+                os.fsync(sync_fd)
+            finally:
+                os.close(sync_fd)
         os.replace(tmp_path, cache_path)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
         return True
