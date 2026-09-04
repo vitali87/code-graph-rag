@@ -448,6 +448,43 @@ def test_a_cpp_interface_the_graph_lost_is_forgotten(temp_repo: Path) -> None:
     assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
 
 
+def test_a_parsed_interface_is_not_revived_on_a_later_run(temp_repo: Path) -> None:
+    # cpp_interfaces_parsed_this_run exempts an interface from the rebuild
+    # because its write may be unflushed. That exemption is scoped to ONE
+    # run: without the per-run reset the qn stays in the companion set
+    # forever and every later rebuild puts it back, which is the stale entry
+    # this fix removes.
+    #
+    # The interface must be parsed by THIS updater, not a previous one --
+    # with a fresh updater the companion set is empty and the reset cannot
+    # be what saves it.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "iface.cppm": "export module M;\nexport int f();\n",
+            "other.cpp": "int x() { return 1; }\n",
+        },
+    )
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.CPP)
+    if cs.SupportedLanguage.CPP not in updater.parsers:
+        pytest.skip("cpp parser not available")
+    updater.run(force=True)
+    assert "proj.M" in updater.factory.definition_processor.cpp_module_interfaces
+
+    removed = [key for key in store.nodes if key[0] == "ModuleInterface"]
+    assert removed, "expected a ModuleInterface node to delete"
+    for key in removed:
+        del store.nodes[key]
+
+    (root / "other.cpp").write_text("int x() { return 2; }\n", encoding="utf-8")
+    _bump(root, "other.cpp")
+    updater.run(force=False)
+
+    assert "proj.M" not in updater.factory.definition_processor.cpp_module_interfaces
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
