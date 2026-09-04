@@ -945,6 +945,10 @@ REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
 )
+SEED_PRUNE_NO_VERDICT = (
+    "Could not read module paths from the graph; keeping every seeded module "
+    "qn rather than treating an unreadable graph as an empty one."
+)
 CSHARP_TYPE_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} C# type location(s) from the graph for the partial join"
 )
