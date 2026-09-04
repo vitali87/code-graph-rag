@@ -94,15 +94,62 @@ class TestEveryModuleExtensionBindsANamedImport:
             ("Module", "proj.main", "IMPORTS", "Module", "proj.pkg.index")
         ], f"{ext}: {_imports(store)}"
 
-    def test_an_import_of_a_directory_with_no_entry_point_binds_nothing(self) -> None:
-        """The control that stops the rule collapsing into "always strip".
+    @pytest.mark.parametrize("ext", cs.JS_TS_MODULE_EXTENSIONS)
+    def test_a_flat_file_module_resolves(self, ext: str) -> None:
+        """`import { go } from './util'` with a FLAT `util<ext>`, no directory.
 
-        If the module/symbol split stopped consulting the filesystem and simply
-        dropped the last segment, every parametrisation above would pass and
-        the resolver would invent module targets for directories that hold no
-        entry point at all. Here `pkg/` exists but has no `index.*`, so there
-        is no module to bind to and no edge may be emitted.
+        Added after a surviving mutant, not by foresight. Every case above
+        routes through a directory entry point, so neutering the file branch of
+        `_js_module_rel_on_disk` -- the other half of the helper this fix
+        delegates to -- left all 12 tests green. The suite was one-dimensional
+        on "directory entry point vs flat file" and could not see half the
+        component it depends on.
         """
+        body = DECL if ext.startswith(".d.") else IMPL
+        store = _index(
+            {
+                "main.ts": "import { go } from './util';\nexport const r = go;\n",
+                f"util{ext}": body,
+            }
+        )
+
+        assert _imports(store) == [
+            ("Module", "proj.main", "IMPORTS", "Module", "proj.util")
+        ], f"{ext}: {_imports(store)}"
+
+    def test_an_import_of_a_directory_with_no_entry_point_binds_nothing(self) -> None:
         store = _index({"main.ts": MAIN, "pkg/other.ts": IMPL})
 
+        assert _imports(store) == [], _imports(store)
+
+    def test_the_split_still_asks_the_filesystem(self) -> None:
+        """The control with teeth: over-stripping must bind the WRONG module.
+
+        The previous control asserted only that an unresolvable import produces
+        no edge, and a resolver that dropped the last segment unconditionally
+        satisfied that too -- `proj.pkg.missing` is no more bindable than
+        `proj.pkg.missing.go`, so both readings emit nothing and the test could
+        not tell them apart. It passed against the over-stripping mutant.
+
+        This fixture makes the two readings disagree about a real target. A
+        Python package `pkg/__init__.py` registers the module qn `proj.pkg`,
+        while `pkg/` holds no JS/TS entry point at all. So:
+
+          asking the disk  `pkg` names no JS module -> keep `proj.pkg.go`
+                           -> matches nothing -> no edge, correctly
+          over-stripping   -> `proj.pkg` -> IS a known module -> emits an
+                           IMPORTS edge from a TypeScript file to a Python
+                           package
+
+        The failure the split exists to prevent is a wrong edge, not a missing
+        one, so the assertion has to be able to see a wrong edge.
+        """
+        store = _index(
+            {
+                "main.ts": MAIN,
+                "pkg/__init__.py": "def go():\n    return 1\n",
+            }
+        )
+
+        assert "proj.pkg" in _modules(store), _modules(store)
         assert _imports(store) == [], _imports(store)
