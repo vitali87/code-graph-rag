@@ -11,7 +11,8 @@ twin of `services/graph_diff.py`, which diffs exported indexes offline.
 Everything is fixed Cypher scoped to one project plus client-side set
 arithmetic over the fetched rows, so the report is deterministic and cheap:
 the graph reads are linear in the touched files' edges, plus one linear
-project scan each for the duplicate and test-reach indexes.
+project scan for the duplicate index; tests reaching a changed symbol are
+found by walking its callers one hop at a time.
 """
 
 from __future__ import annotations
@@ -383,11 +384,13 @@ def _dangling(
 # --- signature changes --------------------------------------------------------
 
 
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)")
+# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
+# and `**name` accepts keywords, not positionals.
+_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
-    """Whether the Python definition's header declares `*args` or a bare `*`.
+    """Whether the Python definition's header declares `*args`.
 
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
@@ -426,8 +429,14 @@ def _arity_verdict(
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
     is_method = definition.label in _METHOD_LABELS
-    # `arg_count` already counts keyword arguments (issue #1522).
-    passed = site.arg_count + (1 if is_method else 0)
+    # `arg_count` counts keyword arguments too (issue #1522); only the
+    # positionals plus the keywords naming a declared positional parameter
+    # fill the declared list. A keyword naming nothing declared is neutral:
+    # it may be a keyword-only parameter or `**kwargs`, which the stored
+    # positional list cannot see, and a wrong name is not an arity fault.
+    positional = site.arg_count - len(site.kwarg_names)
+    matched = sum(1 for name in site.kwarg_names if name in declared)
+    passed = positional + matched + (1 if is_method else 0)
     # `diagnose_arity` owns the receiver arithmetic (`self` counts for
     # CPython but is not caller-supplied); here the "message" is the site.
     verdict = diagnose_arity(
@@ -438,10 +447,12 @@ def _arity_verdict(
     declared_count = verdict.declared_count - (1 if is_method else 0)
     if verdict.confirmed:
         return declared_count, cs.DELTA_ARITY_OK
-    if passed > verdict.declared_count:
+    if positional + (1 if is_method else 0) > verdict.declared_count:
         if _is_variadic(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
+    if passed > verdict.declared_count:
+        return declared_count, cs.DELTA_ARITY_OK
     return declared_count, cs.DELTA_ARITY_POSSIBLY_MISSING
 
 

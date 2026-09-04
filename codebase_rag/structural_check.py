@@ -23,6 +23,9 @@ from .types_defs import LanguageQueries
 _GIT_DELETED = "D"
 
 
+_CGR_STATE_PREFIX = ".cgr-"
+
+
 class CheckError(ValueError):
     """The working tree cannot be compared against the requested base."""
 
@@ -35,7 +38,17 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
     """
     try:
         status = subprocess.run(
-            [cs.SHELL_CMD_GIT, "diff", "--name-status", "--no-renames", base, "--"],
+            # `--relative`: paths relative to `repo_root`, which may sit below
+            # the git toplevel; `ls-files --others` is already cwd-relative.
+            [
+                cs.SHELL_CMD_GIT,
+                "diff",
+                "--name-status",
+                "--no-renames",
+                "--relative",
+                base,
+                "--",
+            ],
             cwd=repo_root,
             capture_output=True,
             encoding=cs.ENCODING_UTF8,
@@ -60,7 +73,13 @@ def changed_since(repo_root: Path, base: str) -> tuple[list[str], list[str]]:
         if not path:
             continue
         (deleted if code.startswith(_GIT_DELETED) else changed).add(path)
-    changed.update(line for line in untracked.splitlines() if line)
+    # cgr's own untracked state files (hash cache, directory mtimes, ...)
+    # are not source and must not be re-ingested or reported as reparsed.
+    changed.update(
+        line
+        for line in untracked.splitlines()
+        if line and not Path(line).name.startswith(_CGR_STATE_PREFIX)
+    )
     return sorted(changed), sorted(deleted)
 
 

@@ -425,8 +425,8 @@ class ReachIndex:
     """The project's reverse call graph plus the test classifier's inputs.
 
     Built once from the dead-code fetch (one query each for nodes and edges)
-    so a caller with several symbols to look up (a structural delta, issue
-    #1525) does not re-read the project per symbol.
+    and walked backwards from one symbol; the structural delta (issue #1525)
+    walks callers per hop instead and does not use it.
     """
 
     def __init__(

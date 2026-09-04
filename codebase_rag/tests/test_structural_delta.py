@@ -218,6 +218,44 @@ def test_variadic_callee_is_never_too_many(
     assert not has_findings(delta)
 
 
+def test_keyword_arguments_to_a_kwargs_callee_are_not_too_many(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, **kw):"),
+    )
+    _write(
+        root, "pkg/app.py", FIXTURE["pkg/app.py"].replace("helper(1)", "helper(1, b=2)")
+    )
+    delta = _observe(root, store, updater, ["pkg/util.py", "pkg/app.py"])
+    # One positional for one positional parameter; the keyword names nothing
+    # in the positional list and is neutral, not an extra argument.
+    assert delta["arity_findings"] == []
+    assert not has_findings(delta)
+
+
+def test_extra_positional_to_a_keyword_only_callee_is_too_many(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, *, b=1):"),
+    )
+    _write(
+        root,
+        "pkg/app.py",
+        FIXTURE["pkg/app.py"].replace("helper(1)", "helper(1, 2, b=3)"),
+    )
+    delta = _observe(root, store, updater, ["pkg/util.py", "pkg/app.py"])
+    # A bare `*` accepts no extra positionals: this call raises TypeError.
+    assert [f["verdict"] for f in delta["arity_findings"]] == [cs.DELTA_ARITY_TOO_MANY]
+
+
 def test_pasting_a_helper_under_a_new_name_is_a_new_duplicate(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -448,6 +486,71 @@ def test_check_reports_the_delta_since_a_git_ref(
     assert delta["dangling_callers"][0]["target"] == _qn("pkg.util.helper")
     assert _qn("main.main") in delta["symbols"]["removed"]
     assert delta["symbols"]["added"] == [_qn("pkg.new.fresh")]
+
+
+def test_check_works_when_the_project_is_below_the_git_toplevel(
+    temp_repo: Path,
+) -> None:
+    import subprocess
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_check import changed_since, run_check
+
+    top = temp_repo / "mono"
+    root = top / "svc"
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=top, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=top, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=top,
+        check=True,
+    )
+    store = _StatefulIngestor()
+    _updater(store, root).run(force=True)
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def assist(a):"),
+    )
+    # `git diff` names files relative to the toplevel unless told otherwise;
+    # the project root is one level below it.
+    assert changed_since(root, "HEAD")[0] == ["pkg/util.py"]
+    parsers, queries = load_parsers()
+    delta = run_check(root, "HEAD", PROJECT, store, parsers, queries)
+    (rename,) = delta["symbols"]["renamed"]
+    assert rename["old"] == _qn("pkg.util.helper")
+    assert rename["new"] == _qn("pkg.util.assist")
+    assert delta["dangling_callers"][0]["target"] == _qn("pkg.util.helper")
+
+
+def test_check_ignores_cgr_state_files(
+    temp_repo: Path,
+) -> None:
+    import subprocess
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_check import changed_since, run_check
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    store = _StatefulIngestor()
+    # Indexing after the commit leaves cgr's state files untracked.
+    _updater(store, root).run(force=True)
+    assert any(p.name.startswith(".cgr-") for p in root.iterdir())
+    assert changed_since(root, "HEAD") == ([], [])
+    parsers, queries = load_parsers()
+    delta = run_check(root, "HEAD", PROJECT, store, parsers, queries)
+    assert delta["paths"] == [] and delta["reparsed"] == []
 
 
 def test_keyword_arguments_are_counted_once(
