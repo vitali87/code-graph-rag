@@ -374,11 +374,17 @@ def _module_key(path: str) -> str:
 
     `PurePosixPath.with_suffix("")` is not enough on its own -- it strips one
     suffix, turning `index.d.ts` into `index.d` rather than `index`.
+
+    A path with no MODULE extension is returned unchanged. Stripping whatever
+    suffix it happens to carry cuts a dotted basename in half: `./foo.test`
+    became `foo` while the created `foo.test.ts` became `foo.test`, so the two
+    forms of the same module missed each other again -- the very asymmetry
+    this function exists to remove (raised on #1717).
     """
     for ext in _MODULE_EXTS_LONGEST_FIRST:
         if path.endswith(ext):
             return path[: -len(ext)]
-    return PurePosixPath(path).with_suffix("").as_posix()
+    return path
 
 
 def _specifier_wanted_keys(present_keys: Iterable[str]) -> set[str]:

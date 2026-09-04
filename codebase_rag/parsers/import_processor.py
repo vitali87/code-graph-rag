@@ -3322,9 +3322,11 @@ class ImportProcessor:
                 continue
             # A CommonJS `require()` reads a dual-package exports map from
             # the require side.
+            require_text = safe_decode_with_fallback(arg).strip("'\"")
             resolved_module = self._resolve_js_module_path(
-                safe_decode_with_fallback(arg).strip("'\""), current_module, True
+                require_text, current_module, True
             )
+            self._note_unresolved_js_specifier(current_module, require_text)
             if name_node.type == cs.TS_IDENTIFIER:
                 # `const fs = require('fs')`: bind the whole module.
                 var_name = safe_decode_with_fallback(name_node)
@@ -3348,6 +3350,7 @@ class ImportProcessor:
                 source_module = self._resolve_js_module_path(
                     source_text, current_module
                 )
+                self._note_unresolved_js_specifier(current_module, source_text)
                 break
 
         if not source_module:

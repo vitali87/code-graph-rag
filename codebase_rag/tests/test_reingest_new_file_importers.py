@@ -478,6 +478,94 @@ class TestUnresolvedSpecifierWaiters:
 
         assert keys == ["main.ts"]
 
+    def test_a_dotted_basename_is_not_cut_in_half(self, tmp_path: Path) -> None:
+        """`./foo.test` must not lose `.test`, which is not a module extension.
+
+        The fallback used to strip whatever suffix a path carried, so the
+        specifier became `foo` while the created `foo.test.ts` became
+        `foo.test` -- the same asymmetry the normalisation exists to remove,
+        reintroduced by the branch that handles everything else (raised on
+        #1717).
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {"main.ts": "import { go } from './foo.test';\nexport const r = go;\n"},
+        )
+        (root / "foo.test.ts").write_text(
+            "export function go() { return 1; }\n", encoding="utf-8"
+        )
+
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["foo.test.ts"])
+
+        assert keys == ["main.ts"]
+
+    def test_a_commonjs_require_of_a_missing_target_is_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """`require('./util')` drops its edge exactly as `import` does.
+
+        The recording hung off the import-statement branch alone, so CommonJS
+        importers were never nominated -- and `require` is the older half of
+        the JS corpus, not an edge case (raised on #1717).
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {
+                "main.js": "const { go } = require('./util');\nmodule.exports = { go };\n"
+            },
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./util"
+        ]
+
+        (root / "util.js").write_text(
+            "function go() { return 1; }\nmodule.exports = { go };\n",
+            encoding="utf-8",
+        )
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.js"])
+
+        assert keys == ["main.js"]
+
+    def test_a_re_export_from_a_missing_target_is_recorded(
+        self, tmp_path: Path
+    ) -> None:
+        """`export ... from './util'` takes its own parse branch."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(root, {"main.ts": "export { go } from './util';\n"})
+
+        assert self._module(store, "main.ts")[cs.KEY_UNRESOLVED_SPECIFIERS] == [
+            "./util"
+        ]
+
+        (root / "util.ts").write_text(
+            "export function go(): number { return 1; }\n", encoding="utf-8"
+        )
+        keys = self._updater_on(root, store)._unresolved_importer_keys(["util.ts"])
+
+        assert keys == ["main.ts"]
+
+    def test_a_bare_require_of_a_package_is_not_recorded(self, tmp_path: Path) -> None:
+        """The control for the two above: only RELATIVE specifiers qualify.
+
+        A bare `require('lodash')` becomes a real edge to an ExternalModule,
+        which the row-based lookup already finds; recording it here would
+        nominate the importer on every unrelated creation.
+        """
+        root = tmp_path / "proj"
+        root.mkdir()
+        store = self._index(
+            root,
+            {"main.js": "const _ = require('lodash');\nmodule.exports = { _ };\n"},
+        )
+
+        assert self._module(store, "main.js")[cs.KEY_UNRESOLVED_SPECIFIERS] == []
+
     def test_a_reused_updater_clears_a_specifier_whose_target_now_exists(
         self, tmp_path: Path
     ) -> None:
