@@ -330,6 +330,125 @@ class _StatefulIngestor:
                     )
         return rows
 
+    # --- deterministic graph queries the edit operations issue (#1523) -------
+
+    _GRAPH_DEFINITION_KEYS = (
+        cs.KEY_QUALIFIED_NAME,
+        cs.KEY_NAME,
+        cs.KEY_PATH,
+        cs.KEY_START_LINE,
+        cs.KEY_END_LINE,
+        cs.KEY_DOCSTRING,
+        cs.KEY_NAME_START_LINE,
+        cs.KEY_NAME_START_COL,
+    )
+    _GRAPH_SITE_KEYS = (
+        cs.KEY_LINE,
+        cs.KEY_COL,
+        cs.KEY_END_LINE,
+        cs.KEY_END_COL,
+        cs.KEY_ARG_COUNT,
+        cs.KEY_KWARG_NAMES,
+        cs.KEY_RESOLUTION,
+    )
+    _GRAPH_IMPORT_KEYS = (
+        cs.KEY_LINE,
+        cs.KEY_COL,
+        cs.KEY_END_LINE,
+        cs.KEY_END_COL,
+        cs.KEY_ALIAS,
+        cs.KEY_IMPORTED_NAME,
+    )
+
+    def _graph_node_ids(self, qn: str) -> list[_NodeId]:
+        return [
+            (label, uid)
+            for (label, uid) in self.nodes
+            if uid == qn and label not in (_FILE_LABEL, _FOLDER_LABEL)
+        ]
+
+    def _graph_edge_row(
+        self, edge: _RelTuple, keys: tuple[str, ...], node: _NodeId
+    ) -> ResultRow:
+        label, uid = node
+        props = self.nodes.get(node, {})
+        row: ResultRow = {
+            cs.KEY_LABEL: label,
+            cs.KEY_QUALIFIED_NAME: _result(uid),
+            cs.KEY_PATH: _result(props.get(cs.KEY_PATH)),
+            cs.KEY_REL_TYPE: edge[2],
+        }
+        edge_props = self.edge_props.get(edge, {})
+        for key in keys:
+            row[key] = _result(edge_props.get(key))
+        return row
+
+    def _project_root_rows(self, params: PropertyDict) -> list[ResultRow]:
+        """The Project node's stored root, as `source_root_for` reads it."""
+        name = _str(params.get(cs.KEY_PROJECT_NAME))
+        props = self.nodes.get((cs.NodeLabel.PROJECT.value, name))
+        if props is None:
+            return []
+        return [{cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH))}]
+
+    def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
+        qn = _str(params.get(cs.KEY_QN))
+        targets = self._graph_node_ids(qn)
+        if query == cq.CYPHER_GRAPH_DEFINITION:
+            for label, uid in targets:
+                props = self.nodes[(label, uid)]
+                row: ResultRow = {cs.KEY_LABEL: label}
+                for key in self._GRAPH_DEFINITION_KEYS:
+                    row[key] = _result(props.get(key))
+                return [row]
+            return []
+        rows: list[ResultRow] = []
+        if query in (
+            cq.CYPHER_GRAPH_CALLERS,
+            cq.CYPHER_GRAPH_REFERENCES,
+            cq.CYPHER_GRAPH_TYPE_EDGES,
+        ):
+            wanted = {
+                cq.CYPHER_GRAPH_CALLERS: {cs.RelationshipType.CALLS.value},
+                cq.CYPHER_GRAPH_REFERENCES: {
+                    cs.RelationshipType.REFERENCES.value,
+                    cs.RelationshipType.INSTANTIATES.value,
+                },
+                cq.CYPHER_GRAPH_TYPE_EDGES: {
+                    cs.RelationshipType.INHERITS.value,
+                    cs.RelationshipType.ACCEPTS.value,
+                    cs.RelationshipType.RETURNS.value,
+                },
+            }[query]
+            for target in targets:
+                for edge in self._in.get(target, ()):
+                    source = (edge[0], edge[1])
+                    if edge[2] in wanted and source in self.nodes:
+                        rows.append(
+                            self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
+                        )
+        elif query == cq.CYPHER_GRAPH_OVERRIDES:
+            overrides = cs.RelationshipType.OVERRIDES.value
+            for target in targets:
+                for edge in self._in.get(target, ()):
+                    if edge[2] == overrides and (edge[0], edge[1]) in self.nodes:
+                        rows.append(self._graph_edge_row(edge, (), (edge[0], edge[1])))
+                for edge in self._out.get(target, ()):
+                    if edge[2] == overrides and (edge[3], edge[4]) in self.nodes:
+                        rows.append(self._graph_edge_row(edge, (), (edge[3], edge[4])))
+        elif query == cq.CYPHER_GRAPH_IMPORTERS:
+            for target in targets:
+                for edge in self._in.get(target, ()):
+                    source = (edge[0], edge[1])
+                    if (
+                        edge[2] == cs.RelationshipType.IMPORTS.value
+                        and source in self.nodes
+                    ):
+                        rows.append(
+                            self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
+                        )
+        return rows
+
     def _delta_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
         raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
@@ -416,6 +535,17 @@ class _StatefulIngestor:
                 | cq.CYPHER_DEAD_CODE_RELS
             ):
                 return self._delta_rows(query, params or {})
+            case cq.CYPHER_PROJECT_ROOT_PATH:
+                return self._project_root_rows(params or {})
+            case (
+                cq.CYPHER_GRAPH_DEFINITION
+                | cq.CYPHER_GRAPH_CALLERS
+                | cq.CYPHER_GRAPH_REFERENCES
+                | cq.CYPHER_GRAPH_TYPE_EDGES
+                | cq.CYPHER_GRAPH_OVERRIDES
+                | cq.CYPHER_GRAPH_IMPORTERS
+            ):
+                return self._graph_rows(query, params or {})
             case cs.CYPHER_ALL_FOLDER_PATHS:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:

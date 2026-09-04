@@ -535,6 +535,10 @@ EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
 EDIT_TRANSACTION_FINISHED = "This transaction has already been committed or rolled back"
 EDIT_CONFLICT = "File changed since it was staged; transaction refused: {path}"
 EDIT_NOTHING_STAGED = "Nothing staged; the working tree is untouched"
+EDIT_NOT_NEWEST = (
+    "Transaction {transaction_id} is not the newest recorded edit ({newest}); "
+    "undo the later edit first"
+)
 EDIT_VERIFICATION_FAILED = (
     "Verification failed; the working tree is untouched: {reason}"
 )
@@ -569,6 +573,34 @@ RENAME_STRUCTURAL_UNLOCATABLE = (
 )
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
+RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"
+RENAME_ROLLBACK_REFUSED = (
+    "Rename kept: its postcondition failed ({reasons}) but a later edit was "
+    "recorded on top of it, so it was not rolled back; undo the later edit "
+    "and rerun"
+)
+RENAME_ROLLBACK_UNMEASURED = (
+    "Rename rolled back after its postcondition failed ({reasons}), but the "
+    "graph could not be re-ingested afterwards ({error}); rebuild the graph "
+    "before the next graph-backed operation"
+)
+RENAME_CONTRACT_UNMEASURED = (
+    "Rename applied, but its postcondition could not be measured: {error}"
+)
+# Postcondition contract (issue #1531).
+CONTRACT_OP_RENAME = "rename"
+CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
+CONTRACT_OP_MOVE = "move"
+CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
+CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
+CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
+CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
+CONTRACT_DANGLING = "dangling callers: {sites}"
+CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
+CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
+CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
+CONTRACT_NEW_DUPLICATE = "new duplicate: {pairs}"
+CONTRACT_PARSE_FAILED = "files no longer parse: {files}"
 MSG_SURGICAL_FAILED = (
     "Failed to apply surgical replacement in {path}. "
     "Target code not found or patches failed."

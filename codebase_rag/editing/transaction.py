@@ -603,6 +603,23 @@ def undo_last(repo_root: Path, count: int = 1) -> list[TransactionOutcome]:
     return outcomes
 
 
+def undo_transaction(repo_root: Path, transaction_id: str) -> TransactionOutcome:
+    """Reverse the recorded transaction `transaction_id`, which must be the
+    newest one: a later edit stacked on top would be clobbered by reversing
+    an older entry, so that case refuses instead of undoing the wrong edit."""
+    root = repo_root.resolve()
+    with _repo_lock(root):
+        entries = load_history(root)
+        newest = str(entries[-1].get(cs.EDIT_KEY_ID, "")) if entries else ""
+        if newest != transaction_id:
+            raise TransactionConflict(
+                cs.EDIT_NOT_NEWEST.format(transaction_id=transaction_id, newest=newest)
+            )
+        outcome = _undo_newest(root)
+    assert outcome is not None
+    return outcome
+
+
 def _undo_newest(root: Path) -> TransactionOutcome | None:
     """Reverse the newest history entry under the caller's lock; None if empty."""
     entries = load_history(root)
