@@ -1222,17 +1222,151 @@ class TestFastPathInSync:
             "the edit is never indexed and no later run corrects it"
         )
 
-        # Only `_is_already_in_sync` is pinned here, deliberately. The hashing
-        # loop reads the same stamp for the same shortcut, and is guarded the
-        # same way, but reverting ONLY that reader leaves the suite green and
-        # the edit still indexed: once the sync check declines, the loop's
-        # `old_hashes` comparison catches the changed content whatever the
-        # mtime says, because the hash is the authority and the mtime is only
-        # an optimisation over it. Measured, not assumed -- with that reader
-        # reverted the run still re-indexed the edited file and rewrote the
-        # cache with a sane stamp. The guard stays on both readers so they
-        # cannot diverge (issue #1636's shape), but the second one has no
-        # failing case to pin.
+        # And the edit must actually REACH the graph. The assertion above is
+        # satisfied by any reason for declining the fast path, including a
+        # rescan that finds nothing wrong: it pins "did not take the shortcut",
+        # not "did not lose the edit", and those are different claims. Skipping
+        # silently is the dangerous direction here; a redundant re-hash is the
+        # safe error, so the outcome is what has to be asserted. Measured
+        # against the unfixed helper, where the new symbol never appears.
+        mock_ingestor.reset_mock()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+        indexed_functions = {
+            str(call.args[1].get(cs.KEY_QUALIFIED_NAME))
+            for call in mock_ingestor.ensure_node_batch.call_args_list
+            if call.args[0] == cs.NodeLabel.FUNCTION
+        }
+        assert any("edited_after_the_stamp" in qn for qn in indexed_functions), (
+            "the edit never reached the graph against a future stamp: "
+            f"{sorted(indexed_functions)}"
+        )
+
+        # And the edit must actually REACH the graph. The assertion above is
+        # satisfied by any reason for declining the fast path, including a
+        # rescan that finds nothing wrong: it pins "did not take the shortcut",
+        # not "did not lose the edit", and those are different claims. Skipping
+        # silently is the dangerous direction here; a redundant re-hash is the
+        # safe error, so the outcome is what has to be asserted. Measured
+        # against the unfixed helper, where the new symbol never appears.
+
+    def test_a_future_stamp_does_not_skip_an_edit_in_the_hashing_loop(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The SECOND reader of the stamp, at the loop that actually indexes.
+
+        `_is_already_in_sync` is only the fast path. When it declines, the run
+        reaches the hashing loop, which applies the same `mtime <=
+        cache_mtime` shortcut against the same stamp -- and that shortcut
+        `continue`s BEFORE the hash comparison, so the hash is not the
+        authority here the way it is for the sync check. The stale hash is
+        then copied into the new cache and the stamp rewritten sanely, so the
+        lie becomes indistinguishable from truth and no later run corrects it.
+
+        The unrelated addition is what makes this test about the LOOP: it
+        makes the sync check decline for a reason other than the edit itself,
+        which is the only way the poisoned stamp reaches the loop at all.
+        Without it the sync check answers first and this re-tests the reader
+        above.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
+        ahead = time.time() + 3600
+        os.utime(cache, (ahead, ahead))
+
+        (py_project / "module_a.py").write_text(
+            "def edited_under_a_future_stamp():\n    return 2\n", encoding="utf-8"
+        )
+        (py_project / "module_new.py").write_text(
+            "def unrelated():\n    return 3\n", encoding="utf-8"
+        )
+
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # The cache must carry the file's REAL hash. Asserting on the graph
+        # would not do: the edited file is re-parsed either way once the run
+        # proceeds, and it is the persisted stale hash that loses the edit for
+        # every later run.
+        cached = json.loads(cache.read_text(encoding="utf-8")).get("module_a.py")
+        assert cached == _hash_file(py_project / "module_a.py"), (
+            "the hashing loop skipped the edited file against a future stamp "
+            "and persisted its stale hash, so no later run sees the edit"
+        )
+
+    def test_a_single_file_run_over_a_distrusted_cache_keeps_sibling_edits(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The stamp WRITER, which the two readers above do not reach.
+
+        A single-file run carries the previous cache mtime forward so the
+        siblings it never looked at keep their meaning. When that previous
+        stamp was distrusted for being in the future it reads as 0.0, and
+        `cache_mtime or None` -- falsy 0.0 -- takes the `None` branch the
+        comment beside it explicitly warns against: `None` skips the
+        `os.utime`, the cache keeps its own write time (NOW), and a sibling
+        edited before the run is then older than the stamp, so every later
+        project run reports "already in sync" and the edit is lost for good.
+
+        So the read guard alone made the write worse. The epoch vouches for
+        nothing, which is the honest claim after an untrustworthy stamp;
+        `None` vouches for now.
+        """
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        cache = py_project / cs.HASH_CACHE_FILENAME
+        assert cache.is_file(), "fixture guard: run 1 wrote no cache to stamp"
+        ahead = time.time() + 3600
+        os.utime(cache, (ahead, ahead))
+
+        # Edited BEFORE the single-file run, and never looked at by it: this
+        # is the sibling whose edit the stamp has to keep visible.
+        (py_project / "module_b.py").write_text(
+            "def b_edited_before_the_single_file_run():\n    return 2\n",
+            encoding="utf-8",
+        )
+
+        single = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        single._single_file = py_project / "module_a.py"
+        single.run()
+
+        successor = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        assert successor._is_already_in_sync() is False, (
+            "the single-file run stamped the cache with its own write time, "
+            "so the sibling edited before it is never indexed again"
+        )
 
     def test_changed_cli_exclusion_disables_fast_path(
         self, py_project: Path, mock_ingestor: MagicMock

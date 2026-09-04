@@ -3548,7 +3548,15 @@ class GraphUpdater:
             # write time -- LATER than this run's instant, so it makes the
             # trap worse rather than closing it. `cache_mtime` was read at the
             # top of this method, before anything wrote to the cache.
-            self._pending_cache_observed_at = cache_mtime or None
+            #
+            # `or 0.0`, never `or None`: `cache_mtime` is 0.0 when the previous
+            # stamp was distrusted for being in the future (issue #1665), and
+            # 0.0 is falsy, so `or None` would take exactly the branch the
+            # paragraph above warns against. The epoch vouches for nothing,
+            # which is the honest claim for a run whose predecessor's stamp
+            # could not be trusted; None vouches for now, and loses a sibling
+            # edited before this run, permanently.
+            self._pending_cache_observed_at = cache_mtime or 0.0
         # Stamp only full builds: re-stamping an incremental run would
         # silence the staleness warning while unchanged files still carry
         # the old parser's edges.
