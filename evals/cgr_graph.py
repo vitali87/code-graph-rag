@@ -323,6 +323,31 @@ class _StatefulIngestor:
                     }
                     rows.append(row)
                 return rows
+            case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
+                # Modules carrying a dropped relative specifier (issue #1714).
+                # Emulated rather than left to fall through: an unanswered
+                # query returns [] here, which is indistinguishable from "no
+                # waiters" and would let an end-to-end test pass against a
+                # lookup that never ran.
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                waiter_rows: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    specifiers = props.get(cs.KEY_UNRESOLVED_SPECIFIERS)
+                    if not path or not (prefix and qn.startswith(prefix)):
+                        continue
+                    if not isinstance(specifiers, list) or not specifiers:
+                        continue
+                    waiter_rows.append(
+                        {
+                            cs.KEY_CALLER_PATH: path,
+                            cs.CYPHER_KEY_SPECIFIERS: list(specifiers),
+                        }
+                    )
+                return waiter_rows
             case _:
                 return []
 

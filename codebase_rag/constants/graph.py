@@ -62,6 +62,11 @@ KEY_IMPORTED_NAME = "imported_name"
 # `imported_name` of a wildcard import (`from x import *`, `export * from`).
 IMPORTED_NAME_WILDCARD = "*"
 KEY_PATH = "path"
+# Literal relative specifiers this module imported that named no file on disk
+# when it was parsed ("./index"). A dropped IMPORTS edge leaves no row for the
+# target-side lookup to match, so the waiting importer is recorded here and
+# stays findable from the created file's path alone (issue #1714).
+KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -618,6 +623,21 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "OR target.qualified_name STARTS WITH name + '.') "
     "RETURN DISTINCT importer.path AS caller_path"
 )
+# Modules carrying at least one unresolved relative specifier, with the
+# specifiers themselves. The specifier is relative to the IMPORTING module's
+# directory, so the match against a created file is resolved in Python rather
+# than attempted as path arithmetic in Cypher; the row count is small because
+# only modules with a dropped relative import carry the property (issue #1714).
+CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS = (
+    "MATCH (importer) "
+    "WHERE importer.path IS NOT NULL "
+    "AND importer.qualified_name STARTS WITH $project_prefix "
+    "AND importer.unresolved_specifiers IS NOT NULL "
+    "AND size(importer.unresolved_specifiers) > 0 "
+    "RETURN importer.path AS caller_path, "
+    "importer.unresolved_specifiers AS specifiers"
+)
+CYPHER_KEY_SPECIFIERS = "specifiers"
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "

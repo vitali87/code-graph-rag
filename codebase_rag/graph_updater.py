@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import posixpath
 import sys
 import time
 from collections import defaultdict
@@ -2231,6 +2232,7 @@ class GraphUpdater:
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
+            | self._specifier_waiter_keys(present_keys)
         )
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
@@ -2278,6 +2280,55 @@ class GraphUpdater:
             for module in definers
             if (key := key_for_module.get(module)) is not None and key not in gone
         }
+    def _specifier_waiter_keys(self, present_keys: list[str]) -> set[str]:
+        """Importers whose recorded relative specifier names one of these files.
+
+        The row-based lookup above reads persisted IMPORTS edges, and a
+        relative JS/TS import of a path that does not exist yet has no such
+        row: the edge is dropped at flush as an unverifiable internal target.
+        Those importers record the literal specifier on their Module node
+        instead, so they stay findable from the created file's path alone
+        (issue #1714).
+
+        The specifier is relative to the IMPORTER's own directory, so it is
+        resolved here rather than in Cypher, where the arithmetic against
+        `importer.path` would be far harder to read and to test.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS,
+                {cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT},
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved specifiers")
+            return set()
+        wanted = {PurePosixPath(key).with_suffix("").as_posix() for key in present_keys}
+        # A created `pkg/index.ts` also satisfies `./pkg`, the directory form.
+        wanted |= {
+            parent
+            for key in present_keys
+            if (p := PurePosixPath(key)).stem == cs.JS_INDEX_STEM
+            and (parent := p.parent.as_posix()) not in (cs.PATH_CURRENT_DIR, "")
+        }
+        waiters: set[str] = set()
+        for row in rows:
+            caller = row.get(cs.KEY_CALLER_PATH)
+            specifiers = row.get(cs.CYPHER_KEY_SPECIFIERS)
+            if not isinstance(caller, str) or not caller:
+                continue
+            if not isinstance(specifiers, list):
+                continue
+            base = PurePosixPath(caller).parent
+            for specifier in specifiers:
+                if not isinstance(specifier, str):
+                    continue
+                target = posixpath.normpath((base / specifier).as_posix())
+                if target in wanted:
+                    waiters.add(caller)
+                    break
+        return waiters
 
     def _package_paths(self) -> set[str] | None:
         """Relative paths of this project's Package nodes, None if unreadable."""
