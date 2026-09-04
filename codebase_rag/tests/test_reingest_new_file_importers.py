@@ -103,10 +103,18 @@ class TestModuleNamesOffered:
             ("index.py", {"index"}),
             ("mod.py", {"mod"}),
             ("pkg/index.py", {"index", "pkg.index"}),
-            # At the repository root there is no directory to be named by, and
-            # nothing imports the root itself.
-            ("index.ts", set()),
-            ("__init__.py", set()),
+            # At the repository root the directory-module rule has no
+            # directory to apply, so the file is named by its own stem: a
+            # sibling writes `./index`, and dropping that left a root entry
+            # point with no name at all, so its waiters were never re-parsed.
+            ("index.ts", {"index"}),
+            ("index.js", {"index"}),
+            ("index.mts", {"index"}),
+            ("__init__.py", {"__init__"}),
+            # A root-level `index.py` was never affected: `.py`'s directory
+            # stem is `__init__`, so it is an ordinary module and keeps its
+            # name through the other branch entirely. Both are asserted so the
+            # per-language distinction stays visible at the root too.
         ],
     )
     def test_both_spellings_are_offered(

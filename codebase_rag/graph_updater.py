@@ -2104,8 +2104,19 @@ class GraphUpdater:
                 # every `index`/`mod` stem as a directory module leaves them
                 # with no importable name at all.
                 if not parts:
-                    # At the repository root there is no directory to be named
-                    # by, and nothing imports the root itself.
+                    # The directory-module rule needs a DIRECTORY. At the
+                    # repository root there is none, so the file is an
+                    # ordinary module named by its own stem: a sibling writes
+                    # `./index`, and that spelling is what an unresolved edge
+                    # records. Dropping it left a root-level entry point with
+                    # no name at all, so a waiter on it was never re-parsed --
+                    # the exact failure this lookup exists to close.
+                    #
+                    # Offering a name nothing waits on costs one redundant
+                    # re-parse; withholding one costs the unresolved edge
+                    # forever, so the tie breaks towards offering it.
+                    if stem:
+                        names.add(stem)
                     continue
                 stem = parts.pop()
             names.add(stem)
