@@ -118,6 +118,14 @@ DIRECTORY_MODULE_STEM_BY_EXT: dict[str, str] = {
     ".cjs": "index",
     ".ts": "index",
     ".tsx": "index",
+    # `.mts`/`.cts` are TypeScript's ESM/CJS forms and are directory entry
+    # points exactly as `.mjs`/`.cjs` are. They belong to `TS_EXTENSIONS` and
+    # to `JS_TS_MODULE_EXTENSIONS`, which is the set cgr's own directory-index
+    # resolution already searches, so omitting them here made `pkg/index.mts`
+    # derive `pkg.index` instead of `pkg` and the unresolved-importer query
+    # asked for a name no waiter had written (issue #1682 review).
+    ".mts": "index",
+    ".cts": "index",
 }
 MOD_RS = "mod.rs"
 LIB_RS = "lib.rs"

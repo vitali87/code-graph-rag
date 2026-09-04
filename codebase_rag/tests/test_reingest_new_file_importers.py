@@ -83,6 +83,17 @@ class TestModuleNamesOffered:
             ("utils/mod.rs", {"utils"}),
             ("a/b/utils/mod.rs", {"utils", "a.b.utils"}),
             ("components/index.ts", {"components"}),
+            # `.mts`/`.cts` are TypeScript's ESM/CJS forms, directory entry
+            # points exactly as `.mjs`/`.cjs` are. Omitting them derived
+            # `pkg.index` and asked for a name no importer ever writes.
+            ("pkg/index.mts", {"pkg"}),
+            ("pkg/index.cts", {"pkg"}),
+            ("a/b/components/index.mts", {"components", "a.b.components"}),
+            ("pkg/index.mjs", {"pkg"}),
+            ("pkg/index.cjs", {"pkg"}),
+            # Not every `.mts` is an entry point: the rule is the STEM plus the
+            # extension, so an ordinary module keeps both its spellings.
+            ("pkg/util.mts", {"util", "pkg.util"}),
             # A Rust crate root is named by the manifest, not the directory, so
             # it keeps its own stem rather than being folded into the parent.
             ("src/lib.rs", {"lib", "src.lib"}),
@@ -105,6 +116,28 @@ class TestModuleNamesOffered:
         # matching only one of them misses half the real cases.
         updater = _updater(tmp_path, _QueryingIngestor([]))
         assert set(updater._module_names_for([key])) == expected
+
+    def test_every_js_ts_module_extension_has_a_directory_stem(self) -> None:
+        """The forcing function the parametrised cases cannot provide.
+
+        Those cases enumerate the extensions I thought of, so the next
+        extension added to the language set is exactly the one they miss --
+        which is how `.mts` and `.cts` came to be absent while `.mjs` and
+        `.cjs` were present. `JS_TS_MODULE_EXTENSIONS` is the set cgr's own
+        directory-index resolution searches, so anything in it that can be a
+        directory entry point must have a stem here.
+
+        `.d.*` declaration files are excluded: `PurePosixPath('index.d.mts')`
+        has suffix `.mts`, so they are already covered by their own base
+        extension and never reach this map under a `.d.x` key.
+        """
+        missing = {
+            ext
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+            if not ext.startswith(".d.")
+            and cs.DIRECTORY_MODULE_STEM_BY_EXT.get(ext) != cs.JS_INDEX_STEM
+        }
+        assert not missing, missing
 
 
 class TestUnresolvedImporterLookup:
