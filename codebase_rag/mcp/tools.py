@@ -1227,9 +1227,26 @@ class MCPToolsRegistry:
                 self._live_updater = None
                 self._graph_incomplete = True
             elif marked_here is not None:
-                # Best effort: a failing clear must not replace the caller's
-                # real error (a bad path, an abort) with a marker error.
-                self._require_marker_cleared(marked_here)
+                # Nothing was written, so the marker this call created is a
+                # lie about a run that changed nothing and must come off.
+                #
+                # The caller's real error (a bad path, an abort) stays
+                # primary -- replacing it with a marker error would hide why
+                # the reingest actually failed. But a FAILED clear cannot be
+                # discarded either: it leaves the project marked incomplete,
+                # so every later scoped reingest is refused until a full
+                # update runs, for a run that touched nothing (#1705 review).
+                #
+                # `_require_marker_cleared` already syncs `_graph_incomplete`
+                # to the durable state, so this process stops believing the
+                # graph is clean; the warning it logs is what tells an
+                # operator why later reingests refuse.
+                if self._require_marker_cleared(marked_here) is not None:
+                    logger.warning(
+                        lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(
+                            project=marked_here
+                        )
+                    )
             raise
         if marked_here is not None:
             # Invariant (b), same as every other path: the hydration above

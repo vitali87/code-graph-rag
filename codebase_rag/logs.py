@@ -869,6 +869,12 @@ MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 # The incomplete-run marker (issue #1679). Both are warnings rather than
 # errors: the run itself is unaffected, but the cross-process guard silently
 # degrades to the in-process flag, which an operator can only notice here.
+MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT = (
+    "[GraphCode MCP] A scoped reingest for {project} stopped before writing "
+    "anything, but its incomplete-run marker could not be cleared. Later "
+    "scoped reingests will refuse until an update_repository clears it, even "
+    "though this run changed nothing."
+)
 MCP_INCOMPLETE_MARKER_FAILED = (
     "[GraphCode MCP] Could not persist the incomplete-run marker for "
     "{project} (incomplete={incomplete}): {error}. A crash from here would "
