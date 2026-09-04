@@ -776,17 +776,20 @@ class MCPToolsRegistry:
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
         self._graph_incomplete = True
-        self._persist_incomplete(project_name, True)
+        # Invariant (a). Nothing has been touched yet, so refusing costs
+        # nothing; proceeding would leave a half-removed graph a fresh
+        # registry cannot tell from a completed delete.
+        if (refusal := self._require_marker(project_name)) is not None:
+            return DeleteProjectErrorResult(success=False, error=refusal)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
-        # The durable marker must go too. It lives on its own node precisely
-        # so `delete_project` cannot reach it -- which is what lets it survive
-        # an index's delete-then-rebuild -- but that means an INTENTIONAL
-        # delete leaves it behind, and a fresh registry would then refuse
-        # reingest forever for a project the user deliberately removed
-        # (#1705 review, round 2). The in-process flag follows the durable
-        # state, as everywhere else.
-        self._graph_incomplete = not self._persist_incomplete(project_name, False)
+        # Invariant (b). The marker sits on its own node so `delete_project`
+        # cannot reach it -- which is what lets it survive an index's
+        # delete-then-rebuild -- so a deliberate delete must remove it. The
+        # data is gone either way; reporting success while the marker remains
+        # blocks every later reingest for a project that no longer exists.
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            return DeleteProjectErrorResult(success=False, error=stuck)
         return DeleteProjectSuccessResult(
             success=True,
             project=project_name,
@@ -864,10 +867,8 @@ class MCPToolsRegistry:
         # stopping here: no graph state has changed yet. That is the opposite
         # of a failed CLEAR, which must not fail a run that already succeeded
         # (#1705 review).
-        if not self._persist_incomplete(project_name, True):
-            raise RuntimeError(
-                cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
-            )
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
         self._cleanup_project_embeddings(project_name)
         self.ingestor.delete_project(project_name)
 
@@ -895,7 +896,8 @@ class MCPToolsRegistry:
         # while this one believed all was well. Staying incomplete locally
         # keeps the two in agreement and makes the next update retry the clear
         # (#1705 review).
-        self._graph_incomplete = not self._persist_incomplete(project_name, False)
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            raise RuntimeError(stuck)
         self._live_updater = updater
 
         return cs.MCP_INDEX_SUCCESS_PROJECT.format(
@@ -955,10 +957,8 @@ class MCPToolsRegistry:
         # Aborts on failure because the marker is the only protection that
         # survives a restart; nothing has been touched yet, so stopping costs
         # nothing.
-        if not self._persist_incomplete(project_name, True):
-            raise RuntimeError(
-                cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
-            )
+        if (refusal := self._require_marker(project_name)) is not None:
+            raise RuntimeError(refusal)
         self.ingestor.ensure_constraints()
         self.ingestor.flush_all()
 
@@ -983,9 +983,31 @@ class MCPToolsRegistry:
         # while this one believed all was well. Staying incomplete locally
         # keeps the two in agreement and makes the next update retry the clear
         # (#1705 review).
-        self._graph_incomplete = not self._persist_incomplete(project_name, False)
+        if (stuck := self._require_marker_cleared(project_name)) is not None:
+            raise RuntimeError(stuck)
         self._live_updater = updater
         return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    # The incomplete-run invariant, stated once and applied by every mutating
+    # path (#1705 review, round 4). Three rounds of review each found the same
+    # shape next to the previous fix, because the rule was being re-derived per
+    # call site instead of written down:
+    #
+    #   (a) No destructive step starts unless the durable marker was
+    #       persisted. A failed persist aborts BEFORE any cleanup, embedding
+    #       purge, constraint migration or delete_project, and reports a
+    #       retryable failure. Nothing has changed yet, so aborting is free.
+    #   (b) Success is reported only after the marker is durably cleared. A
+    #       failed clear after a successful operation is a retryable failure,
+    #       never success with the marker retained -- that state blocks every
+    #       later reingest and the user cannot see why.
+    #   (c) The fresh scoped-reingest path is a destructive step too: its
+    #       `ensure_constraints` runs the same migration that drops
+    #       constraints and can purge, so it marks first like the others.
+    #
+    # `_require_marker` and `_require_marker_cleared` are the only two places
+    # that decide what a marker failure means; call sites choose the failure
+    # VALUE, not the policy.
 
     def _persist_incomplete(self, project_name: str, incomplete: bool) -> bool:
         """Record (or clear) the incomplete-run marker on its own node.
@@ -1028,6 +1050,27 @@ class MCPToolsRegistry:
             return False
         return True
 
+    def _require_marker(self, project_name: str) -> str | None:
+        """Invariant (a): mark before destructive work, or refuse to start.
+
+        Returns None when the marker is down, or the message to fail with.
+        """
+        if self._persist_incomplete(project_name, True):
+            return None
+        return cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+
+    def _require_marker_cleared(self, project_name: str) -> str | None:
+        """Invariant (b): a run is complete only once its marker is gone.
+
+        Also syncs the in-process flag to the durable state, so this process
+        and the next agree. Returns None on success, or the failure message.
+        """
+        cleared = self._persist_incomplete(project_name, False)
+        self._graph_incomplete = not cleared
+        if cleared:
+            return None
+        return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
 
@@ -1061,6 +1104,9 @@ class MCPToolsRegistry:
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
         updater = self._live_updater
+        # Only set when THIS call marked the project, so the success path
+        # clears its own marker and never one an earlier failure left behind.
+        marked_here: str | None = None
         if updater is None:
             # A scoped re-ingest completes a graph; it cannot stand in for
             # the first index. After delete_project or wipe_database the
@@ -1079,6 +1125,15 @@ class MCPToolsRegistry:
                 raise ValueError(
                     cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
                 )
+            # `ensure_constraints` runs the same destructive migration here
+            # as on the index and update paths -- it drops constraints and can
+            # purge -- so it needs the same marker in front of it. This is the
+            # THIRD caller; fixing the other two and leaving this one meant a
+            # fresh scoped reingest could still fail mid-migration and leave a
+            # partial graph nothing recorded (#1705 review, round 3).
+            if (refusal := self._require_marker(project_name)) is not None:
+                raise RuntimeError(refusal)
+            marked_here = project_name
             self.ingestor.ensure_constraints()
             # The same exclusion set the index and update paths use, or an
             # agent-named path under a CLI-excluded directory would be
@@ -1110,6 +1165,12 @@ class MCPToolsRegistry:
             self._live_updater = None
             self._graph_incomplete = True
             raise
+        if marked_here is not None:
+            # The hydration above marked before its destructive migration;
+            # a completed reingest must lift that, or this path refuses every
+            # later call. The local flag follows the durable state, as
+            # everywhere else (#1705 review, round 3).
+            self._graph_incomplete = not self._persist_incomplete(marked_here, False)
         return ReingestToolResult(
             reparsed=list(report.reparsed),
             affected=list(report.affected),

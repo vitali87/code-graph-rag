@@ -123,6 +123,11 @@ MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"
 )
+MCP_INCOMPLETE_MARKER_STUCK = (
+    "{project} was processed, but its incomplete-run marker could not be "
+    "cleared. Later scoped re-ingests will refuse until it goes. The next "
+    "index or update retries the removal; check the graph store is writable."
+)
 MCP_INCOMPLETE_MARKER_REQUIRED = (
     "Refusing to index or update {project}: the incomplete-run marker could "
     "not be written. Without it a crash part way through would leave a "
