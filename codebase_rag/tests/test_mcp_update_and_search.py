@@ -1076,10 +1076,18 @@ class TestIncompleteMarkerSurvivesTheProcess:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             result = await registry.update_repository()
 
-        assert "Error" not in result, "the run itself succeeded and must say so"
         assert ingestor._marker_store.get(project) is True, (
             "fixture guard: the clear must actually have failed, or this test "
             "proves nothing"
+        )
+        # Invariant (b): a run whose marker could not be cleared is a
+        # RETRYABLE FAILURE, not a success. Reporting success would leave the
+        # marker blocking every later reingest with nothing to show the user
+        # why (#1705 review, round 4). This assertion was inverted before that
+        # round: it required the run to report success, which is precisely the
+        # state the invariant now forbids.
+        assert "Error" in result, (
+            f"a run that left its marker stuck must report a failure: {result}"
         )
         assert registry._graph_incomplete is True, (
             "the local flag reported complete while the graph still says "
@@ -1200,4 +1208,96 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert project not in ingestor._marker_store, (
             "the deleted project kept its incomplete-run marker, so a fresh "
             "registry would refuse reingest for a project that is gone"
+        )
+
+
+class TestIncompleteMarkerInvariant:
+    """The invariant, over every mutating path and both failure points.
+
+    Stated once in `tools.py` and asserted once here, because three review
+    rounds each found the same shape next to the previous fix -- the rule was
+    being re-derived per call site instead of written down (#1705 round 4):
+
+      (a) no destructive step starts unless the marker was persisted
+      (b) success is reported only after the marker is durably cleared
+      (c) the fresh scoped-reingest path marks before its constraint migration
+    """
+
+    @staticmethod
+    def _store() -> MagicMock:
+        return TestIncompleteMarkerSurvivesTheProcess._store()
+
+    def _registry(self, root: Path, ingestor: MagicMock) -> MCPToolsRegistry:
+        return MCPToolsRegistry(
+            project_root=str(root), ingestor=ingestor, cypher_gen=MagicMock()
+        )
+
+    @pytest.mark.parametrize("path", ["index", "update", "delete"])
+    @pytest.mark.parametrize("failure", ["mark", "clear"])
+    async def test_a_marker_failure_never_reports_success(
+        self, temp_project_root: Path, path: str, failure: str
+    ) -> None:
+        """Every path, both failure points: a failure is reported, never success.
+
+        The `mark` case additionally pins invariant (a) by asserting the
+        destructive call never happened -- an abort that still deleted the
+        project would satisfy an error-message assertion while doing the exact
+        damage the marker exists to prevent.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add(failure)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            if path == "index":
+                result = str(await registry.index_repository())
+            elif path == "update":
+                result = str(await registry.update_repository())
+            else:
+                result = str(await registry.delete_project(project))
+
+        assert "Error" in result or "error" in result, (
+            f"{path} with a failing {failure} reported success: {result}"
+        )
+        if failure == "mark":
+            assert not ingestor.delete_project.called, (
+                f"{path} began destructive work despite failing to persist "
+                "the marker, so a crash would leave nothing recording it"
+            )
+
+    async def test_a_fresh_scoped_reingest_marks_before_migrating(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (c): the third `ensure_constraints` caller, easy to miss.
+
+        The index and update paths were fixed first; this one was found a
+        round later, still running the migration that drops constraints and
+        can purge with nothing recording the run. Asserts the ORDER, because
+        after a success both have happened either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        order: list[str] = []
+        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
+        real_write = ingestor.execute_write.side_effect
+
+        def _tracking(query: str, params: dict | None = None) -> None:
+            if "SET m.run_incomplete" in query:
+                order.append("mark")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _tracking
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            await registry.reingest(["a.py"])
+
+        assert order[:2] == ["mark", "constraints"], (
+            "the fresh scoped reingest ran its destructive constraint "
+            f"migration before recording the run: {order}"
         )
