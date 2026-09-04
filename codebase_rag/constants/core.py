@@ -211,6 +211,12 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "ast_cache.py",
     "language_spec.py",
     "parser_loader.py",
+    # `base_module_qn` lives here, and the whole graph keys on the names it
+    # derives: change the rule and every module node should be re-keyed. It
+    # was absent, so a change touching ONLY this file left existing indexes on
+    # the old identities with no staleness warning, and `utils/` is in neither
+    # of the directory globs above (issue #1720 review).
+    "utils/path_utils.py",
 )
 PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj

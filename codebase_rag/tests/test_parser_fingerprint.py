@@ -4,6 +4,9 @@
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
 # later sync against a different parser warns loudly until a clean rebuild.
+import ast
+import inspect
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
@@ -19,6 +22,7 @@ from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
 
@@ -92,6 +96,79 @@ class TestComputeParserFingerprint:
         before = compute_parser_fingerprint(pkg)
         source.write_text("A = 2\n")
         assert compute_parser_fingerprint(pkg) != before
+
+    def test_changes_when_the_module_qn_rule_changes(self, tmp_path: Path) -> None:
+        """`base_module_qn` decides every module's identity, so a change to it
+        must re-key the graph.
+
+        It lives in `utils/path_utils.py`, which was in NEITHER the directory
+        globs (`parsers`, `constants`) nor the file list, so a change touching
+        only that file left existing indexes on their old module names with no
+        staleness warning — the graph silently disagreeing with the code that
+        built it (issue #1720 review).
+        """
+        assert "utils/path_utils.py" in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        pkg = tmp_path / "pkg"
+        (pkg / "utils").mkdir(parents=True)
+        source = pkg / "utils" / "path_utils.py"
+        source.write_text("A = 1\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("A = 2\n")
+        assert compute_parser_fingerprint(pkg) != before
+
+    def test_every_module_qn_deriving_source_is_a_fingerprint_input(self) -> None:
+        """The forcing function the case above cannot provide.
+
+        That test names the file I already know about. This one asks the
+        question from the other end, and follows the rule rather than one
+        file: `base_module_qn` AND every package-internal module or callable
+        it references must be a fingerprint input.
+
+        Checking only the defining file would pass a SPLIT refactor -- the
+        wrapper stays in `utils/path_utils.py` while the arithmetic moves to
+        an unlisted helper, and edits to the helper then leave existing graphs
+        on stale identities with the guard still green (raised on #1722). The
+        property is "everything the identity rule depends on", not "the file
+        it currently lives in".
+        """
+        package_root = Path(cs.__file__).resolve().parent.parent
+
+        def _rel(obj: object) -> str | None:
+            try:
+                source = inspect.getsourcefile(obj)  # type: ignore[arg-type]
+            except TypeError:
+                return None
+            if not source:
+                return None
+            path = Path(source).resolve()
+            if not path.is_relative_to(package_root):
+                return None  # stdlib and third-party are not ours to fingerprint
+            return path.relative_to(package_root).as_posix()
+
+        def _covered(rel: str) -> bool:
+            return rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
+                tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+            )
+
+        defining_module = inspect.getmodule(base_module_qn)
+        assert defining_module is not None
+        tree = ast.parse(textwrap.dedent(inspect.getsource(base_module_qn)))
+        referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        # The definition itself, plus every package-internal name its body
+        # actually reaches for (`cs` resolves to the constants package, which
+        # the directory glob already covers).
+        subjects = {base_module_qn} | {
+            obj
+            for name in referenced
+            if (obj := getattr(defining_module, name, None)) is not None
+        }
+        uncovered = sorted(
+            rel for obj in subjects if (rel := _rel(obj)) and not _covered(rel)
+        )
+        assert not uncovered, (
+            "the module-qn rule depends on these files, and a change to any of "
+            f"them would not refresh the parser fingerprint: {uncovered}"
+        )
 
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
