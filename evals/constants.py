@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 
 from codebase_rag import constants as cs
@@ -374,6 +375,61 @@ TS_SCORED_NODE_KIND_VALUES: frozenset[str] = frozenset(
 TS_ORACLE_DIRNAME = "ts_oracle"
 TS_ORACLE_SCRIPT = "ts_ast.js"
 NODE_BIN = "node"
+# Run instead of trusting `which node` (issue #1639). `@ruby/prism` is ESM-only,
+# so a Node too old to `require()` an ES module satisfies a presence check and
+# then fails the oracle with ERR_REQUIRE_ESM. Probing the interop boundary
+# covers that break, a missing install and any future incompatibility, without
+# hard-coding a version to keep up to date.
+DOTNET_LIST_SDKS_FLAG = "--list-sdks"
+DOTNET_SKIP_NO_BINARY = "{binary} is not on PATH"
+DOTNET_SKIP_NO_SDKS = "dotnet --list-sdks failed: {stderr}"
+DOTNET_SKIP_SDK_TOO_OLD = (
+    "the C# oracle needs .NET SDK {needed} or newer to build its net{needed}.0 "
+    "project; installed: {found}"
+)
+DOTNET_SKIP_BUILD_FAILED = "the C# oracle could not be built: {stderr}"
+DOTNET_SKIP_BUILD_INCOMPLETE = (
+    "the C# oracle build did not complete (another process held the build lock "
+    "past the timeout)"
+)
+DOTNET_PROBE_TIMEOUT_S = 30
+# The build restores packages, so it needs far longer than the version probe;
+# bounded all the same, because an unreachable feed otherwise blocks forever.
+DOTNET_BUILD_TIMEOUT_S = 600
+DOTNET_SKIP_BUILD_TIMEOUT = (
+    "the C# oracle build did not finish within {seconds}s (an unreachable "
+    "package feed will do this); skipping rather than blocking the run"
+)
+DOTNET_SDK_LINE_SEP = " "
+# Oracle.csproj targets net10.0, so an older SDK cannot build it (NETSDK1045).
+# Kept beside the guard that reads it: if the csproj's TargetFramework moves,
+# this moves with it.
+CSHARP_ORACLE_MIN_SDK_MAJOR = 10
+NODE_EVAL_FLAG = "-e"
+# `require()` the oracle's own entry script, which is the call that breaks: a
+# CommonJS script loading an ESM-only package (`@ruby/prism`) on a Node too old
+# for it. A dynamic `import()` probe would pass on that Node and report the
+# toolchain usable, which is worse than no guard at all.
+NODE_REQUIRE_PROBE = 'require("{package}")'
+NODE_PACKAGE_MANIFEST = "package.json"
+NODE_PACKAGE_DEPS_KEY = "dependencies"
+NODE_ORACLE_SCRIPT_GLOB = "*.js"
+# Skip reasons name what actually went wrong. "node/npm toolchain not
+# available" is FALSE on the machine that reported #1639: node is installed
+# there, and the oracle dies on ERR_REQUIRE_ESM. The stderr is truncated
+# because a full node stack trace buries the one line that explains the skip.
+NODE_SKIP_NO_BINARY = "{binary} is not on PATH"
+NODE_SKIP_INSTALL_FAILED = "npm install failed for this oracle: {stderr}"
+NODE_SKIP_CANNOT_REQUIRE = "this node cannot require({package}): {stderr}"
+SKIP_REASON_STDERR_CHARS = 400
+# The oracle's own `require("pkg")` calls: the authoritative statement of what
+# it loads, and literally the call that fails on an incompatible Node. Builtins
+# are excluded because they load everywhere and would make the probe vacuous.
+NODE_REQUIRE_PATTERN = re.compile(r"""require\(\s*["']([^"']+)["']\s*\)""")
+NODE_BUILTIN_MODULES: frozenset[str] = frozenset(
+    {"fs", "path", "os", "util", "url", "process", "assert", "module", "buffer"}
+)
+NODE_PROBE_TIMEOUT_S = 30
 NPM_BIN = "npm"
 NPM_INSTALL = "install"
 NPM_FLAGS: tuple[str, ...] = ("--no-audit", "--no-fund")

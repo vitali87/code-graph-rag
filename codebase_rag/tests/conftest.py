@@ -8,7 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -777,3 +777,24 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
         vs.close_vector_store_client()
     except Exception:
         pass
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
+    """Report an unavailable node oracle as a SKIP, not an error (issue #1639).
+
+    A clean checkout cannot know whether the toolchain can run an oracle until
+    `ensure_node_deps` has installed the packages, which happens inside the
+    test. The runner raises `NodeOracleUnavailable` at that point; letting it
+    through reports a missing toolchain as a test ERROR, which is exactly the
+    misdiagnosis this issue is about. Translated here rather than at each of
+    the ~24 call sites, so a new call site cannot forget it.
+    """
+    # Imported lazily: `evals` is not on the path when conftest is loaded,
+    # only once a test that uses it has been collected.
+    from evals.oracles import NodeOracleUnavailable
+
+    outcome = yield
+    excinfo = getattr(outcome, "excinfo", None)
+    if excinfo is not None and isinstance(excinfo[1], NodeOracleUnavailable):
+        pytest.skip(str(excinfo[1]))

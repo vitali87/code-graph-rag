@@ -1,3 +1,4 @@
+from ._common import NodeOracleUnavailable
 from .cpp_oracle import (
     cpp_available,
     run_c_call_oracle,
@@ -6,14 +7,30 @@ from .cpp_oracle import (
 )
 from .csharp_oracle import (
     csharp_oracle_available,
+    csharp_oracle_skip_reason,
     run_csharp_call_oracle,
     run_csharp_oracle,
 )
 from .go_oracle import go_available, run_go_call_oracle, run_go_oracle
 from .java_oracle import java_available, run_java_call_oracle, run_java_oracle
-from .lua_oracle import lua_oracle_available, run_lua_call_oracle, run_lua_oracle
-from .php_oracle import php_oracle_available, run_php_call_oracle, run_php_oracle
-from .ruby_oracle import ruby_oracle_available, run_ruby_call_oracle, run_ruby_oracle
+from .lua_oracle import (
+    lua_oracle_available,
+    lua_oracle_skip_reason,
+    run_lua_call_oracle,
+    run_lua_oracle,
+)
+from .php_oracle import (
+    php_oracle_available,
+    php_oracle_skip_reason,
+    run_php_call_oracle,
+    run_php_oracle,
+)
+from .ruby_oracle import (
+    ruby_oracle_available,
+    ruby_oracle_skip_reason,
+    run_ruby_call_oracle,
+    run_ruby_oracle,
+)
 from .rust_oracle import run_rust_call_oracle, run_rust_oracle, rust_available
 from .scala_oracle import run_scala_call_oracle, run_scala_oracle, scala_available
 from .typescript_oracle import (
@@ -22,14 +39,17 @@ from .typescript_oracle import (
     run_typescript_call_oracle,
     run_typescript_oracle,
     typescript_available,
+    typescript_skip_reason,
 )
 
 __all__ = [
+    "NodeOracleUnavailable",
     "cpp_available",
     "run_c_call_oracle",
     "run_cpp_call_oracle",
     "run_cpp_oracle",
     "csharp_oracle_available",
+    "csharp_oracle_skip_reason",
     "run_csharp_call_oracle",
     "run_csharp_oracle",
     "go_available",
@@ -39,12 +59,15 @@ __all__ = [
     "run_java_call_oracle",
     "run_java_oracle",
     "lua_oracle_available",
+    "lua_oracle_skip_reason",
     "ruby_oracle_available",
+    "ruby_oracle_skip_reason",
     "run_ruby_call_oracle",
     "run_ruby_oracle",
     "run_lua_call_oracle",
     "run_lua_oracle",
     "php_oracle_available",
+    "php_oracle_skip_reason",
     "run_php_call_oracle",
     "run_php_oracle",
     "run_rust_call_oracle",
@@ -58,4 +81,5 @@ __all__ = [
     "run_typescript_call_oracle",
     "run_typescript_oracle",
     "typescript_available",
+    "typescript_skip_reason",
 ]

@@ -11,7 +11,10 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_js_graph
-from evals.oracles import run_javascript_oracle, typescript_available
+from evals.oracles import (
+    run_javascript_oracle,
+    typescript_skip_reason,
+)
 from evals.score import score_edge_types
 
 JS_SRC = """\
@@ -75,8 +78,9 @@ function wrap(base) {
 
 
 def _require_js() -> None:
-    if not typescript_available():
-        pytest.skip("node/npm toolchain not available")
+    reason = typescript_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
     if cs.SupportedLanguage.JS not in load_parsers()[0]:
         pytest.skip("javascript parser not available")
 

@@ -16,7 +16,10 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_csharp_graph, extract_cgr_csharp_nodes
-from evals.oracles import csharp_oracle_available, run_csharp_oracle
+from evals.oracles import (
+    csharp_oracle_skip_reason,
+    run_csharp_oracle,
+)
 from evals.score import (
     score_edge_types,
     score_name_edge_types,
@@ -60,8 +63,9 @@ public class Animal { }
 
 
 def _require_csharp() -> None:
-    if not csharp_oracle_available():
-        pytest.skip("dotnet toolchain not available")
+    reason = csharp_oracle_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
     if cs.SupportedLanguage.CSHARP not in load_parsers()[0]:
         pytest.skip("c_sharp parser not available")
 

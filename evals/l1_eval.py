@@ -18,6 +18,8 @@ from loguru import logger
 from codebase_rag import constants as cs
 
 from . import constants as ec
+from . import logs as ls
+from .oracles import NodeOracleUnavailable
 from .score import score_structure
 from .structure_report import render, write_outputs
 from .types_defs import GraphData
@@ -30,6 +32,7 @@ def run_l1_eval(
     *,
     available: Callable[[], bool],
     oracle_missing: str,
+    skip_reason: Callable[[], str | None] | None = None,
     extract_cgr: Callable[[Path, str], GraphData],
     run_oracle: Callable[[Path], GraphData],
     oracle_binary: str,
@@ -50,12 +53,23 @@ def run_l1_eval(
     title: str,
 ) -> None:
     if not available():
+        # Prefer the probe's own reason when the caller can supply one: the
+        # fixed message says "not found on PATH", which is FALSE in the case
+        # that matters -- the binary is there and cannot load the parser
+        # (issue #1639). Fall back to the fixed string for oracles with no
+        # reason probe.
+        #
         # Formatted here, as `extracting_oracle` already is below, because the
         # arm that reports a MISSING toolchain is the one arm that never runs
         # and so is never seen by whoever tested the language (issue #1518).
         # Callers that pre-format, or whose message has no placeholder, are
         # unaffected: `str.format` on a string with no fields is the identity.
-        logger.error(oracle_missing.format(binary=oracle_binary))
+        reason = skip_reason() if skip_reason is not None else None
+        logger.error(
+            ls.ORACLE_UNAVAILABLE.format(reason=reason)
+            if reason
+            else oracle_missing.format(binary=oracle_binary)
+        )
         raise typer.Exit(code=1)
 
     target = target.resolve()
@@ -66,7 +80,18 @@ def run_l1_eval(
     logger.success(cgr_done.format(count=len(cgr.nodes)))
 
     logger.info(extracting_oracle.format(binary=oracle_binary, target=target))
-    oracle = run_oracle(target)
+    try:
+        oracle = run_oracle(target)
+    except NodeOracleUnavailable as unavailable:
+        # The `available()` arm above cannot catch this one. On a clean
+        # checkout the dependencies are not installed when the guard runs, so
+        # it honestly answers "cannot tell yet"; the toolchain's real verdict
+        # only exists once `ensure_node_deps` has fetched them, which happens
+        # inside `run_oracle`. Reported the same way as the arm above rather
+        # than escaping as a traceback: an unavailable toolchain is a result
+        # this command should state, not a crash (issue #1639).
+        logger.error(ls.ORACLE_UNAVAILABLE.format(reason=unavailable))
+        raise typer.Exit(code=1) from unavailable
     logger.success(oracle_done.format(count=len(oracle.nodes)))
 
     result = score_structure(

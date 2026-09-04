@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -28,8 +29,72 @@ _CALLABLE_KINDS = frozenset(
 _DOTNET_ENV = {ec.DOTNET_TELEMETRY_ENV: "1", ec.DOTNET_NOLOGO_ENV: "1"}
 
 
+@lru_cache(maxsize=1)
+def csharp_oracle_skip_reason() -> str | None:
+    """Why the C# oracle cannot run here, or None when it can (issue #1639).
+
+    "dotnet toolchain not installed" is FALSE on the reporting machine: dotnet
+    IS installed there and the build fails with NETSDK1045 because the SDK is
+    too old for the csproj. The issue asks for the captured stderr so the skip
+    line names the real obstacle.
+    """
+    dotnet = shutil.which(ec.DOTNET_BIN)
+    if dotnet is None:
+        return ec.DOTNET_SKIP_NO_BINARY.format(binary=ec.DOTNET_BIN)
+    try:
+        probe = subprocess.run(
+            [dotnet, ec.DOTNET_LIST_SDKS_FLAG],
+            capture_output=True,
+            text=True,
+            encoding=cs.ENCODING_UTF8,
+            check=False,
+            timeout=ec.DOTNET_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return str(e)
+    if probe.returncode != 0:
+        return ec.DOTNET_SKIP_NO_SDKS.format(stderr=(probe.stderr or "").strip())
+    listed = [line for line in probe.stdout.splitlines() if line.strip()]
+    if not any(_sdk_major(line) >= ec.CSHARP_ORACLE_MIN_SDK_MAJOR for line in listed):
+        return ec.DOTNET_SKIP_SDK_TOO_OLD.format(
+            needed=ec.CSHARP_ORACLE_MIN_SDK_MAJOR,
+            found=", ".join(listed) or "none",
+        )
+    try:
+        if not _ensure_built(dotnet):
+            return ec.DOTNET_SKIP_BUILD_INCOMPLETE
+    except subprocess.CalledProcessError as e:
+        return ec.DOTNET_SKIP_BUILD_FAILED.format(
+            stderr=((e.stderr or e.stdout or "").strip())[: ec.SKIP_REASON_STDERR_CHARS]
+        )
+    except subprocess.TimeoutExpired as e:
+        return ec.DOTNET_SKIP_BUILD_TIMEOUT.format(seconds=e.timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        return ec.DOTNET_SKIP_BUILD_FAILED.format(stderr=str(e))
+    return None
+
+
 def csharp_oracle_available() -> bool:
-    return shutil.which(ec.DOTNET_BIN) is not None
+    """Whether the C# oracle can run here (issue #1639).
+
+    Thin wrapper over `csharp_oracle_skip_reason`, which holds the reasoning
+    and the caching, so the two can never disagree about availability and the
+    build is probed once rather than once per caller.
+    """
+    return csharp_oracle_skip_reason() is None
+
+
+def _sdk_major(sdk_line: str) -> int:
+    """Major version from a `dotnet --list-sdks` line, or 0 if unreadable.
+
+    Lines look like `10.0.400 [/usr/share/dotnet/sdk]`. A line this cannot
+    parse must not count as a usable SDK, hence 0 rather than a raise: the
+    caller is a skip guard, and failing it closed costs a skip while failing
+    it open costs the hard failure this exists to prevent.
+    """
+    head = sdk_line.strip().split(ec.DOTNET_SDK_LINE_SEP, 1)[0]
+    major = head.split(".", 1)[0]
+    return int(major) if major.isdigit() else 0
 
 
 def _dll_fresh() -> bool:
@@ -71,6 +136,10 @@ def _ensure_built(dotnet: str) -> bool:
                 text=True,
                 encoding=cs.ENCODING_UTF8,
                 check=True,
+                # Bounded: an unreachable NuGet feed makes `dotnet build`
+                # block indefinitely, and the guard calls this, so a stalled
+                # restore would hang the whole run instead of skipping it.
+                timeout=ec.DOTNET_BUILD_TIMEOUT_S,
                 env={**os.environ, **_DOTNET_ENV},
             )
     finally:
