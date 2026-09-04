@@ -404,6 +404,28 @@ def test_dispatch_literal_is_recorded_only_when_it_is_unique(tmp_path: Path) -> 
     assert locate_dispatch_literal(tmp_path, "app.py", 1, 7, "elsewhere") is None
 
 
+@pytest.mark.parametrize("stored", ["fn = registry[name]", "fn = getattr(obj, name)"])
+def test_a_stored_computed_lookup_called_later_makes_the_edge_unlocatable(
+    tmp_path: Path, stored: str
+) -> None:
+    from codebase_rag.trace.dispatch_site import locate_dispatch_literal
+
+    # `fn = registry[name]; fn()` is a computed dispatch split in two; the
+    # sole literal naming the callee elsewhere in the body is not its site.
+    (tmp_path / "app.py").write_text(
+        "def run(obj, registry, name, other):\n"
+        f"    {stored}\n"
+        '    getattr(other, "target")\n'
+        "    return fn()\n"
+    )
+    assert locate_dispatch_literal(tmp_path, "app.py", 1, 4, "target") is None
+    # Stored from a literal key, the lookup is the site itself.
+    (tmp_path / "plain.py").write_text(
+        'def run(registry):\n    fn = registry["target"]\n    return fn()\n'
+    )
+    assert locate_dispatch_literal(tmp_path, "plain.py", 1, 3, "target") is not None
+
+
 def test_a_nested_callers_literal_is_its_own_and_siblings_do_not_leak(
     tmp_path: Path,
 ) -> None:

@@ -56,6 +56,43 @@ def _is_dispatch_literal(node: Node) -> bool:
     return True
 
 
+def _computed_lookup_target(node: Node) -> str | None:
+    """The name bound by `name = table[key]` or `name = getattr(obj, attr)`
+    with a non-literal key: a dispatch stored for a later call."""
+    if node.type != cs.TS_PY_ASSIGNMENT:
+        return None
+    left = node.child_by_field_name(cs.FIELD_LEFT)
+    right = node.child_by_field_name(cs.FIELD_RIGHT)
+    if left is None or right is None or left.type != cs.TS_PY_IDENTIFIER:
+        return None
+    if right.type == cs.TS_PY_SUBSCRIPT:
+        key = right.child_by_field_name(cs.TS_PY_FIELD_SUBSCRIPT)
+        computed = key is not None and key.type != cs.TS_PY_STRING
+    elif right.type == cs.TS_PY_CALL:
+        func = right.child_by_field_name(cs.FIELD_FUNCTION)
+        args = right.child_by_field_name(cs.FIELD_ARGUMENTS)
+        named = args.named_children if args is not None else []
+        computed = (
+            func is not None
+            and safe_decode_text(func) == cs.PY_BUILTIN_GETATTR
+            and len(named) >= 2
+            and named[1].type != cs.TS_PY_STRING
+        )
+    else:
+        computed = False
+    return safe_decode_text(left) if computed else None
+
+
+def _called_identifier(node: Node) -> str | None:
+    """The bare name a call invokes (`fn()`), if any."""
+    if node.type != cs.TS_PY_CALL:
+        return None
+    func = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_PY_IDENTIFIER:
+        return None
+    return safe_decode_text(func)
+
+
 def _is_computed_dispatch(node: Node) -> bool:
     """`getattr(obj, name)` with a non-literal name, or `table[key](...)`.
 
@@ -128,6 +165,10 @@ def _dispatch_literals(
     # callable whose literals belong to that callable, not to this edge.
     stack: list[tuple[Node, bool]] = [(root, False)]
     found: list[Node] = []
+    # A computed lookup stored in a name (`fn = registry[key]`) and called
+    # later (`fn()`) is a computed dispatch too, just split in two.
+    stored: set[str] = set()
+    called: set[str] = set()
     while stack:
         node, inside_caller = stack.pop()
         if node.end_point[0] + 1 < start_line or node.start_point[0] + 1 > end_line:
@@ -138,7 +179,13 @@ def _dispatch_literals(
             inside_caller = True
         if _is_computed_dispatch(node):
             return None
+        if (target := _computed_lookup_target(node)) is not None:
+            stored.add(target)
+        if (name := _called_identifier(node)) is not None:
+            called.add(name)
         if _literal_text(node) == callee_name and _is_dispatch_literal(node):
             found.append(node)
         stack.extend((child, inside_caller) for child in node.children)
+    if stored & called:
+        return None
     return found
