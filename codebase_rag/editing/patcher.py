@@ -291,7 +291,12 @@ class Patcher:
                 path = self.repo_root / key
                 if not path.is_file():
                     raise PatcherError(cs.PATCH_NO_FILE.format(path=key))
-                self._sources[key] = path.read_bytes()
+                try:
+                    self._sources[key] = path.read_bytes()
+                except OSError as error:
+                    # A file that vanished or became unreadable between the
+                    # check and the read is the same refusal as a missing one.
+                    raise PatcherError(cs.PATCH_NO_FILE.format(path=key)) from error
         return self._sources[key]
 
     def _parser(self, key: str) -> tuple[cs.SupportedLanguage | None, Parser | None]:

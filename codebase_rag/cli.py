@@ -1156,6 +1156,59 @@ def check_command(
 
 
 @app.command(
+    name=ch.CLICommandName.RENAME,
+    help=ch.CMD_RENAME,
+    short_help=ch.CMD_RENAME,
+    epilog=ch.EXAMPLES_RENAME,
+    rich_help_panel=ch.PANEL_USE,
+)
+def rename_command(
+    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    new_name: str = typer.Argument(..., help=ch.HELP_RENAME_NEW_NAME),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+    allow_heuristic: bool = typer.Option(
+        False, "--allow-heuristic", help=ch.HELP_RENAME_ALLOW_HEURISTIC
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+) -> None:
+    from .editing.rename import RenameRefused, rename, sites_for
+    from .graph_cli import _project_and_fetch
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        try:
+            report = rename(
+                repo_path.resolve(),
+                fetch_all,
+                name,
+                qualified_name,
+                new_name,
+                allow_heuristic=allow_heuristic,
+                dry_run=dry_run,
+            )
+        except RenameRefused as refused:
+            typer.echo(str(refused), err=True)
+            for site in sites_for(refused.ambiguous):
+                typer.echo(f"  {site}", err=True)
+            for entry in refused.unlocatable:
+                typer.echo(f"  {entry}", err=True)
+            raise typer.Exit(code=1) from refused
+    payload = dict(report._asdict())
+    payload[cs.KEY_SITES] = sites_for(report.sites)
+    payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT, sort_keys=True))
+    if not report.applied and not dry_run:
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.HELP,
     help=ch.CMD_HELP,
     short_help=ch.CMD_HELP,

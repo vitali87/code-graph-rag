@@ -19,6 +19,8 @@ class MCPToolName(StrEnum):
     OVERRIDES = "overrides"
     IMPORTERS = "importers"
     TESTS_REACHING = "tests_reaching"
+    # Graph-driven edit operations (issue #1532).
+    RENAME = "rename"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -98,6 +100,8 @@ class MCPParamName(StrEnum):
     TARGET = "target"
     DEPTH = "depth"
     MODULE_QN = "module_qualified_name"
+    NEW_NAME = "new_name"
+    ALLOW_HEURISTIC = "allow_heuristic"
 
 
 # MCP server constants
