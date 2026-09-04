@@ -15,6 +15,7 @@ the case the guards were written for.
 from __future__ import annotations
 
 import re
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -44,10 +45,57 @@ _ORACLE_CSPROJ = (
 )
 
 
-def _stub(directory: Path, name: str, body: str) -> None:
-    script = directory / name
-    script.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
-    script.chmod(0o755)
+def _stub(
+    directory: Path,
+    name: str,
+    *,
+    stdout: str = "",
+    stderr: str = "",
+    code: int = 0,
+    fail_when_arg_contains: str | None = None,
+) -> None:
+    """Put a fake `name` on PATH that behaves the same on POSIX and Windows.
+
+    A `#!/bin/sh` script with the executable bit is invisible to Windows:
+    `shutil.which` resolves through PATHEXT, so an extensionless shell script
+    is not found and the guards reported "node is not on PATH" instead of the
+    stubbed verdict -- 8 failures on both Windows jobs, in tests that pass
+    everywhere else.
+
+    The stub is therefore a Python script plus, on Windows, a `.cmd` wrapper
+    that PATHEXT does find. Python rather than batch because the bodies here
+    branch on an argument, and translating that to `.cmd` would be a second
+    implementation to keep in step with the POSIX one.
+
+    `fail_when_arg_contains` reproduces Node 18: the `require()` probe is
+    refused while anything else succeeds. It must discriminate on the
+    ARGUMENT, or a test cannot tell a probe that exercises the breaking call
+    from one that does not.
+    """
+    logic = f"""import sys
+argv = sys.argv[1:]
+needle = {fail_when_arg_contains!r}
+if needle is not None and not any(needle in a for a in argv):
+    sys.exit(0)
+if {stdout!r}:
+    sys.stdout.write({stdout!r} + "\\n")
+if {stderr!r}:
+    sys.stderr.write({stderr!r} + "\\n")
+sys.exit({code!r})
+"""
+    worker = directory / f"{name}_stub.py"
+    worker.write_text(logic, encoding="utf-8")
+    if sys.platform == "win32":
+        # PATHEXT includes .CMD, so this is what `shutil.which` finds.
+        (directory / f"{name}.cmd").write_text(
+            f'@echo off\r\n"{sys.executable}" "{worker}" %*\r\n', encoding="utf-8"
+        )
+    else:
+        launcher = directory / name
+        launcher.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{worker}" "$@"\n', encoding="utf-8"
+        )
+        launcher.chmod(0o755)
 
 
 @pytest.fixture(autouse=True)
@@ -97,14 +145,14 @@ class TestCsharpGuard:
 
         `which` was satisfied here and the build then died with NETSDK1045.
         """
-        _stub(tmp_path, "dotnet", 'echo "8.0.130 [/usr/share/dotnet/sdk]"')
+        _stub(tmp_path, "dotnet", stdout="8.0.130 [/usr/share/dotnet/sdk]")
         monkeypatch.setenv("PATH", str(tmp_path))
         assert csharp_oracle_available() is False
 
     def test_an_sdk_at_least_the_csproj_is_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _stub(tmp_path, "dotnet", 'echo "10.0.400 [/usr/share/dotnet/sdk]"')
+        _stub(tmp_path, "dotnet", stdout="10.0.400 [/usr/share/dotnet/sdk]")
         monkeypatch.setenv("PATH", str(tmp_path))
         assert csharp_oracle_available() is True
 
@@ -112,7 +160,7 @@ class TestCsharpGuard:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # An exact-TFM check would wrongly skip here: SDK 11 builds net10.0.
-        _stub(tmp_path, "dotnet", 'echo "11.0.100 [/usr/share/dotnet/sdk]"')
+        _stub(tmp_path, "dotnet", stdout="11.0.100 [/usr/share/dotnet/sdk]")
         monkeypatch.setenv("PATH", str(tmp_path))
         assert csharp_oracle_available() is True
 
@@ -121,7 +169,7 @@ class TestCsharpGuard:
     ) -> None:
         # `dotnet` exists and runs, but lists no SDKs: the launcher is present
         # for a runtime-only install, which cannot build anything.
-        _stub(tmp_path, "dotnet", "exit 0")
+        _stub(tmp_path, "dotnet")
         monkeypatch.setenv("PATH", str(tmp_path))
         assert csharp_oracle_available() is False
 
@@ -184,12 +232,11 @@ class TestNodeGuard:
         _stub(
             binaries,
             "node",
-            'case "$2" in\n'
-            '  *require*) echo "Error [ERR_REQUIRE_ESM]" >&2; exit 1 ;;\n'
-            "  *) exit 0 ;;\n"
-            "esac",
+            stderr="Error [ERR_REQUIRE_ESM]",
+            code=1,
+            fail_when_arg_contains="require",
         )
-        _stub(binaries, "npm", "exit 0")
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
         assert node_oracle_available(self._oracle(tmp_path, "@ruby/prism")) is False
 
@@ -198,8 +245,8 @@ class TestNodeGuard:
     ) -> None:
         binaries = tmp_path / "bin"
         binaries.mkdir()
-        _stub(binaries, "node", "exit 0")
-        _stub(binaries, "npm", "exit 0")
+        _stub(binaries, "node")
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
         assert node_oracle_available(self._oracle(tmp_path, "@ruby/prism")) is True
 
@@ -213,8 +260,8 @@ class TestNodeGuard:
         """
         binaries = tmp_path / "bin"
         binaries.mkdir()
-        _stub(binaries, "node", "exit 1")
-        _stub(binaries, "npm", "exit 0")
+        _stub(binaries, "node", code=1)
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
         bare = tmp_path / "oracle"
         bare.mkdir()
@@ -297,10 +344,11 @@ class TestGuardCacheLifecycle:
         """
         binaries = tmp_path / "bin"
         binaries.mkdir()
-        node = binaries / "node"
-        node.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        node.chmod(0o755)
-        _stub(binaries, "npm", "exit 0")
+        # Rewritten mid-test below, so it goes through `_stub` both times and
+        # stays portable: a raw `#!/bin/sh` here would be unfindable on
+        # Windows and this test would assert against "node is not on PATH".
+        _stub(binaries, "node", code=1)
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
 
         oracle = tmp_path / "oracle"
@@ -326,8 +374,7 @@ class TestGuardCacheLifecycle:
 
         # And a real success IS remembered, or rule 1 would be satisfied by
         # caching nothing at all.
-        node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        node.chmod(0o755)
+        _stub(binaries, "node")
         assert node_oracle_available(oracle) is True
         assert _REQUIRE_OK, "a successful probe was not cached"
 
@@ -376,7 +423,7 @@ class TestSkipReasons:
     def test_an_old_sdk_reason_names_the_versions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _stub(tmp_path, "dotnet", 'echo "8.0.130 [/usr/share/dotnet/sdk]"')
+        _stub(tmp_path, "dotnet", stdout="8.0.130 [/usr/share/dotnet/sdk]")
         monkeypatch.setenv("PATH", str(tmp_path))
         reason = csharp_oracle_skip_reason()
         assert reason is not None
@@ -406,12 +453,11 @@ class TestSkipReasons:
         _stub(
             binaries,
             "node",
-            'case "$2" in\n'
-            '  *require*) echo "Error [ERR_REQUIRE_ESM]: nope" >&2; exit 1 ;;\n'
-            "  *) exit 0 ;;\n"
-            "esac",
+            stderr="Error [ERR_REQUIRE_ESM]: nope",
+            code=1,
+            fail_when_arg_contains="require",
         )
-        _stub(binaries, "npm", "exit 0")
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
         oracle = tmp_path / "oracle"
         (oracle / ec.NODE_MODULES_DIRNAME).mkdir(parents=True)
@@ -454,12 +500,8 @@ class TestPostInstallRecheck:
         """
         binaries = tmp_path / "bin"
         binaries.mkdir()
-        _stub(
-            binaries,
-            "node",
-            'case "$2" in\n  *require*) exit 1 ;;\n  *) exit 0 ;;\nesac',
-        )
-        _stub(binaries, "npm", "exit 0")
+        _stub(binaries, "node", code=1, fail_when_arg_contains="require")
+        _stub(binaries, "npm")
         monkeypatch.setenv("PATH", str(binaries))
 
         oracle = tmp_path / "oracle"
