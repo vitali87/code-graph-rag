@@ -2696,6 +2696,12 @@ class CallResolver:
                     method_qn=method_qn,
                 )
                 return self.function_registry[method_qn], method_qn
+            # `import pkg.util` is recorded as `pkg -> proj.pkg.util`, so a
+            # call spelled `pkg.util.helper` repeats the module's tail; the
+            # import names the module exactly, so the call is exact too and
+            # must not fall to the name-only trie (issue #1526).
+            if module_qn_hit := self._import_tail_qualified(class_qn, parts, call_name):
+                return module_qn_hit
 
         if local_var_types and class_name in local_var_types:
             var_type = local_var_types[class_name]
@@ -2728,6 +2734,22 @@ class CallResolver:
         return self._resolve_field_hop_method(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _import_tail_qualified(
+        self, class_qn: str, parts: list[str], call_name: str
+    ) -> tuple[str, str] | None:
+        """`parts` re-spells the tail of the imported module `class_qn`."""
+        for cut in range(len(parts) - 1, 1, -1):
+            tail = cs.SEPARATOR_DOT.join(parts[:cut])
+            if class_qn != tail and not class_qn.endswith(cs.SEPARATOR_DOT + tail):
+                continue
+            method_qn = f"{class_qn}.{cs.SEPARATOR_DOT.join(parts[cut:])}"
+            if method_qn in self.function_registry:
+                logger.debug(
+                    ls.CALL_IMPORT_QUALIFIED, call_name=call_name, method_qn=method_qn
+                )
+                return self.function_registry[method_qn], method_qn
+        return None
 
     def _resolve_field_hop_method(
         self,

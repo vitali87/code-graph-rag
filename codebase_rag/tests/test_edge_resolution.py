@@ -159,6 +159,22 @@ def test_a_higher_order_calls_callback_does_not_change_its_own_label(
     assert by_callee["sorted"] == {cs.EdgeResolution.EXACT}
 
 
+def test_a_call_through_a_dotted_module_import_is_exact(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # `import pkg.util` names the module exactly; `pkg.util.helper()` is
+    # bound through that import, not by the name-only trie, so it is exact.
+    (temp_repo / "pkg").mkdir()
+    (temp_repo / "pkg" / "__init__.py").write_text("")
+    (temp_repo / "pkg" / "util.py").write_text("def helper(a, b):\n    return a + b\n")
+    (temp_repo / "pkg" / "app.py").write_text(
+        "import pkg.util\n\n\ndef run():\n    return pkg.util.helper(3, 4)\n"
+    )
+    create_and_run_updater(temp_repo, mock_ingestor)
+    by_callee = _resolutions(mock_ingestor, ".pkg.app.run")
+    assert by_callee["helper"] == {cs.EdgeResolution.EXACT}
+
+
 def test_ambiguous_callee_fans_out_as_overload(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
