@@ -1358,10 +1358,16 @@ class GraphUpdater:
 
         # Before known_module_paths is built from the map: the seed pass only
         # ever adds, so a reused updater carries qns whose Module another
-        # writer has since deleted. A full build re-parses everything and
-        # rebuilds the map from scratch, so it needs no prune.
-        if not force:
-            self._prune_stale_seeded_module_qns()
+        # writer has since deleted.
+        #
+        # A forced run prunes too. It re-parses every file but does NOT clear
+        # the map, so on a reused updater a qn whose Module and file are both
+        # gone survives a full rebuild -- measured, and the reason this is not
+        # gated on `not force`. Nothing this run parsed can be dropped
+        # (`_parsed_files` exempts it) and an unreadable or empty read is
+        # already a no-op, so the first full build of an empty graph is
+        # unaffected.
+        self._prune_stale_seeded_module_qns()
 
         known_module_paths = self._resolve_deferred_definitions(rehydrate=not force)
 

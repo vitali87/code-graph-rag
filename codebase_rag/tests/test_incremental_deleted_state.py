@@ -638,6 +638,38 @@ def test_a_file_parsed_this_run_survives_a_read_that_cannot_see_it(
     assert updater.known_module_paths()["proj.fresh"].endswith("fresh.py")
 
 
+def test_a_forced_run_also_prunes_the_seeded_map(temp_repo: Path) -> None:
+    # A forced run re-parses every file but does NOT clear
+    # module_qn_to_file_path, so on a reused updater a qn whose Module and
+    # file are both gone survives the full rebuild. Gating the prune on
+    # `not force` left exactly that hole.
+    root = temp_repo / "proj"
+    _materialise(
+        root,
+        {
+            "util.py": "def helper():\n    return 1\n",
+            "other.py": "def x():\n    return 1\n",
+        },
+    )
+    store = _StatefulIngestor()
+    updater = _updater(store, root, cs.SupportedLanguage.PYTHON)
+    updater.run(force=True)
+    assert "proj.util" in updater.factory.definition_processor.module_qn_to_file_path
+
+    removed = [key for key in store.nodes if key[1] == "proj.util"]
+    assert removed, "expected a proj.util node to delete"
+    for key in removed:
+        del store.nodes[key]
+    (root / "util.py").unlink()
+
+    updater.run(force=True)
+
+    pruned = updater.factory.definition_processor.module_qn_to_file_path
+    assert "proj.util" not in pruned
+    assert "proj.util" not in updater.known_module_paths()
+    assert "proj.other" in pruned
+
+
 JEDI_CORE = (
     "class Base:\n    def run(self):\n        return 1\n\n\ndef build():\n"
     "    return Base()\n"
