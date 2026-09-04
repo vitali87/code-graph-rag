@@ -1274,6 +1274,48 @@ class TestIncompleteMarkerInvariant:
                 "the marker, so a crash would leave nothing recording it"
             )
 
+    async def test_a_retained_updater_reingest_is_marked_too(
+        self, temp_project_root: Path
+    ) -> None:
+        """The fifth mutating path: reingest through a RETAINED updater.
+
+        Both branches of `_reingest_sync` reach `updater.reingest`, which
+        mutates, but the marker was established only inside the hydrating
+        branch. A reingest through a retained updater therefore ran entirely
+        unmarked, and an interruption left a partially mutated graph a
+        restarted process could not tell from a complete one (#1705 round 6).
+
+        Drives the retained path by leaving `_live_updater` set, which is the
+        state a previous successful call leaves behind.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        retained = MagicMock()
+        retained.reingest.return_value = SimpleNamespace(
+            reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+        )
+        registry._live_updater = retained
+
+        marked_during: list[bool] = []
+        retained.reingest.side_effect = lambda *a, **k: (
+            marked_during.append(ingestor._marker_store.get(project) is True)
+            or SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+        )
+
+        await registry.reingest(["a.py"])
+
+        assert marked_during == [True], (
+            "the retained-updater reingest mutated the graph without the "
+            "durable marker set, so an interruption would leave no record"
+        )
+        assert project not in ingestor._marker_store, (
+            "the marker must be cleared once the reingest completes"
+        )
+
     async def test_a_fresh_scoped_reingest_marks_before_migrating(
         self, temp_project_root: Path
     ) -> None:
