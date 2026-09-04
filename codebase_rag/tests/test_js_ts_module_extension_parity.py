@@ -48,22 +48,28 @@ DECL = "export declare function go(): number;\n"
 def _index(
     files: dict[str, str], exclude_paths: frozenset[str] | None = None
 ) -> _StatefulIngestor:
-    root = Path(tempfile.mkdtemp()) / "proj"
-    root.mkdir(parents=True)
-    for rel, text in files.items():
-        path = root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    store = _StatefulIngestor()
-    parsers, queries = load_parsers()
-    GraphUpdater(
-        ingestor=store,
-        repo_path=root,
-        parsers=parsers,
-        queries=queries,
-        project_name="proj",
-        exclude_paths=exclude_paths,
-    ).run(force=True)
+    # `TemporaryDirectory`, not `mkdtemp`: this helper runs once per
+    # parametrisation and there are twenty-odd of them, so an unremoved tree
+    # per case accumulates in the system temp directory (CodeRabbit, #1728).
+    # The graph is asserted against the in-memory store, which outlives the
+    # directory, so tearing it down at the end of indexing is safe.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "proj"
+        root.mkdir(parents=True)
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        store = _StatefulIngestor()
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+            exclude_paths=exclude_paths,
+        ).run(force=True)
     return store
 
 

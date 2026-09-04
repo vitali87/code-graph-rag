@@ -71,6 +71,38 @@ class ProcessorFactory:
         self._type_inference: TypeInferenceEngine | None = None
         self._call_processor: CallProcessor | None = None
 
+    def propagate_unignore_paths(
+        self, resolved: frozenset[str] | None
+    ) -> tuple[str, ...]:
+        """Push a re-resolved unignore policy to every ALREADY-BUILT processor.
+
+        Generated-source discovery re-resolves this policy per run, and every
+        processor that prunes must prune identically or a sweep reads files the
+        indexer skipped (issue #1088). That propagation used to be two named
+        assignments at the call site, which is an inventory that fails open: a
+        processor added later keeps a stale policy and nothing says so. The
+        declaration tie-break (#1720) became the third consumer and was missed
+        exactly that way (Greptile P1, PR #1728).
+
+        So the consumers are DERIVED from ``__slots__`` rather than listed. A
+        processor built later picks the policy up at construction, because it
+        reads the value updated here.
+
+        Returns the slots updated, so a caller can assert coverage rather than
+        assume it.
+        """
+        self.unignore_paths = resolved
+        updated: list[str] = []
+        for slot in self.__slots__:
+            if not slot.startswith("_"):
+                continue
+            built = getattr(self, slot, None)
+            if built is None or not hasattr(built, "unignore_paths"):
+                continue
+            built.unignore_paths = resolved
+            updated.append(slot)
+        return tuple(updated)
+
     @property
     def import_processor(self) -> ImportProcessor:
         if self._import_processor is None:
