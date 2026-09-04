@@ -352,7 +352,16 @@ def _publish_hash_cache(
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hashes, f, indent=2)
             f.flush()
-            if observed_at is not None:
+            # Stamping through the DESCRIPTOR where the platform allows it,
+            # because a path-based utime can follow a symlink swapped in after
+            # creation. Windows does not: `os.utime` is absent from
+            # `os.supports_fd` there, so passing a descriptor raises
+            # "TypeError: utime: path should be string, bytes or os.PathLike,
+            # not int" and every hash-cache publish fails with it. This host is
+            # POSIX, so the fd branch is the only one exercised locally and the
+            # break was invisible until CI's Windows job ran (#1701 review).
+            stamp_by_fd = os.utime in os.supports_fd
+            if observed_at is not None and stamp_by_fd:
                 os.utime(f.fileno(), (observed_at, observed_at))
             # `flush` only pushes the bytes to the OS. Without the fsync a
             # power loss after `os.replace` can expose a cache file whose
@@ -389,6 +398,14 @@ def _publish_hash_cache(
             raise OSError(
                 f"temporary cache path {tmp_path} was replaced after creation"
             )
+        if observed_at is not None and not stamp_by_fd:
+            # The path branch, for platforms whose `os.utime` takes no
+            # descriptor. Safe here specifically because it runs AFTER the
+            # inode check above: the name has just been confirmed to still be
+            # the file the O_EXCL|O_NOFOLLOW open created, in a directory
+            # whose write permission already grants an attacker the same
+            # outcome without a race (see the argument above `current`).
+            os.utime(tmp_path, (observed_at, observed_at))
         os.replace(tmp_path, cache_path)
         logger.info(ls.HASH_CACHE_SAVED, count=len(hashes), path=cache_path)
         return True
