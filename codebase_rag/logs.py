@@ -890,7 +890,13 @@ MCP_INCOMPLETE_MARKER_FAILED = (
 )
 MCP_INCOMPLETE_MARKER_UNREADABLE = (
     "[GraphCode MCP] Could not read the incomplete-run marker for {project}: "
-    "{error}. Treating the previous run as complete."
+    "{error}. Refusing scoped reingest until it can be read; update_repository "
+    "recovers either way."
+)
+MCP_INCOMPLETE_MARKER_RECOVERED = (
+    "[GraphCode MCP] The incomplete-run marker for {project} was left by a run "
+    "that stopped before its first graph write, so the graph is as that run "
+    "found it; cleared it and continuing."
 )
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."

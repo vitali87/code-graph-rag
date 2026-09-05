@@ -4703,8 +4703,16 @@ class GraphUpdater:
         self,
         paths: Iterable[Path | str],
         deleted: Iterable[Path | str] = (),
+        before_write: Callable[[], None] | None = None,
     ) -> ReingestReport:
         """Re-ingest the given files with file-scoped call resolution.
+
+        `before_write`, when given, runs once at the exact point the read-only
+        prologue ends and the first delete is about to be issued. A caller
+        persisting recovery state uses it to record that the graph is about
+        to change; if it raises, the run aborts as `ReingestAborted` with the
+        graph untouched, the same as any other prologue failure (#1705
+        review).
 
         The batch incremental path already knows how to do this for the
         files a hash walk finds changed: re-parse them plus the files that
@@ -4776,6 +4784,15 @@ class GraphUpdater:
             captured = self._capture_inbound_edges(all_keys)
         except Exception as exc:
             raise ReingestAborted(str(exc)) from exc
+        # The caller's last word before the first write. Still inside the
+        # read-only prologue: a refusal here leaves the graph exactly as it
+        # was, and `reingest_mutated` stays False so the caller classifies
+        # it as "nothing changed".
+        if before_write is not None:
+            try:
+                before_write()
+            except Exception as exc:
+                raise ReingestAborted(str(exc)) from exc
         # Past this point the run WILL issue deletes and writes. Callers that
         # persist recovery state need to know whether a failure left the graph
         # untouched or partial, and classifying by exception TYPE is not

@@ -52,6 +52,7 @@ from codebase_rag.types_defs import (
     MCPInputSchema,
     MCPInputSchemaProperty,
     MCPToolSchema,
+    PropertyValue,
     QueryResultDict,
     ReingestToolResult,
     StructuralReplaceChange,
@@ -784,9 +785,11 @@ class MCPToolsRegistry:
         # Invariant (a). Nothing has been touched yet, so refusing costs
         # nothing; proceeding would leave a half-removed graph a fresh
         # registry cannot tell from a completed delete.
-        if (refusal := self._require_marker(project_name)) is not None:
+        # `writing=False` for the same reason as the index path: the
+        # embedding purge is not a graph write (#1705 review).
+        if (refusal := self._require_marker(project_name, writing=False)) is not None:
             return DeleteProjectErrorResult(success=False, error=refusal)
-        self._cleanup_project_embeddings(project_name)
+        self._cleanup_embeddings_then_begin_writing(project_name)
         self.ingestor.delete_project(project_name)
         # Invariant (b). The marker sits on its own node so `delete_project`
         # cannot reach it -- which is what lets it survive an index's
@@ -872,9 +875,15 @@ class MCPToolsRegistry:
         # stopping here: no graph state has changed yet. That is the opposite
         # of a failed CLEAR, which must not fail a run that already succeeded
         # (#1705 review).
-        if (refusal := self._require_marker(project_name)) is not None:
+        #
+        # `writing=False`: the embedding purge that follows is not a graph
+        # write, so a failure or a crash in it leaves the graph as it was, and
+        # a marker saying so lets a fresh process clear it and carry on rather
+        # than refuse until a full update (#1705 review). The phase advances
+        # to writing immediately before `delete_project`.
+        if (refusal := self._require_marker(project_name, writing=False)) is not None:
             raise RuntimeError(refusal)
-        self._cleanup_project_embeddings(project_name)
+        self._cleanup_embeddings_then_begin_writing(project_name)
         self.ingestor.delete_project(project_name)
 
         self.ingestor.ensure_constraints()
@@ -1014,8 +1023,14 @@ class MCPToolsRegistry:
     # that decide what a marker failure means; call sites choose the failure
     # VALUE, not the policy.
 
-    def _persist_incomplete(self, project_name: str, incomplete: bool) -> bool:
+    def _persist_incomplete(
+        self, project_name: str, incomplete: bool, *, writing: bool = True
+    ) -> bool:
         """Record (or clear) the incomplete-run marker on its own node.
+
+        `writing` is the marker's phase (see `CYPHER_MARK_PROJECT_INCOMPLETE`):
+        False while the run is still doing read-only or graph-external work,
+        True from its first graph write. Ignored when clearing.
 
         `_graph_incomplete` lives on this registry, so it only ever covered
         the process that ran the failed update. A crash or an MCP restart
@@ -1039,13 +1054,14 @@ class MCPToolsRegistry:
         degrades this guard back to the old in-process behaviour and only the
         log would show it.
         """
-        query = (
-            cq.CYPHER_MARK_PROJECT_INCOMPLETE
-            if incomplete
-            else cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
-        )
+        params: dict[str, PropertyValue] = {cs.KEY_PROJECT_NAME: project_name}
+        if incomplete:
+            query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
+            params[cs.KEY_WRITING] = writing
+        else:
+            query = cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
         try:
-            self.ingestor.execute_write(query, {cs.KEY_PROJECT_NAME: project_name})
+            self.ingestor.execute_write(query, params)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_FAILED.format(
@@ -1055,14 +1071,61 @@ class MCPToolsRegistry:
             return False
         return True
 
-    def _require_marker(self, project_name: str) -> str | None:
+    def _require_marker(self, project_name: str, *, writing: bool = True) -> str | None:
         """Invariant (a): mark before destructive work, or refuse to start.
 
         Returns None when the marker is down, or the message to fail with.
+        `writing=False` marks a run that has not yet reached a graph write;
+        it must call `_require_writing` before its first one.
         """
-        if self._persist_incomplete(project_name, True):
+        if self._persist_incomplete(project_name, True, writing=writing):
             return None
         return cs.MCP_INCOMPLETE_MARKER_REQUIRED.format(project=project_name)
+
+    def _require_writing(self, project_name: str) -> str | None:
+        """Invariant (a), second half: say WRITING before the first graph write.
+
+        A run marked `writing=False` has told a fresh process it may clear the
+        marker and carry on. Once this run is about to change the graph that
+        is no longer true, and it must be recorded durably BEFORE the change:
+        if the record cannot be written the run stops here, with the graph
+        untouched and the marker still honest. Returns None or the refusal.
+        """
+        return self._require_marker(project_name, writing=True)
+
+    def _abandon_before_writing(self, project_name: str) -> None:
+        """A run stopped before its first graph write: take its marker off.
+
+        Nothing was written, so the marker is a lie about a run that changed
+        nothing, and left in place it refuses every later scoped reingest
+        until a full update runs. Best effort, never raising: the caller's
+        own error stays primary. A clear that FAILS is logged rather than
+        discarded, and leaves a `writing=False` marker that a later process
+        clears for itself (`_persisted_incomplete`); the local flag follows
+        the durable state through `_require_marker_cleared` (#1705 review).
+        """
+        if self._require_marker_cleared(project_name) is not None:
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(project=project_name)
+            )
+
+    def _cleanup_embeddings_then_begin_writing(self, project_name: str) -> None:
+        """The step between a `writing=False` mark and the first graph write.
+
+        The embedding purge touches the vector store, not the graph, so a
+        failure in it leaves the graph as it was and the marker must come
+        off (or, failing that, stay `writing=False`) rather than strand a
+        fresh process behind a marker for a run that never reached the graph
+        (#1705 review). Then the phase advances, and a refusal there stops
+        the run before anything destructive.
+        """
+        try:
+            self._cleanup_project_embeddings(project_name)
+        except Exception:
+            self._abandon_before_writing(project_name)
+            raise
+        if (refusal := self._require_writing(project_name)) is not None:
+            raise RuntimeError(refusal)
 
     def _require_marker_cleared(self, project_name: str) -> str | None:
         """Invariant (b): a run is complete only once its marker is gone.
@@ -1103,7 +1166,39 @@ class MCPToolsRegistry:
             # which is the failure this guard exists to prevent. An
             # update_repository recovers either way (#1705 review).
             return True
-        return any(bool(row.get("run_incomplete")) for row in rows or [])
+        for row in rows or []:
+            if not row.get("run_incomplete"):
+                continue
+            # The marker's phase decides. A run that reached its first graph
+            # write may have left the graph partial: refuse. One that stopped
+            # before it -- an aborted prologue, a failed embedding purge, a
+            # crash in either -- left the graph as it found it and simply
+            # could not (or did not live to) clear its own marker. That marker
+            # is safe to clear here, and clearing it is what stops a no-write
+            # abort from blocking every later process until someone runs a
+            # full update (#1705 review). An absent phase reads as writing, so
+            # a marker from before the phase existed stays fail-closed.
+            if row.get("writing", True):
+                return True
+            if not self._persist_incomplete(project_name, False):
+                # Could not clear it. The store refused a write, so the run
+                # that would follow could not mark itself either; refuse now
+                # and let the next attempt retry.
+                return True
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
+            )
+        return False
+
+    def _begin_writing_or_refuse(self, project_name: str) -> None:
+        """`before_write` for `GraphUpdater.reingest`: advance the phase or stop.
+
+        Raising here is caught by the updater and re-raised as
+        `ReingestAborted` with the graph untouched, which `_reingest_sync`
+        then classifies as "nothing changed" and clears the marker.
+        """
+        if (refusal := self._require_writing(project_name)) is not None:
+            raise RuntimeError(refusal)
 
     def _updater_for_reingest(self) -> GraphUpdater:
         updater = self._live_updater
@@ -1252,11 +1347,23 @@ class MCPToolsRegistry:
             # hydration branch. An interruption here left a partially mutated
             # graph a restarted process could not tell from a complete one
             # (#1705 review, round 6). Same invariant, fifth path.
-            if (refusal := self._require_marker(project_name)) is not None:
+            #
+            # `writing=False` because the updater's prologue is read-only:
+            # the phase advances through `before_write` below, at the exact
+            # point the updater is about to issue its first delete. Until
+            # then the marker tells a fresh process the graph is untouched
+            # (#1705 review).
+            if (
+                refusal := self._require_marker(project_name, writing=False)
+            ) is not None:
                 raise RuntimeError(refusal)
             marked_here = project_name
         try:
-            report = updater.reingest(paths, deleted=deleted)
+            report = updater.reingest(
+                paths,
+                deleted=deleted,
+                before_write=lambda: self._begin_writing_or_refuse(project_name),
+            )
         except Exception as exc:
             # One classification for every failure, by WHAT HAPPENED rather
             # than by exception type (#1705 review, round 7):
@@ -1290,16 +1397,13 @@ class MCPToolsRegistry:
                 # so every later scoped reingest is refused until a full
                 # update runs, for a run that touched nothing (#1705 review).
                 #
-                # `_require_marker_cleared` already syncs `_graph_incomplete`
-                # to the durable state, so this process stops believing the
-                # graph is clean; the warning it logs is what tells an
-                # operator why later reingests refuse.
-                if self._require_marker_cleared(marked_here) is not None:
-                    logger.warning(
-                        lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(
-                            project=marked_here
-                        )
-                    )
+                # `_abandon_before_writing` syncs `_graph_incomplete` to the
+                # durable state, so this process stops believing the graph is
+                # clean, and the warning it logs is what tells an operator
+                # why later reingests refuse. The marker it could not clear
+                # still says `writing=False`, so a later process clears it
+                # for itself rather than refusing forever (#1705 review).
+                self._abandon_before_writing(marked_here)
             raise
         if marked_here is not None:
             # Invariant (b), same as every other path: the hydration above

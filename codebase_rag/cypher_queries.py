@@ -61,15 +61,27 @@ CYPHER_PROJECT_ROOT_PATH = (
 # Cleared by DELETING the node rather than setting false, so a project indexed
 # before this existed reads exactly like one that completed: absent means
 # complete, and no migration is needed.
+#
+# `writing` is the marker's PHASE. Every mutating path marks before anything
+# destructive, but some of them then do read-only or graph-external work first
+# (a reingest's prologue, the embedding purge before an index or delete) and
+# can stop there -- an abort, a crash, a cleanup failure -- with the graph
+# exactly as it was. A marker from such a run says `writing = false`, and a
+# fresh process may clear it and carry on; one that reached its first graph
+# write says `writing = true` and refuses scoped work until a full update
+# recovers the graph (#1705 review). An absent property reads as `true`: a
+# marker written before the phase existed is treated the fail-closed way.
 CYPHER_MARK_PROJECT_INCOMPLETE = (
-    "MERGE (m:IncompleteRun {project: $project_name}) SET m.run_incomplete = true"
+    "MERGE (m:IncompleteRun {project: $project_name}) "
+    "SET m.run_incomplete = true, m.writing = $writing"
 )
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
 )
 CYPHER_PROJECT_IS_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) "
-    "RETURN coalesce(m.run_incomplete, false) AS run_incomplete"
+    "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
+    "coalesce(m.writing, true) AS writing"
 )
 
 CYPHER_DELETE_PROJECT = """

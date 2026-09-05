@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -545,8 +545,8 @@ class TestReingest:
 
             mock_updater_cls.assert_called_once()
             assert mock_updater.reingest.call_args_list == [
-                call(["a.py"], deleted=[]),
-                call(["a.py"], deleted=["c.py"]),
+                call(["a.py"], deleted=[], before_write=ANY),
+                call(["a.py"], deleted=["c.py"], before_write=ANY),
             ]
             assert first == {
                 "reparsed": ["a.py"],
@@ -594,7 +594,9 @@ class TestReingest:
             await mcp_registry.reingest(["a.py"])
 
             mock_updater_cls.assert_called_once()
-            mock_updater.reingest.assert_called_once_with(["a.py"], deleted=[])
+            mock_updater.reingest.assert_called_once_with(
+                ["a.py"], deleted=[], before_write=ANY
+            )
 
     async def test_reingest_error_is_reported_not_raised(
         self, mcp_registry: MCPToolsRegistry
@@ -878,6 +880,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
         having happened.
         """
         store: dict[str, bool] = {}
+        # The marker's phase, kept beside the marker itself so the existing
+        # `store[name] is True` assertions keep their meaning. Absent reads as
+        # writing, exactly as the production query's `coalesce` does.
+        writing: dict[str, bool] = {}
         ingestor = MagicMock()
 
         # A plain dict, never an attribute on the MagicMock: `getattr` on a
@@ -900,8 +906,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
             if "SET m.run_incomplete" in query:
                 if query.lstrip().startswith("MERGE") or name in store:
                     store[name] = True
+                    writing[name] = bool((params or {}).get(cs.KEY_WRITING, True))
             elif "DELETE m" in query:
                 store.pop(name, None)
+                writing.pop(name, None)
 
         def _read(query: str, params: dict | None = None) -> list[dict]:
             if "run_incomplete" not in query:
@@ -912,7 +920,9 @@ class TestIncompleteMarkerSurvivesTheProcess:
             # A real MATCH returns NO ROWS when the marker node is absent, not
             # a row saying false. Modelling the empty result matters: code that
             # reads rows[0] would pass against a canned false and fail here.
-            return [{"run_incomplete": True}] if store.get(name) else []
+            if not store.get(name):
+                return []
+            return [{"run_incomplete": True, "writing": writing.get(name, True)}]
 
         def _delete_project(name: str) -> None:
             # Models CYPHER_DELETE_PROJECT: it detaches the Project and
@@ -924,6 +934,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.fetch_all.side_effect = _read
         ingestor.delete_project.side_effect = _delete_project
         ingestor._marker_store = store
+        ingestor._writing_store = writing
         ingestor._failing = failing
         return ingestor
 
@@ -1538,3 +1549,274 @@ class TestIncompleteMarkerInvariant:
             "a stuck marker after a no-op abort was not reported, so an "
             f"operator has nothing explaining why reingests refuse: {logged}"
         )
+
+    @pytest.mark.parametrize("path", ["index", "delete"])
+    async def test_a_cleanup_failure_before_graph_work_does_not_strand_a_fresh_process(
+        self, temp_project_root: Path, path: str
+    ) -> None:
+        """The embedding purge is not a graph write; its failure must not block.
+
+        Index and delete mark, then purge the project's embeddings, then
+        delete the project. A purge that raised left the marker behind with
+        the graph untouched, and a fresh process refused every scoped reingest
+        against a complete graph until a full update ran (#1705 review). The
+        fresh registry's reingest below is the process that was wrongly
+        blocked; `delete_project` not being called is what proves the graph
+        was never touched.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        with (
+            patch.object(
+                registry,
+                "_cleanup_project_embeddings",
+                side_effect=RuntimeError("vector store down"),
+            ),
+            patch("codebase_rag.mcp.tools.GraphUpdater"),
+        ):
+            if path == "index":
+                result = str(await registry.index_repository())
+            else:
+                result = str(await registry.delete_project(project))
+
+        assert "vector store down" in result, (
+            f"the cleanup failure must surface as the error: {result}"
+        )
+        assert not ingestor.delete_project.called, (
+            "fixture guard: the graph was touched, so this is not the pre-write case"
+        )
+        assert project not in ingestor._marker_store, (
+            f"{path} left its marker behind after a failure that never reached "
+            "the graph, so a fresh process refuses scoped reingests for nothing"
+        )
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            assert "error" not in await fresh.reingest(["a.py"]), (
+                "a fresh registry refused a scoped reingest after a cleanup "
+                "failure that changed nothing"
+            )
+
+    @pytest.mark.parametrize("path", ["index", "delete", "reingest"])
+    async def test_a_marker_from_a_run_that_never_wrote_is_cleared_by_a_fresh_process(
+        self, temp_project_root: Path, path: str
+    ) -> None:
+        """The durable half of the recovery: the CLEAR failed, the phase saves it.
+
+        A run that stops before its first graph write clears its own marker,
+        but that clear is a write to the same store and can fail too. The
+        marker then stays, and before the phase existed a fresh process could
+        only refuse (#1705 review, the reproduction on this PR). Now the
+        marker says `writing=false`, so the fresh process knows the graph is
+        as the run found it, clears the marker itself and carries on.
+
+        Three ways to stop before the first write, one assertion each.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        if path == "reingest":
+            aborting = MagicMock()
+            aborting.reingest_mutated = False
+            aborting.reingest.side_effect = ReingestAborted("graph read failed")
+            registry._live_updater = aborting
+            result = str(await registry.reingest(["a.py"]))
+        else:
+            with (
+                patch.object(
+                    registry,
+                    "_cleanup_project_embeddings",
+                    side_effect=RuntimeError("vector store down"),
+                ),
+                patch("codebase_rag.mcp.tools.GraphUpdater"),
+            ):
+                if path == "index":
+                    result = str(await registry.index_repository())
+                else:
+                    result = str(await registry.delete_project(project))
+
+        assert "error" in result.lower()
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must have failed and the marker stayed"
+        )
+        assert ingestor._writing_store.get(project) is False, (
+            f"{path} marked itself as writing before it had written anything, "
+            "so a fresh process has no way to tell this from a partial graph"
+        )
+        assert not ingestor.delete_project.called
+
+        # The store is writable again; the marker is still there.
+        ingestor._failing.discard("clear")
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            recovered = await fresh.reingest(["a.py"])
+        assert "error" not in recovered, (
+            "a fresh registry refused after a no-write stop whose clear failed, "
+            f"even though the marker said the graph was untouched: {recovered}"
+        )
+        assert project not in ingestor._marker_store, (
+            "the recovered marker must be gone once the reingest completes"
+        )
+
+    async def test_a_marker_that_says_writing_still_refuses_a_fresh_process(
+        self, temp_project_root: Path
+    ) -> None:
+        """The fail-closed half, and the reason the phase is needed at all.
+
+        Clearing a marker is only safe when its run never wrote. A marker
+        that says `writing=true`, or one from before the phase existed that
+        says nothing, must still refuse -- a version that cleared every
+        stale marker would satisfy the recovery tests above while hydrating a
+        scoped reingest from a partial graph. Both readings are asserted.
+        """
+        for phase in (True, None):
+            ingestor = self._store()
+            registry = self._registry(temp_project_root, ingestor)
+            project = _mark_indexed(registry)
+            ingestor._marker_store[project] = True
+            if phase is not None:
+                ingestor._writing_store[project] = phase
+
+            with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+                result = await registry.reingest(["a.py"])
+            assert "error" in result, (
+                f"a marker with writing={phase} was not refused: {result}"
+            )
+            assert not updater_cls.return_value.reingest.called, (
+                "the refusal must come before any scoped work"
+            )
+            assert ingestor._marker_store.get(project) is True, (
+                f"a marker with writing={phase} was cleared by a process that "
+                "cannot know whether the graph is partial"
+            )
+
+    async def test_the_phase_advances_exactly_before_the_first_write(
+        self, temp_project_root: Path
+    ) -> None:
+        """Drives the REAL `GraphUpdater`: `before_write` runs once, at the seam.
+
+        The MCP tests above preset the phase on doubles; this pins where the
+        updater actually invokes the hook. It must run AFTER the prologue
+        (so a prologue abort never reaches it) and BEFORE the first delete or
+        node write (so a crash at any later point finds `writing=true`), and
+        its failure must abort with the graph untouched.
+        """
+        from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
+        from codebase_rag.parser_loader import load_parsers
+        from codebase_rag.tests.conftest import _MockIngestor
+
+        (temp_project_root / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+        parsers, queries = load_parsers()
+
+        # A hook that refuses: the run aborts, nothing is written.
+        refusing = _MockIngestor()
+        updater = GraphUpdater(
+            ingestor=refusing,
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        with pytest.raises(ReingestAborted, match="store refused"):
+            updater.reingest(
+                ["mod.py"],
+                before_write=lambda: (_ for _ in ()).throw(
+                    RuntimeError("store refused")
+                ),
+            )
+        assert updater.reingest_mutated is False, (
+            "a refused before_write was classified as a mutation"
+        )
+        assert not refusing.ensure_node_batch.called, (
+            "the run wrote nodes after before_write refused"
+        )
+        assert not refusing.execute_write.called, (
+            "the run issued a write after before_write refused"
+        )
+
+        # A hook that records its place in the order of events.
+        order: list[str] = []
+        ingestor = _MockIngestor()
+        ingestor.ensure_node_batch.side_effect = lambda *a, **k: order.append("write")
+        ingestor.execute_write.side_effect = lambda *a, **k: order.append("write")
+        fresh = GraphUpdater(
+            ingestor=ingestor,
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        fresh.reingest(["mod.py"], before_write=lambda: order.append("phase"))
+        assert order.count("phase") == 1, (
+            f"before_write ran {order.count('phase')} times"
+        )
+        assert "write" in order, "fixture guard: the reingest issued no writes at all"
+        assert order.index("phase") < order.index("write"), (
+            f"the phase advanced after the first write: {order[:5]}"
+        )
+
+        # And the prologue abort never reaches the hook.
+        never: list[str] = []
+        aborting = GraphUpdater(
+            ingestor=_MockIngestor(),
+            repo_path=temp_project_root,
+            parsers=parsers,
+            queries=queries,
+        )
+        with patch.object(
+            aborting, "_hydrate_for_reingest", side_effect=RuntimeError("read failed")
+        ):
+            with pytest.raises(ReingestAborted):
+                aborting.reingest(
+                    ["mod.py"], before_write=lambda: never.append("phase")
+                )
+        assert never == [], "before_write ran for a run that aborted in its prologue"
+
+    async def test_a_retained_reingest_is_not_writing_until_the_updater_says_so(
+        self, temp_project_root: Path
+    ) -> None:
+        """The MCP side of the seam: `writing` flips inside `before_write`.
+
+        Mirrors `test_a_retained_updater_reingest_is_marked_too`, which pins
+        that the marker is DOWN during a retained reingest; this pins its
+        phase. A double that invokes the hook it is handed observes the phase
+        before and after, and a run marked writing from the start would fail
+        the first reading.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        phases: list[bool | None] = []
+        retained = MagicMock()
+        retained.reingest_mutated = False
+
+        def _reingest(*_args: object, **kwargs: object) -> SimpleNamespace:
+            phases.append(ingestor._writing_store.get(project))
+            before_write = kwargs["before_write"]
+            assert callable(before_write)
+            before_write()
+            phases.append(ingestor._writing_store.get(project))
+            return SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+
+        retained.reingest.side_effect = _reingest
+        registry._live_updater = retained
+
+        assert "error" not in await registry.reingest(["a.py"])
+        assert phases == [False, True], (
+            "the marker's phase across the updater's before_write hook should "
+            f"read [False, True]: {phases}"
+        )
+        assert project not in ingestor._marker_store
