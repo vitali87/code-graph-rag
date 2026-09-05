@@ -71,9 +71,14 @@ CYPHER_PROJECT_ROOT_PATH = (
 # write says `writing = true` and refuses scoped work until a full update
 # recovers the graph (#1705 review). An absent property reads as `true`: a
 # marker written before the phase existed is treated the fail-closed way.
+# The phase only ever advances: a mark with `writing=false` must not demote a
+# marker another process left at `writing=true` over a graph it had started to
+# change, or that process's abort would clear a guard it does not own (#1705
+# review). Ownership of the DELETE is the remaining half, tracked in #1709.
 CYPHER_MARK_PROJECT_INCOMPLETE = (
     "MERGE (m:IncompleteRun {project: $project_name}) "
-    "SET m.run_incomplete = true, m.writing = $writing"
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing"
 )
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"

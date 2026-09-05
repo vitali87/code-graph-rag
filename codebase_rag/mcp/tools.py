@@ -1110,22 +1110,30 @@ class MCPToolsRegistry:
             )
 
     def _cleanup_embeddings_then_begin_writing(self, project_name: str) -> None:
-        """The step between a `writing=False` mark and the first graph write.
+        """The step between a `writing=False` mark and the first destructive write.
 
-        The embedding purge touches the vector store, not the graph, so a
-        failure in it leaves the graph as it was and the marker must come
-        off (or, failing that, stay `writing=False`) rather than strand a
-        fresh process behind a marker for a run that never reached the graph
-        (#1705 review). Then the phase advances, and a refusal there stops
-        the run before anything destructive.
+        The embedding purge has a READ half and a DELETE half, and the phase
+        advances between them (#1705 review, both directions):
+
+        * Reading the project's node ids touches nothing. A failure there
+          leaves graph and vectors as they were, so the marker comes off (or,
+          failing that, stays `writing=False`) rather than strand a fresh
+          process behind a marker for a run that never changed anything.
+        * Deleting the vectors IS destructive: a scoped reingest restores
+          vectors only for its own paths, so a crash mid-purge followed by a
+          fresh process clearing a `writing=False` marker would leave every
+          unselected path without embeddings. The phase therefore says
+          WRITING before the first vector goes, and a refusal there stops the
+          run with nothing deleted.
         """
         try:
-            self._cleanup_project_embeddings(project_name)
+            node_ids = self._get_project_node_ids(project_name)
         except Exception:
             self._abandon_before_writing(project_name)
             raise
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
+        delete_project_embeddings(project_name, node_ids)
 
     def _require_marker_cleared(self, project_name: str) -> str | None:
         """Invariant (b): a run is complete only once its marker is gone.

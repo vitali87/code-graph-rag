@@ -906,7 +906,11 @@ class TestIncompleteMarkerSurvivesTheProcess:
             if "SET m.run_incomplete" in query:
                 if query.lstrip().startswith("MERGE") or name in store:
                     store[name] = True
-                    writing[name] = bool((params or {}).get(cs.KEY_WRITING, True))
+                    # Monotonic, as the production MERGE is: a later mark can
+                    # raise the phase to writing but never lower it.
+                    writing[name] = writing.get(name, False) or bool(
+                        (params or {}).get(cs.KEY_WRITING, True)
+                    )
             elif "DELETE m" in query:
                 store.pop(name, None)
                 writing.pop(name, None)
@@ -1571,9 +1575,10 @@ class TestIncompleteMarkerInvariant:
         with (
             patch.object(
                 registry,
-                "_cleanup_project_embeddings",
-                side_effect=RuntimeError("vector store down"),
+                "_get_project_node_ids",
+                side_effect=RuntimeError("node id read failed"),
             ),
+            patch("codebase_rag.mcp.tools.delete_project_embeddings") as purge,
             patch("codebase_rag.mcp.tools.GraphUpdater"),
         ):
             if path == "index":
@@ -1581,8 +1586,11 @@ class TestIncompleteMarkerInvariant:
             else:
                 result = str(await registry.delete_project(project))
 
-        assert "vector store down" in result, (
+        assert "node id read failed" in result, (
             f"the cleanup failure must surface as the error: {result}"
+        )
+        assert not purge.called, (
+            "fixture guard: vectors were deleted, so this is not the read-only case"
         )
         assert not ingestor.delete_project.called, (
             "fixture guard: the graph was touched, so this is not the pre-write case"
@@ -1633,9 +1641,10 @@ class TestIncompleteMarkerInvariant:
             with (
                 patch.object(
                     registry,
-                    "_cleanup_project_embeddings",
-                    side_effect=RuntimeError("vector store down"),
+                    "_get_project_node_ids",
+                    side_effect=RuntimeError("node id read failed"),
                 ),
+                patch("codebase_rag.mcp.tools.delete_project_embeddings"),
                 patch("codebase_rag.mcp.tools.GraphUpdater"),
             ):
                 if path == "index":
@@ -1834,3 +1843,105 @@ class TestIncompleteMarkerInvariant:
             f"read [False, True]: {phases}"
         )
         assert project not in ingestor._marker_store
+
+    @pytest.mark.parametrize("path", ["index", "delete"])
+    async def test_the_vector_purge_runs_only_once_the_marker_says_writing(
+        self, temp_project_root: Path, path: str
+    ) -> None:
+        """The purge is destructive, so it sits AFTER the phase advance.
+
+        A scoped reingest restores vectors only for its own paths. If the
+        purge ran while the marker still said `writing=false`, a crash
+        mid-purge followed by a fresh process clearing that marker would leave
+        every unselected path without embeddings and nothing recording it
+        (#1705 review). Asserts the ORDER, because after a success both have
+        happened either way, and asserts a purge failure keeps the marker at
+        writing so the next process refuses until a full update restores them.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        phase_at_purge: list[bool | None] = []
+
+        def _purge(*_args: object, **_kwargs: object) -> None:
+            phase_at_purge.append(ingestor._writing_store.get(project))
+            raise RuntimeError("purge died half way")
+
+        with (
+            patch(
+                "codebase_rag.mcp.tools.delete_project_embeddings", side_effect=_purge
+            ),
+            patch("codebase_rag.mcp.tools.GraphUpdater"),
+        ):
+            if path == "index":
+                result = str(await registry.index_repository())
+            else:
+                result = str(await registry.delete_project(project))
+
+        assert "purge died half way" in result
+        assert phase_at_purge == [True], (
+            f"the vector purge ran with the marker's phase at {phase_at_purge}, "
+            "so a crash inside it would be cleared as a no-write stop"
+        )
+        assert ingestor._marker_store.get(project) is True
+        assert ingestor._writing_store.get(project) is True, (
+            "a failed purge left the marker at writing=false, so a fresh process "
+            "would clear it over a half-purged vector store"
+        )
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "error" in await fresh.reingest(["a.py"]), (
+                "a fresh registry accepted scoped work over a half-purged store"
+            )
+
+    async def test_a_no_write_mark_cannot_demote_another_runs_writing_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The phase is monotonic across processes.
+
+        Process A marks writing and starts changing the graph; process B's
+        retained reingest marks the same project `writing=false` and aborts
+        before writing. B's mark must not lower A's phase: a fresh process C
+        reading `writing=false` would clear the marker and hydrate from A's
+        partial graph (#1705 review). Whether B's CLEAR may delete A's marker
+        at all is the ownership question tracked in #1709; this pins the half
+        that a phase-monotonic mark closes.
+        """
+        ingestor = self._store()
+        a = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(a)
+        assert a._require_marker(project, writing=True) is None
+        assert ingestor._writing_store.get(project) is True
+
+        b = self._registry(temp_project_root, ingestor)
+        _mark_indexed(b)
+        assert b._require_marker(project, writing=False) is None
+        assert ingestor._writing_store.get(project) is True, (
+            "a writing=false mark demoted a marker another run left at writing"
+        )
+
+        c = self._registry(temp_project_root, ingestor)
+        _mark_indexed(c)
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "error" in await c.reingest(["a.py"]), (
+                "a fresh registry cleared a marker over a graph another run is "
+                "still changing"
+            )
+
+    def test_the_mark_query_never_lowers_the_phase(self) -> None:
+        """Pins the production Cypher the fake store models.
+
+        The fake's monotonic phase is only faithful while the MERGE reads the
+        existing value back; a `SET m.writing = $writing` would demote another
+        run's marker and the fake would not notice. The query text is the one
+        place that can be asserted without a live store.
+        """
+        from codebase_rag import cypher_queries as cq
+
+        assert "coalesce(m.writing, false) OR $writing" in (
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE
+        )
+        assert "m.writing = $writing" not in cq.CYPHER_MARK_PROJECT_INCOMPLETE
