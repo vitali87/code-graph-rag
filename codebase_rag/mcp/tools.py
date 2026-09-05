@@ -1144,9 +1144,11 @@ class MCPToolsRegistry:
 
         An absent property means complete, so a project indexed before this
         marker existed reads exactly like one whose run finished and no
-        migration is needed. A store that cannot answer returns False rather
-        than blocking every reingest on an unreadable graph; the not-indexed
-        guard and the in-process flag both still apply.
+        migration is needed. A store that cannot answer returns True: "I
+        cannot tell" and "the last run finished" are different answers and
+        only refusing is safe to act on; update_repository recovers either
+        way (#1705 review). A marker whose run never reached a graph write
+        (`writing=false`) is cleared here and does not refuse.
         """
         try:
             rows = self.ingestor.fetch_all(

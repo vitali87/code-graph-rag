@@ -1708,19 +1708,31 @@ class TestIncompleteMarkerInvariant:
         """Drives the REAL `GraphUpdater`: `before_write` runs once, at the seam.
 
         The MCP tests above preset the phase on doubles; this pins where the
-        updater actually invokes the hook. It must run AFTER the prologue
-        (so a prologue abort never reaches it) and BEFORE the first delete or
-        node write (so a crash at any later point finds `writing=true`), and
-        its failure must abort with the graph untouched.
+        updater actually invokes the hook. It must run AFTER the prologue (so
+        a prologue abort never reaches it) and BEFORE the first delete or
+        content write (so a crash at any later point finds `writing=true`),
+        and its failure must abort with the graph as it was.
+
+        The fixture has a PACKAGE, not a flat file, on purpose: on a fresh
+        updater the prologue's structure hydration re-emits the Package node
+        before the hook (idempotent, and identical to what any run writes),
+        so a flat layout would let an assertion on "any node write" pass
+        without exercising the claim (#1705 local review). The seam is the
+        first `execute_write` -- the delete of the re-parsed module -- and
+        that is what is ordered against here.
         """
         from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
         from codebase_rag.parser_loader import load_parsers
         from codebase_rag.tests.conftest import _MockIngestor
 
-        (temp_project_root / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
+        pkg = temp_project_root / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("", encoding="utf-8")
+        (pkg / "mod.py").write_text("def f(): pass\n", encoding="utf-8")
         parsers, queries = load_parsers()
 
-        # A hook that refuses: the run aborts, nothing is written.
+        # A hook that refuses: the run aborts, nothing is deleted or written
+        # beyond the idempotent structure upserts.
         refusing = _MockIngestor()
         updater = GraphUpdater(
             ingestor=refusing,
@@ -1730,7 +1742,7 @@ class TestIncompleteMarkerInvariant:
         )
         with pytest.raises(ReingestAborted, match="store refused"):
             updater.reingest(
-                ["mod.py"],
+                ["pkg/mod.py"],
                 before_write=lambda: (_ for _ in ()).throw(
                     RuntimeError("store refused")
                 ),
@@ -1738,17 +1750,19 @@ class TestIncompleteMarkerInvariant:
         assert updater.reingest_mutated is False, (
             "a refused before_write was classified as a mutation"
         )
-        assert not refusing.ensure_node_batch.called, (
-            "the run wrote nodes after before_write refused"
-        )
         assert not refusing.execute_write.called, (
-            "the run issued a write after before_write refused"
+            "the run issued a delete or write after before_write refused"
+        )
+        written_labels = {
+            call.args[0] for call in refusing.ensure_node_batch.call_args_list
+        }
+        assert cs.NodeLabel.FUNCTION not in written_labels, (
+            "a definition was written after before_write refused"
         )
 
         # A hook that records its place in the order of events.
         order: list[str] = []
         ingestor = _MockIngestor()
-        ingestor.ensure_node_batch.side_effect = lambda *a, **k: order.append("write")
         ingestor.execute_write.side_effect = lambda *a, **k: order.append("write")
         fresh = GraphUpdater(
             ingestor=ingestor,
@@ -1756,13 +1770,13 @@ class TestIncompleteMarkerInvariant:
             parsers=parsers,
             queries=queries,
         )
-        fresh.reingest(["mod.py"], before_write=lambda: order.append("phase"))
+        fresh.reingest(["pkg/mod.py"], before_write=lambda: order.append("phase"))
         assert order.count("phase") == 1, (
             f"before_write ran {order.count('phase')} times"
         )
         assert "write" in order, "fixture guard: the reingest issued no writes at all"
         assert order.index("phase") < order.index("write"), (
-            f"the phase advanced after the first write: {order[:5]}"
+            f"the phase advanced after the first delete or write: {order[:5]}"
         )
 
         # And the prologue abort never reaches the hook.
@@ -1778,7 +1792,7 @@ class TestIncompleteMarkerInvariant:
         ):
             with pytest.raises(ReingestAborted):
                 aborting.reingest(
-                    ["mod.py"], before_write=lambda: never.append("phase")
+                    ["pkg/mod.py"], before_write=lambda: never.append("phase")
                 )
         assert never == [], "before_write ran for a run that aborted in its prologue"
 

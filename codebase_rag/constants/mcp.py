@@ -132,7 +132,7 @@ MCP_INCOMPLETE_MARKER_STUCK = (
     "index or update retries the removal; check the graph store is writable."
 )
 MCP_INCOMPLETE_MARKER_REQUIRED = (
-    "Refusing to index or update {project}: the incomplete-run marker could "
+    "Refusing to change the graph of {project}: the incomplete-run marker could "
     "not be written. Without it a crash part way through would leave a "
     "partial graph that a fresh process cannot recognise, and a later scoped "
     "reingest would treat it as authoritative. Check the graph store is "

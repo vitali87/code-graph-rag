@@ -4707,12 +4707,16 @@ class GraphUpdater:
     ) -> ReingestReport:
         """Re-ingest the given files with file-scoped call resolution.
 
-        `before_write`, when given, runs once at the exact point the read-only
-        prologue ends and the first delete is about to be issued. A caller
-        persisting recovery state uses it to record that the graph is about
-        to change; if it raises, the run aborts as `ReingestAborted` with the
-        graph untouched, the same as any other prologue failure (#1705
-        review).
+        `before_write`, when given, runs once at the exact point the prologue
+        ends and the first DELETE or content write is about to be issued. A
+        caller persisting recovery state uses it to record that the graph is
+        about to change; if it raises, the run aborts as `ReingestAborted`
+        with the graph as it was, the same as any other prologue failure
+        (#1705 review). "As it was" rather than "untouched": on a fresh
+        updater the prologue's structure hydration re-emits Package and
+        Folder upserts, which are idempotent and change nothing a later run
+        would not write identically; nothing is deleted and no definition is
+        written before the hook.
 
         The batch incremental path already knows how to do this for the
         files a hash walk finds changed: re-parse them plus the files that
