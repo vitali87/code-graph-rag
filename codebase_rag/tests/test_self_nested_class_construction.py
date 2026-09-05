@@ -95,9 +95,11 @@ class TestSelfNestedClassConstruction:
         # The other half: removing the bad edge must not remove the good ones.
         create_and_run_updater(nested_project, mock_ingestor)
         assert (
-            "selfnested.m.Outer.make_optional",
+            "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner",
         ) in _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
+        edges = _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
+        assert ("selfnested.m.Outer.make_optional", "selfnested.m.Outer.Inner") in edges
         assert (
             "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner.__init__",
