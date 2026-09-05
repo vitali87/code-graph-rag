@@ -59,7 +59,7 @@ class Outer:
     def make(self):
         return self.Inner(1)
 
-
+    def make_optional(o: Outer | None): return o.Inner(1)
 class Base:
     def render(self):
         return "base"
@@ -95,7 +95,7 @@ class TestSelfNestedClassConstruction:
         # The other half: removing the bad edge must not remove the good ones.
         create_and_run_updater(nested_project, mock_ingestor)
         assert (
-            "selfnested.m.Outer.make",
+            "selfnested.m.Outer.make_optional",
             "selfnested.m.Outer.Inner",
         ) in _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
         assert (

@@ -491,7 +491,7 @@ class CallResolver:
         var_type = local_var_types.get(head)
         if not var_type:
             return False
-        typed_qn = self._resolve_class_name(var_type, module_qn)
+        typed_qn = self._resolve_class_name(self._strip_optional(var_type), module_qn)
         return bool(
             typed_qn
             and self.function_registry.get(typed_qn) == cs.NodeLabel.CLASS
