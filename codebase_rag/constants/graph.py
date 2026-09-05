@@ -48,6 +48,39 @@ KEY_END_LINE = "end_line"
 KEY_LINE = "line"
 # Fixed-Cypher parameter names for the deterministic graph queries (#1523).
 KEY_QN = "qn"
+# How a CALLS/REFERENCES/INSTANTIATES edge was resolved (issue #1526).
+KEY_RESOLUTION = "resolution"
+KEY_UNLOCATABLE = "unlocatable"
+KEY_DISPATCH_LITERAL = "dispatch_literal"
+
+
+class EdgeResolution(StrEnum):
+    """Confidence of a call/reference edge, set where it is emitted.
+
+    `exact`: the resolver bound the target through scope, import, type or
+    signature. `overload`: one edge per same-named candidate. `heuristic`:
+    a name-only match (trie suffix, wildcard import, package member).
+    `trace_confirmed`: a static edge a runtime trace observed. `dynamic`: a
+    call only a trace saw, with the dispatch literal's site when found.
+    """
+
+    EXACT = "exact"
+    OVERLOAD = "overload"
+    HEURISTIC = "heuristic"
+    TRACE_CONFIRMED = "trace_confirmed"
+    DYNAMIC = "dynamic"
+
+
+# Ordering for `--min-resolution`: an edge with no label is a legacy static
+# edge and ranks as exact; a trace-only edge ranks with the confirmed ones,
+# a runtime having observed it.
+RESOLUTION_RANK: dict[str, int] = {
+    EdgeResolution.HEURISTIC: 1,
+    EdgeResolution.OVERLOAD: 2,
+    EdgeResolution.EXACT: 3,
+    EdgeResolution.DYNAMIC: 4,
+    EdgeResolution.TRACE_CONFIRMED: 4,
+}
 KEY_SUFFIX = "suffix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"

@@ -494,6 +494,9 @@ class DeadCodeConfig(NamedTuple):
     entry_points: tuple[str, ...]
     test_patterns: tuple[str, ...]
     exclude_patterns: tuple[str, ...] = ()
+    # Drop CALLS/REFERENCES edges below this confidence before the walk
+    # (issue #1526); None keeps every edge.
+    min_resolution: str | None = None
 
 
 class AstFingerprintResult(NamedTuple):
@@ -955,7 +958,7 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
             RelationshipType.INSTANTIATES,
         ),
         "{line: int?, col: int?, end_line: int?, end_col: int?, "
-        "arg_count: int?, kwarg_names: list[string]?}",
+        "arg_count: int?, kwarg_names: list[string]?, resolution: string?, unlocatable: boolean?, dispatch_literal: boolean?}",
     ),
     RelationshipPropertySchema(
         (RelationshipType.IMPORTS,),

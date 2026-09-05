@@ -1327,6 +1327,7 @@ def _dead_code_config(
     include_classes: bool,
     entry_points: list[str],
     decorator_roots: list[str],
+    min_resolution: cs.EdgeResolution | None = None,
 ) -> DeadCodeConfig:
     # test_patterns is always set: included tests become roots; excluded, it
     # filters test modules out of module-load roots so test-only code stays dead.
@@ -1339,6 +1340,7 @@ def _dead_code_config(
         ),
         entry_points=tuple(entry_points),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),
+        min_resolution=str(min_resolution) if min_resolution is not None else None,
     )
 
 
@@ -1486,6 +1488,9 @@ def dead_code(
     fail_on_found: bool = typer.Option(
         False, "--fail-on-found", help=ch.HELP_DEADCODE_FAIL_ON_FOUND
     ),
+    min_resolution: cs.EdgeResolution | None = typer.Option(
+        None, "--min-resolution", help=ch.HELP_DEADCODE_MIN_RESOLUTION
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
@@ -1507,7 +1512,11 @@ def dead_code(
                     ingestor,
                     resolved,
                     _dead_code_config(
-                        include_tests, include_classes, entry_point, decorator_root
+                        include_tests,
+                        include_classes,
+                        entry_point,
+                        decorator_root,
+                        min_resolution,
                     ),
                 )
     except Exception as e:

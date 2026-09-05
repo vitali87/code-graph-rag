@@ -78,6 +78,7 @@ class CallSiteRow(TypedDict):
     end_col: int | None
     arg_count: int | None
     kwarg_names: list[str] | None
+    resolution: str | None
     depth: int
     through: str
 
@@ -276,6 +277,7 @@ def _site_row(row: ResultRow, depth: int, through: str) -> CallSiteRow:
         end_col=_opt_int(row.get(cs.KEY_END_COL)),
         arg_count=_opt_int(row.get(cs.KEY_ARG_COUNT)),
         kwarg_names=[str(k) for k in kwargs] if isinstance(kwargs, list) else None,
+        resolution=_opt_str(row.get(cs.KEY_RESOLUTION)),
         depth=depth,
         through=through,
     )
