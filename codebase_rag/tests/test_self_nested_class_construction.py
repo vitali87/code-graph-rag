@@ -59,7 +59,7 @@ class Outer:
     def make(self):
         return self.Inner(1)
 
-
+    def make_optional(o: Outer | None): return o.Inner(1)
 class Base:
     def render(self):
         return "base"
@@ -98,6 +98,8 @@ class TestSelfNestedClassConstruction:
             "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner",
         ) in _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
+        edges = _source_target_pairs(mock_ingestor, RelationshipType.INSTANTIATES)
+        assert ("selfnested.m.Outer.make_optional", "selfnested.m.Outer.Inner") in edges
         assert (
             "selfnested.m.Outer.make",
             "selfnested.m.Outer.Inner.__init__",
