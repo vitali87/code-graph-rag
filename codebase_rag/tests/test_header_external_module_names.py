@@ -174,3 +174,54 @@ def test_the_header_rule_does_not_rename_other_languages_externals() -> None:
     assert _external_module_name("a.b.h") == "h", (
         "the header rule reached a qn that carries no std. include prefix"
     )
+
+
+def test_a_removed_module_declaration_does_not_suppress_a_later_include_edge(
+    temp_repo: Path,
+) -> None:
+    """A stale declaration exemption must not veto a real include (#1758).
+
+    `_cpp_declaration_mappings` records `(module_qn, full_name)` for an
+    `export module X;` so the main edge loop does not emit a self-import. The
+    shadowed-include sweep reads that same set, and it matches on the RESOLVED
+    qn rather than on the declaration binding -- so an exemption left behind
+    by a re-parse that REMOVED the declaration can suppress a genuine
+    include's edge. Before the sweep existed the stale entry was inert,
+    because it only ever matched the binding it came from, which was gone.
+
+    Drives `parse_imports` twice on ONE processor, because that is the only
+    way to reach it: every test using `run_updater` gets a fresh
+    `ImportProcessor`, so the per-module clear is unobservable there and the
+    whole file stayed green with the clear removed.
+    """
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    processor = ImportProcessor(repo_path=temp_repo, project_name="proj")
+    module_qn = "proj.m"
+
+    def parse(source: str) -> None:
+        tree = parsers[cs.SupportedLanguage.CPP].parse(source.encode())
+        processor.parse_imports(
+            tree.root_node, module_qn, cs.SupportedLanguage.CPP, queries
+        )
+
+    # v1 declares module `foo`, registering the exemption.
+    parse("export module foo;\n")
+    assert (module_qn, "proj.foo") in processor._cpp_declaration_mappings, (
+        "fixture guard: the declaration must register an exemption, or there "
+        "is no stale entry for the re-parse to leave behind"
+    )
+
+    # v2 removes the declaration and includes two headers that bind the same
+    # local name `foo`, so the first is displaced and only the sweep carries
+    # its edge. `foo.h` resolves to `proj.foo` -- the very qn the stale
+    # exemption names.
+    parse('#include "foo.h"\n#include "sub/foo.h"\n')
+    assert (module_qn, "proj.foo") not in processor._cpp_declaration_mappings, (
+        "the removed declaration's exemption survived the re-parse, so the "
+        "sweep will veto the include that resolves to the same qn"
+    )
