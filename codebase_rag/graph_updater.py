@@ -4734,6 +4734,15 @@ class GraphUpdater:
             # the containment gate that spares out-of-repo File and Folder
             # rows never runs for them.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
+            # The two sweeps below still run. Unlike the path-keyed loop they
+            # take no path and no project: each deletes only nodes with zero
+            # inbound edges, so a partial walk cannot make them over-delete.
+            # And a single-file run DOES orphan them -- it deletes and
+            # re-ingests its target's entities, which is exactly what strands
+            # an ExternalModule whose import was removed or a Resource whose
+            # endpoint was (#1756 review).
+            self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+            prune_unanchored_resources(self.ingestor)
             return
 
         logger.info(ls.PRUNE_START)

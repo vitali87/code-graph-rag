@@ -670,3 +670,59 @@ class TestSingleFileRunScope:
             "a single-file run on a file in a subdirectory pruned modules it "
             f"was never asked about: {sorted(swept)}"
         )
+
+    def test_a_single_file_run_still_sweeps_the_edgeless_orphans(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """Skipping the path-keyed prune must not skip these two (#1756).
+
+        `CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES` and
+        `prune_unanchored_resources` take no path and no project: each deletes
+        only nodes with zero inbound edges, so a partial walk cannot make them
+        over-delete, and the "cannot speak for the project" reasoning that
+        justifies the guard does not reach them.
+
+        They are also exactly what a single-file run orphans. It deletes and
+        re-ingests its target's entities, so an import or an endpoint removed
+        from that one file strands an ExternalModule or a Resource that
+        nothing else will ever collect -- `deleted_keys` is guarded off for
+        these runs too.
+
+        Asserts the queries are ISSUED rather than their effect, because the
+        fake store holds no edges to make a node orphaned in the first place.
+        """
+        repo = self._nested_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        second = _MockIngestor()
+        GraphUpdater(
+            ingestor=second,
+            repo_path=repo / "pkg" / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+            project_name="nested",
+        ).run()
+
+        issued = {
+            call.args[0] for call in second.execute_write.call_args_list if call.args
+        }
+        assert cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES in issued, (
+            "the single-file guard skipped the external-module sweep, so an "
+            "import removed from the target's own file strands its "
+            "ExternalModule with nothing left to collect it"
+        )
+        from codebase_rag.services.resource_cleanup import (
+            CYPHER_DELETE_UNANCHORED_RESOURCES,
+        )
+
+        assert CYPHER_DELETE_UNANCHORED_RESOURCES in issued, (
+            "the single-file guard skipped the unanchored-resource sweep, so "
+            "an endpoint removed from the target's own file strands its "
+            "Resource node"
+        )
