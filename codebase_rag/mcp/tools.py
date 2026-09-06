@@ -103,6 +103,10 @@ class MCPToolsRegistry:
         # scoped reingest must not hydrate from, because it would treat the
         # missing and stale definitions as authoritative.
         self._graph_incomplete = False
+        # Set when `_persisted_incomplete` clears a recoverable marker, so the
+        # in-process flag can follow the durable state out of a wedged refusal
+        # without discarding a failure only this process knows about (#1705).
+        self._marker_recovered = False
 
         self.parsers, self.queries = load_parsers()
 
@@ -1195,6 +1199,7 @@ class MCPToolsRegistry:
                 # that would follow could not mark itself either; refuse now
                 # and let the next attempt retry.
                 return True
+            self._marker_recovered = True
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
             )
@@ -1282,7 +1287,25 @@ class MCPToolsRegistry:
         # that earned it: with no retained updater this may be a fresh
         # registry after a crash, where `_graph_incomplete` is False
         # because nothing in THIS process failed (issue #1679).
-        if self._graph_incomplete or self._persisted_incomplete(project_name):
+        # The durable check runs FIRST and unconditionally, because
+        # `_persisted_incomplete` is also what CLEARS a recoverable
+        # `writing=false` marker. Short-circuiting on `_graph_incomplete`
+        # skipped that recovery: after a read-only abort whose marker clear
+        # failed transiently, `_require_marker_cleared` left the flag True and
+        # this process refused every later scoped reingest, even once the
+        # store became writable again, until a full update or a restart
+        # (#1705 review).
+        #
+        # Its answer does NOT override the local flag, it joins it. The flag
+        # can be the only evidence there is: a failure that could not persist
+        # a marker at all leaves the durable state clean while this process
+        # knows the graph is partial, and dropping the flag would accept
+        # scoped work over it. The flag is cleared only when the recovery
+        # above actually cleared the marker, which is exactly the wedged case.
+        persisted_incomplete = self._persisted_incomplete(project_name)
+        if not persisted_incomplete and self._marker_recovered:
+            self._graph_incomplete = False
+        if self._graph_incomplete or persisted_incomplete:
             raise ValueError(
                 cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
             )

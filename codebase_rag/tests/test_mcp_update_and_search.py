@@ -1931,6 +1931,50 @@ class TestIncompleteMarkerInvariant:
                 "still changing"
             )
 
+    async def test_a_transient_clear_failure_does_not_wedge_the_process(
+        self, temp_project_root: Path
+    ) -> None:
+        """A recoverable marker must not be masked by the in-process flag.
+
+        A read-only scoped reingest aborts and its marker clear fails because
+        the store is momentarily unwritable, so `_require_marker_cleared` sets
+        `_graph_incomplete`. The marker it left behind is `writing=false`, the
+        recoverable kind that `_persisted_incomplete` clears on sight. But the
+        refusal short-circuited on the local flag, so that recovery never ran
+        and THIS process refused every later scoped reingest until a full
+        update or a restart, long after the store became writable again
+        (#1705 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A no-write run: marked at writing=false, then its clear is refused.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        assert registry._graph_incomplete is True, (
+            "fixture guard: a failed clear must set the in-process flag"
+        )
+        assert ingestor._writing_store.get(project) is False, (
+            "fixture guard: the stranded marker must be the recoverable kind"
+        )
+
+        # The store recovers.
+        ingestor._failing.discard("clear")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = str(await registry.reingest(["a.py"]))
+        assert "error" not in result, (
+            "the same process still refused scoped reingest after the store "
+            f"recovered and the marker was clearable: {result}"
+        )
+        assert registry._graph_incomplete is False, (
+            "the in-process flag was not healed from the durable state"
+        )
+
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
         """Pins the production Cypher the fake store models.
 
