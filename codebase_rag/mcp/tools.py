@@ -1443,6 +1443,16 @@ class MCPToolsRegistry:
                 self._live_updater = None
                 self._graph_incomplete = True
                 # Not a stranded marker: this flag must not be healed by one.
+                #
+                # Defensive here, unlike the other four sites, and no test
+                # can discriminate it: `reingest_mutated` is only set after
+                # `before_write()`, so this project's own marker is already
+                # `writing=true` by now and `_persisted_incomplete` refuses
+                # on its own account whatever the attribution says. Kept so
+                # the invariant "a flag no marker explains carries no
+                # attribution" holds at every site rather than at the four
+                # that happen to be observable -- a later change to when the
+                # marker is promoted would otherwise make this the one hole.
                 self._flag_from_failed_clear = None
             elif marked_here is not None:
                 # Nothing was written, so the marker this call created is a

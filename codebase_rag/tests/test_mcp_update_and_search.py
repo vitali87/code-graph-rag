@@ -2025,19 +2025,72 @@ class TestIncompleteMarkerInvariant:
             f"marker-less failure earned: {result}"
         )
 
+    @staticmethod
+    async def _fail_without_writing_a_marker(
+        registry: MCPToolsRegistry, ingestor: MagicMock, path: str
+    ) -> None:
+        """Drive one marker-less failure path to its `_graph_incomplete = True`.
+
+        Each branch fails a DIFFERENT tool, because each sets the flag at its
+        own site and the attribution has to be dropped at all five. The
+        failures are the ones the tests above already pin as flag-setting;
+        this only reuses their driving mechanism.
+        """
+        if path == "wipe":
+            ingestor.clean_database.side_effect = RuntimeError("wipe died")
+            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+                await registry.wipe_database(confirm=True)
+            ingestor.clean_database.side_effect = None
+        elif path == "delete":
+            # A delete of ANOTHER project that dies part way. It must fail:
+            # `_delete_project_sync` marks before its first write but clears
+            # the flag again when it completes, so a successful delete tests
+            # nothing. The target is deliberately not this project, which is
+            # what makes the failure marker-less for the project under test.
+            ingestor.list_projects.return_value = ["other"]
+            ingestor.delete_project.side_effect = RuntimeError("delete died")
+            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+                await registry.delete_project("other")
+            ingestor.delete_project.side_effect = None
+        elif path == "index":
+            ingestor.delete_project.side_effect = RuntimeError("delete died")
+            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+                await registry.index_repository()
+            ingestor.delete_project.side_effect = None
+        elif path == "update":
+            ingestor.flush_all.side_effect = [RuntimeError("flush died")]
+            with patch("codebase_rag.mcp.tools.GraphUpdater"):
+                await registry.update_repository()
+            ingestor.flush_all.side_effect = None
+        else:  # pragma: no cover - guards against a typo in the parametrise
+            raise AssertionError(f"unknown failure path {path!r}")
+
+    # `reingest_mutated` is deliberately absent: that path promotes this
+    # project's own marker to `writing=true` before it sets the flag, so
+    # `_persisted_incomplete` refuses on its own and no assertion here can
+    # tell its attribution-drop apart from its absence. Including it would
+    # add a variant that stays green when the line is deleted -- assurance
+    # the test cannot actually give (#1705 review, final round).
+    @pytest.mark.parametrize("failure", ["wipe", "delete", "index", "update"])
     async def test_a_pending_recovery_cannot_heal_a_marker_less_failure(
-        self, temp_project_root: Path
+        self, temp_project_root: Path, failure: str
     ) -> None:
         """The heal needs PROVENANCE, not just "some marker was recovered".
 
-        A stranded `writing=false` marker is still pending, and then a wipe
+        A stranded `writing=false` marker is still pending, and then a call
         fails part way and sets `_graph_incomplete` while writing no marker
         for this project. At the next reingest the pending marker recovers,
         and a bare "a marker was recovered" flag would take that as licence
-        to clear a flag the wipe earned -- discarding the only record that
+        to clear a flag the failure earned -- discarding the only record that
         the graph is partial (#1705 review). The flag is attributed to the
         project whose failed CLEAR set it, so an unrelated recovery cannot
         consume it.
+
+        Parametrised over every marker-less failure path, because each one
+        sets the flag at its own site and drops the attribution on its own
+        line: hard-coding the wipe left the other four lines deletable with
+        the file still green, so the exact bug this fixes could come back at
+        four of the five places it was fixed (#1705 review, final round).
 
         Unlike the sibling test above, the pending marker is deliberately NOT
         consumed before the guard runs: consuming it first is what let the
@@ -2057,21 +2110,28 @@ class TestIncompleteMarkerInvariant:
         assert ingestor._marker_store.get(project) is True, (
             "fixture guard: the marker must still be pending at guard time"
         )
-
-        # A marker-less failure: the wipe dies after dropping the updater.
-        ingestor.clean_database.side_effect = RuntimeError("wipe died")
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
-            await registry.wipe_database(confirm=True)
-        assert registry._graph_incomplete is True, (
-            "fixture guard: the failed wipe must set the in-process flag"
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: the failed clear must attribute the flag to this "
+            "project, or the recovery under test heals nothing"
         )
 
-        ingestor.clean_database.side_effect = None
+        # A failure that writes no marker for this project.
+        await self._fail_without_writing_a_marker(registry, ingestor, failure)
+        assert registry._graph_incomplete is True, (
+            f"fixture guard: the failed {failure} must set the in-process flag"
+        )
+        assert registry._flag_from_failed_clear is None, (
+            f"the failed {failure} left the flag attributed to a stranded "
+            "marker, so an unrelated recovery may consume it"
+        )
+
+        _mark_indexed(registry)
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" in result, (
-            "an unrelated marker recovery cleared the flag a failed wipe "
-            f"earned, and scoped reingest ran over a partial graph: {result}"
+            "an unrelated marker recovery cleared the flag a failed "
+            f"{failure} earned, and scoped reingest ran over a partial "
+            f"graph: {result}"
         )
 
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
