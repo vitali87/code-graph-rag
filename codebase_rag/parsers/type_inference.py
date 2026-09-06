@@ -617,6 +617,47 @@ class TypeInferenceEngine:
         self._go_free_fn_index = {}
         self._go_free_fn_index_size = -1
 
+    def drop_csharp_side_tables(
+        self, function_qns: Collection[str], class_qns: Collection[str]
+    ) -> None:
+        """Forget the C# side-table entries owned by removed definitions.
+
+        `GraphUpdater.remove_file_from_state` reached the registry, both
+        return-type maps and `csharp_partial_groups`, but never these four
+        (issue #1769): a deleted file's generic methods, class arities, local
+        functions and extension methods outlived it on a reused updater and
+        went on steering resolution towards a definition that is gone.
+
+        `function_qns` are the method and function qns the caller determined
+        this file owned, under the same filter the registry sweep uses;
+        `class_qns` are the class qns, which carry no span records of their
+        own and so are owned by module-qn prefix alone.
+        `csharp_extension_methods` is keyed by simple NAME with a list of
+        owners, so its prune drops the owning entries from each list and
+        removes the key only once nothing is left under it.
+
+        The maps are mutated in place: the lazily built
+        `CSharpTypeInferenceEngine` shares these same objects by reference,
+        so rebinding any of them here would leave that engine reading the
+        pre-prune state.
+        """
+        function_qns = set(function_qns)
+        self.csharp_generic_methods -= function_qns
+        for qn in function_qns:
+            self.csharp_local_functions.pop(qn, None)
+        for qn in class_qns:
+            self.csharp_class_generic_arity.pop(qn, None)
+        for name in list(self.csharp_extension_methods):
+            kept = [
+                entry
+                for entry in self.csharp_extension_methods[name]
+                if entry[0] not in function_qns
+            ]
+            if kept:
+                self.csharp_extension_methods[name] = kept
+            else:
+                del self.csharp_extension_methods[name]
+
     def drop_method_return_types(self, qns: Collection[str]) -> None:
         """Forget the return types recorded under `qns` (issues #1738, #1753).
 
