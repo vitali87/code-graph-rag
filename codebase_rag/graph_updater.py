@@ -3203,47 +3203,24 @@ class GraphUpdater:
         }
         # `foreign_qns` is built from function span records, and a class
         # registers none, so for a class qn it is vacuously false and cannot
-        # protect anything. Ownership therefore has to come from the module
-        # index, and by LONGEST prefix rather than by any prefix: a directory
-        # whose name equals another file's stem nests under it, so
-        # `proj/A.cs` -> `proj.A` and `proj/A/B.cs` -> `proj.A.B` are both
-        # prefixes of `proj.A.B.N.Nested`, which only `B.cs` owns. Matching
-        # any prefix errs in both directions -- deleting `A.cs` would take
-        # `B.cs`'s class, and merely EXCLUDING everything under a surviving
-        # module would then spare that class when `B.cs` itself is deleted,
-        # reinstating #1769 for every file whose parent directory shares a
-        # sibling's stem. The longest matching module owns the qn.
-        #
-        # On the `module_qn_prefixes = recorded_qns or {path_derived_qn}`
-        # fallback (a file this updater never parsed), the derived qn is by
-        # definition absent from the module index, so `_owning_module` cannot
-        # return it and this filter prunes nothing. That is deliberate and is
-        # the safe direction: a file that recorded no module owns no class
-        # arity to begin with, and under-pruning a stale entry costs a wrong
-        # resolution while over-pruning a live sibling's costs a lost one.
-        module_index = self.factory.definition_processor.module_qn_to_file_path
+        # protect anything. Ownership comes from a record written at INGEST
+        # instead of being inferred from the qn, because the qn cannot yield
+        # it: a C# class qn embeds its namespace, so `proj/Core.cs` declaring
+        # `namespace Util` produces `proj.Core.Util.Helper`, which sits under
+        # the SIBLING module `proj.Core.Util` (`proj/Core/Util.cs`). Both a
+        # prefix rule and a longest-prefix rule therefore attribute that
+        # class to the wrong file and err in both directions -- deleting the
+        # sibling drops a live class, and deleting its real declarer keeps a
+        # dead one (#1769 review). A class with no recorded owner (ingested
+        # before this map existed) is left alone rather than guessed at.
+        owner_module = type_inference.csharp_class_owner_module
         class_qns = {
             qn
             for qn in type_inference.csharp_class_generic_arity
-            if self._owning_module(qn, module_index) in module_qn_prefixes
+            if owner_module.get(qn) in module_qn_prefixes
         }
         if function_qns or class_qns:
             type_inference.drop_csharp_side_tables(function_qns, class_qns)
-
-    @staticmethod
-    def _owning_module(qn: str, module_qns: Collection[str]) -> str | None:
-        """The longest module qn `qn` sits under, or None when it sits under none.
-
-        Longest wins because module qns nest: `proj.A` and `proj.A.B` are
-        different files, and a class under both belongs to the deeper one.
-        """
-        best: str | None = None
-        for module_qn in module_qns:
-            if (qn == module_qn or qn.startswith(f"{module_qn}.")) and (
-                best is None or len(module_qn) > len(best)
-            ):
-                best = module_qn
-        return best
 
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:

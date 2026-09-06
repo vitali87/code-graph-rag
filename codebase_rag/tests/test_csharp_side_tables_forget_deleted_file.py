@@ -219,3 +219,73 @@ def test_a_nested_file_under_a_surviving_siblings_module_is_still_pruned(
         f"sibling's module is also a prefix of it: {arity}"
     )
     assert kept in arity, f"the surviving file's class arity was swept: {arity}"
+
+
+NAMESPACE_MATCHING_SIBLING_DIR_CS = """namespace Util
+{
+    public class Helper<T> { }
+}
+"""
+
+OTHER_NAMESPACE_CS = """namespace N
+{
+    public class Other<T> { }
+}
+"""
+
+
+@pytest.mark.parametrize(
+    ("victim", "survivor_qn"),
+    [
+        ("Core/Util.cs", "proj.Core.Util.Helper"),
+        ("Core.cs", "proj.Core.Util.N.Other"),
+    ],
+    ids=["delete-the-sibling", "delete-the-declarer"],
+)
+def test_a_namespace_matching_a_sibling_directory_owns_by_record_not_prefix(
+    temp_repo: Path, victim: str, survivor_qn: str
+) -> None:
+    """A class qn embeds its NAMESPACE, so no prefix rule can own it (#1769).
+
+    `proj/Core.cs` declaring `namespace Util` yields `proj.Core.Util.Helper`,
+    which sits under the sibling module `proj.Core.Util` (`proj/Core/Util.cs`)
+    as well as under its own `proj.Core`. Longest-prefix ownership therefore
+    hands the class to the WRONG file and errs in both directions: deleting
+    the sibling dropped a live class (the arity map went empty), and deleting
+    the real declarer left the dead entry behind.
+
+    Ownership is a record written at ingest, where the declaring module is
+    actually known, rather than an inference from the qn's shape.
+
+    Parametrised over both directions because a rule can be right on one and
+    wrong on the other -- which is exactly what the two earlier attempts at
+    this filter each did. Neither existing fixture in this file has a
+    namespace segment that collides with a directory name, so the whole suite
+    stayed green while this was broken: green meant untested, not working.
+    """
+    root = temp_repo / "proj"
+    (root / "Core").mkdir(parents=True)
+    (root / "Core.cs").write_text(NAMESPACE_MATCHING_SIBLING_DIR_CS, encoding="utf-8")
+    (root / "Core" / "Util.cs").write_text(OTHER_NAMESPACE_CS, encoding="utf-8")
+    updater = _create_graph_updater(root)
+    updater.run()
+    arity = updater.factory.type_inference.csharp_class_generic_arity
+
+    assert set(arity) == {"proj.Core.Util.Helper", "proj.Core.Util.N.Other"}, (
+        f"fixture guard: both generic classes must be recorded: {arity}"
+    )
+    # The shape the defect needs: the DECLARER's class qn nests under a
+    # sibling module's qn, so a prefix rule attributes it to that sibling.
+    owner = updater.factory.type_inference.csharp_class_owner_module
+    assert owner["proj.Core.Util.Helper"] == "proj.Core", (
+        "fixture guard: Core.cs must own Helper despite the qn sitting under "
+        f"proj.Core.Util: {owner}"
+    )
+
+    (root / victim).unlink()
+    updater.remove_file_from_state(root / victim)
+
+    assert set(arity) == {survivor_qn}, (
+        f"deleting {victim} left the wrong class arity behind; a prefix rule "
+        f"attributes the namespace-shifted qn to the wrong file: {arity}"
+    )

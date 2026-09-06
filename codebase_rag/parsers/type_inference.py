@@ -62,6 +62,7 @@ class TypeInferenceEngine:
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_class_generic_arity",
+        "csharp_class_owner_module",
         "csharp_method_return_types",
         "function_locations",
         "_java_type_inference",
@@ -111,6 +112,7 @@ class TypeInferenceEngine:
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_class_owner_module: dict[str, str] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
@@ -219,6 +221,22 @@ class TypeInferenceEngine:
         )
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
+        )
+        # The module qn of the file that DECLARED each class, recorded at
+        # ingest because it cannot be recovered from the class qn: a C#
+        # class qn embeds its namespace, so `proj/Core.cs` declaring
+        # `namespace Util` yields `proj.Core.Util.Helper`, which sits under
+        # the sibling module `proj.Core.Util` (`Core/Util.cs`). Inferring
+        # the owner by longest module prefix therefore attributes the class
+        # to the wrong file (#1769 review).
+        # Deliberately NOT forwarded to `CSharpTypeInferenceEngine` below:
+        # resolution never consults it. Only `remove_file_from_state`'s prune
+        # reads it, and it reads it from here. Passing it raised
+        # `unexpected keyword argument` inside the call pass, where the
+        # exception was SWALLOWED -- the arity map is populated earlier, so a
+        # probe checking only that map still looked correct (#1769 review).
+        self.csharp_class_owner_module = (
+            csharp_class_owner_module if csharp_class_owner_module is not None else {}
         )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
@@ -631,7 +649,9 @@ class TypeInferenceEngine:
         `function_qns` are the method and function qns the caller determined
         this file owned, under the same filter the registry sweep uses;
         `class_qns` are the class qns, which carry no span records of their
-        own and so are owned by module-qn prefix alone.
+        own and are owned by the module recorded for them at ingest
+        (`csharp_class_owner_module`) -- their qn embeds a namespace and so
+        cannot be attributed by prefix.
         `csharp_extension_methods` is keyed by simple NAME with a list of
         owners, so its prune drops the owning entries from each list and
         removes the key only once nothing is left under it.
@@ -647,6 +667,10 @@ class TypeInferenceEngine:
             self.csharp_local_functions.pop(qn, None)
         for qn in class_qns:
             self.csharp_class_generic_arity.pop(qn, None)
+            # Dropped together: an owner record for a class whose arity is
+            # gone names a file this updater no longer has, and would keep
+            # the entry alive across the next deletion of the same qn.
+            self.csharp_class_owner_module.pop(qn, None)
         for name in list(self.csharp_extension_methods):
             kept = [
                 entry
