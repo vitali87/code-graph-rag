@@ -494,19 +494,34 @@ def _dotted_include_path(include_path: str) -> str:
 def _external_module_name(module_path: str) -> str:
     """The display name for an ExternalModule qn.
 
-    The last DOTTED segment names a package path (`std.fmt` -> `fmt`), but a
-    C/C++ header carries its extension in that position, so every `.h` include
-    was named `h`: `std.stdio.h`, `std.signal.h` and `std.sys.types.h` all
-    minted an ExternalModule called `h` (issue #1758). A header is named by
-    its own stem instead, the same name `_cpp_include_local_name` binds it
-    under, so the node and the local name agree.
+    The last DOTTED segment names a package path (`os.path` -> `path`,
+    `std.fmt` -> `fmt`), but a C/C++ header carries its EXTENSION in that
+    position, so every `.h` include minted an ExternalModule called `h`:
+    `std.stdio.h`, `std.signal.h` and `std.sys.types.h` alike (issue #1758).
+    A header is named by its own stem instead, the same name
+    `_cpp_include_local_name` binds it under, so the node and the local name
+    agree.
+
+    The header rule is deliberately confined to the `std.` prefix that
+    `_cpp_include_full_name` puts on an include, AND to qns of three or more
+    segments. This function serves EVERY language's external imports, and a
+    package whose last segment is literally `h` is a real thing (the Python
+    HTTP/2 library), so an unconditional rule would rename `mypkg.h` to
+    `mypkg` for languages that have no header extensions at all.
+
+    The three-segment floor leaves one known inconsistency: `<std.h>` has the
+    two-segment qn `std.h`, indistinguishable here from a package `h` under
+    `std`, so its node is named `h` while `_cpp_include_local_name` binds it
+    as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
+    external of every language; `<std.h>` is not a real header, so the
+    inconsistency is the cheaper of the two errors.
     """
     segments = module_path.split(cs.SEPARATOR_DOT)
-    # `stdio.h` occupies the last TWO dotted segments, the stem and the
-    # extension; anything else is named by its last segment as before.
-    if len(segments) >= 2 and f"{cs.SEPARATOR_DOT}{segments[-1]}" in (
-        cs.EXT_H,
-        cs.EXT_HPP,
+    # `stdio.h` occupies the last TWO dotted segments, stem and extension.
+    if (
+        len(segments) >= 3
+        and module_path.startswith(cs.IMPORT_STD_PREFIX)
+        and f"{cs.SEPARATOR_DOT}{segments[-1]}" in (cs.EXT_H, cs.EXT_HPP)
     ):
         return segments[-2]
     return segments[-1]
@@ -1061,6 +1076,13 @@ class ImportProcessor:
                 # that carried it belongs to the include that won the name.
                 for module_key, shadowed in self._cpp_shadowed_include_targets:
                     if module_key != module_qn:
+                        continue
+                    if (module_qn, shadowed) in self._cpp_declaration_mappings:
+                        # The displaced binding can be one `export module X;`
+                        # wrote, not an include: re-emitting it here would
+                        # rebuild the self-import the main loop above filters
+                        # out, which `test_cpp_module_declarations_emit_no_
+                        # self_import` forbids (#1758 review).
                         continue
                     self._deferred_import_edges.append(
                         DeferredImportEdge(

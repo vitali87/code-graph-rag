@@ -128,3 +128,29 @@ def test_two_headers_binding_one_local_name_each_keep_their_edge(
     assert targets == {"std", "std.h"}, (
         f"a header lost its IMPORTS edge to another binding the same name: {targets}"
     )
+
+
+def test_the_header_rule_does_not_rename_other_languages_externals() -> None:
+    """The `.h` rule must not reach a package whose last segment is `h`.
+
+    `_external_module_name` serves EVERY language's external imports, not
+    just C/C++ includes, and `h` is a real Python package (the HTTP/2
+    library). An unconditional "last segment is an extension" rule renamed
+    `mypkg.h` to `mypkg` for languages that have no headers at all, so the
+    rule is confined to the `std.` prefix `_cpp_include_full_name` applies.
+    """
+    from codebase_rag.parsers.import_processor import _external_module_name
+
+    # The header shapes the rule exists for.
+    assert _external_module_name("std.stdio.h") == "stdio"
+    assert _external_module_name("std.sys.types.h") == "types"
+    assert _external_module_name("std.a.b.c.hpp") == "c"
+    # A non-header external keeps its last segment, header-shaped or not.
+    assert _external_module_name("std.vector") == "vector"
+    assert _external_module_name("os.path") == "path"
+    assert _external_module_name("mypkg.h") == "h", (
+        "the header rule renamed a package whose last segment is literally h"
+    )
+    assert _external_module_name("a.b.h") == "h", (
+        "the header rule reached a qn that carries no std. include prefix"
+    )
