@@ -130,6 +130,26 @@ def test_two_headers_binding_one_local_name_each_keep_their_edge(
     )
 
 
+def test_the_two_segment_floor_keeps_a_bare_std_header_named_by_its_extension() -> None:
+    """Pins the deliberately accepted `<std.h>` inconsistency.
+
+    The rule needs three or more segments, so `std.h` keeps the name `h`
+    while its local binding is `std`. That is the cheaper of two errors --
+    without the floor, `segments[-2]` would name the node `std`, colliding
+    with the `std` namespace module every C++ file imports.
+
+    Pinned because nothing else covers the floor: removing
+    `len(segments) >= 3` left every other assertion in this file green
+    (#1758 review).
+    """
+    from codebase_rag.parsers.import_processor import _external_module_name
+
+    assert _external_module_name("std.h") == "h"
+    assert _external_module_name("std.hpp") == "hpp"
+    # Three segments is where the rule starts applying.
+    assert _external_module_name("std.stdio.h") == "stdio"
+
+
 def test_the_header_rule_does_not_rename_other_languages_externals() -> None:
     """The `.h` rule must not reach a package whose last segment is `h`.
 

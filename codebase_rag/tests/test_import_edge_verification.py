@@ -156,10 +156,18 @@ def test_a_module_declaration_shadowed_by_an_include_emits_no_self_import(
     filters it via `_cpp_declaration_mappings`, so the sweep must too.
     """
     (temp_repo / "foo.cpp").write_text("int helper() { return 1; }\n")
+    sub = temp_repo / "sub"
+    sub.mkdir()
+    # A SECOND include binding the same local name `foo`, so the first one is
+    # genuinely displaced and only the sweep can carry its edge. Without it
+    # the surviving-edge assertion below is satisfied by the main edge loop
+    # (the winning include is in `import_mapping` either way) and a guard
+    # that dropped everything in the sweep would still pass (#1758 review).
     (temp_repo / "m.cpp").write_text(
         """
 export module foo;
 #include <foo.h>
+#include <sub/foo.h>
 
 int use() { return 2; }
 """
@@ -173,10 +181,12 @@ int use() { return 2; }
         "the shadowed-include sweep re-emitted a module declaration's own qn "
         f"as an IMPORTS edge: {targets}"
     )
-    # The include itself must still keep its edge: the guard has to drop the
-    # declaration without also dropping what the sweep exists to preserve.
-    assert any(t.endswith("foo.h") for t in targets), (
-        f"the include's own edge was lost with the declaration: {targets}"
+    # Both includes keep their edge. The displaced one reaches the graph ONLY
+    # through the sweep, so this fails if the guard suppresses too much --
+    # which the single-include version of this test could not detect.
+    assert {"std.foo.h", "std.sub.foo.h"} <= targets, (
+        "an include's edge was lost with the declaration; the guard must drop "
+        f"the declaration binding only: {targets}"
     )
 
 

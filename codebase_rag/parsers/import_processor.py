@@ -975,6 +975,16 @@ class ImportProcessor:
             for entry in self._cpp_shadowed_include_targets
             if entry[0] != module_qn
         }
+        # Cleared here too, now that the shadowed sweep READS it. These
+        # entries SUPPRESS edges, so a stale one is the opposite hazard: a
+        # re-parse that removes an `export module X;` used to leave an
+        # exemption that only ever matched the declaration binding it came
+        # from -- already gone, so inert. The sweep matches on the resolved
+        # qn instead, so the same stale entry can now suppress a real
+        # include's edge (#1758 review).
+        self._cpp_declaration_mappings = {
+            entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
+        }
         self._retract_import_sites(module_qn)
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
