@@ -4716,6 +4716,25 @@ class GraphUpdater:
         """Remove graph nodes whose files/folders no longer exist on disk."""
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        if self._single_file is not None:
+            # A single-file run walked one file and cannot say what the
+            # project still holds, exactly as it cannot speak for the
+            # project's file set (`deleted_keys`) or its exclusion set (the
+            # stamp in `run`). The prune is a whole-project claim: it deletes
+            # every node whose path is absent from disk, on the premise that
+            # a full walk established which paths those are.
+            #
+            # Left unguarded it did not merely over-reach, it emptied the
+            # graph (issue #1756). `repo_path` is the TARGET'S PARENT here,
+            # so `pkg/module_a.py` makes it `pkg/` and every module's
+            # relative path is resolved against the wrong root:
+            # `root_module.py` is tested as `pkg/root_module.py`, is absent,
+            # and is deleted. Modules are the worst case because
+            # CYPHER_ALL_MODULE_PATHS_INTERNAL returns no `absolute_path`, so
+            # the containment gate that spares out-of-repo File and Folder
+            # rows never runs for them.
+            logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
+            return
 
         logger.info(ls.PRUNE_START)
         total_pruned = 0

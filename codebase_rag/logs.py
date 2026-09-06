@@ -987,6 +987,12 @@ PRUNE_DELETING = "Pruning orphan {label}: {path}"
 PRUNE_LEGACY_IDENTITIES = "Swept {count} legacy target-resolved File record(s)"
 PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
 PRUNE_SKIP = "No orphan nodes found. Graph is clean."
+# Distinct from PRUNE_SKIP: the prune did not run, which is not the
+# same claim as running and finding nothing (issue #1756).
+PRUNE_SKIPPED_SINGLE_FILE = (
+    "Single-file run: skipping the orphan prune, which can only speak "
+    "for a full project walk."
+)
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"

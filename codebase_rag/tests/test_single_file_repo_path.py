@@ -581,3 +581,92 @@ class TestSingleFileRunScope:
             "first, so the old parse's nodes and edges survive alongside the "
             "new ones"
         )
+
+    @staticmethod
+    def _nested_project(tmp_path: Path) -> Path:
+        """A project whose modules live in a SUBDIRECTORY and at the root.
+
+        The existing fixture puts every module at the repo root, so
+        `repo_path` derived from the target's parent IS the project root and
+        the defect cannot fire. Only a target inside a subdirectory separates
+        the two.
+        """
+        repo = tmp_path / "nested"
+        pkg = repo / "pkg"
+        pkg.mkdir(parents=True)
+        (repo / "__init__.py").touch()
+        (repo / "root_module.py").write_text(
+            "def at_the_root():\n    pass\n", encoding="utf-8"
+        )
+        (pkg / "__init__.py").touch()
+        (pkg / "module_a.py").write_text(
+            "class Alpha:\n    def greet(self):\n        return 1\n", encoding="utf-8"
+        )
+        (pkg / "module_b.py").write_text("def func_b():\n    pass\n", encoding="utf-8")
+        return repo
+
+    def test_a_target_in_a_subdirectory_prunes_no_module_outside_it(
+        self, tmp_path: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The orphan prune must not act on a run that walked one file (#1756).
+
+        `GraphUpdater(repo_path=<file>)` sets `repo_path` to the file's
+        PARENT, so for `pkg/module_a.py` that is `pkg/`. `_prune_orphan_nodes`
+        then resolves every Module's relative path against `pkg/` and deletes
+        the ones that do not exist there -- which is every module outside
+        `pkg/`, and, because Module rows carry no `absolute_path`, the
+        containment gate that protects File and Folder rows never runs for
+        them. The measured result was a graph holding no Modules at all.
+
+        This is the same claim the run already refuses to make elsewhere: a
+        single-file run cannot speak for the project's file set, which is why
+        `deleted_keys` and the exclusion stamp are both guarded on
+        `self._single_file is None`. The prune is guarded for that reason too.
+
+        The target is deliberately NOT at the repo root: with a root-level
+        target the derived `repo_path` equals the project root and the whole
+        defect is invisible, which is why every test above passes on the
+        broken code.
+        """
+        repo = self._nested_project(tmp_path)
+        parsers, queries = load_parsers()
+        GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+        ).run()
+
+        # The graph the second run sees: the modules the project run wrote,
+        # keyed relative to the PROJECT root. A plain MagicMock would make
+        # the prune skip entirely (it is gated on QueryProtocol), so the
+        # defect would be invisible rather than absent.
+        second = _MockIngestor()
+        second.fetch_all.return_value = [
+            {cs.KEY_PATH: "root_module.py", "qualified_name": "nested.root_module"},
+            {cs.KEY_PATH: "pkg/module_a.py", "qualified_name": "nested.pkg.module_a"},
+            {cs.KEY_PATH: "pkg/module_b.py", "qualified_name": "nested.pkg.module_b"},
+        ]
+        # The SAME project name as the project run, which is what the issue
+        # measured. Without it the derived name is `pkg`, every row fails the
+        # `qn.startswith(project_prefix)` gate before the path test is
+        # reached, and the prune skips them for an unrelated reason -- so the
+        # test would pass on the broken code.
+        single = GraphUpdater(
+            ingestor=second,
+            repo_path=repo / "pkg" / "module_a.py",
+            parsers=parsers,
+            queries=queries,
+            project_name="nested",
+        )
+        assert single.repo_path == repo / "pkg", (
+            "fixture guard: the constructor must derive the TARGET'S PARENT "
+            f"as repo_path, or the defect cannot fire: {single.repo_path}"
+        )
+        single.run()
+
+        swept = self._swept_module_keys(second)
+        assert swept == set(), (
+            "a single-file run on a file in a subdirectory pruned modules it "
+            f"was never asked about: {sorted(swept)}"
+        )
