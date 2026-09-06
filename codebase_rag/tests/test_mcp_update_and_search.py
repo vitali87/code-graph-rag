@@ -1975,22 +1975,23 @@ class TestIncompleteMarkerInvariant:
             "the in-process flag was not healed from the durable state"
         )
 
-    async def test_an_earlier_recovery_cannot_clear_a_later_local_failure(
+    async def test_a_recovery_does_not_clear_a_flag_it_cannot_explain(
         self, temp_project_root: Path
     ) -> None:
-        """The recovery flag must not outlive the call that set it.
+        """The heal is keyed to the project whose failed clear set the flag.
 
-        A marker recovered once, then a LATER failure that could not persist a
-        marker at all: the durable state is clean and `_graph_incomplete` is
-        the only record that the graph is partial. If the recovery flag were a
-        process-lifetime latch it would still authorise clearing that flag, and
-        scoped reingest would be accepted over a partial graph (#1705 review).
+        A stranded marker is recovered for one project, and a LATER failure
+        that persisted no marker sets `_graph_incomplete` again. The earlier
+        recovery must not license clearing that flag: the durable state is
+        clean and the flag is the only record the graph is partial. The
+        attribution is dropped wherever a non-marker path raises the flag,
+        so the heal has nothing to match (#1705 review).
         """
         ingestor = self._store()
         registry = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(registry)
 
-        # A recoverable marker is stranded and then recovered on the next read.
+        # Strand a marker, then recover it: attribution names this project.
         assert registry._require_marker(project, writing=False) is None
         ingestor._failing.add("clear")
         assert registry._require_marker_cleared(project) is not None, (
@@ -2000,12 +2001,19 @@ class TestIncompleteMarkerInvariant:
         assert registry._persisted_incomplete(project) is False, (
             "fixture guard: the recoverable marker should have been cleared"
         )
-        assert registry._marker_recovered is True, (
-            "fixture guard: the recovery flag should have been set"
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: the failed clear should have attributed the flag"
         )
 
-        # A later failure that leaves NO durable marker: only the flag knows.
-        registry._graph_incomplete = True
+        # A marker-less failure now raises the flag for a different reason;
+        # it must drop the stale attribution as it does so.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the failed wipe must set the in-process flag"
+        )
         assert not ingestor._marker_store, (
             "fixture guard: this interleaving needs a clean durable state"
         )
@@ -2013,8 +2021,57 @@ class TestIncompleteMarkerInvariant:
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
         assert "error" in result, (
-            "a stale recovery flag cleared a local-only incomplete marker and "
-            f"scoped reingest was accepted over a partial graph: {result}"
+            "a stale attribution from an earlier recovery cleared the flag a "
+            f"marker-less failure earned: {result}"
+        )
+
+    async def test_a_pending_recovery_cannot_heal_a_marker_less_failure(
+        self, temp_project_root: Path
+    ) -> None:
+        """The heal needs PROVENANCE, not just "some marker was recovered".
+
+        A stranded `writing=false` marker is still pending, and then a wipe
+        fails part way and sets `_graph_incomplete` while writing no marker
+        for this project. At the next reingest the pending marker recovers,
+        and a bare "a marker was recovered" flag would take that as licence
+        to clear a flag the wipe earned -- discarding the only record that
+        the graph is partial (#1705 review). The flag is attributed to the
+        project whose failed CLEAR set it, so an unrelated recovery cannot
+        consume it.
+
+        Unlike the sibling test above, the pending marker is deliberately NOT
+        consumed before the guard runs: consuming it first is what let the
+        earlier version of this fix pass while the hole was still open.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # Strand a recoverable marker and leave it pending.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the marker must still be pending at guard time"
+        )
+
+        # A marker-less failure: the wipe dies after dropping the updater.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.wipe_database(confirm=True)
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the failed wipe must set the in-process flag"
+        )
+
+        ingestor.clean_database.side_effect = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = str(await registry.reingest(["a.py"]))
+        assert "error" in result, (
+            "an unrelated marker recovery cleared the flag a failed wipe "
+            f"earned, and scoped reingest ran over a partial graph: {result}"
         )
 
     def test_the_mark_query_never_lowers_the_phase(self) -> None:

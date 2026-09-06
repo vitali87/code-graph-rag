@@ -103,11 +103,14 @@ class MCPToolsRegistry:
         # scoped reingest must not hydrate from, because it would treat the
         # missing and stale definitions as authoritative.
         self._graph_incomplete = False
-        # Set when `_persisted_incomplete` clears a recoverable marker, so the
-        # in-process flag can follow the durable state out of a wedged refusal
-        # without discarding a failure only this process knows about. Reset
-        # before each read so it never outlives the call that set it (#1705).
-        self._marker_recovered = False
+        # The project whose FAILED MARKER CLEAR set `_graph_incomplete`, or
+        # None when the flag came from somewhere else (a failed wipe, delete
+        # or update, which set it while writing no marker for this project).
+        # Only a flag with this provenance may be healed by a marker
+        # recovery: a bare "a marker was recovered" boolean discards a flag
+        # an unrelated marker-less failure earned, whenever some recoverable
+        # marker happens to be pending at guard time (#1705 review).
+        self._flag_from_failed_clear: str | None = None
 
         self.parsers, self.queries = load_parsers()
 
@@ -787,6 +790,8 @@ class MCPToolsRegistry:
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
         self._graph_incomplete = True
+        # Not a stranded marker: this flag must not be healed by one.
+        self._flag_from_failed_clear = None
         # Invariant (a). Nothing has been touched yet, so refusing costs
         # nothing; proceeding would leave a half-removed graph a fresh
         # registry cannot tell from a completed delete.
@@ -831,6 +836,8 @@ class MCPToolsRegistry:
                 # its failure keeps the updater dropped and nothing else.
                 self._live_updater = None
                 self._graph_incomplete = True
+                # Not a stranded marker: this flag must not be healed by one.
+                self._flag_from_failed_clear = None
                 await asyncio.to_thread(self.ingestor.clean_database)
                 self._graph_incomplete = False
                 await asyncio.to_thread(clear_all_embeddings)
@@ -867,6 +874,8 @@ class MCPToolsRegistry:
         # whatever partial graph a failure left behind.
         self._live_updater = None
         self._graph_incomplete = True
+        # Not a stranded marker: this flag must not be healed by one.
+        self._flag_from_failed_clear = None
         # Persisted BEFORE the delete, and on a node the delete cannot reach:
         # this path removes the Project and rebuilds it, so a marker stored on
         # the Project would be destroyed by the very operation whose failure it
@@ -961,6 +970,8 @@ class MCPToolsRegistry:
         # the partial graph would be no better.
         self._live_updater = None
         self._graph_incomplete = True
+        # Not a stranded marker: this flag must not be healed by one.
+        self._flag_from_failed_clear = None
         # The marker goes down BEFORE ensure_constraints, not after.
         # `ensure_constraints` runs `_migrate_legacy_path_keys`, which drops
         # constraints and can run purge queries -- autocommitted, destructive
@@ -1148,6 +1159,10 @@ class MCPToolsRegistry:
         """
         cleared = self._persist_incomplete(project_name, False)
         self._graph_incomplete = not cleared
+        # Attribute the flag to this project's stranded marker (or drop a
+        # stale attribution when the clear succeeded), so the recovery in
+        # `_refuse_reingest_if_unsafe` heals only the flag it explains.
+        self._flag_from_failed_clear = project_name if not cleared else None
         if cleared:
             return None
         return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
@@ -1200,7 +1215,6 @@ class MCPToolsRegistry:
                 # that would follow could not mark itself either; refuse now
                 # and let the next attempt retry.
                 return True
-            self._marker_recovered = True
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
             )
@@ -1309,10 +1323,11 @@ class MCPToolsRegistry:
         # failure that could not persist a marker at all, and the next
         # reingest would drop a `_graph_incomplete` that is the only record
         # the graph is partial.
-        self._marker_recovered = False
+        recoverable_here = self._flag_from_failed_clear == project_name
         persisted_incomplete = self._persisted_incomplete(project_name)
-        if not persisted_incomplete and self._marker_recovered:
+        if not persisted_incomplete and recoverable_here:
             self._graph_incomplete = False
+            self._flag_from_failed_clear = None
         if self._graph_incomplete or persisted_incomplete:
             raise ValueError(
                 cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
@@ -1427,6 +1442,8 @@ class MCPToolsRegistry:
             if mutated:
                 self._live_updater = None
                 self._graph_incomplete = True
+                # Not a stranded marker: this flag must not be healed by one.
+                self._flag_from_failed_clear = None
             elif marked_here is not None:
                 # Nothing was written, so the marker this call created is a
                 # lie about a run that changed nothing and must come off.
