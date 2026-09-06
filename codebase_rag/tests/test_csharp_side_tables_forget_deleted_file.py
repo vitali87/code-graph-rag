@@ -129,3 +129,52 @@ def test_a_deleted_csharp_files_side_tables_are_forgotten(temp_repo: Path) -> No
     assert kept_ext in _ext_owners(extension), (
         "a sibling's extension method was swept along"
     )
+
+
+NESTED_DIR_CS = """namespace N
+{
+    public class Nested<T>
+    {
+        public U Deep<U>(U value) { return value; }
+    }
+}
+"""
+
+
+def test_a_sibling_directory_sharing_the_deleted_files_stem_is_kept(
+    temp_repo: Path,
+) -> None:
+    """`proj/A.cs` beside `proj/A/B.cs`: deleting A.cs must not sweep B.cs.
+
+    A directory whose name equals a deleted file's stem produces module qns
+    that NEST (`proj.A` and `proj.A.B`), and a class registers no function
+    span, so `foreign_qns` cannot protect `proj.A.B.N.Nested` the way it
+    protects the method qns under it. A module-prefix-only sweep therefore
+    took a live sibling's class arity with the deleted file's.
+    """
+    root = temp_repo / "proj"
+    root.mkdir()
+    (root / "A.cs").write_text(A_CS, encoding="utf-8")
+    (root / "A").mkdir()
+    (root / "A" / "B.cs").write_text(NESTED_DIR_CS, encoding="utf-8")
+    updater = _create_graph_updater(root)
+    updater.run()
+    arity = updater.factory.type_inference.csharp_class_generic_arity
+
+    gone = next((qn for qn in arity if qn.endswith(".K")), None)
+    kept = next((qn for qn in arity if qn.endswith(".Nested")), None)
+    assert gone, f"fixture guard: A.cs recorded no class arity: {arity}"
+    assert kept, f"fixture guard: A/B.cs recorded no class arity: {arity}"
+    # The shape the defect needs: the survivor's qn nests under the deleted
+    # file's module qn, so a prefix-only filter matches it.
+    assert kept.startswith("proj.A."), (
+        f"fixture guard: the survivor does not nest under the deleted module: {kept}"
+    )
+
+    (root / "A.cs").unlink()
+    updater.remove_file_from_state(root / "A.cs")
+
+    assert gone not in arity, f"the deleted file's class arity survived: {arity}"
+    assert kept in arity, (
+        f"a surviving sibling's class arity was swept by the prefix filter: {arity}"
+    )

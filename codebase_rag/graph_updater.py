@@ -3166,12 +3166,17 @@ class GraphUpdater:
         the filter the registry sweep and the return-type maps use: already
         swept, or owned by this file's span records on the natural qn, or
         under one of its module prefixes with `foreign_qns` excluded.
-        `csharp_class_generic_arity` keys by a CLASS qn instead, and classes
-        record no function span, so `owned_natural` can never name one; the
-        module-qn prefix is the only ownership available, which is sound
-        because a C# class qn always sits under the module qn of the file
-        declaring it (a partial type's other halves are separate qns under
-        their own modules, each pruned by its own deletion).
+        `csharp_class_generic_arity` keys by a CLASS qn instead. Classes
+        record no function span, so `owned_natural` can never name one and
+        `foreign_qns` is vacuous for them; ownership comes from the module
+        index instead. A class qn does sit under the module qn of its
+        declaring file, but it can equally sit under a SHORTER module qn
+        belonging to a different file: `proj/A.cs` records `proj.A` and
+        `proj/A/B.cs` records `proj.A.B`, so deleting `A.cs` on the prefix
+        alone would take `B.cs`'s `proj.A.B.N.Nested` with it. A qn under a
+        surviving module is therefore kept, whichever prefix also matches.
+        A partial type's other halves are separate qns under their own
+        modules and each is pruned by its own deletion.
         """
 
         def owned(qn: str) -> bool:
@@ -3196,10 +3201,23 @@ class GraphUpdater:
             )
             if owned(qn)
         }
+        # `foreign_qns` is built from function span records, and a class
+        # registers none, so for a class qn it is vacuously false and cannot
+        # protect anything. Ownership therefore has to come from the module
+        # index: a directory whose name equals a deleted file's stem nests
+        # under it (`proj/A.cs` -> `proj.A`, `proj/A/B.cs` -> `proj.A.B`), so
+        # a prefix-only sweep of `A.cs` would take `proj.A.B.N.Nested`, which
+        # `B.cs` still owns and which this event does not re-parse.
+        surviving_modules = {
+            qn
+            for qn in self.factory.definition_processor.module_qn_to_file_path
+            if qn not in module_qn_prefixes
+        }
         class_qns = {
             qn
             for qn in type_inference.csharp_class_generic_arity
-            if qn not in foreign_qns and self._under(qn, module_qn_prefixes)
+            if self._under(qn, module_qn_prefixes)
+            and not self._under(qn, surviving_modules)
         }
         if function_qns or class_qns:
             type_inference.drop_csharp_side_tables(function_qns, class_qns)
