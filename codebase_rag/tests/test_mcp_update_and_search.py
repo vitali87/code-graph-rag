@@ -1975,6 +1975,48 @@ class TestIncompleteMarkerInvariant:
             "the in-process flag was not healed from the durable state"
         )
 
+    async def test_an_earlier_recovery_cannot_clear_a_later_local_failure(
+        self, temp_project_root: Path
+    ) -> None:
+        """The recovery flag must not outlive the call that set it.
+
+        A marker recovered once, then a LATER failure that could not persist a
+        marker at all: the durable state is clean and `_graph_incomplete` is
+        the only record that the graph is partial. If the recovery flag were a
+        process-lifetime latch it would still authorise clearing that flag, and
+        scoped reingest would be accepted over a partial graph (#1705 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A recoverable marker is stranded and then recovered on the next read.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+        assert registry._persisted_incomplete(project) is False, (
+            "fixture guard: the recoverable marker should have been cleared"
+        )
+        assert registry._marker_recovered is True, (
+            "fixture guard: the recovery flag should have been set"
+        )
+
+        # A later failure that leaves NO durable marker: only the flag knows.
+        registry._graph_incomplete = True
+        assert not ingestor._marker_store, (
+            "fixture guard: this interleaving needs a clean durable state"
+        )
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = str(await registry.reingest(["a.py"]))
+        assert "error" in result, (
+            "a stale recovery flag cleared a local-only incomplete marker and "
+            f"scoped reingest was accepted over a partial graph: {result}"
+        )
+
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
         """Pins the production Cypher the fake store models.
 

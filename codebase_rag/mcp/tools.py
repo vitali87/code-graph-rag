@@ -105,7 +105,8 @@ class MCPToolsRegistry:
         self._graph_incomplete = False
         # Set when `_persisted_incomplete` clears a recoverable marker, so the
         # in-process flag can follow the durable state out of a wedged refusal
-        # without discarding a failure only this process knows about (#1705).
+        # without discarding a failure only this process knows about. Reset
+        # before each read so it never outlives the call that set it (#1705).
         self._marker_recovered = False
 
         self.parsers, self.queries = load_parsers()
@@ -1302,6 +1303,13 @@ class MCPToolsRegistry:
         # knows the graph is partial, and dropping the flag would accept
         # scoped work over it. The flag is cleared only when the recovery
         # above actually cleared the marker, which is exactly the wedged case.
+        # Cleared first so the flag reports only THIS call's recovery. As a
+        # process-lifetime latch it would go on authorising a clear long after
+        # the recovery that set it: an earlier recovered marker, then a later
+        # failure that could not persist a marker at all, and the next
+        # reingest would drop a `_graph_incomplete` that is the only record
+        # the graph is partial.
+        self._marker_recovered = False
         persisted_incomplete = self._persisted_incomplete(project_name)
         if not persisted_incomplete and self._marker_recovered:
             self._graph_incomplete = False
