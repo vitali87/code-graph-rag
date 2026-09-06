@@ -481,6 +481,37 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _dotted_include_path(include_path: str) -> str:
+    """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
+
+    The qualified name is a dotted path everywhere else in the graph, so a
+    slash left in it (`std.sys/types.h`) is not addressable by any dotted
+    lookup and does not segment (issue #1758).
+    """
+    return include_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+
+
+def _external_module_name(module_path: str) -> str:
+    """The display name for an ExternalModule qn.
+
+    The last DOTTED segment names a package path (`std.fmt` -> `fmt`), but a
+    C/C++ header carries its extension in that position, so every `.h` include
+    was named `h`: `std.stdio.h`, `std.signal.h` and `std.sys.types.h` all
+    minted an ExternalModule called `h` (issue #1758). A header is named by
+    its own stem instead, the same name `_cpp_include_local_name` binds it
+    under, so the node and the local name agree.
+    """
+    segments = module_path.split(cs.SEPARATOR_DOT)
+    # `stdio.h` occupies the last TWO dotted segments, the stem and the
+    # extension; anything else is named by its last segment as before.
+    if len(segments) >= 2 and f"{cs.SEPARATOR_DOT}{segments[-1]}" in (
+        cs.EXT_H,
+        cs.EXT_HPP,
+    ):
+        return segments[-2]
+    return segments[-1]
+
+
 def _cpp_include_local_name(include_path: str) -> str:
     """The name the include binds locally: the header's stem for `.h`/`.hpp`,
     the bare last path segment otherwise (`<vector>`)."""
@@ -2915,7 +2946,7 @@ class ImportProcessor:
         if cs.SEPARATOR_DOUBLE_COLON in module_path:
             name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
         else:
-            name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            name = _external_module_name(module_path)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_MODULE,
             {
@@ -4204,7 +4235,11 @@ class ImportProcessor:
                 cs.IMPORT_STD_PREFIX
             ):
                 return include_path
-            return f"{cs.IMPORT_STD_PREFIX}{include_path}"
+            # A slashed include path is segmented like any other module path:
+            # `<sys/types.h>` is the module `types.h` under `sys`, and leaving
+            # the slash in produced the qn `std.sys/types.h`, which no dotted
+            # lookup can address (issue #1758).
+            return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
         if resolved := self._resolve_cpp_include_target(include_path, module_qn):
             # The include resolves to a real repo file; use that file's
             # actual (collision-disambiguated) module qn. The old
@@ -4215,8 +4250,9 @@ class ImportProcessor:
             # (issue #652).
             return resolved
         # A quoted include matching no repo file is a third-party header; a
-        # project-rooted qn would be a phantom.
-        return f"{cs.IMPORT_STD_PREFIX}{include_path}"
+        # project-rooted qn would be a phantom. Segmented like the system
+        # branch above, for the same reason (issue #1758).
+        return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
         identifier_child = None
