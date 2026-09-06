@@ -556,6 +556,7 @@ class ImportProcessor:
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
+        "_cpp_shadowed_include_targets",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -763,6 +764,12 @@ class ImportProcessor:
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
         self._cpp_declaration_mappings: set[tuple[str, str]] = set()
+        # Include targets whose LOCAL name was taken by a later include in
+        # the same file. `<std>` and `<std.h>` both bind `std`, so the second
+        # overwrote the first in `import_mapping` and only one IMPORTS edge
+        # survived (issue #1758). The binding can hold one name, but the file
+        # really does include both headers, so the edge is kept here.
+        self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -945,6 +952,14 @@ class ImportProcessor:
         lang_config = queries[language]["config"]
 
         self.import_mapping[module_qn] = {}
+        # Cleared with the mapping it shadows: these entries ADD edges, so a
+        # stale one would resurrect an include the edited file has removed
+        # (issue #1758).
+        self._cpp_shadowed_include_targets = {
+            entry
+            for entry in self._cpp_shadowed_include_targets
+            if entry[0] != module_qn
+        }
         self._retract_import_sites(module_qn)
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
@@ -1038,6 +1053,21 @@ class ImportProcessor:
                             full_name=full_name,
                             language=language,
                             site=sites.get(local_name),
+                        )
+                    )
+                # Includes whose local binding a later include took over: the
+                # file includes them, so they keep their edge even though the
+                # map no longer names them (issue #1758). No site: the binding
+                # that carried it belongs to the include that won the name.
+                for module_key, shadowed in self._cpp_shadowed_include_targets:
+                    if module_key != module_qn:
+                        continue
+                    self._deferred_import_edges.append(
+                        DeferredImportEdge(
+                            module_qn=module_qn,
+                            full_name=shadowed,
+                            language=language,
+                            site=None,
                         )
                     )
 
@@ -4211,6 +4241,13 @@ class ImportProcessor:
         full_name = self._cpp_include_full_name(
             include_path, is_system_include, module_qn
         )
+        # A local name already bound by an earlier include in this file names
+        # a DIFFERENT header (`<std>` then `<std.h>`, both binding `std`).
+        # The map holds one binding, so remember the loser's target: it is a
+        # real include of a real header and must keep its IMPORTS edge (#1758).
+        displaced = self.import_mapping[module_qn].get(local_name)
+        if displaced is not None and displaced != full_name:
+            self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][local_name] = full_name
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(

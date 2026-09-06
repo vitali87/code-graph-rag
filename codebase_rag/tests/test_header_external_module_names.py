@@ -81,3 +81,50 @@ def test_a_slashed_system_include_is_segmented_like_a_module_path(
     assert external.get("std.sys.types.h") == "types", (
         f"a slashed header is not segmented and named by its stem: {external}"
     )
+
+
+COLLIDING = "#include <std>\n#include <std.h>\nint main(void) { return 0; }\n"
+
+
+def _import_targets(root: Path, source: str) -> set[str]:
+    """Every IMPORTS target the run emits for `m.c`."""
+    parsers, queries = load_parsers()
+    for language in (cs.SupportedLanguage.C, cs.SupportedLanguage.CPP):
+        if language not in parsers:
+            pytest.skip(f"{language} parser not available")
+    (root / "m.c").write_text(source, encoding="utf-8")
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run()
+    store.flush_all()
+    return {
+        str(dst)
+        for (_sl, _src, rel, _tl, dst) in store.edges
+        if rel == cs.RelationshipType.IMPORTS.value
+    }
+
+
+def test_two_headers_binding_one_local_name_each_keep_their_edge(
+    tmp_path: Path,
+) -> None:
+    """`<std>` and `<std.h>` both bind the local name `std`.
+
+    `import_mapping` holds one binding per local name and the IMPORTS edges
+    are derived from it, so the second include overwrote the first and the
+    file ended up importing only one of the two headers it includes
+    (issue #1758). The binding can still only name one of them; the edge for
+    the displaced header is kept beside it.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    targets = _import_targets(root, COLLIDING)
+
+    assert targets, "fixture guard: the run emitted no IMPORTS edges at all"
+    assert targets == {"std", "std.h"}, (
+        f"a header lost its IMPORTS edge to another binding the same name: {targets}"
+    )
