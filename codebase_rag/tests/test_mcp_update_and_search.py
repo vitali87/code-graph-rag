@@ -2065,12 +2065,13 @@ class TestIncompleteMarkerInvariant:
         else:  # pragma: no cover - guards against a typo in the parametrise
             raise AssertionError(f"unknown failure path {path!r}")
 
-    # `reingest_mutated` is deliberately absent: that path promotes this
-    # project's own marker to `writing=true` before it sets the flag, so
-    # `_persisted_incomplete` refuses on its own and no assertion here can
-    # tell its attribution-drop apart from its absence. Including it would
-    # add a variant that stays green when the line is deleted -- assurance
-    # the test cannot actually give (#1705 review, final round).
+    # `reingest_mutated` is absent from this parametrise because it cannot
+    # be driven through the same helper: within ONE registry that path leaves
+    # the marker `writing=true`, so `_persisted_incomplete` refuses on its own
+    # and the attribution is never the deciding factor. It is not untestable,
+    # only untestable HERE -- a second process clearing the marker exposes it,
+    # which `test_another_process_clearing_the_marker_cannot_heal_a_mutating_
+    # failure` below does (#1705 review, final round).
     @pytest.mark.parametrize("failure", ["wipe", "delete", "index", "update"])
     async def test_a_pending_recovery_cannot_heal_a_marker_less_failure(
         self, temp_project_root: Path, failure: str
@@ -2132,6 +2133,90 @@ class TestIncompleteMarkerInvariant:
             "an unrelated marker recovery cleared the flag a failed "
             f"{failure} earned, and scoped reingest ran over a partial "
             f"graph: {result}"
+        )
+
+    async def test_another_process_clearing_the_marker_cannot_heal_a_mutating_failure(
+        self, temp_project_root: Path
+    ) -> None:
+        """The fifth attribution site, which only a SECOND process exposes.
+
+        A reingest that got past `before_write` may have left the graph
+        partial, so it sets `_graph_incomplete`. Within one registry the
+        durable marker is `writing=true` by then and `_persisted_incomplete`
+        refuses on its own, which is why this site looks untestable.
+
+        It is not. Another process completing a full update clears that
+        marker durably. `_persisted_incomplete` then returns False while THIS
+        registry still knows its own graph is partial, and a stale
+        attribution left by an earlier failed clear satisfies
+        `recoverable_here` -- healing a flag no marker explains and letting a
+        scoped reingest run over the partial graph (#1705 review).
+
+        The updater is RETAINED on `_live_updater` and its `reingest` must
+        RAISE after calling `before_write`. Both matter: a patched
+        `GraphUpdater` class never reaches the retained-updater path, and a
+        reingest that returns instead of raising never enters the `mutated`
+        branch at all -- the call then falls through to
+        `_require_marker_cleared`, whose successful clear nulls the
+        attribution for an unrelated reason and the test discriminates
+        nothing. The fixture guards below pin both.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # An earlier failed clear attributes the flag to this project.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: the failed clear must attribute the flag, or "
+            "there is no stale attribution for the heal to act on"
+        )
+
+        # A retained updater that writes, then dies: the graph may be partial.
+        retained = MagicMock()
+
+        def _reingest(paths, deleted=None, before_write=None, **kwargs):
+            if before_write is not None:
+                before_write()  # promotes this project's marker to writing
+            retained.reingest_mutated = True  # the read-only prologue ended
+            raise RuntimeError("died after writing began")
+
+        retained.reingest_mutated = False
+        retained.reingest.side_effect = _reingest
+        registry._live_updater = retained
+        assert "error" in str(await registry.reingest(["a.py"]))
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the mutating failure must set the in-process flag"
+        )
+        assert ingestor._writing_store.get(project) is True, (
+            "fixture guard: `before_write` must have promoted the marker, or "
+            "this is not the mutated branch the test exists for"
+        )
+
+        # Another process finishes a full update and clears the marker.
+        other = self._registry(temp_project_root, ingestor)
+        _mark_indexed(other)
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await other.update_repository()
+        assert registry._persisted_incomplete(project) is False, (
+            "fixture guard: the other process must have cleared the durable "
+            "marker, or _persisted_incomplete refuses on its own and the "
+            "attribution is never the deciding factor"
+        )
+
+        registry._live_updater = None
+        _mark_indexed(registry)
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = str(await registry.reingest(["a.py"]))
+        assert "error" in result, (
+            "another process's marker clear healed a flag earned by THIS "
+            "process's mutating failure, so a scoped reingest ran over the "
+            f"partial graph it left: {result}"
         )
 
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
