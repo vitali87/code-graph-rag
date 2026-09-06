@@ -3204,23 +3204,46 @@ class GraphUpdater:
         # `foreign_qns` is built from function span records, and a class
         # registers none, so for a class qn it is vacuously false and cannot
         # protect anything. Ownership therefore has to come from the module
-        # index: a directory whose name equals a deleted file's stem nests
-        # under it (`proj/A.cs` -> `proj.A`, `proj/A/B.cs` -> `proj.A.B`), so
-        # a prefix-only sweep of `A.cs` would take `proj.A.B.N.Nested`, which
-        # `B.cs` still owns and which this event does not re-parse.
-        surviving_modules = {
-            qn
-            for qn in self.factory.definition_processor.module_qn_to_file_path
-            if qn not in module_qn_prefixes
-        }
+        # index, and by LONGEST prefix rather than by any prefix: a directory
+        # whose name equals another file's stem nests under it, so
+        # `proj/A.cs` -> `proj.A` and `proj/A/B.cs` -> `proj.A.B` are both
+        # prefixes of `proj.A.B.N.Nested`, which only `B.cs` owns. Matching
+        # any prefix errs in both directions -- deleting `A.cs` would take
+        # `B.cs`'s class, and merely EXCLUDING everything under a surviving
+        # module would then spare that class when `B.cs` itself is deleted,
+        # reinstating #1769 for every file whose parent directory shares a
+        # sibling's stem. The longest matching module owns the qn.
+        #
+        # On the `module_qn_prefixes = recorded_qns or {path_derived_qn}`
+        # fallback (a file this updater never parsed), the derived qn is by
+        # definition absent from the module index, so `_owning_module` cannot
+        # return it and this filter prunes nothing. That is deliberate and is
+        # the safe direction: a file that recorded no module owns no class
+        # arity to begin with, and under-pruning a stale entry costs a wrong
+        # resolution while over-pruning a live sibling's costs a lost one.
+        module_index = self.factory.definition_processor.module_qn_to_file_path
         class_qns = {
             qn
             for qn in type_inference.csharp_class_generic_arity
-            if self._under(qn, module_qn_prefixes)
-            and not self._under(qn, surviving_modules)
+            if self._owning_module(qn, module_index) in module_qn_prefixes
         }
         if function_qns or class_qns:
             type_inference.drop_csharp_side_tables(function_qns, class_qns)
+
+    @staticmethod
+    def _owning_module(qn: str, module_qns: Collection[str]) -> str | None:
+        """The longest module qn `qn` sits under, or None when it sits under none.
+
+        Longest wins because module qns nest: `proj.A` and `proj.A.B` are
+        different files, and a class under both belongs to the deeper one.
+        """
+        best: str | None = None
+        for module_qn in module_qns:
+            if (qn == module_qn or qn.startswith(f"{module_qn}.")) and (
+                best is None or len(module_qn) > len(best)
+            ):
+                best = module_qn
+        return best
 
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:

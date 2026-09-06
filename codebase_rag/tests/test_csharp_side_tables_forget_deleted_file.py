@@ -178,3 +178,44 @@ def test_a_sibling_directory_sharing_the_deleted_files_stem_is_kept(
     assert kept in arity, (
         f"a surviving sibling's class arity was swept by the prefix filter: {arity}"
     )
+
+
+def test_a_nested_file_under_a_surviving_siblings_module_is_still_pruned(
+    temp_repo: Path,
+) -> None:
+    """The mirror of the test above: delete `proj/A/B.cs`, keep `proj/A.cs`.
+
+    `proj.A.B.N.Nested` sits under BOTH `proj.A.B` (its own file, deleted)
+    and `proj.A` (`A.cs`, surviving). Excluding everything under a surviving
+    module to protect the previous case spares this class too, which
+    reinstates #1769 for every file whose parent directory shares a
+    sibling's stem. Ownership is by LONGEST matching module, so the deeper
+    `proj.A.B` wins and the class goes.
+    """
+    root = temp_repo / "proj"
+    root.mkdir()
+    (root / "A.cs").write_text(A_CS, encoding="utf-8")
+    (root / "A").mkdir()
+    (root / "A" / "B.cs").write_text(NESTED_DIR_CS, encoding="utf-8")
+    updater = _create_graph_updater(root)
+    updater.run()
+    arity = updater.factory.type_inference.csharp_class_generic_arity
+
+    gone = next((qn for qn in arity if qn.endswith(".Nested")), None)
+    kept = next((qn for qn in arity if qn.endswith(".K")), None)
+    assert gone, f"fixture guard: A/B.cs recorded no class arity: {arity}"
+    assert kept, f"fixture guard: A.cs recorded no class arity: {arity}"
+    # The shape the defect needs: the DELETED file's qn nests under a
+    # SURVIVING file's module qn, so a survivor-exclusion filter spares it.
+    assert gone.startswith("proj.A."), (
+        f"fixture guard: the deleted class does not nest under proj.A: {gone}"
+    )
+
+    (root / "A" / "B.cs").unlink()
+    updater.remove_file_from_state(root / "A" / "B.cs")
+
+    assert gone not in arity, (
+        "a deleted file's class arity was spared because a surviving "
+        f"sibling's module is also a prefix of it: {arity}"
+    )
+    assert kept in arity, f"the surviving file's class arity was swept: {arity}"
