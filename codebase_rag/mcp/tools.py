@@ -1468,7 +1468,9 @@ class MCPToolsRegistry:
             payload[cs.KEY_VERDICT] = report.verdict._asdict()
         return payload
 
-    def _reingest_for_contract(self, project_name: str) -> Callable[[list[str]], ReingestReport] | None:
+    def _reingest_for_contract(
+        self, project_name: str
+    ) -> Callable[[list[str]], ReingestReport] | None:
         """The live updater's re-ingest for an edit's postcondition contract.
 
         A project that is not indexed has no graph to measure against and

@@ -622,6 +622,7 @@ SIGNATURE_VARIADIC = (
 SIGNATURE_UNKNOWN_KEYWORD = "the site passes an unknown keyword {name}"
 SIGNATURE_NEEDS_KEYWORDS = "the mapping needs keyword arguments this language lacks"
 SIGNATURE_UNMAPPED_PARAM = "the site passes no value for {name}"
+SIGNATURE_SURPLUS_ARGS = "the site passes more arguments than the definition declares"
 SIGNATURE_DEFAULT_ORDER = "Parameter {name} has no default but follows one that does"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"

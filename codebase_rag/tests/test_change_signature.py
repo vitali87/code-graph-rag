@@ -219,6 +219,41 @@ def test_default_literal_incompatible_with_declared_type_is_refused(
         )
 
 
+def test_a_site_passing_surplus_arguments_is_refused_not_truncated(
+    tmp_path: Path,
+) -> None:
+    """An argument the new signature has no home for must not be dropped.
+
+    `_map_arguments` consumes one value per spec; anything left over is an
+    argument the caller passes and the mapping does not name. Rewriting the
+    site would delete it from the caller's source, and the contract cannot
+    catch that -- the argument is gone from the file before the delta is
+    measured, so the `too_many` arity check sees nothing.
+    """
+    root = tmp_path / "proj"
+    surplus = dict(FIXTURE)
+    # A stale caller passing three arguments to a two-parameter definition.
+    surplus["pkg/app.py"] = (
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(1, 2, 3)\n"
+    )
+    for rel, text in surplus.items():
+        _write(root, rel, text)
+    store, updater = _index(root)
+    before = (root / "pkg/app.py").read_text()
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.util.helper"),
+        ["a@0", "b@1"],
+        reingest=updater.reingest,
+    )
+
+    assert {u.owner for u in report.unmapped} == {_qn("pkg.app.run")}
+    assert (root / "pkg/app.py").read_text() == before, "the site was rewritten"
+
+
 def test_unmapped_parameter_leaves_sites_untouched_and_lists_them(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
