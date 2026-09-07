@@ -342,7 +342,20 @@ class Renamer:
         patcher = Patcher(self.repo_root)
         # Definition name token.
         path = definition["path"]
-        source = patcher.source(path)
+        try:
+            source = patcher.source(path)
+        except PatcherError as error:
+            # The graph names a file the tree no longer has, or cannot read.
+            # Every other refusal on this path is a RenameRefused, and the
+            # MCP handler turns that into a payload; letting a PatcherError
+            # escape makes a stale index an unhandled error instead of the
+            # documented refusal (the site-level read below already does
+            # this).
+            raise RenameRefused(
+                cs.RENAME_DEFINITION_UNREADABLE.format(qn=qn, path=path, error=error),
+                [],
+                [],
+            ) from error
         start = definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(

@@ -388,6 +388,31 @@ def test_unlocatable_dynamic_site_is_listed(
     assert forced.value.unlocatable
 
 
+def test_a_deleted_definition_file_refuses_rather_than_raising(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    """A stale index is a refusal, not an unhandled error.
+
+    Every other failure on this path raises RenameRefused, which the MCP
+    handler turns into a payload and the CLI into a message. A PatcherError
+    escaping instead makes a deleted-but-indexed file crash the tool. The
+    site-level read already refuses; the definition read did not.
+    """
+    root, graph = py_repo
+    # The graph still names pkg/util.py; the tree no longer has it.
+    (root / "pkg" / "util.py").unlink()
+
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.util.helper",
+            "assist",
+        )
+    assert "cannot be read" in str(refused.value)
+
+
 def test_unknown_symbol_and_bad_name(py_repo: tuple[Path, RecordedGraph]) -> None:
     root, graph = py_repo
     with pytest.raises(RenameRefused, match="No definition"):

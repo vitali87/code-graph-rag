@@ -553,6 +553,10 @@ EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
 RENAME_UNKNOWN = "No definition named {qn} in the graph"
 RENAME_NO_DEFINITION_TOKEN = "Could not locate the name of {qn} in {path}"
+RENAME_DEFINITION_UNREADABLE = (
+    "Cannot rename {qn}: its file {path} cannot be read ({error}). "
+    "The index names a file the tree no longer has; re-index and retry."
+)
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
 RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
