@@ -749,6 +749,13 @@ def _map_arguments(
                 out.append(spec.literal)
         else:
             return cs.SIGNATURE_UNMAPPED_PARAM.format(name=spec.name)
+    # Every spec consumed what it named; anything still in `values` is an
+    # argument the new signature has no home for. Rewriting would drop it
+    # from the caller's source silently -- and the contract cannot catch
+    # that, because the argument is gone from the file before the delta is
+    # measured, so the `too_many` arity check sees nothing.
+    if values:
+        return cs.SIGNATURE_SURPLUS_ARGS
     return out + carried
 
 
