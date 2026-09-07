@@ -160,6 +160,39 @@ def _name_token(
     return None
 
 
+def _best_call_at(
+    root: Node, line: int, col: int, recorded_end: tuple[int, int] | None
+) -> Node | None:
+    """The call node at (line, col) that the graph site refers to.
+
+    Several calls can share a start point -- `helper(helper(1))`,
+    `helper(2).upper()`, and both links of `obj.helper(1).helper(2)` -- so the
+    right one is the call ending where the site recorded its end, or the
+    outermost when no end was recorded.
+
+    Extracted from `_callee_span` to keep it under the cognitive complexity
+    limit (S3776). This walk is where that complexity lives: a loop with
+    three levels of nested branching, and nesting multiplies the cost.
+    Extracting the straight-line setup around it would not have helped.
+    """
+    best: Node | None = None
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.start_point == (line - 1, col):
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            if func is not None:
+                if node.end_point == recorded_end:
+                    return node
+                if best is None or (
+                    best.end_point != recorded_end and node.end_byte > best.end_byte
+                ):
+                    best = node
+        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+            stack.extend(node.children)
+    return best
+
+
 def _callee_span(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -182,27 +215,12 @@ def _callee_span(
     if parser is None:
         return None
     root = parser.parse(source).root_node
-    best: Node | None = None
-    stack: list[Node] = [root]
     recorded_end = (
         (end_line - 1, end_col)
         if end_line is not None and end_col is not None
         else None
     )
-    while stack:
-        node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    best = node
-                    break
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
-            stack.extend(node.children)
+    best = _best_call_at(root, line, col, recorded_end)
     if best is None:
         return None
     func = best.child_by_field_name(cs.FIELD_FUNCTION)
@@ -369,6 +387,31 @@ class Renamer:
             self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
         return sites, unlocatable, old_name, definition["label"]
 
+    @staticmethod
+    def _record_unlocatable(
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        *,
+        owner: str,
+        path: str,
+        line: int,
+        col: int,
+        resolution: str,
+        site_resolution: str,
+    ) -> None:
+        """Record a graph-known occurrence that cannot be rewritten.
+
+        Both refusal paths in `_add_site` -- a row with no usable position,
+        and a file the patcher cannot read -- append the same pair. Sharing
+        them keeps `_add_site` under the cognitive complexity limit (S3776)
+        by removing a whole branch body rather than straight-line setup,
+        which is the part that actually counts.
+        """
+        unlocatable.append(
+            cs.RENAME_UNLOCATABLE_SITE.format(owner=owner, resolution=resolution)
+        )
+        sites.append(RenameSite("unlocatable", path, line, col, owner, site_resolution))
+
     def _add_site(
         self,
         sites: list[RenameSite],
@@ -389,23 +432,18 @@ class Renamer:
             or not isinstance(line, int)
             or not isinstance(col, int)
         ):
-            unlocatable.append(
-                cs.RENAME_UNLOCATABLE_SITE.format(
-                    owner=owner, resolution=resolution_text or "unknown"
-                )
-            )
             # A graph-known edge with no site cannot be rewritten, whatever
             # bound it: applying anyway would leave that caller under the
             # old name, so it blocks like a guess does.
-            sites.append(
-                RenameSite(
-                    "unlocatable",
-                    path if isinstance(path, str) else "",
-                    0,
-                    0,
-                    owner,
-                    resolution_text or _SITELESS,
-                )
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path if isinstance(path, str) else "",
+                line=0,
+                col=0,
+                resolution=resolution_text or "unknown",
+                site_resolution=resolution_text or _SITELESS,
             )
             return
         try:
@@ -413,12 +451,16 @@ class Renamer:
         except PatcherError:
             # The graph knows this occurrence but its file cannot be read:
             # renaming around it would leave it under the old name.
-            unlocatable.append(
-                cs.RENAME_UNLOCATABLE_SITE.format(
-                    owner=owner, resolution="missing file"
-                )
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="missing file",
+                site_resolution=_SITELESS,
             )
-            sites.append(RenameSite("unlocatable", path, line, col, owner, _SITELESS))
             return
         token = _last_identifier(
             source,
