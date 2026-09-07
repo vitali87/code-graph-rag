@@ -2421,3 +2421,56 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
 
         ingestor.fetch_all.assert_called_once()
         assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
+
+
+class TestTheCachedUpdatersProject:
+    """A cached updater belongs to one project and must not answer for another.
+
+    `_live_updater` is built by `_update_repository_sync` for the DERIVED
+    project name. A caller naming a different project (the rename tool takes
+    an explicit `project`) would otherwise be handed that updater: the delta
+    is then measured under the selected prefix while the re-ingest writes
+    under the derived one, so a correct rename reads as not applied, is
+    rolled back, and the graph ends up split across two project names.
+    """
+
+    def _registry(self, tmp_path: Path, cached_project: str | None):
+        from unittest.mock import MagicMock
+
+        from codebase_rag.mcp.tools import MCPToolsRegistry
+
+        registry = MCPToolsRegistry(
+            project_root=str(tmp_path),
+            ingestor=MagicMock(),
+            cypher_gen=MagicMock(),
+        )
+        if cached_project is not None:
+            cached = MagicMock()
+            cached.project_name = cached_project
+            registry._live_updater = cached
+        return registry
+
+    def test_a_cached_updater_for_another_project_is_not_reused(
+        self, tmp_path: Path
+    ) -> None:
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        # Asking for BETA must not hand back ALPHA's updater. There is no
+        # graph here, so rebuilding refuses -- which is the point: the
+        # refusal proves the cached one was rejected rather than returned.
+        registry.ingestor.list_projects.return_value = []
+        with pytest.raises(ValueError):
+            registry._updater_for_reingest(BETA)
+
+    def test_the_cached_updater_is_reused_for_its_own_project(
+        self, tmp_path: Path
+    ) -> None:
+        # The known-positive: without this, the test above would pass just as
+        # well against a method that never reuses a cached updater at all.
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        assert registry._updater_for_reingest(ALPHA) is registry._live_updater
+
+    def test_an_unnamed_caller_still_reuses_the_cached_updater(
+        self, tmp_path: Path
+    ) -> None:
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        assert registry._updater_for_reingest() is registry._live_updater
