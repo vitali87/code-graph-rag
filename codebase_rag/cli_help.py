@@ -20,6 +20,7 @@ class CLICommandName(StrEnum):
     EDITS = "edits"
     GRAPH = "graph"
     CHECK = "check"
+    RENAME = "rename"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -130,6 +131,20 @@ HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, arity "
     "findings, new duplicates or new import cycles."
 )
+CMD_RENAME = (
+    "Rename a definition everywhere the graph references it (definition, call "
+    "and reference sites, imports, overrides, __all__); refuses on guessed sites."
+)
+EXAMPLES_RENAME = (
+    "Examples:\n  cgr rename myproj.pkg.util.helper assist --dry-run\n"
+    "  cgr rename myproj.pkg.Store.get fetch --allow-heuristic"
+)
+HELP_RENAME_QN = "Qualified name of the definition to rename."
+HELP_RENAME_NEW_NAME = "The new identifier."
+HELP_RENAME_ALLOW_HEURISTIC = (
+    "Rewrite through heuristic, overload and trace-only sites as well."
+)
+HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -450,6 +465,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.EDITS: CMD_EDITS,
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
+    CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

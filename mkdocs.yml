@@ -109,6 +109,7 @@ nav:
     - Security Model: architecture/security.md
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
+    - Rename Operation: architecture/rename.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
