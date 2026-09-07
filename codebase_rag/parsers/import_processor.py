@@ -950,22 +950,14 @@ class ImportProcessor:
     def get_stdlib_cache_stats() -> StdlibCacheStats:
         return get_stdlib_cache_stats()
 
-    def parse_imports(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
-        pre_captures: dict | None = None,
-    ) -> None:
-        if language not in queries:
-            return
-        imports_query = queries[language]["imports"]
-        if not imports_query:
-            return
+    def _clear_module_import_state(self, module_qn: str) -> None:
+        """Drop everything a previous parse of this module recorded.
 
-        lang_config = queries[language]["config"]
-
+        Extracted from `parse_imports` to keep it under the cognitive
+        complexity limit (S3776); the grouping is also the honest one, since
+        these four writes share a single invariant: a re-parse must carry
+        nothing the edited file no longer says.
+        """
         self.import_mapping[module_qn] = {}
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
@@ -986,6 +978,24 @@ class ImportProcessor:
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
         self._retract_import_sites(module_qn)
+
+    def parse_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+        pre_captures: dict | None = None,
+    ) -> None:
+        if language not in queries:
+            return
+        imports_query = queries[language]["imports"]
+        if not imports_query:
+            return
+
+        lang_config = queries[language]["config"]
+
+        self._clear_module_import_state(module_qn)
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
