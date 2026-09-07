@@ -170,6 +170,7 @@ class ClassIngestMixin:
     csharp_partial_groups: dict[str, list[str]]
     csharp_generic_methods: set[str]
     csharp_class_generic_arity: dict[str, int]
+    csharp_class_owner_module: dict[str, str]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -1238,6 +1239,10 @@ class ClassIngestMixin:
                     self.csharp_class_generic_arity[class_qn] = len(
                         child.named_children
                     )
+                    # The declaring module, recorded because the class qn
+                    # cannot yield it: a namespace pushes the qn under a
+                    # sibling module's qn (#1769 review).
+                    self.csharp_class_owner_module[class_qn] = module_qn
                     break
             # A `partial` type is split across files into N path-distinct
             # nodes; group the parts into one shared list so a typed receiver

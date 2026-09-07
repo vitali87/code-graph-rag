@@ -154,6 +154,13 @@ class DefinitionProcessor(
         # so `Builder` vs `Builder<TResult>` (same simple name) can be told
         # apart when a type reference's written arity is known.
         self.csharp_class_generic_arity: dict[str, int] = {}
+        # {class qn: module qn of the file that DECLARED it}. Recorded
+        # rather than derived: a C# class qn embeds its namespace, so
+        # `proj/Core.cs` with `namespace Util` yields
+        # `proj.Core.Util.Helper`, which sits under the SIBLING module
+        # `proj.Core.Util`. No prefix rule on the qn can recover the
+        # declarer, so the prune reads this map (#1769).
+        self.csharp_class_owner_module: dict[str, str] = {}
         # {method qn: (normalized return type, its written generic arity)}
         # for chained-receiver typing; separate from the cross-language
         # method_return_types because the arity is C#-specific.

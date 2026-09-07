@@ -3107,6 +3107,15 @@ class GraphUpdater:
         if stale_method_qns:
             self.factory.type_inference.drop_method_return_types(stale_method_qns)
 
+        # Four more C# side tables, the same defect for four more maps (issue
+        # #1769). Extracted so this already-long sweep does not grow further.
+        self._prune_csharp_side_tables(
+            qns_to_remove=qns_to_remove,
+            owned_natural=owned_natural,
+            foreign_qns=foreign_qns,
+            module_qn_prefixes=module_qn_prefixes,
+        )
+
         for simple_name, qn_set in self.simple_name_lookup.items():
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
@@ -3136,6 +3145,89 @@ class GraphUpdater:
         rehydrated = self.factory.definition_processor.rehydrated_definition_paths
         for qn in qns_to_remove:
             rehydrated.pop(qn, None)
+
+    def _prune_csharp_side_tables(
+        self,
+        qns_to_remove: set[str],
+        owned_natural: set[str],
+        foreign_qns: set[str],
+        module_qn_prefixes: set[str],
+    ) -> None:
+        """Drop a removed file's entries from the four remaining C# maps.
+
+        `remove_file_from_state` reached the registry, both return-type maps
+        and `csharp_partial_groups`, but never `csharp_generic_methods`,
+        `csharp_class_generic_arity`, `csharp_local_functions` or
+        `csharp_extension_methods` (issue #1769): a deleted file's entries
+        survived on a reused updater and went on steering resolution at a
+        definition that is gone. Same defect class as #1668, #1738 and #1753.
+
+        Three of the four key by the DEFINITION's qn, so they take exactly
+        the filter the registry sweep and the return-type maps use: already
+        swept, or owned by this file's span records on the natural qn, or
+        under one of its module prefixes with `foreign_qns` excluded.
+        `csharp_class_generic_arity` keys by a CLASS qn instead. Classes
+        record no function span, so `owned_natural` can never name one and
+        `foreign_qns` is vacuous for them; ownership comes from the module
+        index instead. A class qn does sit under the module qn of its
+        declaring file, but it can equally sit under a SHORTER module qn
+        belonging to a different file: `proj/A.cs` records `proj.A` and
+        `proj/A/B.cs` records `proj.A.B`, so deleting `A.cs` on the prefix
+        alone would take `B.cs`'s `proj.A.B.N.Nested` with it. A qn under a
+        surviving module is therefore kept, whichever prefix also matches.
+        A partial type's other halves are separate qns under their own
+        modules and each is pruned by its own deletion.
+        """
+
+        def owned(qn: str) -> bool:
+            return (
+                qn in qns_to_remove
+                or _natural_qn(qn) in owned_natural
+                or (qn not in foreign_qns and self._under(qn, module_qn_prefixes))
+            )
+
+        type_inference = self.factory.type_inference
+        extension_owners = {
+            owner
+            for entries in type_inference.csharp_extension_methods.values()
+            for owner, *_rest in entries
+        }
+        function_qns = {
+            qn
+            for qn in (
+                type_inference.csharp_generic_methods
+                | type_inference.csharp_local_functions.keys()
+                | extension_owners
+            )
+            if owned(qn)
+        }
+        # `foreign_qns` is built from function span records, and a class
+        # registers none, so for a class qn it is vacuously false and cannot
+        # protect anything. Ownership comes from a record written at INGEST
+        # instead of being inferred from the qn, because the qn cannot yield
+        # it: a C# class qn embeds its namespace, so `proj/Core.cs` declaring
+        # `namespace Util` produces `proj.Core.Util.Helper`, which sits under
+        # the SIBLING module `proj.Core.Util` (`proj/Core/Util.cs`). Both a
+        # prefix rule and a longest-prefix rule therefore attribute that
+        # class to the wrong file and err in both directions -- deleting the
+        # sibling drops a live class, and deleting its real declarer keeps a
+        # dead one (#1769 review). A class with no recorded owner (ingested
+        # before this map existed) is left alone rather than guessed at.
+        owner_module = type_inference.csharp_class_owner_module
+        class_qns = {
+            qn
+            for qn in type_inference.csharp_class_generic_arity
+            if owner_module.get(qn) in module_qn_prefixes
+        }
+        if function_qns or class_qns:
+            type_inference.drop_csharp_side_tables(function_qns, class_qns)
+
+    @staticmethod
+    def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
+        """True when `qn` is one of the prefixes or sits beneath one."""
+        return any(
+            qn.startswith(f"{prefix}.") or qn == prefix for prefix in module_qn_prefixes
+        )
 
     def _existing_module_paths(self) -> frozenset[str] | None:
         """Paths of this project's Module nodes already in the graph.
