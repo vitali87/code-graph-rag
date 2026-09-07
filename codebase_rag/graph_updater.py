@@ -2329,7 +2329,9 @@ class GraphUpdater:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
-    def _prune_stale_seeded_module_qns(self) -> None:
+    def _prune_stale_seeded_module_qns(
+        self, exempt_paths: set[Path] | None = None
+    ) -> None:
         """Drop map entries for modules the graph no longer holds.
 
         `_seed_module_qns_from_graph` only ever adds, so on a reused updater
@@ -2348,11 +2350,17 @@ class GraphUpdater:
         different path sets, the second covering only the gone files, so a
         prune running inside it would delete what the first call seeded.
 
-        `reingest` therefore never prunes, since it does not go through
-        `run()`: a retained updater that indexes once and then only makes
-        scoped re-ingest calls (the MCP server's `_live_updater`) still
-        accumulates. That is the same class of bug in a path this fix does
-        not reach, not something it closes.
+        `reingest` calls this too (issue #1712), passing the paths IT
+        re-parsed as `exempt_paths`. It cannot use the default: the exemption
+        means "parsed by this operation, so the Module node may be
+        unflushed", and `_parsed_files` only carries that meaning on `run()`,
+        which clears it per run. `reingest` never clears it -- deliberately,
+        because `_hydrate_for_reingest` reads it as a LIVENESS PROXY
+        (non-empty means "this updater already has live state, skip the
+        rehydration read"). So on a retained updater the default would exempt
+        every file parsed since the process started, and the map would never
+        shrink -- the accumulation #1712 is about, in a fix that looks
+        correct and does nothing from the second call onwards.
         """
         if not isinstance(self.ingestor, QueryProtocol):
             return
@@ -2378,7 +2386,11 @@ class GraphUpdater:
         if not in_graph:
             logger.warning(ls.SEED_PRUNE_NO_VERDICT)
             return
-        parsed_this_run = {path for path, _lang in self._parsed_files}
+        parsed_this_run = (
+            exempt_paths
+            if exempt_paths is not None
+            else {path for path, _lang in self._parsed_files}
+        )
         for qn in [qn for qn in module_map if qn not in in_graph]:
             # A file this run parsed writes its own entry and its Module node
             # may still be unflushed, so the read above cannot see it.
@@ -4818,6 +4830,14 @@ class GraphUpdater:
         )
         self._reingest_delete(reparse, gone, hashes)
         parsed = self._reingest_reparse(reparse, gone)
+        # After BOTH seed calls and after the re-parse, so a re-parsed file's
+        # own entry is exempt while its Module node is still unflushed
+        # (issue #1712). The exemption is the paths THIS call re-parsed, not
+        # `_parsed_files`: that field accumulates here on purpose, since
+        # `_hydrate_for_reingest` reads it as a liveness proxy, so the default
+        # would exempt everything the process has ever parsed and the map
+        # would never shrink on the retained updater this fix exists for.
+        self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
