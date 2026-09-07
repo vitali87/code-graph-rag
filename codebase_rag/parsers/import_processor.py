@@ -515,6 +515,18 @@ def _external_module_name(module_path: str) -> str:
     as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
     external of every language; `<std.h>` is not a real header, so the
     inconsistency is the cheaper of the two errors.
+
+    A second, unfixable-here case: this sees only the qn, and slash
+    segmentation has already erased the difference between a PATH and dots
+    inside one basename. `<foo/bar.h>` and `<foo.bar.h>` both become
+    `std.foo.bar.h`, yet `_cpp_include_local_name` binds the first as `bar`
+    (basename stem) and the second as `foo` (first stem segment). One name
+    must therefore disagree with its binding, and no rule at this layer can
+    tell which. It is `<foo/bar.h>` -- a real path, the common shape -- that
+    is served correctly; `<foo.bar.h>` gets `bar` where its binding says
+    `foo`. Fixing that means passing the ORIGINAL include path down to node
+    creation rather than deriving from the qn, which is a wider change than
+    the naming defect warrants (#1758 review).
     """
     segments = module_path.split(cs.SEPARATOR_DOT)
     # `stdio.h` occupies the last TWO dotted segments, stem and extension.
@@ -979,6 +991,61 @@ class ImportProcessor:
         }
         self._retract_import_sites(module_qn)
 
+    def _defer_module_import_edges(
+        self, module_qn: str, language: cs.SupportedLanguage
+    ) -> None:
+        """Queue this module's IMPORTS edges for the post-parse flush.
+
+        Extracted from `parse_imports` to keep it under the cognitive
+        complexity limit (S3776). The two loops here -- the mapping's own
+        bindings and the includes a later binding displaced -- are the
+        densest branching in that function, and nesting multiplies the
+        cost, so moving them out is what actually reduces it; the earlier
+        extraction of straight-line assignments did not.
+        """
+        # Hold the edges back: an internal target is only real if some file
+        # yields that module qn, known only after every file is parsed
+        # (flush_deferred_import_edges).
+        sites = self._import_sites.get(module_qn, {})
+        for local_name, full_name in self.import_mapping[module_qn].items():
+            if (module_qn, full_name) in self._cpp_declaration_mappings:
+                continue
+            if full_name == cs.RUST_UNRESOLVABLE_QN:
+                # The unrepresentable-#[path] sentinel stays in the map
+                # for name binding but names no module, so it must never
+                # become a phantom IMPORTS edge (issue #1082).
+                continue
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=full_name,
+                    language=language,
+                    site=sites.get(local_name),
+                )
+            )
+        # Includes whose local binding a later include took over: the
+        # file includes them, so they keep their edge even though the
+        # map no longer names them (issue #1758). No site: the binding
+        # that carried it belongs to the include that won the name.
+        for module_key, shadowed in self._cpp_shadowed_include_targets:
+            if module_key != module_qn:
+                continue
+            if (module_qn, shadowed) in self._cpp_declaration_mappings:
+                # The displaced binding can be one `export module X;`
+                # wrote, not an include: re-emitting it here would
+                # rebuild the self-import the main loop above filters
+                # out, which `test_cpp_module_declarations_emit_no_
+                # self_import` forbids (#1758 review).
+                continue
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=shadowed,
+                    language=language,
+                    site=None,
+                )
+            )
+
     def parse_imports(
         self,
         root_node: Node,
@@ -1070,49 +1137,7 @@ class ImportProcessor:
             )
 
             if self.ingestor:
-                # Hold the edges back: an internal target is only real if some file
-                # yields that module qn, known only after every file is parsed
-                # (flush_deferred_import_edges).
-                sites = self._import_sites.get(module_qn, {})
-                for local_name, full_name in self.import_mapping[module_qn].items():
-                    if (module_qn, full_name) in self._cpp_declaration_mappings:
-                        continue
-                    if full_name == cs.RUST_UNRESOLVABLE_QN:
-                        # The unrepresentable-#[path] sentinel stays in the map
-                        # for name binding but names no module, so it must never
-                        # become a phantom IMPORTS edge (issue #1082).
-                        continue
-                    self._deferred_import_edges.append(
-                        DeferredImportEdge(
-                            module_qn=module_qn,
-                            full_name=full_name,
-                            language=language,
-                            site=sites.get(local_name),
-                        )
-                    )
-                # Includes whose local binding a later include took over: the
-                # file includes them, so they keep their edge even though the
-                # map no longer names them (issue #1758). No site: the binding
-                # that carried it belongs to the include that won the name.
-                for module_key, shadowed in self._cpp_shadowed_include_targets:
-                    if module_key != module_qn:
-                        continue
-                    if (module_qn, shadowed) in self._cpp_declaration_mappings:
-                        # The displaced binding can be one `export module X;`
-                        # wrote, not an include: re-emitting it here would
-                        # rebuild the self-import the main loop above filters
-                        # out, which `test_cpp_module_declarations_emit_no_
-                        # self_import` forbids (#1758 review).
-                        continue
-                    self._deferred_import_edges.append(
-                        DeferredImportEdge(
-                            module_qn=module_qn,
-                            full_name=shadowed,
-                            language=language,
-                            site=None,
-                        )
-                    )
-
+                self._defer_module_import_edges(module_qn, language)
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
 
@@ -4421,6 +4446,20 @@ class ImportProcessor:
     ) -> None:
         module_name = parts[name_index].rstrip(";")
         full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
+        # A global module fragment puts includes BEFORE the declaration:
+        #
+        #     module;
+        #     #include <foo.h>
+        #     export module foo;
+        #
+        # so the declaration displaces the include's binding, exactly as a
+        # later include displaces an earlier one. Record it the same way or
+        # the header's IMPORTS edge is lost -- the declaration's own target is
+        # then skipped by the deferred loop as a self-import, and nothing is
+        # emitted for the include at all (#1758 review).
+        displaced = self.import_mapping[module_qn].get(module_name)
+        if displaced is not None and displaced != full_name:
+            self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][module_name] = full_name
         # `module X;` / `export module X;` DECLARE this file's module; the mapping
         # exists for name resolution only, never as an IMPORTS edge.
