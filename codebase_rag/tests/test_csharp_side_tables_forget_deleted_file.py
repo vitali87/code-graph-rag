@@ -289,3 +289,47 @@ def test_a_namespace_matching_a_sibling_directory_owns_by_record_not_prefix(
         f"deleting {victim} left the wrong class arity behind; a prefix rule "
         f"attributes the namespace-shifted qn to the wrong file: {arity}"
     )
+
+
+def test_dropping_the_last_owner_of_an_extension_name_removes_the_key(
+    temp_repo: Path,
+) -> None:
+    """The `del` inside the sweep is why its iteration is over `list(...)`.
+
+    `drop_csharp_side_tables` deletes an extension-method NAME once its last
+    owner is gone. Deleting from a dict while iterating it directly raises
+    `RuntimeError: dictionary changed size during iteration`, so the loop
+    iterates a materialised list of the keys.
+
+    SonarCloud flags that `list()` as an unnecessary call on an already
+    iterable object (python:S6199). It is a false positive, and this test is
+    the evidence: it drives the delete branch, so removing the `list()` turns
+    it into a RuntimeError rather than a silent behaviour change.
+
+    Two owners under one name, and only one removed, also pins the other half
+    -- the key survives with its remaining owner rather than being dropped
+    wholesale.
+    """
+    engine = _create_graph_updater(temp_repo).factory.type_inference
+    engine.csharp_extension_methods = {
+        "Twice": [("proj.A.Ext.Twice(int)", "int", "proj.A", 0)],
+        "Thrice": [
+            ("proj.A.Ext.Thrice(int)", "int", "proj.A", 0),
+            ("proj.B.Ext.Thrice(int)", "int", "proj.B", 0),
+        ],
+    }
+
+    engine.drop_csharp_side_tables(
+        function_qns={"proj.A.Ext.Twice(int)", "proj.A.Ext.Thrice(int)"},
+        class_qns=set(),
+    )
+
+    assert "Twice" not in engine.csharp_extension_methods, (
+        "a name whose only owner was removed must be dropped entirely"
+    )
+    assert engine.csharp_extension_methods["Thrice"] == [
+        ("proj.B.Ext.Thrice(int)", "int", "proj.B", 0)
+    ], (
+        "a name with a surviving owner must keep the key and lose only the "
+        f"removed entry: {engine.csharp_extension_methods}"
+    )
