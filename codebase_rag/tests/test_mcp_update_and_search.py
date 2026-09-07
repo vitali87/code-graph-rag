@@ -2297,12 +2297,26 @@ class TestIncompleteMarkerInvariant:
         `writing=false` marker, and lifted the flag, hydrating an updater over
         a half-wiped graph. No store outage at any point (#1705 review).
 
-        Both parameters must REFUSE, and they fail differently on broken code:
-        the same-project case is the defect, while the different-project case
-        refuses anyway because the attribution never matches at the guard.
-        The near-miss is carried as a control precisely because it looks like
-        the same test -- a future simplification to one project would keep it
-        green while removing all of its power.
+        Both parameters must REFUSE. What the near-miss case is worth,
+        measured rather than assumed:
+
+        * `recoverable_here = True` (a provenance-free heal) reddens BOTH
+          cases. So the near-miss can fail for the right reason -- its
+          abandon leaves a recoverable marker, and a blind heal lifts the
+          wipe's flag for it too. It is a real control against the heal
+          logic, not decoration.
+        * `if True:` on the refusal guard (refuse everything) leaves BOTH
+          cases green. So neither case detects OVER-refusal; both are
+          satisfied by code that refuses unconditionally. Their greenness is
+          not evidence that a legitimate reingest still succeeds. Twenty
+          other tests in this file DO catch it (measured), among them
+          `test_reingest_builds_one_updater_and_reuses_it` and
+          `test_wipe_database_drops_the_retained_updater`; the coverage is
+          real, it simply is not here.
+
+        Keep both parameters: collapsing them to one would leave the heal
+        logic pinned in a single direction. But do not read this test as
+        covering the refuse-everything failure mode; it does not.
         """
         ingestor = self._store()
         registry = self._registry(temp_project_root, ingestor)
