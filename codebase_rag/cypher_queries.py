@@ -398,8 +398,7 @@ CYPHER_GRAPH_DEFINITION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
-       n.docstring AS docstring, n.name_start_line AS name_start_line,
-       n.name_start_col AS name_start_col
+       n.docstring AS docstring
 LIMIT 1"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)

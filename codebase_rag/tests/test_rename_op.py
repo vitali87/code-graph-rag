@@ -184,6 +184,38 @@ def _smoke(root: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_markdown_mentions_of_the_old_name_are_reported(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    """`doc_mentions` lists prose a rename cannot rewrite, for a human.
+
+    The happy path asserts it is empty, which a function that can never
+    return anything also satisfies; this drives the collecting branch.
+    """
+    root, graph = py_repo
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs" / "guide.md").write_text(
+        "# Guide\n\nCall helper to do the thing.\n\nUnrelated: helperish stays.\n",
+        encoding="utf-8",
+    )
+    # Under an ignored directory, so it must NOT be reported.
+    (root / "node_modules").mkdir(exist_ok=True)
+    (root / "node_modules" / "vendor.md").write_text(
+        "helper appears here too\n", encoding="utf-8"
+    )
+    report = rename(
+        root,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    # The word boundary excludes `helperish`, and IGNORE_PATTERNS excludes
+    # node_modules, so exactly one line is reported.
+    assert report.doc_mentions == ("docs/guide.md:3",)
+
+
 def test_python_function_rename_rewrites_every_site_and_import(
     py_repo: tuple[Path, RecordedGraph],
 ) -> None:

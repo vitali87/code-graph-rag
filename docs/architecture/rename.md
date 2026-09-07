@@ -48,6 +48,13 @@ likely to belong to a different symbol with the same name. Dynamic
 refuse. Pass `--allow-heuristic` (`allow_heuristic: true`) to rewrite through
 them anyway.
 
+A class named by an `INHERITS`, `ACCEPTS` or `RETURNS` edge that carries no
+rewrite site refuses unconditionally: the graph knows the reference exists
+but records no position to rewrite, so renaming would leave that edge
+pointing at the old name. `--allow-heuristic` does NOT bypass this, because
+the problem is a missing location rather than an uncertain one. A class that
+is only instantiated or called renames normally.
+
 The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).

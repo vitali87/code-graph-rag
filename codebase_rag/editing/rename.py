@@ -490,9 +490,11 @@ class Renamer:
             new_name=new_name,
             applied=False,
             transaction_id="",
-            files=tuple(
-                sorted({s.path for s in sites} | self._all_paths(hierarchy, old_name))
-            ),
+            # `preview` and `apply` both replace this with the files the
+            # transaction actually staged, and a refusal raises rather than
+            # returning, so computing it here would run `_all_paths` (one
+            # graph query per hierarchy member) for a value nothing reads.
+            files=(),
             sites=tuple(sites),
             ambiguous=tuple(ambiguous),
             unlocatable=tuple(unlocatable),
