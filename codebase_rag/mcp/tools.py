@@ -932,6 +932,15 @@ class MCPToolsRegistry:
 
     def _updater_for_reingest(self, project_name: str | None = None) -> GraphUpdater:
         updater = self._live_updater
+        # The cached updater belongs to whichever project last indexed this
+        # root, which is the DERIVED name. A caller naming a different
+        # project would otherwise measure its delta under the selected
+        # prefix while re-ingesting under the derived one: the postcondition
+        # then reads a rename that never happened, rolls back a correct
+        # edit, and leaves the graph split across two project names.
+        if updater is not None and project_name is not None:
+            if updater.project_name != project_name:
+                updater = None
         if updater is None:
             # A scoped re-ingest completes a graph; it cannot stand in for
             # the first index. After delete_project or wipe_database the
@@ -1408,7 +1417,9 @@ class MCPToolsRegistry:
             # the scoped re-ingest (issue #1531); a project that is not indexed
             # has no graph to measure against and skips it.
             # The selected project was verified to be indexed from this
-            # root above, so its own updater measures its own graph.
+            # root above, and `_updater_for_reingest` rejects a cached
+            # updater built for a different project, so the delta is
+            # measured under the same name the re-ingest writes.
             reingest = (
                 self._updater_for_reingest(project_name).reingest
                 if self._live_updater is not None

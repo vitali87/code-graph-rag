@@ -37,7 +37,8 @@ caller count, and says so with `removed=(qn,)` and
 
 An operation measures its delta through the scoped re-ingest of the files it
 wrote (`measure`), verifies, and on failure undoes its transaction with
-`undo_last` and re-ingests the restored files so the graph follows. The
+`undo_transaction`, which refuses when a later edit was recorded on top
+of it, and re-ingests the restored files so the graph follows. The
 [rename operation](rename.md#postcondition-contract) does this whenever it is
 given a `reingest` callable; the MCP `rename` tool and `cgr rename` pass the
 live updater's. The verdict rides on the operation's report (`verdict`), so
