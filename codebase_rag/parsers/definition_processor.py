@@ -439,6 +439,8 @@ class DefinitionProcessor(
                     self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
                 ),
             }
+            if docstring := self._get_docstring(root_node):
+                module_props[cs.KEY_DOCSTRING] = docstring
             if self.generated_source_prefixes and (
                 hint := generator_hint(
                     relative_path_str, self.generated_source_prefixes
@@ -618,12 +620,21 @@ class DefinitionProcessor(
         )
 
     def _get_docstring(self, node: ASTNode) -> str | None:
-        body_node = node.child_by_field_name(cs.FIELD_BODY)
-        if not body_node or not body_node.children:
+        if node.type == cs.TS_PY_MODULE:
+            # A module node has no `body` field: its statements are direct
+            # children, one level shallower than a class or function body.
+            statements = node.children
+        else:
+            body_node = node.child_by_field_name(cs.FIELD_BODY)
+            if not body_node:
+                return None
+            statements = body_node.children
+        if not statements:
             return None
-        first_statement = body_node.children[0]
+        first_statement = statements[0]
         if (
             first_statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+            and first_statement.children
             and first_statement.children[0].type == cs.TS_PY_STRING
         ):
             text = first_statement.children[0].text
