@@ -2153,13 +2153,36 @@ class TestIncompleteMarkerInvariant:
         scoped reingest run over the partial graph (#1705 review).
 
         The updater is RETAINED on `_live_updater` and its `reingest` must
-        RAISE after calling `before_write`. Both matter: a patched
-        `GraphUpdater` class never reaches the retained-updater path, and a
-        reingest that returns instead of raising never enters the `mutated`
-        branch at all -- the call then falls through to
-        `_require_marker_cleared`, whose successful clear nulls the
-        attribution for an unrelated reason and the test discriminates
-        nothing. The fixture guards below pin both.
+        RAISE after calling `before_write`.
+
+        The raising matters and is guarded below: a reingest that RETURNS
+        never enters the `mutated` branch, the call falls through to
+        `_require_marker_cleared`, and that successful clear nulls the
+        attribution for an unrelated reason -- the test would then pass on
+        broken code.
+
+        The retaining is load-bearing for a reason worth stating, because a
+        patched `GraphUpdater` class LOOKS equivalent: it also reaches the
+        mutated branch (the hydrating path builds its own updater and honours
+        `reingest_mutated`) and leaves every observable identical afterwards.
+
+        The difference is that the patched form goes through
+        `_hydrate_reingest_updater`, and the heal under test lives INSIDE that
+        method. Measured: it runs 0 times on the retained path and once on the
+        patched path, where it consumes the attribution
+        (`<project>` -> `None`) during step 2. So the patched form performs at
+        step 2 the very heal this test wants to observe at step 4, and the
+        stale attribution never survives to be tested. Under mutation the
+        retained form is ACCEPTED (the bug) while the patched form still
+        refuses.
+
+        Consequence for maintenance: this test depends on `reingest` reaching
+        a RETAINED updater without hydrating. If the hydration seam moves --
+        if `_reingest_sync` starts hydrating even when `_live_updater` is set,
+        or the heal moves out of `_hydrate_reingest_updater` -- this test
+        stops discriminating and the mutation will still appear to work.
+        Re-measure the hydrate call count if that code is refactored
+        (#1705 review).
         """
         ingestor = self._store()
         registry = self._registry(temp_project_root, ingestor)
@@ -2189,13 +2212,41 @@ class TestIncompleteMarkerInvariant:
         retained.reingest_mutated = False
         retained.reingest.side_effect = _reingest
         registry._live_updater = retained
+
+        # The heal under test lives inside `_hydrate_reingest_updater`, so
+        # step 2 must NOT hydrate: a hydrating step 2 performs that heal
+        # itself and consumes the attribution before step 4 can observe it.
+        # This counts the seam directly, so a refactor that starts hydrating
+        # here fails loudly instead of quietly making the test vacuous.
+        hydrations = 0
+        real_hydrate = registry._hydrate_reingest_updater
+
+        def _counting_hydrate(name: str) -> object:
+            nonlocal hydrations
+            hydrations += 1
+            return real_hydrate(name)
+
+        registry._hydrate_reingest_updater = _counting_hydrate  # type: ignore[method-assign]
         assert "error" in str(await registry.reingest(["a.py"]))
+        registry._hydrate_reingest_updater = real_hydrate  # type: ignore[method-assign]
+        assert hydrations == 0, (
+            "fixture guard: step 2 hydrated a fresh updater, so the heal "
+            "inside `_hydrate_reingest_updater` already consumed the "
+            "attribution and step 4 tests nothing (#1705 review)"
+        )
+        # Validate the instrument: `== 0` above reads the same whether the
+        # counter works or the wrapper was never invoked (mis-scoped, or
+        # attached to the wrong object), which would make it green forever.
+        # Step 4 hydrates by construction -- `_live_updater` is cleared
+        # below -- so the counter MUST reach 1 there. Asserted after step 4.
         assert registry._graph_incomplete is True, (
             "fixture guard: the mutating failure must set the in-process flag"
         )
+        assert registry._live_updater is None, (
+            "fixture guard: the mutated branch must have dropped the retained updater"
+        )
         assert ingestor._writing_store.get(project) is True, (
-            "fixture guard: `before_write` must have promoted the marker, or "
-            "this is not the mutated branch the test exists for"
+            "fixture guard: `before_write` must have promoted the marker"
         )
 
         # Another process finishes a full update and clears the marker.
@@ -2211,8 +2262,16 @@ class TestIncompleteMarkerInvariant:
 
         registry._live_updater = None
         _mark_indexed(registry)
+        registry._hydrate_reingest_updater = _counting_hydrate  # type: ignore[method-assign]
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             result = str(await registry.reingest(["a.py"]))
+        registry._hydrate_reingest_updater = real_hydrate  # type: ignore[method-assign]
+        assert hydrations == 1, (
+            "instrument check: step 4 hydrates by construction, so the "
+            "counter must register it. A counter that stays 0 here is not "
+            "measuring anything, and the `== 0` guard above is vacuous "
+            f"(#1705 review): {hydrations}"
+        )
         assert "error" in result, (
             "another process's marker clear healed a flag earned by THIS "
             "process's mutating failure, so a scoped reingest ran over the "
