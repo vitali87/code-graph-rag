@@ -9,8 +9,9 @@ The graph knows every site, so a rename is a graph operation:
    statement binding the symbol (issue #1522) and, for a method on a
    hierarchy, the same for each overriding and overridden method;
 2. refuse when a site is ambiguous (`heuristic`, `overload`, `dynamic`)
-   unless the caller accepts the risk with `allow_heuristic`; unlocatable
-   dynamic sites are always listed, they cannot be rewritten at all;
+   unless the caller accepts the risk with `allow_heuristic`; a graph-known
+   site with no rewrite location refuses regardless, it cannot be rewritten
+   at all and applying would leave it under the old name;
 3. rewrite the identifier at every site through the span patcher (issue
    #1529) and the import statements through the import rewriter (issue
    #1530), stage the results in a transaction (issue #1528), verify that
@@ -56,6 +57,11 @@ _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 _STRUCTURAL = "structural"
 _SITELESS = "siteless"
+# A same-named link of a fluent chain the index has no row for.
+_CHAIN = "chain"
+_MEMBER_NAME_TYPES = frozenset(
+    {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
+)
 
 
 class RenameSite(NamedTuple):
@@ -155,13 +161,19 @@ def _name_token(
 
 
 def _callee_span(
-    source: bytes, language: cs.SupportedLanguage | None, line: int, col: int
+    source: bytes,
+    language: cs.SupportedLanguage | None,
+    line: int,
+    col: int,
+    end_line: int | None = None,
+    end_col: int | None = None,
 ) -> tuple[int, int] | None:
-    """Byte span of the callee expression of the OUTERMOST call at (line, col).
+    """Byte span of the callee expression of the site's call at (line, col).
 
     `helper(helper(1))` and `helper(2).upper()` both start at the same point
-    as an inner call; the site's call is the outermost one, and its callee
-    is everything before its own argument list.
+    as an inner call, and so do both links of `obj.helper(1).helper(2)`: the
+    site's call is the one ending where the graph recorded the site's end,
+    or, without a recorded end, the outermost one.
     """
     if language is None:
         return None
@@ -172,12 +184,23 @@ def _callee_span(
     root = parser.parse(source).root_node
     best: Node | None = None
     stack: list[Node] = [root]
+    recorded_end = (
+        (end_line - 1, end_col)
+        if end_line is not None and end_col is not None
+        else None
+    )
     while stack:
         node = stack.pop()
         if node.start_point == (line - 1, col):
             func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None and (best is None or node.end_byte > best.end_byte):
-                best = node
+            if func is not None:
+                if node.end_point == recorded_end:
+                    best = node
+                    break
+                if best is None or (
+                    best.end_point != recorded_end and node.end_byte > best.end_byte
+                ):
+                    best = node
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
     if best is None:
@@ -185,6 +208,45 @@ def _callee_span(
     func = best.child_by_field_name(cs.FIELD_FUNCTION)
     assert func is not None
     return func.start_byte, func.end_byte
+
+
+def _chain_links(
+    source: bytes,
+    language: cs.SupportedLanguage | None,
+    line: int,
+    col: int,
+    name: str,
+) -> list[tuple[int, int]]:
+    """(line, col) of `name` as the member called by EVERY call starting at
+    (line, col): the links of a fluent chain `obj.name(1).name(2)`.
+
+    The index keeps one call row per start position, so the chain's later
+    links have no row of their own; the caller decides what to do with them.
+    """
+    if language is None:
+        return []
+    parsers, _queries = load_parsers()
+    parser = parsers.get(language)
+    if parser is None:
+        return []
+    root = parser.parse(source).root_node
+    found: list[tuple[int, int]] = []
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.start_point == (line - 1, col):
+            func = node.child_by_field_name(cs.FIELD_FUNCTION)
+            member = func.children[-1] if func is not None and func.children else None
+            if (
+                member is not None
+                and member.type in _MEMBER_NAME_TYPES
+                and member.text is not None
+                and member.text.decode(cs.ENCODING_UTF8, errors="replace") == name
+            ):
+                found.append((member.start_point[0] + 1, member.start_point[1]))
+        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+            stack.extend(node.children)
+    return sorted(found)
 
 
 def _last_identifier(
@@ -204,7 +266,7 @@ def _last_identifier(
     """
     start = line_col_to_byte(source, line, col)
     end = line_col_to_byte(source, end_line, end_col)
-    callee = _callee_span(source, language, line, col)
+    callee = _callee_span(source, language, line, col, end_line, end_col)
     if callee is not None and callee[0] == start:
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
@@ -373,6 +435,16 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
+        if kind != "call":
+            return
+        # `obj.helper(1).helper(2)`: a link of the chain the index has no
+        # row for (the receiver's type was not inferred) binds to nobody
+        # the graph knows. It is renamed only as a guess the caller opts
+        # into with allow_heuristic; `plan` drops it where a row covers it.
+        language = get_language_for_extension(Path(path).suffix)
+        for link in _chain_links(source, language, line, col, old_name):
+            if link != token:
+                sites.append(RenameSite(kind, path, link[0], link[1], owner, _CHAIN))
 
     def _import_sites(self, qn: str, old_name: str) -> list[tuple[ImportSite, str]]:
         module_qn, _path = self._module_of(qn)
@@ -382,27 +454,37 @@ class Renamer:
             # nested definition shares its name with nothing an importer
             # can bind, so `from pkg.util import get` stays as it is.
             return out
-        for row in graph_query.importers(self.fetch_all, self.project, module_qn):
-            if (
-                row["imported_name"] != old_name
-                or row["path"] is None
-                or row["line"] is None
-            ):
-                continue
-            out.append(
-                (
-                    ImportSite(
-                        row["path"],
-                        row["line"],
-                        row["col"] or 0,
-                        row["end_line"] or row["line"],
-                        row["end_col"] or 0,
-                        row["alias"],
-                        row["imported_name"],
-                    ),
-                    row["module"],
+        # A module that imports the name re-exports it (`pkg/__init__.py`
+        # as a barrel): its own importers of the name bind through it and
+        # are rewritten too, transitively.
+        pending = [module_qn]
+        seen = {module_qn}
+        while pending:
+            source_qn = pending.pop()
+            for row in graph_query.importers(self.fetch_all, self.project, source_qn):
+                if (
+                    row["imported_name"] != old_name
+                    or row["path"] is None
+                    or row["line"] is None
+                ):
+                    continue
+                out.append(
+                    (
+                        ImportSite(
+                            row["path"],
+                            row["line"],
+                            row["col"] or 0,
+                            row["end_line"] or row["line"],
+                            row["end_col"] or 0,
+                            row["alias"],
+                            row["imported_name"],
+                        ),
+                        row["module"],
+                    )
                 )
-            )
+                if row["module"] not in seen:
+                    seen.add(row["module"])
+                    pending.append(row["module"])
         return out
 
     def _doc_mentions(self, old_name: str) -> list[str]:
@@ -447,6 +529,12 @@ class Renamer:
             sites.extend(member_sites)
             unlocatable.extend(member_unlocatable)
         assert old_name is not None
+        covered = {(s.path, s.line, s.col) for s in sites if s.resolution != _CHAIN}
+        sites = [
+            s
+            for s in sites
+            if s.resolution != _CHAIN or (s.path, s.line, s.col) not in covered
+        ]
         structural = [s for s in sites if s.resolution == _STRUCTURAL]
         if structural:
             raise RenameRefused(
@@ -454,18 +542,19 @@ class Renamer:
                 structural,
                 unlocatable,
             )
-        siteless = [
-            s
-            for s in sites
-            if s.kind == "unlocatable" and s.resolution not in _AMBIGUOUS
-        ]
+        # Every graph-known occurrence without a rewrite location blocks,
+        # whatever bound it: `allow_heuristic` accepts rewriting through a
+        # guessed site, not leaving a known one under the old name.
+        siteless = [s for s in sites if s.kind == "unlocatable"]
         if siteless:
             raise RenameRefused(
                 cs.RENAME_SITELESS.format(qn=qn, count=len(siteless)),
                 siteless,
                 unlocatable,
             )
-        ambiguous = [s for s in sites if s.resolution in _AMBIGUOUS]
+        ambiguous = [
+            s for s in sites if s.resolution in _AMBIGUOUS or s.resolution == _CHAIN
+        ]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
                 cs.RENAME_AMBIGUOUS.format(qn=qn, count=len(ambiguous)),

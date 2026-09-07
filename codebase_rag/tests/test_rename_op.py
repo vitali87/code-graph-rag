@@ -371,16 +371,22 @@ def test_unlocatable_dynamic_site_is_listed(
             f"{graph.project}.pkg.util.helper",
             "assist",
         )
-    assert excinfo.value.unlocatable and "dynamic" in excinfo.value.unlocatable[0]
-    report = rename(
-        temp_repo,
-        graph.fetch_all,
-        graph.project,
-        f"{graph.project}.pkg.util.helper",
-        "assist",
-        allow_heuristic=True,
-    )
-    assert report.applied and report.unlocatable
+    assert excinfo.value.unlocatable
+    assert "dynamic" in excinfo.value.unlocatable[0]
+    # `allow_heuristic` does NOT lift this. It accepts rewriting THROUGH a
+    # guessed site; it is not permission to commit while a site the graph
+    # knows about keeps the old name. Applying here would report success
+    # over a half-renamed symbol.
+    with pytest.raises(RenameRefused) as forced:
+        rename(
+            temp_repo,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.util.helper",
+            "assist",
+            allow_heuristic=True,
+        )
+    assert forced.value.unlocatable
 
 
 def test_unknown_symbol_and_bad_name(py_repo: tuple[Path, RecordedGraph]) -> None:
@@ -803,3 +809,134 @@ async def test_mcp_rename_refusal_is_a_payload_not_an_exception(
     assert isinstance(payload, dict)
     assert cs.DICT_KEY_ERROR in payload
     assert payload[cs.KEY_AMBIGUOUS] == [] and payload[cs.KEY_UNLOCATABLE] == []
+
+
+FLUENT = (
+    "class Fluent:\n    def helper(self, n):\n        self.n = n\n        return self\n\n\n"
+    "def run(obj{annotation}):\n    return obj.helper(1).helper(2)\n"
+)
+
+
+def test_both_links_of_a_fluent_chain_are_renamed(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    _write(temp_repo, "pkg/fluent.py", FLUENT.format(annotation=": Fluent"))
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.fluent.Fluent.helper",
+        "assist",
+    )
+    assert report.applied, report.message
+    # Both call rows start at `obj`; each resolves to its own link through
+    # the end the graph recorded, not both to the outermost call.
+    assert (
+        "return obj.assist(1).assist(2)"
+        in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
+    calls = sorted((s.col, s.resolution) for s in report.sites if s.kind == "call")
+    assert calls == [(15, "exact"), (25, "exact")]
+
+
+def test_an_unrecorded_chain_link_is_renamed_only_as_a_guess(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The first link is exact; `helper` returns something the index cannot
+    # type, so the second link has no row saying what it binds to.
+    _write(
+        temp_repo,
+        "pkg/fluent.py",
+        "def make():\n    return object()\n\n\n"
+        "class Fluent:\n    def helper(self, n):\n        return make()\n\n\n"
+        "def run(obj: Fluent):\n    return obj.helper(1).helper(2)\n",
+    )
+    graph = _index(temp_repo, mock_ingestor)
+    before = (temp_repo / "pkg" / "fluent.py").read_text()
+    qn = f"{graph.project}.pkg.fluent.Fluent.helper"
+    with pytest.raises(RenameRefused):
+        rename(temp_repo, graph.fetch_all, graph.project, qn, "assist")
+    assert (temp_repo / "pkg" / "fluent.py").read_text() == before
+    report = rename(
+        temp_repo, graph.fetch_all, graph.project, qn, "assist", allow_heuristic=True
+    )
+    assert report.applied, report.message
+    assert (
+        "return obj.assist(1).assist(2)"
+        in (temp_repo / "pkg" / "fluent.py").read_text()
+    )
+    calls = sorted((s.col, s.resolution) for s in report.sites if s.kind == "call")
+    assert calls == [(15, "exact"), (25, "chain")]
+
+
+def test_a_siteless_heuristic_call_refuses_even_with_allow_heuristic(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    root, graph = py_repo
+    graph.edges.append(
+        (
+            f"{graph.project}.pkg.app.run",
+            "CALLS",
+            f"{graph.project}.pkg.util.helper",
+            {"resolution": "heuristic"},
+        )
+    )
+    before = (root / "pkg" / "util.py").read_text()
+    with pytest.raises(RenameRefused) as refused:
+        rename(
+            root,
+            graph.fetch_all,
+            graph.project,
+            f"{graph.project}.pkg.util.helper",
+            "assist",
+            allow_heuristic=True,
+        )
+    # Accepting a guessed site is not accepting a known site left behind.
+    assert "no rewrite location" in str(refused.value)
+    assert (root / "pkg" / "util.py").read_text() == before
+
+
+def test_consumers_of_a_barrel_re_export_follow_the_rename(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    files = dict(PY_FILES)
+    files["pkg/consumer.py"] = (
+        "from pkg import helper as h\n\n\ndef twice():\n    return h(1, 1) * 2\n"
+    )
+    files["pkg/deep.py"] = (
+        "from pkg.consumer import twice\nfrom pkg import helper\n\n\n"
+        "def both():\n    return twice() + helper(0, 0)\n"
+    )
+    for rel, text in files.items():
+        _write(temp_repo, rel, text)
+    graph = _index(temp_repo, mock_ingestor)
+    report = rename(
+        temp_repo,
+        graph.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+        allow_heuristic=True,
+    )
+    assert report.applied, report.message
+    assert (
+        'from pkg.util import assist\n\n__all__ = ["assist"]'
+        in (temp_repo / "pkg" / "__init__.py").read_text()
+    )
+    # The barrel's importers bind through the re-export: rewritten too.
+    assert (
+        (temp_repo / "pkg" / "consumer.py")
+        .read_text()
+        .startswith("from pkg import assist as h\n")
+    )
+    assert "from pkg import assist\n" in (temp_repo / "pkg" / "deep.py").read_text()
+    probe = subprocess.run(
+        [sys.executable, "-c", "import pkg.deep as d; print(d.both())"],
+        cwd=temp_repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
