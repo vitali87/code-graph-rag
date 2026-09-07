@@ -382,6 +382,23 @@ def _split_rs_use(statement: str) -> tuple[str, re.Match[str], str] | None:
     return head.group("lead"), body, rest[semicolon:]
 
 
+def _rs_rewrite_single(
+    lead: str, m: re.Match[str], tail: str, path: str, move: SymbolMove
+) -> str | None:
+    """`use a::b::Symbol;` -- one path, no braces."""
+    prefix, _sep, leaf = path.rpartition("::")
+    if leaf != move.symbol or not _module_matches(prefix, move):
+        return None
+    alias = m.group("alias") or ""
+    new_name = move.new_name or move.symbol
+    if not alias and move.new_name and not move.rebind:
+        alias = f" as {move.symbol}"
+    # _target_module keeps the spelled prefix under ANY_MODULE, so a
+    # wildcard rename touches the name without retargeting the path.
+    new_prefix = _target_module(prefix, move)
+    return f"{lead}{new_prefix}::{new_name}{alias}{tail}"
+
+
 def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
     parts = _split_rs_use(statement)
     if parts is None:
@@ -389,17 +406,7 @@ def _rs_rewrite(statement: str, move: SymbolMove) -> str | None:
     lead, m, tail = parts
     path = m.group("path")
     if m.group("group") is None:
-        prefix, _sep, leaf = path.rpartition("::")
-        if leaf != move.symbol or not _module_matches(prefix, move):
-            return None
-        alias = m.group("alias") or ""
-        new_name = move.new_name or move.symbol
-        if not alias and move.new_name and not move.rebind:
-            alias = f" as {move.symbol}"
-        # _target_module keeps the spelled prefix under ANY_MODULE, so a
-        # wildcard rename touches the name without retargeting the path.
-        new_prefix = _target_module(prefix, move)
-        return f"{lead}{new_prefix}::{new_name}{alias}{tail}"
+        return _rs_rewrite_single(lead, m, tail, path, move)
     if not _module_matches(path, move):
         return None
     entries = [e.strip() for e in m.group("names").split(",") if e.strip()]

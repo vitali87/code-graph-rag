@@ -233,7 +233,8 @@ def test_python_function_rename_rewrites_every_site_and_import(
     assert kinds >= {"definition", "call"}
     assert set(report.files) == {"pkg/__init__.py", "pkg/util.py", "pkg/app.py"}
     util = (root / "pkg" / "util.py").read_text()
-    assert "def assist(a,  b):  # keep spacing" in util and "helper" not in util
+    assert "def assist(a,  b):  # keep spacing" in util
+    assert "helper" not in util
     app = (root / "pkg" / "app.py").read_text()
     assert (
         app
@@ -473,7 +474,8 @@ def test_go_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     )
     assert report.applied, report.message
     text = (temp_repo / "main.go").read_text()
-    assert "func assist(a,  b int) int" in text and "_ = assist(1, 2)" in text
+    assert "func assist(a,  b int) int" in text
+    assert "_ = assist(1, 2)" in text
 
 
 def test_java_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
@@ -688,7 +690,8 @@ async def test_mcp_rename_refuses_a_project_indexed_elsewhere(
         new_name="assist",
         project=graph.project,
     )
-    assert isinstance(payload, dict) and "error" in payload, payload
+    assert isinstance(payload, dict), payload
+    assert "error" in payload, payload
     assert (root / "pkg" / "util.py").read_text() == before
 
 
@@ -751,7 +754,8 @@ async def test_mcp_rename_reingests_the_written_files(
         new_name="assist",
         project=graph.project,
     )
-    assert isinstance(payload, dict) and payload["applied"], payload
+    assert isinstance(payload, dict), payload
+    assert payload["applied"], payload
     (written,) = registry._delta_after_write.call_args.args
     assert set(written) >= {"pkg/util.py", "pkg/app.py", "pkg/__init__.py"}
     assert payload[cs.KEY_STRUCTURAL_DELTA] == "delta text"
@@ -787,7 +791,8 @@ async def test_mcp_rename_tool_runs_under_the_lock_and_reports(
         project=graph.project,
     )
     assert isinstance(payload, dict)
-    assert payload[cs.KEY_SITES] and payload["applied"] is False
+    assert payload[cs.KEY_SITES]
+    assert payload["applied"] is False
     assert "def helper" in (root / "pkg" / "util.py").read_text()
 
 
@@ -808,7 +813,8 @@ async def test_mcp_rename_refusal_is_a_payload_not_an_exception(
     )
     assert isinstance(payload, dict)
     assert cs.DICT_KEY_ERROR in payload
-    assert payload[cs.KEY_AMBIGUOUS] == [] and payload[cs.KEY_UNLOCATABLE] == []
+    assert payload[cs.KEY_AMBIGUOUS] == []
+    assert payload[cs.KEY_UNLOCATABLE] == []
 
 
 FLUENT = (
