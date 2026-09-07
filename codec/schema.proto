@@ -236,6 +236,9 @@ message GraphCodeIndex {
     // the document no longer declares -- SET n += row.props merges, so
     // omitting the property could not express removal.
     repeated string front_matter = 10;
+    // The file's own documentation (issue #1789): a Python module docstring,
+    // a Rust `//!` block, a Go package comment, Javadoc/JSDoc, and so on.
+    string docstring = 11;
   }
 
   message ExternalModule {
