@@ -41,6 +41,7 @@ from .go import utils as go_utils
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .module_docstring import extract_module_docstring
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -439,7 +440,7 @@ class DefinitionProcessor(
                     self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
                 ),
             }
-            if docstring := self._get_docstring(root_node):
+            if docstring := self._get_module_docstring(root_node, language):
                 module_props[cs.KEY_DOCSTRING] = docstring
             if self.generated_source_prefixes and (
                 hint := generator_hint(
@@ -618,6 +619,20 @@ class DefinitionProcessor(
             (cs.NodeLabel.EXTERNAL_PACKAGE, cs.KEY_NAME, dep_name),
             properties=rel_properties,
         )
+
+    def _get_module_docstring(
+        self, root_node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation for a whole file, in whatever form its language uses.
+
+        Python's is a string literal and reuses `_get_docstring`; every other
+        language marks it with a comment convention, which needs the marker
+        prefixes in `module_docstring` because the grammars report a doc
+        comment and an ordinary one as the same node type.
+        """
+        if language == cs.SupportedLanguage.PYTHON:
+            return self._get_docstring(root_node)
+        return extract_module_docstring(root_node, language)
 
     def _get_docstring(self, node: ASTNode) -> str | None:
         if node.type == cs.TS_PY_MODULE:

@@ -128,6 +128,34 @@ Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentional
 
 See [I/O and Data-Flow Edges](data-flow-edges.md) for the detailed reference: the taint model, propagation and kill rules, the `kind`/`via` edge properties, scope attribution, and example queries.
 
+## Module Documentation
+
+Every `Module` node carries the documentation for the file as a whole in its
+optional `docstring` property, in whatever form the language uses.
+
+The grammars do not distinguish a documentation comment from an ordinary one
+-- tree-sitter reports Rust's `//!` and a throwaway `// note` both as
+`line_comment` -- so the marker prefix decides, not the node type.
+
+| Language | Marker | Notes |
+|----------|--------|-------|
+| Python | `"""docstring"""` | A string literal as the first statement |
+| Rust | `//!`, `/*!` | Inner docs only; `///` documents the next item, not the module |
+| Go | `//` above `package` | No marker: a blank line before `package` makes it a licence header instead |
+| Java, Scala | `/**` | Javadoc/Scaladoc |
+| JavaScript, TypeScript, TSX | `/**` | JSDoc |
+| C, C++ | `/**`, `/*!` | Doxygen |
+| C# | `///` | XML documentation comments |
+| Dart | `///`, `/**` | Library docs |
+| PHP | `/**`, `///` | Follows the `<?php` tag |
+| Lua | `---` | LuaDoc/LDoc; a plain `--` is an ordinary comment |
+| SQL | none | No module-documentation convention, so nothing is extracted |
+
+Consecutive line comments join into one block, and a blank line ends it. A
+comment that does not carry its language's marker is left alone: recording a
+licence header or a `// TODO` as the file's documentation is a wrong answer
+that reads like a right one.
+
 ## Nested Definitions
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
