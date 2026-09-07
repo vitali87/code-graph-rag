@@ -788,9 +788,9 @@ async def test_mcp_rename_reingests_the_written_files(temp_repo: Path) -> None:
     )
     assert isinstance(payload, dict), payload
     assert payload["applied"], payload
-    (written,) = registry._delta_after_write.call_args.args
-    assert set(written) >= {"pkg/util.py", "pkg/app.py", "pkg/__init__.py"}
-    assert payload[cs.KEY_STRUCTURAL_DELTA] == "delta text"
+    # This layer drives the real `_delta_after_write` rather than a mock, so
+    # the assertion is on the OUTCOME the contract guarantees rather than on
+    # the call that produced it.
     # The graph followed the tree: the new name is a definition, the old is gone.
     assert graph_query.definition(
         store.fetch_all, project, f"{project}.pkg.util.assist", None
