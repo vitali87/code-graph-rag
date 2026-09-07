@@ -127,6 +127,9 @@ KEY_PROJECT_PREFIX = "project_prefix"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# The incomplete-run marker's phase (#1705 review): whether the run it records
+# had reached its first graph write when the marker was last updated.
+KEY_WRITING = "writing"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"

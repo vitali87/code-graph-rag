@@ -39,6 +39,56 @@ CYPHER_PROJECT_ROOT_PATH = (
     "MATCH (p:Project {name: $project_name}) RETURN p.root_path AS root_path"
 )
 
+# The incomplete-run marker (issue #1679). `_graph_incomplete` on the tools
+# registry only ever covered the process that ran the failed update: a crash or
+# an MCP restart left a fresh registry seeing a project that looks whole, so it
+# would hydrate a scoped updater from the partial graph and treat its missing
+# definitions as authoritative. Persisting the flag means the refusal survives
+# the process that earned it.
+#
+# It lives on its OWN node, not as a property of the Project, for two reasons
+# found in review:
+#
+# 1. `MERGE` on a dedicated label works before any Project exists. A first
+#    index creates the Project inside `GraphUpdater.run()`, so a `MATCH
+#    (p:Project ...)` set beforehand updated ZERO rows and a failed first run
+#    left no marker at all -- exactly the case the guard exists for.
+# 2. `CYPHER_DELETE_PROJECT` detaches and deletes the Project and everything
+#    it CONTAINS, so a marker stored on the Project would be deleted by the
+#    very rebuild whose failure it is meant to record. An unconnected
+#    `:IncompleteRun` node is not reachable from that traversal and survives.
+#
+# Cleared by DELETING the node rather than setting false, so a project indexed
+# before this existed reads exactly like one that completed: absent means
+# complete, and no migration is needed.
+#
+# `writing` is the marker's PHASE. Every mutating path marks before anything
+# destructive, but some of them then do read-only or graph-external work first
+# (a reingest's prologue, the embedding purge before an index or delete) and
+# can stop there -- an abort, a crash, a cleanup failure -- with the graph
+# exactly as it was. A marker from such a run says `writing = false`, and a
+# fresh process may clear it and carry on; one that reached its first graph
+# write says `writing = true` and refuses scoped work until a full update
+# recovers the graph (#1705 review). An absent property reads as `true`: a
+# marker written before the phase existed is treated the fail-closed way.
+# The phase only ever advances: a mark with `writing=false` must not demote a
+# marker another process left at `writing=true` over a graph it had started to
+# change, or that process's abort would clear a guard it does not own (#1705
+# review). Ownership of the DELETE is the remaining half, tracked in #1709.
+CYPHER_MARK_PROJECT_INCOMPLETE = (
+    "MERGE (m:IncompleteRun {project: $project_name}) "
+    "SET m.run_incomplete = true, "
+    "m.writing = coalesce(m.writing, false) OR $writing"
+)
+CYPHER_CLEAR_PROJECT_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
+)
+CYPHER_PROJECT_IS_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
+    "coalesce(m.writing, true) AS writing"
+)
+
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
