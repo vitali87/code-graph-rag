@@ -142,19 +142,30 @@ The grammars do not distinguish a documentation comment from an ordinary one
 | Python | `"""docstring"""` | A string literal as the first statement |
 | Rust | `//!`, `/*!` | Inner docs only; `///` documents the next item, not the module |
 | Go | `//` above `package` | No marker: a blank line before `package` makes it a licence header instead |
-| Java, Scala | `/**` | Javadoc/Scaladoc |
-| JavaScript, TypeScript, TSX | `/**` | JSDoc |
-| C, C++ | `/**`, `/*!` | Doxygen |
-| C# | `///` | XML documentation comments |
-| Dart | `///`, `/**` | Library docs |
-| PHP | `/**`, `///` | Follows the `<?php` tag |
+| Java, Scala | `/**`, `/*!`, `///` | Javadoc/Scaladoc |
+| JavaScript, TypeScript, TSX | `/**`, `/*!` | JSDoc. `///` is TypeScript's `<reference/>` directive, not a doc |
+| C, C++ | `/**`, `/*!`, `///` | Doxygen |
+| C# | `///`, `/**`, `/*!` | XML documentation comments |
+| Dart | `///`, `/**`, `/*!` | Library docs |
+| PHP | `/**`, `/*!`, `///` | Follows the `<?php` tag |
 | Lua | `---` | LuaDoc/LDoc; a plain `--` is an ordinary comment |
 | SQL | none | No module-documentation convention, so nothing is extracted |
 
 Consecutive line comments join into one block, and a blank line ends it. A
-comment that does not carry its language's marker is left alone: recording a
+shebang before the comment is skipped, so a CLI entry point keeps its
+documentation.
+
+A comment that does not carry its language's marker is left alone: recording a
 licence header or a `// TODO` as the file's documentation is a wrong answer
-that reads like a right one.
+that reads like a right one. Three further kinds are excluded for the same
+reason, even when they do carry the marker:
+
+- **Directives** -- `//go:generate`, `//nolint:`, `// Code generated ... DO NOT
+  EDIT.` -- are instructions to tooling. They are skipped rather than treated
+  as the end of the comment, so a real doc beneath one is still found.
+- **Separator rules** -- `--------`, `////////` -- are decoration, not prose.
+- **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
+  marker in JavaScript, TypeScript or TSX; `/**` is.
 
 ## Nested Definitions
 

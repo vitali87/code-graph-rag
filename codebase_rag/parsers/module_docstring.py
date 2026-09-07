@@ -47,14 +47,31 @@ _C_STYLE_BLOCK = frozenset({"comment", "block_comment"})
 # and `/*!` is Doxygen's alternative form.
 _DOC_BLOCK_MARKERS = ("/**", "/*!")
 # `///` is the line form of the same convention. Not valid for Rust, where
-# `///` documents the NEXT ITEM and `//!` documents the enclosing module.
+# `///` documents the NEXT ITEM and `//!` documents the enclosing module, nor
+# for JS/TS, where `///` is TypeScript's reference DIRECTIVE and not a doc.
 _DOC_LINE_MARKERS = ("///",)
+
+# A shebang precedes the doc comment in an executable script, and each grammar
+# names it differently. Without skipping it the first child is not a comment
+# and the file's documentation is silently dropped -- and a CLI entry point is
+# exactly the kind of file that has both a shebang and a module doc.
+_SHEBANGS = frozenset({"hash_bang_line", "shebang", "shebang_directive"})
 
 _C_STYLE = ModuleDocSpec(
     line_types=frozenset({"comment", "line_comment"}),
     line_markers=_DOC_LINE_MARKERS,
     block_types=_C_STYLE_BLOCK,
     block_markers=_DOC_BLOCK_MARKERS,
+    skip_types=_SHEBANGS,
+)
+
+# JS/TS/TSX: `/**` (JSDoc) is the only module-doc form. `///` there is
+# TypeScript's `/// <reference ... />` directive, which is machine input
+# rather than a description of the file.
+_JS_STYLE = ModuleDocSpec(
+    block_types=_C_STYLE_BLOCK,
+    block_markers=_DOC_BLOCK_MARKERS,
+    skip_types=_SHEBANGS,
 )
 
 MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
@@ -67,6 +84,7 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         line_markers=("//!",),
         block_types=frozenset({"block_comment"}),
         block_markers=("/*!",),
+        skip_types=_SHEBANGS,
     ),
     # Go has no marker at all: the package comment is an ordinary `//` comment
     # that happens to sit immediately above `package foo`. The blank line is
@@ -75,20 +93,24 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         line_types=frozenset({"comment"}),
         line_markers=("//",),
         anchor_types=frozenset({"package_clause"}),
+        skip_types=_SHEBANGS,
     ),
     SupportedLanguage.JAVA: _C_STYLE,
     SupportedLanguage.SCALA: _C_STYLE,
-    SupportedLanguage.JS: _C_STYLE,
-    SupportedLanguage.TS: _C_STYLE,
-    SupportedLanguage.TSX: _C_STYLE,
+    SupportedLanguage.JS: _JS_STYLE,
+    SupportedLanguage.TS: _JS_STYLE,
+    SupportedLanguage.TSX: _JS_STYLE,
     SupportedLanguage.C: _C_STYLE,
     SupportedLanguage.CPP: _C_STYLE,
     SupportedLanguage.CSHARP: _C_STYLE,
     SupportedLanguage.DART: ModuleDocSpec(
         line_types=frozenset({"documentation_comment", "comment"}),
         line_markers=_DOC_LINE_MARKERS,
-        block_types=_C_STYLE_BLOCK,
+        # Dart's grammar labels a `/** */` doc `documentation_comment` too, so
+        # the block set must carry it or the documented form yields nothing.
+        block_types=_C_STYLE_BLOCK | {"documentation_comment"},
         block_markers=_DOC_BLOCK_MARKERS,
+        skip_types=_SHEBANGS,
     ),
     SupportedLanguage.PHP: ModuleDocSpec(
         line_types=frozenset({"comment"}),
@@ -96,12 +118,13 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         block_types=_C_STYLE_BLOCK,
         block_markers=_DOC_BLOCK_MARKERS,
         # `<?php` is the first child of every PHP file.
-        skip_types=frozenset({"php_tag", "text_interpolation"}),
+        skip_types=frozenset({"php_tag", "text_interpolation", "text"}) | _SHEBANGS,
     ),
     # LuaDoc/LDoc use `---`. A plain `--` is an ordinary comment.
     SupportedLanguage.LUA: ModuleDocSpec(
         line_types=frozenset({"comment"}),
         line_markers=("---",),
+        skip_types=_SHEBANGS,
     ),
     # SQL has no module-documentation convention -- a leading `--` is as
     # likely to be a commented-out statement -- so nothing is extracted.
@@ -138,6 +161,31 @@ def _is_marked(text: str, markers: tuple[str, ...]) -> bool:
     return any(text.startswith(marker) for marker in markers)
 
 
+# A comment that is only its own delimiter repeated -- `--------`, `////////`
+# -- is a visual separator, not prose. `startswith` matches one, and stripping
+# the marker leaves the remaining dashes looking like content.
+def _is_separator(text: str, markers: tuple[str, ...]) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    return any(
+        marker and set(stripped) <= set(marker) and len(stripped) >= len(marker)
+        for marker in markers
+    )
+
+
+# Machine-readable directives that sit where a package comment would.
+# Go's `//go:generate`, linter pragmas, and the generated-file banner are
+# instructions to tooling, not a description of the file.
+_DIRECTIVE = re.compile(
+    r"^(?://)?\s*(?:go:|lint:|nolint|export\s|cgo\s)|^Code generated .* DO NOT EDIT\.$"
+)
+
+
+def _is_directive(text: str) -> bool:
+    return _DIRECTIVE.search(text.strip()) is not None
+
+
 def extract_module_docstring(root: ASTNode, language: SupportedLanguage) -> str | None:
     """The documentation for the file as a whole, or None.
 
@@ -163,7 +211,10 @@ def extract_module_docstring(root: ASTNode, language: SupportedLanguage) -> str 
     if node.type in spec.block_types and _is_marked(text, spec.block_markers):
         if spec.anchor_types and not _anchored(children, index, node, spec):
             return None
-        return _clean_block(text) or None
+        cleaned = _clean_block(text)
+        if not cleaned or _is_directive(cleaned):
+            return None
+        return cleaned
 
     if node.type not in spec.line_types or not _is_marked(text, spec.line_markers):
         return None
@@ -182,7 +233,21 @@ def extract_module_docstring(root: ASTNode, language: SupportedLanguage) -> str 
         # A blank line between comments ends the block.
         if lines and candidate.start_point[0] > _content_end_row(last) + 1:
             break
-        lines.append(_strip_line(candidate_text, spec.line_markers))
+        # A rule of repeated delimiters is decoration. It ends a doc that has
+        # begun and is not itself the start of one.
+        if _is_separator(candidate_text, spec.line_markers):
+            if lines:
+                break
+            last = candidate
+            continue
+        content = _strip_line(candidate_text, spec.line_markers)
+        # A directive is an instruction to tooling, not a description of the
+        # file. Skipping rather than stopping lets a real doc comment that
+        # follows `//go:generate` still be found.
+        if _is_directive(content):
+            last = candidate
+            continue
+        lines.append(content)
         last = candidate
 
     if spec.anchor_types and not _anchored(children, index, last, spec):
