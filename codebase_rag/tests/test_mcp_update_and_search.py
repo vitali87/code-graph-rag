@@ -2278,6 +2278,90 @@ class TestIncompleteMarkerInvariant:
             f"partial graph it left: {result}"
         )
 
+    @pytest.mark.parametrize(
+        ("abandoned_project", "expect_refused"),
+        [("same", True), ("other", True)],
+        ids=["abandons-the-same-project", "abandons-a-different-project"],
+    )
+    async def test_a_run_that_wrote_nothing_cannot_relabel_another_failures_flag(
+        self, temp_project_root: Path, abandoned_project: str, expect_refused: bool
+    ) -> None:
+        """A no-write abandon must not touch the flag or its attribution.
+
+        A failed `wipe_database` leaves `_graph_incomplete=True` with NO
+        attribution: no marker records a wipe, so nothing may heal it. A later
+        run that stops BEFORE its first write then went through
+        `_require_marker_cleared`, which assigns the attribution
+        unconditionally -- stamping its own project onto the wipe's flag. The
+        next scoped reingest found `recoverable_here` true, recovered the
+        `writing=false` marker, and lifted the flag, hydrating an updater over
+        a half-wiped graph. No store outage at any point (#1705 review).
+
+        Both parameters must REFUSE, and they fail differently on broken code:
+        the same-project case is the defect, while the different-project case
+        refuses anyway because the attribution never matches at the guard.
+        The near-miss is carried as a control precisely because it looks like
+        the same test -- a future simplification to one project would keep it
+        green while removing all of its power.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        target = project if abandoned_project == "same" else "other"
+
+        # Marker-less damage: the wipe dies part way and no marker records it.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the failed wipe must set the flag"
+        )
+        assert registry._flag_from_failed_clear is None, (
+            "fixture guard: a wipe writes no marker, so its flag must carry "
+            "no attribution -- otherwise there is nothing for step 2 to "
+            "overwrite and this test proves nothing"
+        )
+
+        # A later run stops before its first write, and its clear fails too.
+        ingestor.list_projects.return_value = [project, "other"]
+        ingestor._failing.add("clear")
+        with (
+            patch.object(
+                registry,
+                "_get_project_node_ids",
+                side_effect=RuntimeError("node id read failed"),
+            ),
+            patch("codebase_rag.mcp.tools.delete_project_embeddings"),
+            patch("codebase_rag.mcp.tools.GraphUpdater"),
+        ):
+            await registry.delete_project(target)
+        ingestor._failing.discard("clear")
+        assert not ingestor.delete_project.called, (
+            "fixture guard: the abandon path must have stopped before the "
+            "first graph write"
+        )
+        if abandoned_project == "same":
+            # Only asserted for the defect case. The near-miss reaches the
+            # same intermediate state on broken code -- the attribution is
+            # claimed either way -- and asserting it here would redden the
+            # control too, costing it the property that makes it a control.
+            # What separates them is the VERDICT below, not this.
+            assert registry._flag_from_failed_clear is None, (
+                f"a run that abandoned {target} before writing anything "
+                "relabelled the flag a failed wipe earned, so a recoverable "
+                "marker can now heal damage no marker records"
+            )
+
+        _mark_indexed(registry)
+        registry._live_updater = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = str(await registry.reingest(["a.py"]))
+        assert ("error" in result) is expect_refused, (
+            "the wipe's refusal was discarded and a scoped reingest ran over "
+            f"the half-wiped graph it left: {result}"
+        )
+
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
         """Pins the production Cypher the fake store models.
 

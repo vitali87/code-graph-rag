@@ -1117,10 +1117,57 @@ class MCPToolsRegistry:
         until a full update runs. Best effort, never raising: the caller's
         own error stays primary. A clear that FAILS is logged rather than
         discarded, and leaves a `writing=False` marker that a later process
-        clears for itself (`_persisted_incomplete`); the local flag follows
-        the durable state through `_require_marker_cleared` (#1705 review).
+        clears for itself (`_persisted_incomplete`).
+
+        This run wrote NOTHING, so it must not touch the in-process flag or
+        its attribution at all -- neither to set them nor to clear them. It
+        deliberately does not go through `_require_marker_cleared`, which
+        assigns both unconditionally:
+
+        * setting them relabels damage another failure recorded. A failed
+          wipe leaves `_graph_incomplete=True` with NO attribution, because
+          no marker records it; a later run that stops before writing then
+          stamped its own project onto that flag, and the next reingest
+          healed it against a recoverable marker -- discarding the wipe's
+          refusal and hydrating over a half-wiped graph (#1705 review).
+        * clearing them outright is the same bug from the other side: it
+          would discard an earlier run's damage just as readily.
+
+        So the flag is restored to whatever it was on entry.
+
+        The captured values are read HERE rather than saved by each caller:
+        a caller-side save is defeated by the next caller that forgets one,
+        which leaves a stale value in the slot and restores something
+        arbitrary. Capturing at entry cannot be bypassed that way.
+
+        The scenario needs the abandoning run to name the SAME project as the
+        later reingest -- that is what makes `recoverable_here` true at the
+        guard. A run abandoning a DIFFERENT project reads as a near-miss and
+        refuses correctly, so a test written that way passes with or without
+        this fix (measured both ways).
         """
-        if self._require_marker_cleared(project_name) is not None:
+        flag_before = self._graph_incomplete
+        attributed_before = self._flag_from_failed_clear
+        cleared = self._persist_incomplete(project_name, False)
+        # A failed clear strands a marker, so the flag must go up: this
+        # process has to know later reingests will refuse. But the
+        # ATTRIBUTION -- the licence to heal that flag from the marker -- is
+        # only this run's to grant when the flag is this run's to explain.
+        #
+        # If the flag was ALREADY set on entry it records damage some earlier
+        # failure found, and a wipe records damage no marker can describe.
+        # Claiming it here is what let a recoverable marker lift a wipe's
+        # refusal (#1705 review). So attribute only when this run raised the
+        # flag from clean; otherwise leave the earlier owner in place, and
+        # the stranded marker stays unhealable until a full update clears it.
+        if not cleared:
+            self._graph_incomplete = True
+            if not flag_before:
+                self._flag_from_failed_clear = project_name
+        else:
+            self._graph_incomplete = flag_before
+            self._flag_from_failed_clear = attributed_before
+        if not cleared:
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT.format(project=project_name)
             )
