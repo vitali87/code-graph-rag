@@ -2376,6 +2376,54 @@ class TestIncompleteMarkerInvariant:
             f"the half-wiped graph it left: {result}"
         )
 
+    async def test_a_failed_structural_delta_does_not_inherit_an_attribution(
+        self, temp_project_root: Path
+    ) -> None:
+        """The seventh flag setter, which arrived on main after this branch.
+
+        `_delta_after_write` invalidates the graph when its re-ingest raised,
+        precisely because a subtree may have been deleted and not rebuilt. So
+        the flag it sets records real damage that NO marker describes, and a
+        stranded marker must not be allowed to heal it.
+
+        That site (#1525) landed on `main` while this branch was in review, so
+        it was written against a file where `_flag_from_failed_clear` does not
+        exist. Without the reset added on the rebase it sets the flag and
+        leaves whatever attribution happened to be there -- letting the next
+        reingest lift a refusal the delta path earned. Same overwrite as the
+        abandon path, reached from the other direction.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A pending recoverable marker, attributed to this project.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: the failed clear must attribute the flag, or "
+            "there is no attribution for the delta path to inherit"
+        )
+
+        # The delta path's re-ingest dies after the graph may have changed.
+        failing = MagicMock()
+        failing.reingest.side_effect = RuntimeError("delta re-ingest died")
+        registry._live_updater = failing
+        registry._delta_after_write(["a.py"])
+
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the failed delta must invalidate the graph"
+        )
+        assert registry._flag_from_failed_clear is None, (
+            "the structural-delta path set the incomplete flag while leaving "
+            "an unrelated attribution in place, so a pending marker recovery "
+            "can lift a refusal that records a half-rebuilt subtree"
+        )
+
     def test_the_mark_query_never_lowers_the_phase(self) -> None:
         """Pins the production Cypher the fake store models.
 

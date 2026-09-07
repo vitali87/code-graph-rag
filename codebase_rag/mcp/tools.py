@@ -1277,39 +1277,7 @@ class MCPToolsRegistry:
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
 
-    def _updater_for_reingest(self) -> GraphUpdater:
-        updater = self._live_updater
-        if updater is None:
-            # A scoped re-ingest completes a graph; it cannot stand in for
-            # the first index. After delete_project or wipe_database the
-            # project is gone, and hydrating from nothing would leave every
-            # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
-            if self._graph_incomplete:
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            if project_name not in self.ingestor.list_projects():
-                raise ValueError(
-                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
-                )
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
-        return updater
-
+    @staticmethod
     def _reingest_mutated(updater: object, exc: BaseException) -> bool:
         """Whether a failed reingest got as far as writing.
 
@@ -1405,6 +1373,39 @@ class MCPToolsRegistry:
         self._live_updater = updater
         return updater
 
+    def _updater_for_reingest(self) -> GraphUpdater:
+        updater = self._live_updater
+        if updater is None:
+            # A scoped re-ingest completes a graph; it cannot stand in for
+            # the first index. After delete_project or wipe_database the
+            # project is gone, and hydrating from nothing would leave every
+            # unrelated definition missing.
+            project_name = derive_project_name(Path(self.project_root))
+            if self._graph_incomplete:
+                raise ValueError(
+                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                )
+            if project_name not in self.ingestor.list_projects():
+                raise ValueError(
+                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
+                )
+            self.ingestor.ensure_constraints()
+            # The same exclusion set the index and update paths use, or an
+            # agent-named path under a CLI-excluded directory would be
+            # indexed here and kept by every later update.
+            exclude_paths, unignore_paths = self._ignore_sets()
+            updater = GraphUpdater(
+                ingestor=self.ingestor,
+                repo_path=Path(self.project_root),
+                parsers=self.parsers,
+                queries=self.queries,
+                unignore_paths=unignore_paths,
+                exclude_paths=exclude_paths,
+                project_name=project_name,
+            )
+            self._live_updater = updater
+        return updater
+
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
@@ -1428,22 +1429,6 @@ class MCPToolsRegistry:
         if updater is None:
             updater = self._hydrate_reingest_updater(project_name)
             marked_here = project_name
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
-        return updater
         else:
             # The RETAINED-updater branch reaches the same mutating call below
             # but skipped every marker step, because the mark lived inside the
@@ -1688,6 +1673,15 @@ class MCPToolsRegistry:
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
             self._live_updater = None
             self._graph_incomplete = True
+            # Not a stranded marker: this flag must not be healed by one.
+            # This path invalidates precisely BECAUSE a subtree may have been
+            # deleted and not rebuilt, so the flag records real damage that no
+            # marker describes. Leaving an earlier attribution in place would
+            # let an unrelated marker recovery lift it -- the same overwrite
+            # the abandon path was fixed for, arriving from the other side.
+            # Added on the rebase: this site landed on main (#1525) after the
+            # attribution was written, so it had no way to know about it.
+            self._flag_from_failed_clear = None
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         return (
             "\n\n"
