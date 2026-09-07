@@ -51,6 +51,10 @@ KEY_QN = "qn"
 # How a CALLS/REFERENCES/INSTANTIATES edge was resolved (issue #1526).
 KEY_RESOLUTION = "resolution"
 KEY_UNLOCATABLE = "unlocatable"
+# Rename report fields (issue #1532).
+KEY_SITES = "sites"
+KEY_AMBIGUOUS = "ambiguous"
+KEY_STRUCTURAL_DELTA = "structural_delta"
 KEY_DISPATCH_LITERAL = "dispatch_literal"
 
 
