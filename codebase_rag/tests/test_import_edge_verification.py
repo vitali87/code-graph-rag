@@ -143,6 +143,51 @@ export int answer() { return 42; }
     assert f"{project}.my_export_module" not in targets, targets
 
 
+def test_a_quoted_include_keeps_its_edge_beside_a_same_named_declaration(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """The declaration guard must not swallow a real quoted include (#1758 review).
+
+    The guard skips a displaced binding that `export module X;` registered,
+    so it cannot rebuild the self-import. The worry is that a QUOTED include
+    resolving to the same qn would be suppressed with it, silently losing a
+    real dependency edge.
+
+    It cannot, and this pins why: a quoted include resolves to the qn of the
+    FILE it names, so `#include "foo.h"` beside `foo.cpp` yields `proj.foo.h`
+    -- the header's own module -- while the declaration registered
+    `proj.foo`. Different qns, so the guard never matches the include. If
+    include resolution ever started stripping the extension, the two would
+    collide and this test goes red.
+    """
+    (temp_repo / "foo.cpp").write_text("int helper() { return 1; }\n")
+    (temp_repo / "foo.h").write_text("int helper();\n")
+    sub = temp_repo / "sub"
+    sub.mkdir()
+    (sub / "foo.h").write_text("int other();\n")
+    (temp_repo / "m.cpp").write_text(
+        """
+export module foo;
+#include "foo.h"
+#include "sub/foo.h"
+
+int use() { return 2; }
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    _assert_no_dangling_imports(mock_ingestor)
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.m")
+    assert f"{project}.foo" not in targets, (
+        f"the module declaration's own qn was emitted as an import: {targets}"
+    )
+    assert {f"{project}.foo.h", f"{project}.sub.foo"} <= targets, (
+        "a quoted include that shares a name with the module declaration lost "
+        f"its edge to the declaration guard: {targets}"
+    )
+
+
 def test_a_module_declaration_shadowed_by_an_include_emits_no_self_import(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

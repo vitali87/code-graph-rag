@@ -4308,6 +4308,18 @@ class ImportProcessor:
             # `<sys/types.h>` is the module `types.h` under `sys`, and leaving
             # the slash in produced the qn `std.sys/types.h`, which no dotted
             # lookup can address (issue #1758).
+            #
+            # Accepted collision, measured: this maps `<sys/types.h>` and a
+            # literal `<sys.types.h>` onto the same qn, which `main` kept
+            # distinct by leaving the slash in. C and C++ use `/` as the
+            # include separator and a dot only inside the final component, so
+            # the colliding spelling is not a form real code takes; and the
+            # qn `main` gave the slashed one was unaddressable anyway, so
+            # nothing could resolve against it. A conflated pair of headers
+            # that both exist is the cheaper error than a target no dotted
+            # lookup can name at all. `test_two_spellings_of_one_header_path`
+            # pins the behaviour so a later reader sees a decision rather
+            # than an oversight (#1758 review).
             return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
         if resolved := self._resolve_cpp_include_target(include_path, module_qn):
             # The include resolves to a real repo file; use that file's

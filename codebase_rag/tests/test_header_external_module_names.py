@@ -225,3 +225,27 @@ def test_a_removed_module_declaration_does_not_suppress_a_later_include_edge(
         "the removed declaration's exemption survived the re-parse, so the "
         "sweep will veto the include that resolves to the same qn"
     )
+
+
+def test_two_spellings_of_one_header_path_share_a_qualified_name() -> None:
+    """Pins an accepted collision that `main` did not have (#1758 review).
+
+    Segmenting the include path means `<sys/types.h>` and a literal
+    `<sys.types.h>` produce the same qn. On `main` the slashed form kept its
+    slash (`std.sys/types.h`), so the two were distinct -- but that qn was
+    unaddressable by any dotted lookup, which is the bug this change fixes.
+
+    The trade is deliberate: `/` is the include separator in C and C++ and a
+    dot appears only inside the final component, so the colliding spelling is
+    not a form real source takes. A conflated pair of headers that both exist
+    is a cheaper error than a target nothing can resolve against.
+
+    Asserted rather than left implicit so that if someone later needs the two
+    kept apart, this test names the decision being reversed.
+    """
+    from codebase_rag.parsers.import_processor import _dotted_include_path
+
+    assert _dotted_include_path("sys/types.h") == _dotted_include_path("sys.types.h")
+    # And the separator really is what collapses: distinct DIRECTORIES stay
+    # distinct, so the change does not conflate unrelated headers.
+    assert _dotted_include_path("a/b.h") != _dotted_include_path("c/b.h")
