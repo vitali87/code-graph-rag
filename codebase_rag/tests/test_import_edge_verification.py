@@ -143,6 +143,144 @@ export int answer() { return 42; }
     assert f"{project}.my_export_module" not in targets, targets
 
 
+def test_a_global_module_fragment_include_keeps_its_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """The include comes BEFORE the declaration, so the declaration displaces it.
+
+    A global module fragment is legal C++20 and puts includes first:
+
+        module;
+        #include <foo.h>
+        export module foo;
+
+    `<foo.h>` binds the local name `foo`, then `export module foo;` overwrites
+    that binding. The shadowed-include sweep only recorded displacements made
+    by a later INCLUDE, so nothing recorded this one: the declaration's own
+    target is skipped by the deferred loop as a self-import, and the header
+    got no edge at all. Measured before the fix -- `IMPORTS from proj.m` was
+    empty (#1758 review).
+
+    The declaration now records what it displaced, exactly as an include
+    does. Asserts both halves: the header keeps its edge AND the declaration
+    still emits no self-import, since recording the displacement must not
+    reintroduce the thing the guard exists to suppress.
+    """
+    (temp_repo / "m.cpp").write_text(
+        """
+module;
+#include <foo.h>
+export module foo;
+
+int use() { return 2; }
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    _assert_no_dangling_imports(mock_ingestor)
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.m")
+    assert "std.foo.h" in targets, (
+        "an include in the global module fragment lost its edge when the "
+        f"module declaration overwrote its local binding: {targets}"
+    )
+    assert f"{project}.foo" not in targets, (
+        f"the module declaration's own qn was emitted as an import: {targets}"
+    )
+
+
+def test_a_quoted_include_keeps_its_edge_beside_a_same_named_declaration(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """The declaration guard must not swallow a real quoted include (#1758 review).
+
+    The guard skips a displaced binding that `export module X;` registered,
+    so it cannot rebuild the self-import. The worry is that a QUOTED include
+    resolving to the same qn would be suppressed with it, silently losing a
+    real dependency edge.
+
+    It cannot, and this pins why: a quoted include resolves to the qn of the
+    FILE it names, so `#include "foo.h"` beside `foo.cpp` yields `proj.foo.h`
+    -- the header's own module -- while the declaration registered
+    `proj.foo`. Different qns, so the guard never matches the include. If
+    include resolution ever started stripping the extension, the two would
+    collide and this test goes red.
+    """
+    (temp_repo / "foo.cpp").write_text("int helper() { return 1; }\n")
+    (temp_repo / "foo.h").write_text("int helper();\n")
+    sub = temp_repo / "sub"
+    sub.mkdir()
+    (sub / "foo.h").write_text("int other();\n")
+    (temp_repo / "m.cpp").write_text(
+        """
+export module foo;
+#include "foo.h"
+#include "sub/foo.h"
+
+int use() { return 2; }
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    _assert_no_dangling_imports(mock_ingestor)
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.m")
+    assert f"{project}.foo" not in targets, (
+        f"the module declaration's own qn was emitted as an import: {targets}"
+    )
+    assert {f"{project}.foo.h", f"{project}.sub.foo"} <= targets, (
+        "a quoted include that shares a name with the module declaration lost "
+        f"its edge to the declaration guard: {targets}"
+    )
+
+
+def test_a_module_declaration_shadowed_by_an_include_emits_no_self_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`export module foo;` beside `#include <foo.h>`, with a real `proj.foo`.
+
+    The declaration registers `foo -> proj.foo` and the include then takes
+    the same local name, so the declaration's binding is DISPLACED. The
+    shadowed-include sweep re-emits displaced bindings to keep an include's
+    edge alive (#1758), and a declaration caught in that sweep rebuilds
+    exactly the self-import the test above forbids: the main edge loop
+    filters it via `_cpp_declaration_mappings`, so the sweep must too.
+    """
+    (temp_repo / "foo.cpp").write_text("int helper() { return 1; }\n")
+    sub = temp_repo / "sub"
+    sub.mkdir()
+    # A SECOND include binding the same local name `foo`, so the first one is
+    # genuinely displaced and only the sweep can carry its edge. Without it
+    # the surviving-edge assertion below is satisfied by the main edge loop
+    # (the winning include is in `import_mapping` either way) and a guard
+    # that dropped everything in the sweep would still pass (#1758 review).
+    (temp_repo / "m.cpp").write_text(
+        """
+export module foo;
+#include <foo.h>
+#include <sub/foo.h>
+
+int use() { return 2; }
+"""
+    )
+    run_updater(temp_repo, mock_ingestor)
+
+    _assert_no_dangling_imports(mock_ingestor)
+    project = temp_repo.name
+    targets = _import_targets(mock_ingestor, f"{project}.m")
+    assert f"{project}.foo" not in targets, (
+        "the shadowed-include sweep re-emitted a module declaration's own qn "
+        f"as an IMPORTS edge: {targets}"
+    )
+    # Both includes keep their edge. The displaced one reaches the graph ONLY
+    # through the sweep, so this fails if the guard suppresses too much --
+    # which the single-include version of this test could not detect.
+    assert {"std.foo.h", "std.sub.foo.h"} <= targets, (
+        "an include's edge was lost with the declaration; the guard must drop "
+        f"the declaration binding only: {targets}"
+    )
+
+
 def test_cpp_module_impl_without_interface_emits_no_phantom(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

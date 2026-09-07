@@ -481,6 +481,64 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _dotted_include_path(include_path: str) -> str:
+    """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
+
+    The qualified name is a dotted path everywhere else in the graph, so a
+    slash left in it (`std.sys/types.h`) is not addressable by any dotted
+    lookup and does not segment (issue #1758).
+    """
+    return include_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+
+
+def _external_module_name(module_path: str) -> str:
+    """The display name for an ExternalModule qn.
+
+    The last DOTTED segment names a package path (`os.path` -> `path`,
+    `std.fmt` -> `fmt`), but a C/C++ header carries its EXTENSION in that
+    position, so every `.h` include minted an ExternalModule called `h`:
+    `std.stdio.h`, `std.signal.h` and `std.sys.types.h` alike (issue #1758).
+    A header is named by its own stem instead, the same name
+    `_cpp_include_local_name` binds it under, so the node and the local name
+    agree.
+
+    The header rule is deliberately confined to the `std.` prefix that
+    `_cpp_include_full_name` puts on an include, AND to qns of three or more
+    segments. This function serves EVERY language's external imports, and a
+    package whose last segment is literally `h` is a real thing (the Python
+    HTTP/2 library), so an unconditional rule would rename `mypkg.h` to
+    `mypkg` for languages that have no header extensions at all.
+
+    The three-segment floor leaves one known inconsistency: `<std.h>` has the
+    two-segment qn `std.h`, indistinguishable here from a package `h` under
+    `std`, so its node is named `h` while `_cpp_include_local_name` binds it
+    as `std`. Lowering the floor to two would rename every `<pkg.h>`-shaped
+    external of every language; `<std.h>` is not a real header, so the
+    inconsistency is the cheaper of the two errors.
+
+    A second, unfixable-here case: this sees only the qn, and slash
+    segmentation has already erased the difference between a PATH and dots
+    inside one basename. `<foo/bar.h>` and `<foo.bar.h>` both become
+    `std.foo.bar.h`, yet `_cpp_include_local_name` binds the first as `bar`
+    (basename stem) and the second as `foo` (first stem segment). One name
+    must therefore disagree with its binding, and no rule at this layer can
+    tell which. It is `<foo/bar.h>` -- a real path, the common shape -- that
+    is served correctly; `<foo.bar.h>` gets `bar` where its binding says
+    `foo`. Fixing that means passing the ORIGINAL include path down to node
+    creation rather than deriving from the qn, which is a wider change than
+    the naming defect warrants (#1758 review).
+    """
+    segments = module_path.split(cs.SEPARATOR_DOT)
+    # `stdio.h` occupies the last TWO dotted segments, stem and extension.
+    if (
+        len(segments) >= 3
+        and module_path.startswith(cs.IMPORT_STD_PREFIX)
+        and f"{cs.SEPARATOR_DOT}{segments[-1]}" in (cs.EXT_H, cs.EXT_HPP)
+    ):
+        return segments[-2]
+    return segments[-1]
+
+
 def _cpp_include_local_name(include_path: str) -> str:
     """The name the include binds locally: the header's stem for `.h`/`.hpp`,
     the bare last path segment otherwise (`<vector>`)."""
@@ -525,6 +583,7 @@ class ImportProcessor:
         "_csharp_module_namespaces",
         "_csharp_module_identifiers",
         "_cpp_declaration_mappings",
+        "_cpp_shadowed_include_targets",
         "_rust_dir_listing",
         "_rust_entry_mod_decls",
         "_rust_module_mod_decls",
@@ -732,6 +791,12 @@ class ImportProcessor:
         # `export module X;`, `import :partition;`). They exist for name resolution
         # only; a declaration is not an import, so no IMPORTS edge is emitted.
         self._cpp_declaration_mappings: set[tuple[str, str]] = set()
+        # Include targets whose LOCAL name was taken by a later include in
+        # the same file. `<std>` and `<std.h>` both bind `std`, so the second
+        # overwrote the first in `import_mapping` and only one IMPORTS edge
+        # survived (issue #1758). The binding can hold one name, but the file
+        # really does include both headers, so the edge is kept here.
+        self._cpp_shadowed_include_targets: set[tuple[str, str]] = set()
         # Local names brought in by a PHP `use function A\B\c` import, keyed by
         # module. A PHP namespace path never matches cgr's file-path qn (a global
         # helper declares `namespace Illuminate\Support` from
@@ -897,6 +962,90 @@ class ImportProcessor:
     def get_stdlib_cache_stats() -> StdlibCacheStats:
         return get_stdlib_cache_stats()
 
+    def _clear_module_import_state(self, module_qn: str) -> None:
+        """Drop everything a previous parse of this module recorded.
+
+        Extracted from `parse_imports` to keep it under the cognitive
+        complexity limit (S3776); the grouping is also the honest one, since
+        these four writes share a single invariant: a re-parse must carry
+        nothing the edited file no longer says.
+        """
+        self.import_mapping[module_qn] = {}
+        # Cleared with the mapping it shadows: these entries ADD edges, so a
+        # stale one would resurrect an include the edited file has removed
+        # (issue #1758).
+        self._cpp_shadowed_include_targets = {
+            entry
+            for entry in self._cpp_shadowed_include_targets
+            if entry[0] != module_qn
+        }
+        # Cleared here too, now that the shadowed sweep READS it. These
+        # entries SUPPRESS edges, so a stale one is the opposite hazard: a
+        # re-parse that removes an `export module X;` used to leave an
+        # exemption that only ever matched the declaration binding it came
+        # from -- already gone, so inert. The sweep matches on the resolved
+        # qn instead, so the same stale entry can now suppress a real
+        # include's edge (#1758 review).
+        self._cpp_declaration_mappings = {
+            entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
+        }
+        self._retract_import_sites(module_qn)
+
+    def _defer_module_import_edges(
+        self, module_qn: str, language: cs.SupportedLanguage
+    ) -> None:
+        """Queue this module's IMPORTS edges for the post-parse flush.
+
+        Extracted from `parse_imports` to keep it under the cognitive
+        complexity limit (S3776). The two loops here -- the mapping's own
+        bindings and the includes a later binding displaced -- are the
+        densest branching in that function, and nesting multiplies the
+        cost, so moving them out is what actually reduces it; the earlier
+        extraction of straight-line assignments did not.
+        """
+        # Hold the edges back: an internal target is only real if some file
+        # yields that module qn, known only after every file is parsed
+        # (flush_deferred_import_edges).
+        sites = self._import_sites.get(module_qn, {})
+        for local_name, full_name in self.import_mapping[module_qn].items():
+            if (module_qn, full_name) in self._cpp_declaration_mappings:
+                continue
+            if full_name == cs.RUST_UNRESOLVABLE_QN:
+                # The unrepresentable-#[path] sentinel stays in the map
+                # for name binding but names no module, so it must never
+                # become a phantom IMPORTS edge (issue #1082).
+                continue
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=full_name,
+                    language=language,
+                    site=sites.get(local_name),
+                )
+            )
+        # Includes whose local binding a later include took over: the
+        # file includes them, so they keep their edge even though the
+        # map no longer names them (issue #1758). No site: the binding
+        # that carried it belongs to the include that won the name.
+        for module_key, shadowed in self._cpp_shadowed_include_targets:
+            if module_key != module_qn:
+                continue
+            if (module_qn, shadowed) in self._cpp_declaration_mappings:
+                # The displaced binding can be one `export module X;`
+                # wrote, not an include: re-emitting it here would
+                # rebuild the self-import the main loop above filters
+                # out, which `test_cpp_module_declarations_emit_no_
+                # self_import` forbids (#1758 review).
+                continue
+            self._deferred_import_edges.append(
+                DeferredImportEdge(
+                    module_qn=module_qn,
+                    full_name=shadowed,
+                    language=language,
+                    site=None,
+                )
+            )
+
     def parse_imports(
         self,
         root_node: Node,
@@ -913,8 +1062,7 @@ class ImportProcessor:
 
         lang_config = queries[language]["config"]
 
-        self.import_mapping[module_qn] = {}
-        self._retract_import_sites(module_qn)
+        self._clear_module_import_state(module_qn)
         # A watch-mode re-parse must not carry references the edited file no
         # longer makes (issue #1347).
         self._inferred_module_imports.pop(module_qn, None)
@@ -989,27 +1137,7 @@ class ImportProcessor:
             )
 
             if self.ingestor:
-                # Hold the edges back: an internal target is only real if some file
-                # yields that module qn, known only after every file is parsed
-                # (flush_deferred_import_edges).
-                sites = self._import_sites.get(module_qn, {})
-                for local_name, full_name in self.import_mapping[module_qn].items():
-                    if (module_qn, full_name) in self._cpp_declaration_mappings:
-                        continue
-                    if full_name == cs.RUST_UNRESOLVABLE_QN:
-                        # The unrepresentable-#[path] sentinel stays in the map
-                        # for name binding but names no module, so it must never
-                        # become a phantom IMPORTS edge (issue #1082).
-                        continue
-                    self._deferred_import_edges.append(
-                        DeferredImportEdge(
-                            module_qn=module_qn,
-                            full_name=full_name,
-                            language=language,
-                            site=sites.get(local_name),
-                        )
-                    )
-
+                self._defer_module_import_edges(module_qn, language)
         except Exception as e:
             logger.warning(ls.IMP_PARSE_FAILED, module=module_qn, error=e)
 
@@ -2915,7 +3043,7 @@ class ImportProcessor:
         if cs.SEPARATOR_DOUBLE_COLON in module_path:
             name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
         else:
-            name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            name = _external_module_name(module_path)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.EXTERNAL_MODULE,
             {
@@ -4180,6 +4308,13 @@ class ImportProcessor:
         full_name = self._cpp_include_full_name(
             include_path, is_system_include, module_qn
         )
+        # A local name already bound by an earlier include in this file names
+        # a DIFFERENT header (`<std>` then `<std.h>`, both binding `std`).
+        # The map holds one binding, so remember the loser's target: it is a
+        # real include of a real header and must keep its IMPORTS edge (#1758).
+        displaced = self.import_mapping[module_qn].get(local_name)
+        if displaced is not None and displaced != full_name:
+            self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][local_name] = full_name
         self._record_import_site(module_qn, local_name, include_node, include_path)
         logger.debug(
@@ -4204,7 +4339,23 @@ class ImportProcessor:
                 cs.IMPORT_STD_PREFIX
             ):
                 return include_path
-            return f"{cs.IMPORT_STD_PREFIX}{include_path}"
+            # A slashed include path is segmented like any other module path:
+            # `<sys/types.h>` is the module `types.h` under `sys`, and leaving
+            # the slash in produced the qn `std.sys/types.h`, which no dotted
+            # lookup can address (issue #1758).
+            #
+            # Accepted collision, measured: this maps `<sys/types.h>` and a
+            # literal `<sys.types.h>` onto the same qn, which `main` kept
+            # distinct by leaving the slash in. C and C++ use `/` as the
+            # include separator and a dot only inside the final component, so
+            # the colliding spelling is not a form real code takes; and the
+            # qn `main` gave the slashed one was unaddressable anyway, so
+            # nothing could resolve against it. A conflated pair of headers
+            # that both exist is the cheaper error than a target no dotted
+            # lookup can name at all. `test_two_spellings_of_one_header_path`
+            # pins the behaviour so a later reader sees a decision rather
+            # than an oversight (#1758 review).
+            return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
         if resolved := self._resolve_cpp_include_target(include_path, module_qn):
             # The include resolves to a real repo file; use that file's
             # actual (collision-disambiguated) module qn. The old
@@ -4215,8 +4366,9 @@ class ImportProcessor:
             # (issue #652).
             return resolved
         # A quoted include matching no repo file is a third-party header; a
-        # project-rooted qn would be a phantom.
-        return f"{cs.IMPORT_STD_PREFIX}{include_path}"
+        # project-rooted qn would be a phantom. Segmented like the system
+        # branch above, for the same reason (issue #1758).
+        return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
         identifier_child = None
@@ -4294,6 +4446,20 @@ class ImportProcessor:
     ) -> None:
         module_name = parts[name_index].rstrip(";")
         full_name = f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
+        # A global module fragment puts includes BEFORE the declaration:
+        #
+        #     module;
+        #     #include <foo.h>
+        #     export module foo;
+        #
+        # so the declaration displaces the include's binding, exactly as a
+        # later include displaces an earlier one. Record it the same way or
+        # the header's IMPORTS edge is lost -- the declaration's own target is
+        # then skipped by the deferred loop as a self-import, and nothing is
+        # emitted for the include at all (#1758 review).
+        displaced = self.import_mapping[module_qn].get(module_name)
+        if displaced is not None and displaced != full_name:
+            self._cpp_shadowed_include_targets.add((module_qn, displaced))
         self.import_mapping[module_qn][module_name] = full_name
         # `module X;` / `export module X;` DECLARE this file's module; the mapping
         # exists for name resolution only, never as an IMPORTS edge.
