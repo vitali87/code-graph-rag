@@ -339,10 +339,8 @@ def test_heuristic_site_refuses_and_changes_nothing(
         "alone",
         allow_heuristic=True,
     )
-    assert (
-        report.applied
-        and "return alone()" in (temp_repo / "pkg" / "app.py").read_text()
-    )
+    assert report.applied
+    assert "return alone()" in (temp_repo / "pkg" / "app.py").read_text()
 
 
 def test_unlocatable_dynamic_site_is_listed(
@@ -532,11 +530,9 @@ def test_rust_rename(temp_repo: Path, mock_ingestor: MagicMock) -> None:
         "pub fn assist(a: u32,  b: u32)" in (temp_repo / "src" / "util.rs").read_text()
     )
     main = (temp_repo / "src" / "main.rs").read_text()
-    assert (
-        "use crate::util::assist;" in main
-        and "helper(1,  2)" not in main
-        and "assist(1,  2)" in main
-    )
+    assert "use crate::util::assist;" in main
+    assert "helper(1,  2)" not in main
+    assert "assist(1,  2)" in main
 
 
 # --- MCP tool and CLI surface ------------------------------------------------------
