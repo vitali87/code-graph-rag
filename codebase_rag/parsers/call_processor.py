@@ -1296,7 +1296,9 @@ class CallProcessor:
         text = name_node.text
         # Replacement decode, not strict: one undecodable byte in this file
         # must not abort the whole call pass and strand the file's CALLS
-        # edges (issue #1797, same class as the definition-side extractors).
+        # edges (issue #1797). This is NOT the call pass's only name funnel
+        # -- `_get_call_target_name` decodes call targets separately and is
+        # routed through the same helper.
         return None if text is None else decode_node_text(text)
 
     def _collect_all_call_nodes(
@@ -2656,12 +2658,12 @@ class CallProcessor:
                     | cs.TS_PHP_NAME
                 ):
                     if func_child.text is not None:
-                        return func_child.text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(func_child.text)
                 case cs.TS_GENERIC_FUNCTION:
                     # turbofish: unwrap to the underlying callee identifier
                     inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
                     if inner and inner.text:
-                        return inner.text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(inner.text)
                 case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
                     # Rust member call `a.b.method()`: use the full dotted receiver
                     # chain as the call name so the resolver can map the receiver to
@@ -2670,11 +2672,11 @@ class CallProcessor:
                     # path; a paren-free chain ends at the bare-method trie fallback
                     # when the receiver type is unknown.
                     if (text := func_child.text) is not None:
-                        return text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(text)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:
-                        method = field_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(field_node.text)
                         # Prepend a simple-identifier receiver (`obj->m`/`obj.m`
                         # -> `obj.m`) so the resolver can map obj to its type and
                         # bind the correct class method; a `.`-joined two-part name
@@ -2687,7 +2689,7 @@ class CallProcessor:
                             and arg.type == cs.TS_IDENTIFIER
                             and arg.text
                         ):
-                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(arg.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         # A factory-call receiver (`parser(ia, cb).parse(...)`,
                         # nlohmann's basic_json::parse) is a call_expression on a
@@ -2712,7 +2714,7 @@ class CallProcessor:
                             )
                             and arg.text
                         ):
-                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(arg.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CSHARP_GENERIC_NAME if (
@@ -2725,7 +2727,7 @@ class CallProcessor:
                     # graph (Polly's parameterless HandleInner overload
                     # delegating to its Func sibling).
                     if func_child.text is not None:
-                        full = func_child.text.decode(cs.ENCODING_UTF8)
+                        full = decode_node_text(func_child.text)
                         return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                 case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION if (
                     language == cs.SupportedLanguage.CSHARP
@@ -2740,13 +2742,13 @@ class CallProcessor:
                         cs.TS_CSHARP_FIELD_EXPRESSION
                     )
                     if name_node and name_node.text:
-                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(name_node.text)
                         # A generic member (`recv.Handle<T>`) registers
                         # generic-free; strip the type arguments so the
                         # name-keyed fallbacks can match.
                         method = method.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                         if expr_node and expr_node.text:
-                            receiver = expr_node.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(expr_node.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION if (
@@ -2770,7 +2772,7 @@ class CallProcessor:
                         else None
                     )
                     if name_node and name_node.text:
-                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(name_node.text)
                         receiver_node = (
                             func_child.named_children[0]
                             if (func_child.named_children)
@@ -2781,7 +2783,7 @@ class CallProcessor:
                             and receiver_node is not binding
                             and receiver_node.text
                         ):
-                            receiver = receiver_node.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(receiver_node.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
@@ -2796,7 +2798,7 @@ class CallProcessor:
                     if self._unwrap_bound_function(func_child) is not None:
                         peeled = self._peel_bound_callable(func_child)
                         if peeled.text is not None:
-                            return peeled.text.decode(cs.ENCODING_UTF8)
+                            return decode_node_text(peeled.text)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
                 case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION if (
@@ -2824,7 +2826,7 @@ class CallProcessor:
                 # it is not reported as dead.
                 ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
                 if ctor is not None and ctor.text is not None:
-                    return ctor.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(ctor.text)
             case cs.TS_OBJECT_CREATION_EXPRESSION if language in (
                 cs.SupportedLanguage.JAVA,
                 cs.SupportedLanguage.CSHARP,
@@ -2836,7 +2838,7 @@ class CallProcessor:
                 # -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
                 type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
                 if type_node is not None and type_node.text is not None:
-                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                    return decode_node_text(type_node.text).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
             case cs.TS_NEW_EXPRESSION if language == cs.SupportedLanguage.CPP:
@@ -2867,16 +2869,16 @@ class CallProcessor:
             ):
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
-                    operator_text = operator_node.text.decode(cs.ENCODING_UTF8)
+                    operator_text = decode_node_text(operator_node.text)
                     return cpp_utils.convert_operator_symbol_to_name(operator_text)
             case cs.TS_METHOD_INVOCATION:
                 object_node = call_node.child_by_field_name(cs.FIELD_OBJECT)
                 name_node = call_node.child_by_field_name(cs.FIELD_NAME)
                 if name_node and name_node.text:
-                    method_name = name_node.text.decode(cs.ENCODING_UTF8)
+                    method_name = decode_node_text(name_node.text)
                     if not object_node or not object_node.text:
                         return method_name
-                    object_text = object_node.text.decode(cs.ENCODING_UTF8)
+                    object_text = decode_node_text(object_node.text)
                     return f"{object_text}{cs.SEPARATOR_DOT}{method_name}"
             # Scala infix operator call (`a ~> b`, `xs map f`): the callee is the
             # `operator` field's method name. tree-sitter has no `function` field
@@ -2890,7 +2892,7 @@ class CallProcessor:
             case cs.TS_SCALA_INFIX_EXPRESSION if language == cs.SupportedLanguage.SCALA:
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
-                    return operator_node.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(operator_node.text)
             # Rust `square!(3)`: the callee lives in the `macro` field (no
             # `function`/`name` field), so the invocation was captured as a
             # call but dropped nameless here; unresolvable even now that
@@ -2898,11 +2900,11 @@ class CallProcessor:
             case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
                 macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
                 if macro_node is not None and macro_node.text is not None:
-                    return macro_node.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(macro_node.text)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
-                return name_node.text.decode(cs.ENCODING_UTF8)
+                return decode_node_text(name_node.text)
 
         return None
 

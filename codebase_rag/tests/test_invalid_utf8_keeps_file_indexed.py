@@ -116,3 +116,25 @@ def test_the_call_pass_still_links_the_file(
         for call in get_relationships(mock_ingestor, RelationshipType.CALLS.value)
     }
     assert ("proj.a.caller", _UNTOUCHED_SIBLING) in edges
+
+
+# The bad byte is in a DECORATOR, not in any name the extractors read. It
+# reaches `parsers.utils.safe_decode_text`, a third pass that decodes
+# independently of the two above -- and Python is the repo's primary
+# language, so this is the most likely way a real repository hits #1797.
+_BAD_DECORATOR = b"@deco\xffr\ndef f(): pass\ndef other(): pass\n"
+
+
+def test_a_bad_byte_in_a_decorator_does_not_drop_the_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Fixing only the name extractors and the call pass left this raising:
+    # decorators, modifiers and import paths all go through
+    # `safe_decode_text`, whose name suggests it already handled this and
+    # whose cached decode was strict.
+    project = temp_repo / "pyproj"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / "a.py").write_bytes(_BAD_DECORATOR)
+    create_and_run_updater(project, mock_ingestor)
+    found = get_node_names(mock_ingestor, NodeType.FUNCTION.value)
+    assert {"pyproj.a.f", "pyproj.a.other"} <= found

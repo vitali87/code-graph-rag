@@ -23,6 +23,12 @@ def decode_node_text(raw: bytes) -> str:
     undecodable byte drops EVERY definition in that file from the graph --
     including definitions nowhere near the bad byte (issue #1797).
 
+    Several passes decode node text independently -- the name extractors
+    below, the call pass, and `parsers.utils.safe_decode_text` (decorators,
+    modifiers, import paths) -- and each one abandons the file on its own.
+    Every such site must route through here; fixing one leaves the rest
+    losing data on the same input.
+
     `errors="replace"` keeps the rest of the file indexable and leaves a
     visibly mangled identifier, matching what `document_tier`, `java_lombok`
     and `build_lock` already do with the same class of input.

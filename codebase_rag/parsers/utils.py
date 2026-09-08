@@ -10,6 +10,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 
 from .. import constants as cs
 from .. import logs
+from ..language_spec import decode_node_text
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -242,7 +243,11 @@ def extract_modifiers_and_decorators(
 
 @lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
-    return text_bytes.decode(cs.ENCODING_UTF8)
+    # Replacement decode, not strict. `safe_decode_text` feeds decorators,
+    # modifiers and import paths, and a strict decode here raised
+    # UnicodeDecodeError and abandoned the whole file -- one bad byte in a
+    # Python decorator dropped every definition in it (issue #1797).
+    return decode_node_text(text_bytes)
 
 
 def node_site_properties(node: Node) -> PropertyDict:
