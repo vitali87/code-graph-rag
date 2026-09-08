@@ -105,3 +105,34 @@ def test_deleted_same_stem_file_uses_its_recorded_module(tmp_path: Path) -> None
     assert all(
         entry[0] == "proj.unit" for entry in processor._cpp_shadowed_include_targets
     )
+
+
+@pytest.mark.parametrize("suffix", [".c", ".cpp"])
+def test_deleted_header_refreshes_cached_include_resolution(
+    tmp_path: Path, suffix: str
+) -> None:
+    local_dir = tmp_path / "local"
+    sibling_dir = tmp_path / "sibling"
+    local_dir.mkdir()
+    sibling_dir.mkdir()
+    gone = local_dir / "widget.hpp"
+    kept = sibling_dir / "widget.hpp"
+    consumer = local_dir / f"consumer{suffix}"
+    gone.write_text("#pragma once\n", encoding="utf-8")
+    kept.write_text("#pragma once\n", encoding="utf-8")
+    consumer.write_text('#include "widget.hpp"\n', encoding="utf-8")
+    updater = _updater(tmp_path)
+    processor = updater.factory.import_processor
+    consumer_qn = _module_qn(updater, consumer)
+    gone_qn = _module_qn(updater, gone)
+    kept_qn = _module_qn(updater, kept)
+    assert processor.import_mapping[consumer_qn]["widget"] == gone_qn
+    assert processor._cpp_module_qn_map is not None
+
+    gone.unlink()
+    updater.remove_file_from_state(gone)
+    language = cs.SupportedLanguage.C if suffix == ".c" else cs.SupportedLanguage.CPP
+    tree = updater.parsers[language].parse(consumer.read_bytes())
+    processor.parse_imports(tree.root_node, consumer_qn, language, updater.queries)
+
+    assert processor.import_mapping[consumer_qn]["widget"] == kept_qn
