@@ -182,43 +182,23 @@ def _module_prefixes_without_definitions(root: Path, changed: list[str]) -> set[
     return prefixes
 
 
-def _is_known_package_demotion(
-    actual: tuple[frozenset, frozenset], expected: tuple[frozenset, frozenset]
-) -> bool:
-    """True when the delta is exactly #1798 and nothing else.
+def _package_demotion_residue(
+    extra_nodes: set, missing_nodes: set, extra_edges: set, missing_edges: set
+) -> None:
+    """Discard the parts of the delta that #1798 explains, in place.
 
     Deleting a package's `__init__.py` should retract the directory's
-    `Package` identity. It does not, and that surfaces in two shapes:
-
-    * the directory is MISLABELLED -- a `Package` where a clean index has a
-      `Folder`, so one node is extra and one missing;
-    * the directory is DUPLICATED -- when some file in it survives, the
-      `Folder` is emitted too and the stale `Package` simply remains, so a
-      node is extra and none is missing.
-
-    Both are recognised by: every extra node is a `Package`, every missing
-    node is a `Folder`, and every differing edge is a containment edge
-    between the project and that directory or between that directory and
-    what it holds. Anything else in the delta fails the match, so an
-    unrelated disagreement in the same run is still reported.
-
-    Delete this helper and its call site when #1798 is fixed.
+    `Package` identity. It does not, which surfaces as a `Package` node a
+    clean index does not have (mislabelled, when the `Folder` is missing too;
+    duplicated, when the `Folder` is present as well), plus containment edges
+    anchored to the wrong one of the two.
     """
-    extra_nodes = actual[0] - expected[0]
-    missing_nodes = expected[0] - actual[0]
-    if not extra_nodes:
-        return False
-    if any(node[0] != "Package" for node in extra_nodes):
-        return False
-    if any(node[0] != "Folder" for node in missing_nodes):
-        return False
+    for node in {n for n in extra_nodes if n[0] == "Package"}:
+        extra_nodes.discard(node)
+    for node in {n for n in missing_nodes if n[0] == "Folder"}:
+        missing_nodes.discard(node)
 
-    # The mislabelled directory shows up on both sides of its edges: as the
-    # SOURCE of what it contains, and as the TARGET of the project's own
-    # edge, whose relation type differs too. An earlier version allowed only
-    # the first of those and so never matched; the difference was invisible
-    # because the harness' own message truncated each delta to five entries.
-    allowed = {
+    containment = {
         ("Package", "CONTAINS_FILE"),
         ("Package", "CONTAINS_MODULE"),
         ("Folder", "CONTAINS_FILE"),
@@ -226,48 +206,59 @@ def _is_known_package_demotion(
         ("Project", "CONTAINS_PACKAGE"),
         ("Project", "CONTAINS_FOLDER"),
     }
-    for edge in (actual[1] - expected[1]) | (expected[1] - actual[1]):
-        if (edge[0], edge[2]) not in allowed:
-            return False
-    return True
+    for edges in (extra_edges, missing_edges):
+        for edge in {e for e in edges if (e[0], e[2]) in containment}:
+            edges.discard(edge)
 
 
-def _is_known_stale_edge_leak(
+def _stale_edge_residue(root: Path, changed: list[str], extra_edges: set) -> None:
+    """Discard the parts of the delta that #1794 explains, in place.
+
+    A file that parses to no complete definition keeps the edges its removed
+    definitions emitted, so an extra edge whose SOURCE lives in such a file's
+    module is explained.
+    """
+    prefixes = _module_prefixes_without_definitions(root, changed)
+    if not prefixes:
+        return
+    for edge in {
+        e
+        for e in extra_edges
+        if any(
+            str(e[1]) == prefix or str(e[1]).startswith(f"{prefix}.")
+            for prefix in prefixes
+        )
+    }:
+        extra_edges.discard(edge)
+
+
+def _is_only_known_defects(
     root: Path,
     changed: list[str],
     actual: tuple[frozenset, frozenset],
     expected: tuple[frozenset, frozenset],
 ) -> bool:
-    """True when the delta is EXACTLY #1794 and nothing else.
+    """True when everything in the delta is explained by #1794 or #1798.
 
-    #1794 leaves behind edges whose SOURCE is a definition inside a file that
-    now parses to nothing. So it is not enough that such a file exists in the
-    plan -- every difference must also be an extra edge out of that file's
-    module, with nothing missing and no node difference at all. An earlier
-    version suppressed on the shape alone, which would have hidden an
-    unrelated mismatch introduced by another file in the same plan.
+    Subtractive rather than a disjunction of whole-delta matchers: one edit
+    plan can trigger BOTH defects at once (truncate a file mid-`def` while
+    deleting an `__init__.py`), and an `A or B` test matches neither because
+    each sees the other's rows as foreign. Each helper removes only the rows
+    its own defect explains; whatever survives is a genuine finding and fails
+    the run, so this stays as strict as the per-defect matchers it replaces.
+
+    Delete both helpers and this one when #1794 and #1798 are fixed; the
+    harness then re-detects them.
     """
-    extra_nodes = actual[0] - expected[0]
-    missing_nodes = expected[0] - actual[0]
-    missing_edges = expected[1] - actual[1]
-    if extra_nodes or missing_nodes or missing_edges:
-        return False
+    extra_nodes = set(actual[0] - expected[0])
+    missing_nodes = set(expected[0] - actual[0])
+    extra_edges = set(actual[1] - expected[1])
+    missing_edges = set(expected[1] - actual[1])
 
-    extra_edges = actual[1] - expected[1]
-    if not extra_edges:
-        return False
+    _package_demotion_residue(extra_nodes, missing_nodes, extra_edges, missing_edges)
+    _stale_edge_residue(root, changed, extra_edges)
 
-    prefixes = _module_prefixes_without_definitions(root, changed)
-    if not prefixes:
-        return False
-
-    for edge in extra_edges:
-        source = str(edge[1])
-        if not any(
-            source == prefix or source.startswith(f"{prefix}.") for prefix in prefixes
-        ):
-            return False
-    return True
+    return not (extra_nodes or missing_nodes or extra_edges or missing_edges)
 
 
 def _clean_index(root: Path) -> tuple[frozenset, frozenset]:
@@ -322,9 +313,8 @@ def fuzz_incremental_update(data: bytes) -> None:
         actual = _snapshot(store)
         expected = _clean_index(root)
 
-        if actual != expected and (
-            _is_known_stale_edge_leak(root, changed, actual, expected)
-            or _is_known_package_demotion(actual, expected)
+        if actual != expected and _is_only_known_defects(
+            root, changed, actual, expected
         ):
             # Known defects #1794 and #1798, each matched on its exact
             # delta rather than on the plan's shape.
