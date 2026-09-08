@@ -563,3 +563,38 @@ def test_resurrected_filter_discards_the_phantom_external_module(
     assert not extra_edges
     assert not missing_nodes
     assert not missing_edges
+
+
+def test_resurrected_filter_keeps_a_lost_edge_to_a_real_external_module(
+    tmp_path: Path,
+) -> None:
+    """#1799 adds a phantom import edge; a LOST one is a genuine finding.
+
+    The defect can only ever produce an EXTRA `ExternalModule` and an EXTRA
+    `IMPORTS` edge to it. An edge in the opposite direction -- one a clean
+    index has and the reingest dropped -- is a real regression even when its
+    endpoint shares the resurrected module's bare name, so the phantom rule
+    must not reach the missing side.
+    """
+    harness = import_harness_module("fuzz_incremental_update")
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+
+    lost_edge = (
+        "Module",
+        "proj.pkg.app",
+        "IMPORTS",
+        "ExternalModule",
+        "util",
+        "alias=util",
+    )
+    missing_edges = {lost_edge}
+    missing_nodes = {("ExternalModule", "util")}
+
+    harness._resurrected_file_residue(
+        tmp_path, ["pkg/util.py"], set(), missing_nodes, set(), missing_edges
+    )
+
+    assert lost_edge in missing_edges
+    assert ("ExternalModule", "util") in missing_nodes

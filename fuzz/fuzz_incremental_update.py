@@ -348,14 +348,17 @@ def _resurrected_file_residue(
     # The phantom ExternalModule stands in for the module that was dropped.
     for node in {n for n in extra_nodes if _phantom(n[0], n[1])}:
         extra_nodes.discard(node)
-    for edges in (extra_edges, missing_edges):
+    # #1799 ADDS the phantom and its IMPORTS edge; it never removes one. So
+    # the phantom clause applies to the extra side only -- a LOST edge to a
+    # legitimate ExternalModule of the same name is a genuine finding, and
+    # the node loops above already draw this distinction.
+    for edges, phantom_applies in ((extra_edges, True), (missing_edges, False)):
         for edge in {
             e
             for e in edges
             if _theirs(e[1])
             or _theirs(e[4])
-            or _phantom(e[0], e[1])
-            or _phantom(e[3], e[4])
+            or (phantom_applies and (_phantom(e[0], e[1]) or _phantom(e[3], e[4])))
         }:
             edges.discard(edge)
 
