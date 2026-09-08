@@ -7,11 +7,15 @@
 # fuzz_parse_source refuses to start with no grammars, which would otherwise
 # show up as a target that builds and then exits immediately.
 
-# No `pip install --upgrade pip`: pip here is the distribution's, and pip
-# refuses to uninstall a Debian-managed package ("RECORD file not found"),
-# which fails the build under `set -e`. The distro pip installs the project
-# and its grammars perfectly well.
-python3 -m pip install ".[treesitter-full]"
+# OSS-Fuzz exports sanitizer CFLAGS/CXXFLAGS for the fuzz targets, but pip
+# also hands them to every C extension it builds from source, and pymgclient's
+# cmake rejects them outright ("invalid integral value '1 -fno-omit-frame-
+# pointer ...'", because -O1 and the rest arrive as one token). Nothing the
+# harnesses import touches pymgclient -- it is the Memgraph driver -- and a
+# fuzz target gets its instrumentation from atheris, not from these flags. So
+# install dependencies with a clean environment.
+env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+  python3 -m pip install --break-system-packages ".[treesitter-full]"
 
 # `evals` is NOT part of the installed wheel -- pyproject's package discovery
 # includes only codebase_rag*, codec* and cgr* -- but fuzz_incremental_update
