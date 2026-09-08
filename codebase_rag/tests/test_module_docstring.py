@@ -374,3 +374,201 @@ class TestModuleDocstringPerLanguage:
         """Dart labels a `/** */` doc `documentation_comment`, not `comment`."""
         source = b"/**\n * Library docs.\n */\nlibrary x;\n"
         assert self._extract("dart", source) == "Library docs."
+
+    # --- documentation that belongs to a declaration, not to the file ---
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("java", b"/** Class docs */\nclass C {}\n"),
+            ("scala", b"/** Class docs */\nclass C\n"),
+            ("c", b"/** Func docs */\nint f(void) { return 0; }\n"),
+            ("cpp", b"/** Class docs */\nclass C {};\n"),
+            ("c_sharp", b"/** Class docs */\nclass C {}\n"),
+            ("php", b"<?php\n/** Class docs */\nclass C {}\n"),
+            ("javascript", b"/** Class docs */\nclass C {}\n"),
+            ("typescript", b"/** Iface docs */\ninterface I {}\n"),
+            ("dart", b"/// Class docs.\nclass C {}\n"),
+        ],
+    )
+    def test_declaration_doc_is_not_the_module_doc(
+        self, lang: str, source: bytes
+    ) -> None:
+        """A doc comment touching a declaration documents it, not the file.
+
+        Recording `/** Class docs */` on the Module node attributes a class's
+        own description to its file, which reads as file-level context to
+        every consumer of the graph.
+        """
+        assert self._extract(lang, source) is None
+
+    @pytest.mark.parametrize(
+        ("lang", "source", "expected"),
+        [
+            ("java", b"/** File docs */\npackage p;\n", "File docs"),
+            ("scala", b"/** File docs */\npackage p\n", "File docs"),
+            ("c", b"/** File docs */\n#include <s.h>\n", "File docs"),
+            ("cpp", b"/** File docs */\n#include <s>\n", "File docs"),
+            ("c_sharp", b"/** File docs */\nusing S;\n", "File docs"),
+            (
+                "php",
+                b"<?php\n/** File docs */\ndeclare(strict_types=1);\n",
+                "File docs",
+            ),
+            ("javascript", b"/** File docs */\nlet x = 1;\n", "File docs"),
+            ("javascript", b"/** File docs */\nexport const x = 1;\n", "File docs"),
+            ("typescript", b"/** File docs */\nconst c = 1;\n", "File docs"),
+            ("dart", b"/// File docs.\nvar x = 1;\n", "File docs."),
+            ("dart", b"/// File docs.\nimport 'a.dart';\n", "File docs."),
+            ("lua", b"--- File docs.\nlocal M = {}\n", "File docs."),
+            ("rust", b"//! Crate docs.\nfn f() {}\n", "Crate docs."),
+        ],
+    )
+    def test_file_doc_above_ordinary_code_is_still_found(
+        self, lang: str, source: bytes, expected: str
+    ) -> None:
+        """The other direction: ordinary code below a doc must not suppress it.
+
+        The check is a deny-list of declaration types rather than an allow-list
+        of legal followers, because any statement may open a documented file.
+        An allow-list drops the doc for every construct nobody listed.
+        """
+        assert self._extract(lang, source) == expected
+
+    @pytest.mark.parametrize(
+        ("lang", "source", "expected"),
+        [
+            ("java", b"/** File docs */\n\nclass C {}\n", "File docs"),
+            ("javascript", b"/** File docs */\n\nclass C {}\n", "File docs"),
+            ("dart", b"/// File docs.\n\nclass C {}\n", "File docs."),
+        ],
+    )
+    def test_detached_doc_above_a_declaration_is_a_file_doc(
+        self, lang: str, source: bytes, expected: str
+    ) -> None:
+        """The blank line is the distinction, as it is for Go's package comment."""
+        assert self._extract(lang, source) == expected
+
+    # --- a bare marker line is a paragraph break, not a separator ---
+
+    def test_go_package_comment_survives_a_blank_doc_line(self) -> None:
+        """The standard Go package comment form, which a bare `//` must not end.
+
+        `_is_separator` accepting a bare `//` dropped this entirely: the block
+        ended at the first line, so the anchor check no longer saw `package`.
+        """
+        source = b"// Package m does things.\n//\n// More details.\npackage m\n"
+        assert self._extract("go", source) == "Package m does things.\n\nMore details."
+
+    def test_rust_crate_doc_survives_a_blank_doc_line(self) -> None:
+        source = b"//! First para.\n//!\n//! Second para.\n"
+        assert self._extract("rust", source) == "First para.\n\nSecond para."
+
+    def test_rust_crate_doc_after_an_inner_attribute(self) -> None:
+        """`#![no_std]` legally precedes the crate doc."""
+        assert self._extract("rust", b"#![no_std]\n//! Crate docs.\n") == "Crate docs."
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("javascript", b"/** Class docs */\nexport class C {}\n"),
+            ("javascript", b"/** Fn docs */\nexport function f() {}\n"),
+            ("javascript", b"/** Def docs */\nexport default class D {}\n"),
+            ("typescript", b"/** Iface docs */\nexport interface I {}\n"),
+            ("typescript", b"/** Type docs */\nexport type T = number;\n"),
+            ("typescript", b"/** Enum docs */\nexport enum E { A }\n"),
+        ],
+    )
+    def test_exported_declaration_doc_is_not_the_module_doc(
+        self, lang: str, source: bytes
+    ) -> None:
+        """`export` wraps the declaration; the doc still belongs to it.
+
+        `export class C {}` and `export const x = 1` are both
+        `export_statement`, so the wrapper's type decides nothing. The exported
+        declaration is its last named child, and that is what the deny-list is
+        tested against -- `export const` and `export {}` unwrap to nodes that
+        are not declarations and so remain file documentation.
+        """
+        assert self._extract(lang, source) is None
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("scala", b"/** Ext docs */\nextension (x: Int) { def double = x * 2 }\n"),
+            ("java", b"/** Module docs */\nmodule m {}\n"),
+            ("dart", b"/// Ext docs.\nextension type ET(int i) {}\n"),
+            ("cpp", b'/** Linkage docs */\nextern "C" { int h(); }\n'),
+        ],
+    )
+    def test_less_common_declaration_forms_are_denied(
+        self, lang: str, source: bytes
+    ) -> None:
+        """Spellings the first pass of the deny-list missed.
+
+        C#'s file-scoped `namespace N;` is the modern default and parses as
+        `file_scoped_namespace_declaration`, a different node from the braced
+        form; the rest are ordinary declarations whose grammar names do not
+        resemble their siblings'.
+        """
+        assert self._extract(lang, source) is None
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("java", b"/** Class docs */ class C {}\n"),
+            ("javascript", b"/** Class docs */ class C {}\n"),
+            ("c", b"/** Fn docs */ int f(void) { return 0; }\n"),
+        ],
+    )
+    def test_doc_on_the_same_line_as_its_declaration(
+        self, lang: str, source: bytes
+    ) -> None:
+        """Adjacency is not only the line below: the same line is closer still."""
+        assert self._extract(lang, source) is None
+
+    def test_same_line_ordinary_code_keeps_the_file_doc(self) -> None:
+        """The same-line rule must not swallow a doc above ordinary code."""
+        assert self._extract("javascript", b"/** File docs */ let x = 1;\n") == (
+            "File docs"
+        )
+
+    @pytest.mark.parametrize(
+        ("lang", "source", "expected"),
+        [
+            ("javascript", b"/** File docs */\nexport const x = 1;\n", "File docs"),
+            ("typescript", b"/** File docs */\nexport {};\n", "File docs"),
+        ],
+    )
+    def test_export_of_a_non_declaration_is_still_a_file_doc(
+        self, lang: str, source: bytes, expected: str
+    ) -> None:
+        """`export const` / `export {}` unwrap to nodes that are not declarations."""
+        assert self._extract(lang, source) == expected
+
+    def test_file_scoped_namespace_keeps_the_file_doc(self) -> None:
+        """`namespace N;` scopes the file; `namespace N { }` is a block.
+
+        The file-scoped form has no body, so the file's declarations are its
+        siblings rather than its children and a doc above it describes the
+        file. The braced form contains them, so a doc above it documents the
+        block. Same construct in C#, opposite answers here.
+        """
+        assert self._extract("c_sharp", b"/** File docs */\nnamespace N;\n") == (
+            "File docs"
+        )
+        assert self._extract("c_sharp", b"/** Ns docs */\nnamespace N {}\n") is None
+
+    def test_crlf_does_not_shift_the_documentation_row(self) -> None:
+        """A `\\r` kept in the node text is not a newline.
+
+        Dart's `documentation_comment` includes the `\\r` of a CRLF line but
+        still ends on its own row, so subtracting a row for any trailing
+        whitespace put the doc an impossible row above itself: it truncated a
+        multi-line doc and defeated the declaration check.
+        """
+        assert self._extract("dart", b"/// A.\r\n/// B.\r\nvar x = 1;\r\n") == "A.\nB."
+        assert self._extract("dart", b"/// Class docs.\r\nclass C {}\r\n") is None
+        assert (
+            self._extract("dart", b"/// File docs.\r\nvar x = 1;\r\n") == "File docs."
+        )
