@@ -182,20 +182,64 @@ def _module_prefixes_without_definitions(root: Path, changed: list[str]) -> set[
     return prefixes
 
 
+def _demoted_directories(root: Path, deleted: list[str]) -> set[str]:
+    """Directories whose `__init__.py` this plan removed and that still exist.
+
+    That is the precondition for #1798, and it is what makes the suppression
+    correlated rather than label-shaped: without it, ANY Package/Folder
+    mismatch anywhere in the graph would be discarded.
+    """
+    dirs = set()
+    for rel in deleted:
+        if Path(rel).name != "__init__.py":
+            continue
+        parent = str(Path(rel).parent)
+        if parent in (".", ""):
+            continue
+        if (root / parent).is_dir():
+            dirs.add(parent)
+    return dirs
+
+
 def _package_demotion_residue(
-    extra_nodes: set, missing_nodes: set, extra_edges: set, missing_edges: set
+    root: Path,
+    deleted: list[str],
+    extra_nodes: set,
+    missing_nodes: set,
+    extra_edges: set,
+    missing_edges: set,
 ) -> None:
     """Discard the parts of the delta that #1798 explains, in place.
 
     Deleting a package's `__init__.py` should retract the directory's
     `Package` identity. It does not, which surfaces as a `Package` node a
-    clean index does not have (mislabelled, when the `Folder` is missing too;
-    duplicated, when the `Folder` is present as well), plus containment edges
-    anchored to the wrong one of the two.
+    clean index does not have (mislabelled when the `Folder` is missing too,
+    duplicated when it is present as well), plus containment edges anchored
+    to the wrong one of the two.
+
+    Every row removed here must name one of the directories that actually
+    lost an `__init__.py` in THIS plan. An earlier version filtered on the
+    node label and the (source-label, relation) pair alone, which discarded
+    an unrelated `Package`/`Folder` mismatch just as happily -- a suppression
+    that cannot fail is not a suppression.
     """
-    for node in {n for n in extra_nodes if n[0] == "Package"}:
+    dirs = _demoted_directories(root, deleted)
+    if not dirs:
+        return
+
+    # A directory appears as `proj.pkg` on the Package side and as an
+    # absolute path on the Folder side, so match either spelling. Both the
+    # resolved and unresolved paths are included: the graph stores whatever
+    # the updater saw, and on macOS a temp dir under /var resolves to
+    # /private/var, so comparing one spelling silently matches nothing.
+    qualified = {f"{PROJECT}.{d.replace('/', '.')}" for d in dirs}
+    absolute = {str(root / d) for d in dirs}
+    absolute |= {str((root / d).resolve()) for d in dirs}
+    names = qualified | absolute
+
+    for node in {n for n in extra_nodes if n[0] == "Package" and n[1] in names}:
         extra_nodes.discard(node)
-    for node in {n for n in missing_nodes if n[0] == "Folder"}:
+    for node in {n for n in missing_nodes if n[0] == "Folder" and n[1] in names}:
         missing_nodes.discard(node)
 
     containment = {
@@ -207,7 +251,14 @@ def _package_demotion_residue(
         ("Project", "CONTAINS_FOLDER"),
     }
     for edges in (extra_edges, missing_edges):
-        for edge in {e for e in edges if (e[0], e[2]) in containment}:
+        for edge in {
+            e
+            for e in edges
+            if (e[0], e[2]) in containment
+            # The directory is the SOURCE of what it contains and the TARGET
+            # of the project's edge, so check whichever end names it.
+            and (str(e[1]) in names or str(e[4]) in names)
+        }:
             edges.discard(edge)
 
 
@@ -232,9 +283,62 @@ def _stale_edge_residue(root: Path, changed: list[str], extra_edges: set) -> Non
         extra_edges.discard(edge)
 
 
+def _resurrected_file_residue(
+    root: Path,
+    deleted: list[str],
+    extra_nodes: set,
+    missing_nodes: set,
+    extra_edges: set,
+    missing_edges: set,
+) -> None:
+    """Discard the parts of the delta that #1799 explains, in place.
+
+    A path named in `deleted` whose file still exists is retracted anyway and
+    never re-indexed, so the graph loses that file's File and definition
+    nodes and downgrades its importers to a phantom ExternalModule.
+
+    Correlated to the specific resurrected paths, like the #1798 filter: only
+    rows naming those files, their module prefix, or the ExternalModule that
+    replaced them are removed.
+    """
+    resurrected = [
+        rel for rel in deleted if rel.endswith(".py") and (root / rel).exists()
+    ]
+    if not resurrected:
+        return
+
+    paths = {str(root / rel) for rel in resurrected}
+    paths |= {str((root / rel).resolve()) for rel in resurrected}
+    prefixes = set()
+    stems = set()
+    for rel in resurrected:
+        parts = rel[: -len(".py")].split("/")
+        if parts[-1] == "__init__":
+            parts.pop()
+        if parts:
+            stems.add(parts[-1])
+            prefixes.add(".".join([PROJECT, *parts]))
+
+    def _theirs(value: object) -> bool:
+        text = str(value)
+        if text in paths or text in stems:
+            return True
+        return any(text == pre or text.startswith(f"{pre}.") for pre in prefixes)
+
+    for node in {n for n in missing_nodes if _theirs(n[1])}:
+        missing_nodes.discard(node)
+    # The phantom ExternalModule stands in for the module that was dropped.
+    for node in {n for n in extra_nodes if n[0] == "ExternalModule" and _theirs(n[1])}:
+        extra_nodes.discard(node)
+    for edges in (extra_edges, missing_edges):
+        for edge in {e for e in edges if _theirs(e[1]) or _theirs(e[4])}:
+            edges.discard(edge)
+
+
 def _is_only_known_defects(
     root: Path,
     changed: list[str],
+    deleted: list[str],
     actual: tuple[frozenset, frozenset],
     expected: tuple[frozenset, frozenset],
 ) -> bool:
@@ -255,8 +359,13 @@ def _is_only_known_defects(
     extra_edges = set(actual[1] - expected[1])
     missing_edges = set(expected[1] - actual[1])
 
-    _package_demotion_residue(extra_nodes, missing_nodes, extra_edges, missing_edges)
+    _package_demotion_residue(
+        root, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
+    )
     _stale_edge_residue(root, changed, extra_edges)
+    _resurrected_file_residue(
+        root, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
+    )
 
     return not (extra_nodes or missing_nodes or extra_edges or missing_edges)
 
@@ -314,7 +423,7 @@ def fuzz_incremental_update(data: bytes) -> None:
         expected = _clean_index(root)
 
         if actual != expected and _is_only_known_defects(
-            root, changed, actual, expected
+            root, changed, deleted, actual, expected
         ):
             # Known defects #1794 and #1798, each matched on its exact
             # delta rather than on the plan's shape.

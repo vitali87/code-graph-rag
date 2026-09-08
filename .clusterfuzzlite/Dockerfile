@@ -27,9 +27,18 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# uv is installed by its own script; the interpreter it fetches is the point.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+# uv is fetched as a pinned release artifact and checked against the SHA-256
+# its publisher ships, rather than by piping https://astral.sh/uv/install.sh
+# into a root shell: that URL is mutable, and the image build runs as root, so
+# a compromised script would get root code execution during CI.
+ARG UV_VERSION=0.12.10
+ARG UV_SHA256=173d95a0c32d18c896c46ba6fafbf3cf9c14ab74b033f81b76c883ef492a976b
+RUN curl -fsSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" && \
+    echo "${UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c - && \
+    tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz && \
+    install -m 0755 uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv && \
+    rm -rf uv-x86_64-unknown-linux-gnu uv-x86_64-unknown-linux-gnu.tar.gz
+
 RUN uv python install 3.12
 
 # Make that interpreter the default `python3` so compile_python_fuzzer and
