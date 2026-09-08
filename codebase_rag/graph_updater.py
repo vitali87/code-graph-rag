@@ -3133,6 +3133,11 @@ class GraphUpdater:
             module_qn_prefixes=module_qn_prefixes,
         )
 
+        # The two cross-language class-keyed maps, same defect for two more
+        # (issue #1772). Separate from the C# sweep above because every
+        # language's class ingest writes these.
+        self._prune_class_keyed_maps(module_qn_prefixes, file_path)
+
         for simple_name, qn_set in self.simple_name_lookup.items():
             original_count = len(qn_set)
             new_qn_set = qn_set - qns_to_remove
@@ -3238,6 +3243,70 @@ class GraphUpdater:
         }
         if function_qns or class_qns:
             type_inference.drop_csharp_side_tables(function_qns, class_qns)
+
+    def _prune_class_keyed_maps(
+        self, module_qn_prefixes: set[str], file_path: Path
+    ) -> None:
+        """Drop a removed file's entries from `class_inheritance` and
+        `class_field_types`.
+
+        Both are keyed by a CLASS qn and neither was ever mentioned in
+        `remove_file_from_state`, so a deleted file's rows outlived it on a
+        reused updater (issue #1772). That is a wrong answer rather than a
+        missing one: `class_field_types` types a receiver reached through a
+        field, and `class_inheritance` is walked to reach base-class members
+        and drives the OVERRIDES arbitration -- both at a class that is gone.
+        Same defect class as #1668, #1738, #1753 and #1769.
+
+        Unlike #1769's four maps these are written by EVERY language, so the
+        owner index consulted here is the cross-language `class_owner_module`
+        rather than the C#-only one. Ownership is read from that record and
+        never inferred from the qn, for the reason #1769's review established:
+        a C# class qn embeds its namespace, so `proj/Core.cs` declaring
+        `namespace Util` yields `proj.Core.Util.Helper`, which sits under the
+        SIBLING module `proj.Core.Util`; a prefix rule errs in both directions
+        there.
+
+        Ownership comes from two records, because two different paths write
+        `class_inheritance`. Classes this updater PARSED are keyed in
+        `class_owner_module` at ingest. Classes it only REHYDRATED from the
+        graph never reach that ingest, so an incremental run -- where most
+        classes are rehydrated rather than re-parsed -- would otherwise leave
+        every one of their entries behind, which is the very defect this
+        closes. Their declaring file is already known: the rehydrate records
+        `rehydrated_definition_paths[qn] = path`, the same map
+        `remove_file_from_state` sweeps further down. That path is relative
+        and posix-formed, so it is compared as such.
+        """
+        processor = self.factory.definition_processor
+        owner_module = processor.class_owner_module
+        stale = {
+            qn
+            for qn, module_qn in owner_module.items()
+            if module_qn in module_qn_prefixes
+        }
+        # The rehydrated half. This runs BEFORE the caller's own
+        # `rehydrated_definition_paths` sweep further down, so those rows are
+        # still present to read; moving this call after that sweep would
+        # silently stop pruning rehydrated classes.
+        relative_posix = cached_relative_path(file_path, self.repo_path).as_posix()
+        stale |= {
+            qn
+            for qn, path in processor.rehydrated_definition_paths.items()
+            if path == relative_posix
+        }
+        if not stale:
+            return
+        # Mutated in place: TypeInference and the lazily built per-language
+        # engines share these same dict objects by reference, so rebinding
+        # any of them would leave those readers on the pre-prune state.
+        for qn in stale:
+            processor.class_inheritance.pop(qn, None)
+            processor.class_field_types.pop(qn, None)
+            # The owner record goes with them: it names a file this updater
+            # no longer has, and keeping it would re-sweep the same qn on the
+            # next deletion of a file that happens to reuse the module qn.
+            owner_module.pop(qn, None)
 
     @staticmethod
     def _under(qn: str, module_qn_prefixes: Collection[str]) -> bool:
