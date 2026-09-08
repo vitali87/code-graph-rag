@@ -250,6 +250,14 @@ def _package_demotion_residue(
         ("Project", "CONTAINS_PACKAGE"),
         ("Project", "CONTAINS_FOLDER"),
     }
+    # Measured on both #1798 shapes (init deleted with the directory gone, and
+    # init deleted with a sibling keeping it alive), the containment rows land
+    # on the MISSING side only -- no extra containment edge was produced by
+    # either. The extra side is kept anyway because two shapes are not the
+    # whole defect, and a clause that is merely unused costs nothing, while
+    # dropping one the defect does produce would turn a known bug red. Unlike
+    # the phantom rule in `_resurrected_file_residue`, no lost row is known to
+    # be swallowed here; narrow this the moment one is.
     for edges in (extra_edges, missing_edges):
         for edge in {
             e
