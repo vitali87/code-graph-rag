@@ -182,6 +182,51 @@ def _module_prefixes_without_definitions(root: Path, changed: list[str]) -> set[
     return prefixes
 
 
+def _is_known_package_demotion(
+    actual: tuple[frozenset, frozenset], expected: tuple[frozenset, frozenset]
+) -> bool:
+    """True when the delta is exactly #1798 and nothing else.
+
+    Deleting a package's `__init__.py` should demote the directory from
+    `Package` to `Folder`; `reingest` leaves it a `Package`, so the node and
+    every containment edge stay anchored to the wrong label. Recognised by
+    shape: the only extra node is a Package, the only missing node is a
+    Folder, and every differing edge is a containment edge whose endpoint is
+    one of those two. Anything else in the delta fails the match, so an
+    unrelated disagreement in the same run is still reported.
+
+    Delete this helper and its call site when #1798 is fixed.
+    """
+    extra_nodes = actual[0] - expected[0]
+    missing_nodes = expected[0] - actual[0]
+    if len(extra_nodes) != 1 or len(missing_nodes) != 1:
+        return False
+    if next(iter(extra_nodes))[0] != "Package":
+        return False
+    if next(iter(missing_nodes))[0] != "Folder":
+        return False
+
+    # The mislabelled directory shows up on both sides of its edges: as the
+    # SOURCE of what it contains (Package/Folder -CONTAINS_FILE/MODULE->) and
+    # as the TARGET of the project's own edge, whose relation type differs
+    # too (Project -CONTAINS_PACKAGE-> versus -CONTAINS_FOLDER->). An earlier
+    # version allowed only the first of those and so never matched; the
+    # difference was invisible because the harness' own message truncates
+    # each delta list to five entries.
+    allowed = {
+        ("Package", "CONTAINS_FILE"),
+        ("Package", "CONTAINS_MODULE"),
+        ("Folder", "CONTAINS_FILE"),
+        ("Folder", "CONTAINS_MODULE"),
+        ("Project", "CONTAINS_PACKAGE"),
+        ("Project", "CONTAINS_FOLDER"),
+    }
+    for edge in (actual[1] - expected[1]) | (expected[1] - actual[1]):
+        if (edge[0], edge[2]) not in allowed:
+            return False
+    return True
+
+
 def _is_known_stale_edge_leak(
     root: Path,
     changed: list[str],
@@ -272,16 +317,23 @@ def fuzz_incremental_update(data: bytes) -> None:
         actual = _snapshot(store)
         expected = _clean_index(root)
 
-        if actual != expected and _is_known_stale_edge_leak(
-            root, changed, actual, expected
+        if actual != expected and (
+            _is_known_stale_edge_leak(root, changed, actual, expected)
+            or _is_known_package_demotion(actual, expected)
         ):
-            # Known defect #1794: a file yielding no definitions keeps the
+            # Known defects #1794 and #1798, each matched on its exact
+            # delta rather than on the plan's shape.
+            # #1794: a file yielding no definitions keeps the
             # CALLS edges its removed functions emitted. Suppressed by shape
             # rather than by a golden diff, so the harness still fails on any
             # OTHER disagreement in the same run.
             return
 
         if actual != expected:
+            # Printed in full, not truncated: an earlier `[:5]` hid the
+            # `Project -CONTAINS_PACKAGE->` half of #1798's delta and sent a
+            # suppression predicate that "obviously matched" back for another
+            # build cycle.
             extra_nodes = sorted(actual[0] - expected[0])
             missing_nodes = sorted(expected[0] - actual[0])
             extra_edges = sorted(actual[1] - expected[1])
@@ -291,10 +343,10 @@ def fuzz_incremental_update(data: bytes) -> None:
                 f"  shape: {'fresh' if fresh_updater else 'warm'}\n"
                 f"  plan: {plan}\n"
                 f"  changed={changed} deleted={deleted}\n"
-                f"  extra nodes: {extra_nodes[:5]}\n"
-                f"  missing nodes: {missing_nodes[:5]}\n"
-                f"  extra edges: {extra_edges[:5]}\n"
-                f"  missing edges: {missing_edges[:5]}"
+                f"  extra nodes: {extra_nodes}\n"
+                f"  missing nodes: {missing_nodes}\n"
+                f"  extra edges: {extra_edges}\n"
+                f"  missing edges: {missing_edges}"
             )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

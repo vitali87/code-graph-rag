@@ -353,8 +353,12 @@ def test_parse_seeds_select_the_language_they_are_named_for(
     """
     languages = [str(language) for language in parse_harness._LANGUAGES]
     corpus = FUZZ_DIR / "corpus" / "fuzz_parse_source"
+    # `edge_*` seeds are about degenerate SOURCE and `repro_*` are crash
+    # reproducers kept for regression; neither is named after a language.
     named = sorted(
-        seed for seed in corpus.iterdir() if not seed.stem.startswith("edge_")
+        seed
+        for seed in corpus.iterdir()
+        if not seed.stem.startswith(("edge_", "repro_"))
     )
 
     missing = [seed.stem for seed in named if seed.stem not in languages]
