@@ -25,6 +25,7 @@ class CLICommandName(StrEnum):
     MOVE = "move"
     EXTRACT = "extract"
     INLINE = "inline"
+    CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -188,6 +189,16 @@ HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative 
 HELP_MOVE_KEEP_ALIAS = (
     "Leave a re-export at the old location so the old import path still works."
 )
+CMD_CONTEXT = (
+    "Print a graph-ranked context slice for a symbol, location or task within "
+    "a token budget: source, caller lines, callee signatures, types, tests, docs."
+)
+EXAMPLES_CONTEXT = (
+    "Examples:\n  cgr context myproj.pkg.util.helper\n"
+    "  cgr context pkg/util.py:12 --budget 2000"
+)
+HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
+HELP_CONTEXT_BUDGET = "Token budget for the slice."
 HELP_SIGNATURE_PARAM = (
     "A new parameter, in order: name[:annotation][=default][@source] where "
     "@2 maps from old index 2, @old from the old parameter old, =literal "
@@ -519,6 +530,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.MOVE: CMD_MOVE,
     CLICommandName.EXTRACT: CMD_EXTRACT,
     CLICommandName.INLINE: CMD_INLINE,
+    CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

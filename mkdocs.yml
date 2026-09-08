@@ -114,6 +114,7 @@ nav:
     - Change Signature: architecture/change-signature.md
     - Move: architecture/move.md
     - Extract and Inline: architecture/extract-inline.md
+    - Context Slice: architecture/context-slice.md
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md

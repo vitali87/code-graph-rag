@@ -1375,6 +1375,47 @@ def inline_command(
 
 
 @app.command(
+    name=ch.CLICommandName.CONTEXT,
+    help=ch.CMD_CONTEXT,
+    short_help=ch.CMD_CONTEXT,
+    epilog=ch.EXAMPLES_CONTEXT,
+    rich_help_panel=ch.PANEL_USE,
+)
+def context_command(
+    target: str = typer.Argument(..., help=ch.HELP_CONTEXT_TARGET),
+    budget: int = typer.Option(
+        cs.CONTEXT_DEFAULT_BUDGET, "--budget", min=1, help=ch.HELP_CONTEXT_BUDGET
+    ),
+    repo_path: Path = typer.Option(
+        Path(cs.MCP_DEFAULT_DIRECTORY),
+        "--repo-path",
+        exists=True,
+        file_okay=False,
+        help=ch.HELP_GRAPH_REPO_PATH,
+    ),
+    project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
+) -> None:
+    from .context_slice import context as build_context
+    from .graph_cli import _project_and_fetch
+    from .tools.semantic_search import semantic_code_search
+
+    name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
+    with ingestor:  # type: ignore[attr-defined]
+        payload = build_context(
+            fetch_all,
+            name,
+            target,
+            budget,
+            repo_path.resolve(),
+            search=lambda text: semantic_code_search(ingestor, text, project=name),  # type: ignore[arg-type]
+        )
+    typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))
+    if payload["resolved"] is None:
+        typer.echo(cs.CONTEXT_UNRESOLVED.format(target=target), err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command(
     name=ch.CLICommandName.CHANGE_SIGNATURE,
     help=ch.CMD_CHANGE_SIGNATURE,
     short_help=ch.CMD_CHANGE_SIGNATURE,
