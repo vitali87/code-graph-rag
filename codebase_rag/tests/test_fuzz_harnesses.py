@@ -257,6 +257,10 @@ def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> 
         ("rm /tmp/zzz", True),
         ("rm *", True),
         ("rm -r -- -x/../../outside/victim", True),
+        # No executable segment: production returns COMMAND_EMPTY, so these
+        # are refused, not allowed. Only the no-groups branch decides them.
+        ("", True),
+        ("| && ;", True),
     ):
         dangerous, _reason = shell_harness._classify(command)
         assert dangerous is expected, f"{command!r} classified {dangerous}"

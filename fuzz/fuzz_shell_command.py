@@ -121,8 +121,12 @@ def _classify(command: str) -> tuple[bool, str]:
 
     groups = _parse_command(command)
     if not groups:
-        # No executable segment: nothing runs, so nothing is dangerous.
-        return False, ""
+        # Production returns COMMAND_EMPTY here, before the segment loop, so
+        # the command is REFUSED rather than allowed. Modelling it as safe
+        # would leave the harness asserting its safe-verdict properties over
+        # a path the product never permits, and a regression that started
+        # executing empty commands would not show up as a mismatch.
+        return True, "empty command"
 
     available = ", ".join(sorted(cs.SHELL_LAUNCHER_COMMANDS))
     for group in groups:
