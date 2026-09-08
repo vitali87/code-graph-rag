@@ -1,8 +1,10 @@
+import sys
 from collections import defaultdict
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from tree_sitter import Language, Node, Parser
 
 from codebase_rag import constants as cs
 from codebase_rag.parsers.import_processor import ImportProcessor
@@ -55,6 +57,42 @@ def engine(
         class_inheritance={},
         simple_name_lookup=defaultdict(set),
     )
+
+
+def _parse_java_method(body: str) -> Node:
+    tsjava = pytest.importorskip("tree_sitter_java")
+    source = "class Example { void run() {" + body + "}}"
+    tree = Parser(Language(tsjava.language())).parse(source.encode())
+    assert not tree.root_node.has_error
+    class_body = tree.root_node.named_children[0].child_by_field_name(cs.FIELD_BODY)
+    assert class_body is not None
+    return class_body.named_children[0]
+
+
+@pytest.mark.parametrize("shape", ["nested_blocks", "string_concatenation"])
+def test_build_variable_type_map_handles_deep_java_ast(
+    engine: JavaTypeInferenceEngine, shape: str
+) -> None:
+    depth = sys.getrecursionlimit() + 50
+    if shape == "nested_blocks":
+        body = "{" * depth + 'String value = "text";' + "}" * depth
+    else:
+        body = "String value = " + '"text" + ' * depth + '"end";'
+    method = _parse_java_method(body + 'String after = "done";')
+
+    result = engine.build_variable_type_map(method, "com.example")
+
+    assert result == {"value": "java.lang.String", "after": "java.lang.String"}
+
+
+def test_build_variable_type_map_preserves_declaration_order(
+    engine: JavaTypeInferenceEngine,
+) -> None:
+    method = _parse_java_method('String value = "text"; var copy = value;')
+
+    result = engine.build_variable_type_map(method, "com.example")
+
+    assert result == {"value": "java.lang.String", "copy": "java.lang.String"}
 
 
 class TestAnalyzeJavaParameters:
