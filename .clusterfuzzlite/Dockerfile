@@ -13,18 +13,21 @@
 # reason.
 FROM gcr.io/oss-fuzz-base/base-builder-python:ubuntu-24-04
 
+# `python3-pip` comes from the distribution, so pip is installed and updated
+# by apt with the archive's signature checks rather than by piping a mutable
+# remote script (bootstrap.pypa.io/get-pip.py) into a root interpreter.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git \
         python3.12 \
         python3.12-dev \
-        python3.12-venv && \
+        python3.12-venv \
+        python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
 # `EXTERNALLY-MANAGED` makes pip refuse to install into the system 3.12.
 RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && \
-    update-alternatives --install /usr/local/bin/python3 python3 /usr/bin/python3.12 1 && \
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+    update-alternatives --install /usr/local/bin/python3 python3 /usr/bin/python3.12 1
 
 # atheris must link the image's libFuzzer rather than build its own, the same
 # way base-builder's install_python.sh does it.

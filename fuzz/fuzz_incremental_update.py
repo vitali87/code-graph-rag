@@ -77,8 +77,29 @@ def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
     )
 
 
+def _freeze(value: object) -> object:
+    """A hashable, order-stable rendering of a property value."""
+    if isinstance(value, list | tuple):
+        return tuple(_freeze(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), _freeze(v)) for k, v in value.items()))
+    return str(value)
+
+
 def _snapshot(store: _StatefulIngestor) -> tuple[frozenset, frozenset]:
-    nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
+    """Nodes and edges, both carrying their properties.
+
+    Node PROPERTIES are part of the comparison, not just node identity: a
+    reingest that leaves a stale `end_line` or a dropped docstring on an
+    otherwise correct node changes no edge and no uid, so an identity-only
+    snapshot would call the two graphs equal. Values are frozen through
+    `_freeze` because several properties are lists.
+    """
+    nodes = frozenset(
+        (str(label), str(uid))
+        + tuple(sorted((str(k), _freeze(v)) for k, v in (props or {}).items()))
+        for (label, uid), props in store.nodes.items()
+    )
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
         + tuple(sorted(f"{k}={v}" for k, v in store.edge_props.get(e, {}).items()))
@@ -145,23 +166,58 @@ def _yields_no_definitions(path: Path) -> bool:
     return True
 
 
-def _is_known_stale_edge_leak(root: Path, changed: list[str]) -> bool:
-    """True when any changed file now yields no definitions.
+def _module_prefixes_without_definitions(root: Path, changed: list[str]) -> set[str]:
+    """Qualified-name prefixes of the changed files that define nothing now."""
+    prefixes = set()
+    for rel in changed:
+        path = root / rel
+        if not rel.endswith(".py") or not path.exists():
+            continue
+        if not _yields_no_definitions(path):
+            continue
+        parts = rel[: -len(".py")].split("/")
+        if parts[-1] == "__init__":
+            parts.pop()
+        prefixes.add(".".join([PROJECT, *parts]))
+    return prefixes
 
-    That is the shape of #1794: a file that parses to no complete definition
-    retracts none of the edges its removed functions emitted, whether it was
-    emptied, filled with garbage, or truncated mid-`def`.
 
-    Narrow on purpose -- a plan in which every changed file still defines
-    something is not suppressed, so an unrelated disagreement in the same run
-    is still reported. Delete this helper and its call site when #1794 is
-    fixed; the harness then re-detects it.
+def _is_known_stale_edge_leak(
+    root: Path,
+    changed: list[str],
+    actual: tuple[frozenset, frozenset],
+    expected: tuple[frozenset, frozenset],
+) -> bool:
+    """True when the delta is EXACTLY #1794 and nothing else.
+
+    #1794 leaves behind edges whose SOURCE is a definition inside a file that
+    now parses to nothing. So it is not enough that such a file exists in the
+    plan -- every difference must also be an extra edge out of that file's
+    module, with nothing missing and no node difference at all. An earlier
+    version suppressed on the shape alone, which would have hidden an
+    unrelated mismatch introduced by another file in the same plan.
     """
-    return any(
-        _yields_no_definitions(root / rel)
-        for rel in changed
-        if (root / rel).exists() and rel.endswith(".py")
-    )
+    extra_nodes = actual[0] - expected[0]
+    missing_nodes = expected[0] - actual[0]
+    missing_edges = expected[1] - actual[1]
+    if extra_nodes or missing_nodes or missing_edges:
+        return False
+
+    extra_edges = actual[1] - expected[1]
+    if not extra_edges:
+        return False
+
+    prefixes = _module_prefixes_without_definitions(root, changed)
+    if not prefixes:
+        return False
+
+    for edge in extra_edges:
+        source = str(edge[1])
+        if not any(
+            source == prefix or source.startswith(f"{prefix}.") for prefix in prefixes
+        ):
+            return False
+    return True
 
 
 def _clean_index(root: Path) -> tuple[frozenset, frozenset]:
@@ -216,7 +272,9 @@ def fuzz_incremental_update(data: bytes) -> None:
         actual = _snapshot(store)
         expected = _clean_index(root)
 
-        if actual != expected and _is_known_stale_edge_leak(root, changed):
+        if actual != expected and _is_known_stale_edge_leak(
+            root, changed, actual, expected
+        ):
             # Known defect #1794: a file yielding no definitions keeps the
             # CALLS edges its removed functions emitted. Suppressed by shape
             # rather than by a golden diff, so the harness still fails on any

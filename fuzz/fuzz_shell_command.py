@@ -21,8 +21,17 @@ Run locally (Linux; atheris does not build against Apple Clang):
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
+
+# `shell_command` imports pydantic_ai, which reaches logfire's pydantic plugin.
+# That plugin patches pydantic at import time via `inspect.getsource`, which
+# raises OSError inside a PyInstaller bundle where there is no source to read,
+# killing the target before it fuzzes a single input. Disabling pydantic's
+# plugin machinery avoids the patch entirely; nothing this harness exercises
+# uses it. Set before the import below, since the patch runs at import time.
+os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
 
 import atheris
 

@@ -31,14 +31,14 @@ jobs:
         sanitizer: [address]
     steps:
       - name: Build fuzzers (${{ matrix.sanitizer }})
-        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           sanitizer: ${{ matrix.sanitizer }}
           language: python
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run fuzzers (${{ matrix.sanitizer }})
-        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 600
