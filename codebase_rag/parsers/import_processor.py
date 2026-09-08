@@ -1319,6 +1319,13 @@ class ImportProcessor:
                 mentions.add(text)
         return frozenset(type_positions | (mentions - declared))
 
+    def drop_cpp_module_import_state(self, module_qn: str) -> None:
+        """Retract a deleted C/C++ module without leaving an empty import mapping."""
+        self._clear_module_import_state(module_qn)
+        self.import_mapping.pop(module_qn, None)
+        self._cpp_module_qn_map = None
+        self._cpp_qn_to_rel.clear()
+
     def drop_csharp_module_import_state(self, module_qn: str) -> None:
         # A deleted C# file must stop declaring its namespaces, contributing
         # identifier evidence, and queueing its using entries, or the requeue

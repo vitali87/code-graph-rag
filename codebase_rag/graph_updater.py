@@ -2959,6 +2959,9 @@ class GraphUpdater:
         module_qn_prefixes = recorded_qns or {path_derived_qn}
         for prefix in module_qn_prefixes:
             self.factory.import_processor.commonjs_direct_exports.pop(prefix, None)
+        if file_path.suffix in (*cs.C_EXTENSIONS, *cs.CPP_EXTENSIONS):
+            for qn in recorded_qns:
+                self.factory.import_processor.drop_cpp_module_import_state(qn)
         # A deleted file is no writer: its mod-scope registry entries must
         # not weigh in the next arbitration (a modified file re-drops this
         # in its own re-parse, harmlessly twice). The drop keys on the qn
