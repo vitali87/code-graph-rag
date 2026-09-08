@@ -343,13 +343,29 @@ def test_parse_seeds_select_the_language_they_are_named_for(
     the back of the buffer while `ConsumeBytes` reads from the front -- and
     getting it backwards is silent: the corpus still runs, it just feeds every
     seed to one grammar as byte-corrupted garbage.
+
+    The index a seed carries is positional within whatever grammars are
+    LOADED, so it only means the intended language when the full set is
+    present. On a base install (no `treesitter-full`) the set is shorter and
+    every index points somewhere else, which is a property of the install and
+    not a defect -- hence the skip rather than a failure, the contract the
+    "Unit Tests (base install)" job enforces (issues #1371, #1410).
     """
     languages = [str(language) for language in parse_harness._LANGUAGES]
     corpus = FUZZ_DIR / "corpus" / "fuzz_parse_source"
+    named = sorted(
+        seed for seed in corpus.iterdir() if not seed.stem.startswith("edge_")
+    )
 
-    for seed in sorted(corpus.iterdir()):
-        if seed.stem.startswith("edge_"):
-            continue
+    missing = [seed.stem for seed in named if seed.stem not in languages]
+    if missing:
+        pytest.skip(
+            "grammars not installed for: "
+            + ", ".join(missing)
+            + " (install the treesitter-full extra to run this)"
+        )
+
+    for seed in named:
         provider = _StubProvider(seed.read_bytes())
         index = provider.ConsumeIntInRange(0, len(languages) - 1)
         source = provider.ConsumeBytes(provider.remaining_bytes())
