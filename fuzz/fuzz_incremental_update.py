@@ -320,18 +320,43 @@ def _resurrected_file_residue(
             prefixes.add(".".join([PROJECT, *parts]))
 
     def _theirs(value: object) -> bool:
+        """True for an identity that names one of the resurrected files.
+
+        Qualified identities only: the absolute path, the module FQN, or a
+        symbol beneath it. A bare stem like `util` is deliberately NOT
+        accepted here -- `proj.other.util` and a Function literally named
+        `util` share that stem without being this file, so matching it would
+        discard genuine findings.
+        """
         text = str(value)
-        if text in paths or text in stems:
+        if text in paths:
             return True
         return any(text == pre or text.startswith(f"{pre}.") for pre in prefixes)
+
+    def _phantom(label: object, value: object) -> bool:
+        """True for the ExternalModule the dropped module was downgraded to.
+
+        This is the one place a bare stem is right: the phantom carries the
+        import's trailing name (`util`), not a qualified one, so there is no
+        qualified form to match. Constrained to the ExternalModule label so a
+        same-named node of any other kind stays in the delta.
+        """
+        return label == "ExternalModule" and str(value) in stems
 
     for node in {n for n in missing_nodes if _theirs(n[1])}:
         missing_nodes.discard(node)
     # The phantom ExternalModule stands in for the module that was dropped.
-    for node in {n for n in extra_nodes if n[0] == "ExternalModule" and _theirs(n[1])}:
+    for node in {n for n in extra_nodes if _phantom(n[0], n[1])}:
         extra_nodes.discard(node)
     for edges in (extra_edges, missing_edges):
-        for edge in {e for e in edges if _theirs(e[1]) or _theirs(e[4])}:
+        for edge in {
+            e
+            for e in edges
+            if _theirs(e[1])
+            or _theirs(e[4])
+            or _phantom(e[0], e[1])
+            or _phantom(e[3], e[4])
+        }:
             edges.discard(edge)
 
 

@@ -214,7 +214,7 @@ def build_incremental_corpus() -> int:
     out = CORPUS / "fuzz_incremental_update"
     out.mkdir(parents=True, exist_ok=True)
 
-    def _byte(low: int, high: int, want: int) -> int:
+    def selector_byte(low: int, high: int, want: int) -> int:
         """The byte that makes `ConsumeIntInRange(low, high)` return `want`.
 
         atheris reduces the consumed byte modulo the range size and offsets by
@@ -223,18 +223,18 @@ def build_incremental_corpus() -> int:
         """
         return (want - low) % (high - low + 1)
 
-    def seed(shape: int, edits: list[tuple[int, int]]) -> bytes:
+    def encode_edit_plan(shape: int, edits: list[tuple[int, int]]) -> bytes:
         # The harness reads bool, count, then (file, kind) per edit, and every
         # one of those pops the buffer's CURRENT LAST byte. So the tail holds
         # the selectors in reverse consumption order. The leading b"\x01" is
         # the string_spec that makes the trailing blob decode as ASCII.
         order = [
-            _byte(0, 1, shape),
-            _byte(1, 3, len(edits)),
+            selector_byte(0, 1, shape),
+            selector_byte(1, 3, len(edits)),
         ]
         for file_index, kind in edits:
-            order.append(_byte(0, len(EDITABLE) - 1, file_index))
-            order.append(_byte(0, 6, kind))
+            order.append(selector_byte(0, len(EDITABLE) - 1, file_index))
+            order.append(selector_byte(0, 6, kind))
         return b"\x01blob" + bytes(reversed(order))
 
     app = EDITABLE.index("pkg/app.py")
@@ -242,14 +242,14 @@ def build_incremental_corpus() -> int:
     main_py = EDITABLE.index("main.py")
 
     seeds = {
-        "truncate": seed(0, [(main_py, 0)]),
-        "splice": seed(0, [(app, 1)]),
-        "rewrite": seed(1, [(app, 2)]),
-        "empty_file": seed(0, [(app, 3)]),
-        "delete": seed(0, [(util, 4)]),
-        "delete_recreate": seed(1, [(app, 5)]),
-        "append_call": seed(0, [(util, 6)]),
-        "multi_edit": seed(1, [(util, 0), (app, 4), (main_py, 6)]),
+        "truncate": encode_edit_plan(0, [(main_py, 0)]),
+        "splice": encode_edit_plan(0, [(app, 1)]),
+        "rewrite": encode_edit_plan(1, [(app, 2)]),
+        "empty_file": encode_edit_plan(0, [(app, 3)]),
+        "delete": encode_edit_plan(0, [(util, 4)]),
+        "delete_recreate": encode_edit_plan(1, [(app, 5)]),
+        "append_call": encode_edit_plan(0, [(util, 6)]),
+        "multi_edit": encode_edit_plan(1, [(util, 0), (app, 4), (main_py, 6)]),
     }
     for name, blob in seeds.items():
         (out / f"{name}.bin").write_bytes(blob)

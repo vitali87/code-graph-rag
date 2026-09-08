@@ -15,6 +15,7 @@ assertions still discriminate.
 from __future__ import annotations
 
 import importlib.util
+import os
 import struct
 import sys
 from pathlib import Path
@@ -142,13 +143,22 @@ def _stub_atheris() -> ModuleType:
     return module
 
 
-def _load(name: str) -> ModuleType:
-    """Import a harness with atheris stubbed out."""
+def import_harness_module(name: str) -> ModuleType:
+    """Return the harness module `name`, imported with atheris stubbed out.
+
+    The harnesses import atheris at module scope, which is unavailable on
+    macOS, so a stub stands in for the duration of the import. Both that stub
+    and any environment variable the harness sets at import time are undone
+    on the way out: `fuzz_shell_command` setdefaults
+    PYDANTIC_DISABLE_PLUGINS, and leaving it set would silently change how
+    every later test in the session constructs pydantic models.
+    """
     path = FUZZ_DIR / f"{name}.py"
     if not path.exists():
         pytest.fail(f"harness {name} is missing from {FUZZ_DIR}")
 
     original = sys.modules.get("atheris")
+    original_env = {key: os.environ.get(key) for key in ("PYDANTIC_DISABLE_PLUGINS",)}
     sys.modules["atheris"] = _stub_atheris()
     try:
         spec = importlib.util.spec_from_file_location(f"_fuzz_{name}", path)
@@ -162,16 +172,21 @@ def _load(name: str) -> ModuleType:
             sys.modules.pop("atheris", None)
         else:
             sys.modules["atheris"] = original
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @pytest.fixture(scope="module")
 def parse_harness() -> ModuleType:
-    return _load("fuzz_parse_source")
+    return import_harness_module("fuzz_parse_source")
 
 
 @pytest.fixture(scope="module")
 def shell_harness() -> ModuleType:
-    return _load("fuzz_shell_command")
+    return import_harness_module("fuzz_shell_command")
 
 
 def test_parse_harness_runs_every_seed(parse_harness: ModuleType) -> None:
@@ -477,3 +492,74 @@ def test_incremental_seeds_decode_to_the_plan_they_are_named_for() -> None:
     assert seen_kinds == set(range(7)), (
         f"the corpus covers edit kinds {sorted(seen_kinds)}, not all seven"
     )
+
+
+def test_resurrected_filter_keeps_unrelated_rows_sharing_the_stem(
+    tmp_path: Path,
+) -> None:
+    """The #1799 suppression must not swallow a bare name it merely matches.
+
+    A suppression that is too wide is worse than none: it makes the fuzzer
+    report clean on a real regression. Only the phantom `ExternalModule` the
+    dropped module was downgraded to carries a bare stem, so every other row
+    named `util` -- a Function, a Module, an edge endpoint -- has to survive.
+    """
+    harness = import_harness_module("fuzz_incremental_update")
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    deleted = ["pkg/util.py"]
+
+    unrelated_node = ("Function", "util")
+    unrelated_edge = ("Function", "util", "CALLS", "Function", "other")
+    same_name_other_label = ("Module", "util")
+
+    missing_nodes = {unrelated_node}
+    missing_edges = {unrelated_edge}
+    extra_nodes = {same_name_other_label}
+    extra_edges: set = set()
+
+    harness._resurrected_file_residue(
+        tmp_path, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
+    )
+
+    assert unrelated_node in missing_nodes
+    assert unrelated_edge in missing_edges
+    assert same_name_other_label in extra_nodes
+
+
+def test_resurrected_filter_discards_the_phantom_external_module(
+    tmp_path: Path,
+) -> None:
+    """The complement: the rows #1799 really does explain must be discarded.
+
+    Without this the previous test passes on a filter that does nothing, and
+    the harness would fail on every delete-and-recreate plan instead.
+    """
+    harness = import_harness_module("fuzz_incremental_update")
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
+    deleted = ["pkg/util.py"]
+
+    extra_nodes = {("ExternalModule", "util")}
+    extra_edges = {
+        ("Module", "proj.pkg.app", "IMPORTS", "ExternalModule", "util", "alias=helper")
+    }
+    missing_nodes = {
+        ("Module", "proj.pkg.util"),
+        ("Function", "proj.pkg.util.helper"),
+        ("File", str(tmp_path / "pkg" / "util.py")),
+    }
+    missing_edges = {
+        ("Module", "proj.pkg.util", "DEFINES", "Function", "proj.pkg.util.helper")
+    }
+
+    harness._resurrected_file_residue(
+        tmp_path, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
+    )
+
+    assert not extra_nodes
+    assert not extra_edges
+    assert not missing_nodes
+    assert not missing_edges
