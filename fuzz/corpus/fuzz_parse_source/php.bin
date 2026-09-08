@@ -1,0 +1,10 @@
+<?php
+namespace App;
+
+use RuntimeException;
+
+class Greeter {
+    public function greet(string $name): string { return $name; }
+}
+
+function main(): string { return (new Greeter())->greet('x'); }

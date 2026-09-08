@@ -1,0 +1,7 @@
+import fs from 'fs';
+
+export class Greeter {
+  greet(name) { return fs.resolve(name); }
+}
+
+export function main() { return new Greeter().greet('x'); }

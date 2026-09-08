@@ -1,0 +1,49 @@
+# ClusterFuzzLite on pull requests.
+#
+# Runs each harness in fuzz/ for a short budget against the PR's head, seeded
+# from the corpus in fuzz/corpus/. A crash fails the job with the reproducing
+# input attached as an artifact.
+#
+# See https://google.github.io/clusterfuzzlite/
+
+name: ClusterFuzzLite PR
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+permissions: read-all
+
+# A new push to the same PR supersedes the queued or running run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzzing:
+    name: Fuzz (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address]
+    steps:
+      - name: Build fuzzers (${{ matrix.sanitizer }})
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          sanitizer: ${{ matrix.sanitizer }}
+          language: python
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run fuzzers (${{ matrix.sanitizer }})
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: 'code-change'
+          sanitizer: ${{ matrix.sanitizer }}
+          language: python
+          output-sarif: true

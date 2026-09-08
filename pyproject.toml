@@ -170,6 +170,8 @@ ignore = [
 "**/tests/**" = ["T201"]
 "benchmarks/**" = ["T201"]
 "evals/flows_corpus/**" = ["T201"]
+# The corpus builder is a CLI script; its output is the point.
+"fuzz/build_corpus.py" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

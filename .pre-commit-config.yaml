@@ -32,10 +32,10 @@ repos:
     hooks:
       - id: ty
         name: ty check
-        entry: uv run --frozen --no-sync ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/
+        entry: uv run --frozen --no-sync ty check --exclude codebase_rag/tests/ --exclude benchmarks/ --exclude optimize/ --exclude codec/ --exclude grammars/ --exclude query_modules/ --exclude fuzz/
         language: system
         types: [python]
-        exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/|grammars/|query_modules/)$
+        exclude: ^(codec/.*_pb2\.py|benchmarks/|optimize/|grammars/|query_modules/|fuzz/)$
         pass_filenames: false
   - repo: local
     hooks:

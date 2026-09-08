@@ -1,0 +1,10 @@
+#include <string>
+
+namespace app {
+class Greeter {
+ public:
+  std::string greet(const std::string &n) { return n; }
+};
+}
+
+int main() { return app::Greeter().greet("x").size(); }

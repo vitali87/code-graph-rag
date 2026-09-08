@@ -1,0 +1,9 @@
+package main
+
+import "fmt"
+
+type Greeter struct{}
+
+func (g Greeter) Greet(name string) string { return name }
+
+func main() { fmt.Println(Greeter{}.Greet("x")) }

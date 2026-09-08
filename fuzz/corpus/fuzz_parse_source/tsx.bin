@@ -1,0 +1,7 @@
+import React from 'react';
+
+export function App(): JSX.Element {
+  return <div onClick={() => main()}>hi</div>;
+}
+
+function main(): number { return 1; }

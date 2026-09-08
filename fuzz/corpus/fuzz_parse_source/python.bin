@@ -1,0 +1,10 @@
+	import os
+
+
+class Greeter:
+    def greet(self, name):
+        return os.path.join(name)
+
+
+def main():
+    return Greeter().greet('x')

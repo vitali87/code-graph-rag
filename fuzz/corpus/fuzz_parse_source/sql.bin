@@ -1,0 +1,7 @@
+CREATE TABLE users (id INT PRIMARY KEY, name TEXT);
+
+CREATE FUNCTION greet(name TEXT) RETURNS TEXT AS $$
+  SELECT name;
+$$ LANGUAGE sql;
+
+SELECT greet(name) FROM users;
