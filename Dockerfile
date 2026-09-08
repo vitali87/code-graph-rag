@@ -16,7 +16,15 @@ WORKDIR /app
 # .venv only symlinks to that interpreter, so pin the install dir under /app
 # and copy it into the final stage too, or the venv's python symlink dangles
 # once /root is left behind.
+#
+# uv only populates this directory when it actually downloads a managed
+# interpreter -- if the pinned Python version ever matches this image's
+# system Python, uv uses that instead and never creates the directory,
+# which would make the unconditional COPY below fail the build outright.
+# Pre-create it so COPY always has something to copy, whichever
+# interpreter uv picks.
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
+RUN mkdir -p "$UV_PYTHON_INSTALL_DIR"
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
