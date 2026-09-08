@@ -357,13 +357,7 @@ class CSharpTypeInferenceEngine:
         if func is None:
             return None
         if func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
-            # an in-scope local function first (it shadows same-name method
-            # overloads), then an arity-matched member of the enclosing
-            # type. A miss falls to the generic simple-name path.
-            if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
-                return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
-            return None
+            return self._resolve_non_member_call(func, call_node, module_qn, caller_qn)
         method_name = safe_decode_text(func.child_by_field_name(cs.FIELD_NAME))
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
@@ -389,17 +383,15 @@ class CSharpTypeInferenceEngine:
         # name-only fallback. Trying the name-only fallback before extensions
         # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
         # arity-correct `static Foo(this C, int)` extension.
-        if receiver_class_qn is not None:
-            if arity_hit := self._find_arity_across_parts(
+        if receiver_class_qn is not None and (
+            arity_hit := self._find_arity_across_parts(
                 receiver_class_qn, method_name, arg_count
-            ):
-                # A delegate-typed PROPERTY registers as a METHOD node with
-                # a bare (arity-0) qn, so a 0-arg invoke slips through the
-                # ARITY path too: `entry.Callback()` is Delegate.Invoke,
-                # not a call to the property node.
-                if self.function_registry.is_property(arity_hit):
-                    return CSHARP_EXTERNAL_TARGET
-                return cs.NodeLabel.METHOD.value, arity_hit
+            )
+        ):
+            # A delegate-typed PROPERTY registers as a METHOD node with a bare
+            # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
+            # `entry.Callback()` is Delegate.Invoke, not a call to the property.
+            return self._method_or_property_target(arity_hit)
         # An extension method (`static M(this T x, ...)` on an unrelated static
         # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
@@ -412,26 +404,75 @@ class CSharpTypeInferenceEngine:
             arg_count,
         ):
             return cs.NodeLabel.METHOD.value, ext
-        if receiver_class_qn is not None:
-            if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
-                # A delegate-typed PROPERTY invoked with call syntax
-                # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
-                # method call; binding the property as a METHOD fabricates
-                # an edge. Its reachability comes from the read pass.
-                if self.function_registry.is_property(name_hit):
-                    return CSHARP_EXTERNAL_TARGET
-                return cs.NodeLabel.METHOD.value, name_hit
-        # An object-virtual miss on a TYPED receiver (`severity.ToString()`
-        # on an enum, `options.GetType()`) resolves to System.Object/Enum;
-        # falling to the trie lands on whatever unrelated
-        # hide-object-members override exists (Polly's PolicyBuilder).
+        if receiver_class_qn is not None and (
+            name_hit := self._find_name_across_parts(receiver_class_qn, method_name)
+        ):
+            # A delegate-typed PROPERTY invoked with call syntax
+            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
+            # call; binding the property as a METHOD fabricates an edge. Its
+            # reachability comes from the read pass.
+            return self._method_or_property_target(name_hit)
+        return self._external_or_unresolved(
+            receiver,
+            method_name,
+            receiver_class_qn,
+            local_var_types or {},
+            caller_qn,
+        )
+
+    def _external_or_unresolved(
+        self,
+        receiver: Node,
+        method_name: str,
+        receiver_class_qn: str | None,
+        local_var_types: dict[str, str],
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        """The last word: an external target, or nothing.
+
+        An object-virtual miss on a TYPED receiver (`severity.ToString()` on an
+        enum, `options.GetType()`) resolves to System.Object/Enum; falling to
+        the trie instead lands on whatever unrelated hide-object-members
+        override exists (Polly's PolicyBuilder). An UNTYPED receiver is
+        external when `_externally_targeted` says so; otherwise the call is
+        simply unresolved.
+        """
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return CSHARP_EXTERNAL_TARGET
         if receiver_class_qn is None and self._externally_targeted(
-            receiver, method_name, local_var_types or {}, caller_qn
+            receiver, method_name, local_var_types, caller_qn
         ):
             return CSHARP_EXTERNAL_TARGET
         return None
+
+    def _resolve_non_member_call(
+        self,
+        func: Node,
+        call_node: Node,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        """Resolve a call whose callee is not a member access.
+
+        A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup: an
+        in-scope local function first (it shadows same-name method overloads),
+        then an arity-matched member of the enclosing type. A miss falls to the
+        generic simple-name path. Anything else (an invoked expression, say) is
+        not resolvable here.
+        """
+        if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
+            return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
+        return None
+
+    def _method_or_property_target(self, hit: str) -> tuple[str, str]:
+        """A resolved qn as a call target, or external when it is a property.
+
+        Both the arity and the name lookup end this way, so the property check
+        lives here once rather than twice in the caller.
+        """
+        if self.function_registry.is_property(hit):
+            return CSHARP_EXTERNAL_TARGET
+        return cs.NodeLabel.METHOD.value, hit
 
     def _resolve_base_call(
         self, method_name: str, arg_count: int, caller_qn: str | None
