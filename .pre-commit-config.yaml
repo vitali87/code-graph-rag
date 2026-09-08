@@ -15,8 +15,16 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # The fuzz corpora are binary: a seed's trailing byte is atheris'
+      # language/plan selector and its leading byte is the string_spec, so
+      # "fixing" whitespace or appending a newline silently re-points the
+      # seed at another grammar. Both hooks did exactly that once, and
+      # pre-commit.ci would have redone it server-side on every PR
+      # (autofix_prs is on).
       - id: trailing-whitespace
+        exclude: ^fuzz/corpus/
       - id: end-of-file-fixer
+        exclude: ^fuzz/corpus/
       - id: check-yaml
         args: [--unsafe]
       - id: check-toml

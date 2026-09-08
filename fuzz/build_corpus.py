@@ -9,6 +9,7 @@ Regenerate with:  uv run python fuzz/build_corpus.py
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 CORPUS = Path(__file__).parent / "corpus"
@@ -104,28 +105,74 @@ EDGE_CASES: dict[str, str] = {
 }
 
 
+# The files fuzz_incremental_update can edit, in the order its `EDITABLE`
+# tuple has them (it is `tuple(sorted(FIXTURE))`). Duplicated rather than
+# imported because importing the harness would require atheris, which does not
+# build on macOS; `_editable_files` below asserts the two never drift.
+EDITABLE = (
+    "main.py",
+    "pkg/__init__.py",
+    "pkg/app.py",
+    "pkg/unrelated.py",
+    "pkg/util.py",
+)
+
+
+def _check_editable_matches_harness() -> None:
+    """Fail loudly if the harness' fixture changes and this list does not.
+
+    A silent mismatch would renumber every file index and quietly point the
+    seeds at the wrong files -- the same class of defect as the encoding bugs
+    these seeds were written to fix.
+    """
+    harness = (Path(__file__).parent / "fuzz_incremental_update.py").read_text()
+    names = tuple(sorted(re.findall(r'^\s{4}"([^"]+\.py)":', harness, re.MULTILINE)))
+    if names and names != EDITABLE:
+        raise SystemExit(
+            "fuzz_incremental_update's FIXTURE no longer matches EDITABLE here:\n"
+            f"  harness: {names}\n  builder: {EDITABLE}"
+        )
+
+
 def build_parse_corpus() -> int:
     """Seed fuzz_parse_source.
 
-    The harness consumes the language selector from the FRONT of the input via
-    ConsumeIntInRange, so a seed must carry a leading byte for it. libFuzzer
-    mutates that byte too, which is what lets one seed reach other grammars.
+    atheris' `ConsumeIntInRange` consumes from the BACK of the buffer
+    (`ConsumeSmallIntInRange`: `--remaining_bytes_; result = (result << 8) |
+    data_ptr_[remaining_bytes_]`), while `ConsumeBytes` takes from the front.
+    So the language selector is the LAST byte and the source is everything
+    before it. Writing the selector first, as an earlier version did, left it
+    corrupting the head of the source and handed all but two seeds to
+    whichever grammar the trailing newline happened to select.
+
+    The harness asks for a range of `len(_LANGUAGES) - 1`, so the byte is
+    taken modulo the language count; the index is written directly, which is
+    exact for every count below 256.
     """
     out = CORPUS / "fuzz_parse_source"
     out.mkdir(parents=True, exist_ok=True)
     written = 0
     for index, (name, source) in enumerate(sorted(SOURCES.items())):
-        # A single leading byte standing in for the language choice.
-        (out / f"{name}.bin").write_bytes(bytes([index]) + source.encode())
+        (out / f"{name}.bin").write_bytes(source.encode() + bytes([index]))
         written += 1
     for name, source in EDGE_CASES.items():
-        (out / f"edge_{name}.bin").write_bytes(b"\x00" + source.encode())
+        # Index 0 is the first language alphabetically; the edge cases are
+        # about the SOURCE, and libFuzzer mutates the selector byte anyway.
+        (out / f"edge_{name}.bin").write_bytes(source.encode() + b"\x00")
         written += 1
     return written
 
 
 def build_shell_corpus() -> int:
-    """Seed fuzz_shell_command with commands on both sides of the classifier."""
+    """Seed fuzz_shell_command with commands on both sides of the classifier.
+
+    `ConsumeUnicodeNoSurrogates` eats one leading `string_spec` byte and
+    discards it, then returns ASCII only when `spec & 1`. An odd selector byte
+    is therefore prepended so the command survives verbatim; without it the
+    first character is eaten and even-spec seeds decode to noise, which made
+    every intended-safe seed classify dangerous and left properties 2 and 3
+    unreached across the whole corpus.
+    """
     out = CORPUS / "fuzz_shell_command"
     out.mkdir(parents=True, exist_ok=True)
     commands = {
@@ -146,35 +193,71 @@ def build_shell_corpus() -> int:
         "awk_system": "awk 'BEGIN{system(\"id\")}'",
     }
     for name, command in commands.items():
-        (out / f"{name}.txt").write_text(command, encoding="utf-8")
+        # `.bin`, not `.txt`: the file is no longer literal command text.
+        (out / f"{name}.bin").write_bytes(b"\x01" + command.encode())
     return len(commands)
 
 
 def build_incremental_corpus() -> int:
     """Seed fuzz_incremental_update.
 
-    The harness reads its whole plan from the provider, so seeds are short
-    byte strings selecting a shape, an edit count and per-edit (file, kind)
-    pairs. These cover each edit kind at least once.
+    The harness reads, in order: `ConsumeBool` (shape), `ConsumeIntInRange`
+    (edit count), then per edit a file index and a kind -- all of which come
+    off the BACK of the buffer, last-written byte consumed first. The trailing
+    bytes are therefore laid out in reverse consumption order. A previous
+    version appended a literal `b"seed"`, which supplied the selectors instead
+    and collapsed every seed to the same plan.
+
+    `ConsumeUnicodeNoSurrogates` then takes the splice blob from the front, so
+    a leading odd spec byte plus ASCII gives each seed a readable blob.
     """
     out = CORPUS / "fuzz_incremental_update"
     out.mkdir(parents=True, exist_ok=True)
+
+    def _byte(low: int, high: int, want: int) -> int:
+        """The byte that makes `ConsumeIntInRange(low, high)` return `want`.
+
+        atheris reduces the consumed byte modulo the range size and offsets by
+        `low`, so the value written is not the value read: a count of 1 from
+        `ConsumeIntInRange(1, 3)` needs a 0 byte, not a 1.
+        """
+        return (want - low) % (high - low + 1)
+
+    def seed(shape: int, edits: list[tuple[int, int]]) -> bytes:
+        # The harness reads bool, count, then (file, kind) per edit, and every
+        # one of those pops the buffer's CURRENT LAST byte. So the tail holds
+        # the selectors in reverse consumption order. The leading b"\x01" is
+        # the string_spec that makes the trailing blob decode as ASCII.
+        order = [
+            _byte(0, 1, shape),
+            _byte(1, 3, len(edits)),
+        ]
+        for file_index, kind in edits:
+            order.append(_byte(0, len(EDITABLE) - 1, file_index))
+            order.append(_byte(0, 6, kind))
+        return b"\x01blob" + bytes(reversed(order))
+
+    app = EDITABLE.index("pkg/app.py")
+    util = EDITABLE.index("pkg/util.py")
+    main_py = EDITABLE.index("main.py")
+
     seeds = {
-        "truncate": bytes([0, 0, 1, 0]),
-        "splice": bytes([0, 0, 1, 1]),
-        "rewrite": bytes([1, 0, 2, 2]),
-        "empty_file": bytes([0, 0, 2, 3]),
-        "delete": bytes([0, 0, 4, 4]),
-        "delete_recreate": bytes([1, 0, 1, 5]),
-        "append_call": bytes([0, 0, 1, 6]),
-        "multi_edit": bytes([1, 2, 1, 0, 2, 4, 3, 6]),
+        "truncate": seed(0, [(main_py, 0)]),
+        "splice": seed(0, [(app, 1)]),
+        "rewrite": seed(1, [(app, 2)]),
+        "empty_file": seed(0, [(app, 3)]),
+        "delete": seed(0, [(util, 4)]),
+        "delete_recreate": seed(1, [(app, 5)]),
+        "append_call": seed(0, [(util, 6)]),
+        "multi_edit": seed(1, [(util, 0), (app, 4), (main_py, 6)]),
     }
     for name, blob in seeds.items():
-        (out / f"{name}.bin").write_bytes(blob + b"seed")
+        (out / f"{name}.bin").write_bytes(blob)
     return len(seeds)
 
 
 def main() -> None:
+    _check_editable_matches_harness()
     parse = build_parse_corpus()
     shell = build_shell_corpus()
     incremental = build_incremental_corpus()

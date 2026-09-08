@@ -1,4 +1,4 @@
-using System;
+using System;
 
 namespace App {
   public class Greeter {
@@ -6,3 +6,4 @@ namespace App {
     public static void Main() { new Greeter().Greet("x"); }
   }
 }
+

@@ -1,4 +1,4 @@
-<?php
+<?php
 namespace App;
 
 use RuntimeException;
@@ -8,3 +8,4 @@ class Greeter {
 }
 
 function main(): string { return (new Greeter())->greet('x'); }
+

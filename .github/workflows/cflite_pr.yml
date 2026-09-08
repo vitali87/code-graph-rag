@@ -44,4 +44,11 @@ jobs:
           fuzz-seconds: 600
           mode: 'code-change'
           sanitizer: ${{ matrix.sanitizer }}
+          # `language` is a run_fuzzers input too, not only a build_fuzzers
+          # one: cifuzz reads it as env.LANGUAGE and picks the per-language
+          # reproduce timeout from it (python gets 120s, everything else the
+          # 30s default). A PyInstaller-frozen Python target is slow to start,
+          # so dropping this risks real crashes being written off as
+          # unreproducible.
+          language: python
           output-sarif: true

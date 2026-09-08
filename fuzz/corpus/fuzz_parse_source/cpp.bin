@@ -1,4 +1,4 @@
-#include <string>
+#include <string>
 
 namespace app {
 class Greeter {
@@ -8,3 +8,4 @@ class Greeter {
 }
 
 int main() { return app::Greeter().greet("x").size(); }
+

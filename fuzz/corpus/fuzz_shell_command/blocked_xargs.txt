@@ -1,1 +1,0 @@
-xargs -n1 sh -c id

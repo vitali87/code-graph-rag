@@ -1,4 +1,4 @@
-	import os
+import os
 
 
 class Greeter:
@@ -8,3 +8,4 @@ class Greeter:
 
 def main():
     return Greeter().greet('x')
+	
