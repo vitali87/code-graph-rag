@@ -204,3 +204,60 @@ def test_shell_harness_is_quiet_on_safe_input(shell_harness: ModuleType) -> None
     """
     for command in ("ls", "perl -e 1", "git status"):
         _drive_shell(shell_harness, command)
+
+
+def test_build_script_makes_unpackaged_imports_resolvable() -> None:
+    """`evals` is not in the wheel, so the build must put it on the path.
+
+    `fuzz_incremental_update` imports `evals.cgr_graph`, but pyproject's
+    package discovery includes only `codebase_rag*`, `codec*` and `cgr*`. In
+    the ClusterFuzzLite image pyinstaller freezes each harness from the
+    INSTALLED packages, so without the repo root on the path that import is
+    unresolvable and the target builds into something that fails on first
+    run -- which reads as a fuzzing crash rather than a build mistake.
+
+    Asserted against the build script because that is where the fix lives and
+    nothing else in the suite would notice it being dropped.
+    """
+    harness = (FUZZ_DIR / "fuzz_incremental_update.py").read_text()
+    if "evals" not in harness:
+        pytest.skip("the harness no longer imports evals")
+
+    build = (FUZZ_DIR.parent / ".clusterfuzzlite" / "build.sh").read_text()
+    # Ignore comments: the word PYTHONPATH appears in the rationale above the
+    # line that does the work, so a substring test over the whole file passes
+    # on the comment alone. Checked with the comment stripped, and verified by
+    # deleting the export and watching this test go red.
+    code = "\n".join(
+        line for line in build.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "export PYTHONPATH=" in code, (
+        "build.sh must export PYTHONPATH so pyinstaller can resolve `evals`, "
+        "which is not part of the installed wheel"
+    )
+    assert "--paths" in code, (
+        "compile_python_fuzzer must be given --paths so the frozen target can "
+        "resolve `evals`"
+    )
+
+
+def test_packaged_wheel_really_excludes_evals() -> None:
+    """The premise of the test above, checked rather than assumed.
+
+    If `evals` were ever added to the wheel, the PYTHONPATH dance in build.sh
+    would be dead weight and this test says so instead of quietly passing.
+    """
+    pyproject = (FUZZ_DIR.parent / "pyproject.toml").read_text()
+    include_line = next(
+        (
+            line
+            for line in pyproject.splitlines()
+            if line.strip().startswith("include =")
+        ),
+        "",
+    )
+    assert include_line, "could not find the package-discovery include list"
+    assert "evals" not in include_line, (
+        "evals is now packaged; the PYTHONPATH/--paths workaround in "
+        ".clusterfuzzlite/build.sh is no longer needed"
+    )
