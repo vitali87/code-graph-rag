@@ -18,13 +18,13 @@ WORKDIR /app
 # once /root is left behind.
 #
 # uv only populates this directory when it actually downloads a managed
-# interpreter -- if the pinned Python version ever matches this image's
-# system Python, uv uses that instead and never creates the directory,
-# which would make the unconditional COPY below fail the build outright.
-# Pre-create it so COPY always has something to copy, whichever
-# interpreter uv picks.
+# interpreter -- if the pinned Python version ever matched this image's
+# system Python, uv would use that instead and never create the
+# directory, and the unconditional COPY below would fail the build
+# outright. only-managed rules that out: uv always uses (and downloads
+# if needed) its own interpreter, never the system one.
 ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
-RUN mkdir -p "$UV_PYTHON_INSTALL_DIR"
+ENV UV_PYTHON_PREFERENCE=only-managed
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
