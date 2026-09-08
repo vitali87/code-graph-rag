@@ -80,16 +80,11 @@ def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
         current = stack.pop()
         if current.type in wanted:  # type: ignore[attr-defined]
             # A None return is a legitimate "no name here"; a raise is not.
-            try:
-                fqn_spec.get_name(current)  # type: ignore[arg-type]
-            except UnicodeDecodeError:
-                # Known defect #1798's sibling, #1797: the extractors decode
-                # node text as strict UTF-8, so one undecodable byte raises
-                # and production drops the whole file from the graph. Caught
-                # narrowly -- only this exception type, only here -- so every
-                # other failure in the extractor still surfaces. Remove this
-                # handler when #1797 is fixed; the harness then re-detects it.
-                pass
+            # #1797's UnicodeDecodeError suppression was removed with the fix:
+            # the extractors decode with errors="replace", so an undecodable
+            # byte can no longer raise here and a regression would surface as
+            # a crash rather than being silently tolerated.
+            fqn_spec.get_name(current)  # type: ignore[arg-type]
         stack.extend(current.children)  # type: ignore[attr-defined]
 
 

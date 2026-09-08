@@ -14,13 +14,25 @@ if TYPE_CHECKING:
     from tree_sitter import Node
 
 
+def decode_node_text(raw: bytes) -> str:
+    """Decode node text without letting one bad byte delete a whole file.
+
+    `node.text` is a slice of the raw file bytes, which are never validated
+    as UTF-8. A strict decode raises `UnicodeDecodeError`, and the per-file
+    handler in `graph_updater` catches it and abandons the file, so a single
+    undecodable byte drops EVERY definition in that file from the graph --
+    including definitions nowhere near the bad byte (issue #1797).
+
+    `errors="replace"` keeps the rest of the file indexable and leaves a
+    visibly mangled identifier, matching what `document_tier`, `java_lombok`
+    and `build_lock` already do with the same class of input.
+    """
+    return raw.decode(cs.ENCODING_UTF8, errors="replace")
+
+
 def _python_get_name(node: Node) -> str | None:
     name_node = node.child_by_field_name("name")
-    return (
-        name_node.text.decode(cs.ENCODING_UTF8)
-        if name_node and name_node.text
-        else None
-    )
+    return decode_node_text(name_node.text) if name_node and name_node.text else None
 
 
 def _file_to_module(
@@ -60,9 +72,7 @@ def _js_get_name(node: Node) -> str | None:
     if node.type in cs.JS_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
-            name_node.text.decode(cs.ENCODING_UTF8)
-            if name_node and name_node.text
-            else None
+            decode_node_text(name_node.text) if name_node and name_node.text else None
         )
     return None
 
@@ -73,12 +83,12 @@ _js_file_to_module = partial(_file_to_module, package_marker=cs.INDEX_INDEX)
 def _generic_get_name(node: Node) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node and name_node.text:
-        return name_node.text.decode(cs.ENCODING_UTF8)
+        return decode_node_text(name_node.text)
 
     for field_name in cs.NAME_FIELDS:
         name_node = node.child_by_field_name(field_name)
         if name_node and name_node.text:
-            return name_node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(name_node.text)
 
     return None
 
@@ -96,7 +106,7 @@ def _sql_get_name(node: Node) -> str | None:
             continue
         if not child.text:
             break
-        reference = child.text.decode(cs.ENCODING_UTF8).strip()
+        reference = decode_node_text(child.text).strip()
         # The shared normalizer applies PostgreSQL's folding rules (unquoted
         # lowercases, quoted keeps case); the string-call side uses the SAME
         # one, or a definition and the call naming it would never connect.
@@ -122,11 +132,11 @@ def _rust_get_name(node: Node) -> str | None:
     if node.type in cs.RS_TYPE_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.type == cs.TS_TYPE_IDENTIFIER and name_node.text:
-            return name_node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(name_node.text)
     elif node.type in cs.RS_IDENT_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
-            return name_node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(name_node.text)
     elif node.type == cs.TS_IMPL_ITEM:
         # An `impl Foo` block is an FQN scope but has no `name` field; its
         # target type anchors its methods' qns (owner_module.Foo.method).
@@ -155,14 +165,14 @@ def _c_get_name(node: Node) -> str | None:
     if node.type in cs.C_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
-            return name_node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(name_node.text)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         declarator = _c_unwrap_declarator(declarator)
         if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
             name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
             if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
-                return name_node.text.decode(cs.ENCODING_UTF8)
+                return decode_node_text(name_node.text)
     return _generic_get_name(node)
 
 
@@ -178,13 +188,13 @@ def _cpp_get_name(node: Node) -> str | None:
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
-            return name_node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(name_node.text)
     elif node.type == cs.TS_CPP_FUNCTION_DEFINITION:
         declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if declarator and declarator.type == cs.TS_CPP_FUNCTION_DECLARATOR:
             name_node = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
             if name_node and name_node.type == cs.TS_IDENTIFIER and name_node.text:
-                return name_node.text.decode(cs.ENCODING_UTF8)
+                return decode_node_text(name_node.text)
 
     return _generic_get_name(node)
 
@@ -200,7 +210,7 @@ def _csharp_get_name(node: Node) -> str | None:
             if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
                 name_node = child.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
                 if name_node and name_node.text:
-                    return name_node.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(name_node.text)
         return None
     # Operators expose no `name` field and a destructor's `name` collides
     # with the constructor; delegate to the shared synthesizer so the FQN

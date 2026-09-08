@@ -13,7 +13,7 @@ from tree_sitter import Node, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..language_spec import LanguageSpec
+from ..language_spec import LanguageSpec, decode_node_text
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -1294,7 +1294,10 @@ class CallProcessor:
         if not name_node:
             return None
         text = name_node.text
-        return None if text is None else text.decode(cs.ENCODING_UTF8)
+        # Replacement decode, not strict: one undecodable byte in this file
+        # must not abort the whole call pass and strand the file's CALLS
+        # edges (issue #1797, same class as the definition-side extractors).
+        return None if text is None else decode_node_text(text)
 
     def _collect_all_call_nodes(
         self,
