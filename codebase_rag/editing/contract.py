@@ -181,6 +181,26 @@ def _check_callers(expectation: Expectation, delta: StructuralDelta) -> list[str
     return failures
 
 
+def _changed_site_fault(
+    site: Mapping[str, object], unmapped: set[str], rewritten: set[str]
+) -> str | None:
+    """The fault to report for one call site of a changed signature, if any.
+
+    Split out of `_check_sites_mapped` for S3776: the nesting of the two
+    loops plus these three verdicts put that function one point over the
+    threshold. The decision is per site and reads better named anyway.
+    """
+    key = _site_key(site)
+    verdict = site["verdict"]
+    if verdict == cs.DELTA_ARITY_OK or key in unmapped:
+        return None
+    # A site the operation itself rewrote supplied every value, so the
+    # mapping covers it even where the delta cannot see the argument.
+    if verdict == cs.DELTA_ARITY_POSSIBLY_MISSING and key in rewritten:
+        return None
+    return f"{key} ({verdict})"
+
+
 def _check_sites_mapped(
     expectation: Expectation, delta: StructuralDelta, rewritten: set[str]
 ) -> list[str]:
@@ -199,13 +219,8 @@ def _check_sites_mapped(
     bad: list[str] = []
     for change in delta["signature_changes"]:
         for site in change["sites"]:
-            key = _site_key(site)
-            verdict = site["verdict"]
-            if verdict == cs.DELTA_ARITY_OK or key in unmapped:
-                continue
-            if verdict == cs.DELTA_ARITY_POSSIBLY_MISSING and key in rewritten:
-                continue
-            bad.append(f"{key} ({verdict})")
+            if fault := _changed_site_fault(site, unmapped, rewritten):
+                bad.append(fault)
     for site in delta["arity_findings"]:
         key = _site_key(site)
         if key not in unmapped:

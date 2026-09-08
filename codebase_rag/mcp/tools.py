@@ -83,6 +83,25 @@ def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
     return header + paginated_content
 
 
+# The read-only tools routed through `_graph_query`. Listed rather than
+# inferred: `rename` shares that path for the ingestor lock but is a WRITE,
+# and refusing it here would replace its own refusal payload (which carries
+# `ambiguous`/`unlocatable`) with a generic error. A new read tool must be
+# added here deliberately.
+_READS_THE_GRAPH = frozenset(
+    {
+        cs.MCPToolName.RESOLVE,
+        cs.MCPToolName.DEFINITION,
+        cs.MCPToolName.CALLERS,
+        cs.MCPToolName.CALLEES,
+        cs.MCPToolName.IMPLEMENTORS,
+        cs.MCPToolName.OVERRIDES,
+        cs.MCPToolName.IMPORTERS,
+        cs.MCPToolName.TESTS_REACHING,
+    }
+)
+
+
 class MCPToolsRegistry:
     def __init__(
         self,
@@ -1771,6 +1790,22 @@ class MCPToolsRegistry:
                             )
                         }
                 project_name = project or derive_project_name(Path(self.project_root))
+                # A read is as wrong as a reingest when the graph is known
+                # partial: a failed run (or a rollback whose re-ingest
+                # failed) leaves definitions and edges missing, and every
+                # tool here would report that absence as fact. `_reingest`
+                # already refuses on this flag; the read paths dispatched
+                # regardless, so a caller could not tell a restored graph
+                # from a complete one.
+                if tool in _READS_THE_GRAPH and (
+                    self._graph_incomplete
+                    or await asyncio.to_thread(self._persisted_incomplete, project_name)
+                ):
+                    return {
+                        cs.DICT_KEY_ERROR: cs.MCP_QUERY_AFTER_FAILED_RUN.format(
+                            project=project_name, tool=tool
+                        )
+                    }
                 return await asyncio.to_thread(run, project_name)
         except Exception as e:
             logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))

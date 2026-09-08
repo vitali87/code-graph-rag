@@ -93,7 +93,8 @@ def test_rename_passes_when_only_the_hierarchy_was_renamed() -> None:
         expectation,
         _delta(symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []}),
     )
-    assert verdict.ok and verdict.failures == ()
+    assert verdict.ok
+    assert verdict.failures == ()
     assert [t["qualified_name"] for t in verdict.affected_tests] == [
         "p.tests.test_util.test_helper"
     ]
@@ -548,7 +549,8 @@ def test_real_rename_passes_its_contract_and_lists_affected_tests(
         reingest=updater.reingest,
     )
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok
+    assert report.verdict is not None
+    assert report.verdict.ok
     assert [t["qualified_name"] for t in report.verdict.affected_tests] == [
         f"{PROJECT}.tests.test_app.test_run"
     ]
@@ -599,7 +601,8 @@ def test_real_rename_is_undone_when_the_contract_fails(
     )
 
     assert not report.applied
-    assert report.verdict is not None and not report.verdict.ok
+    assert report.verdict is not None
+    assert not report.verdict.ok
     assert (
         cs.CONTRACT_RENAME_MISSING.format(
             old=f"{PROJECT}.pkg.util.helper", new=f"{PROJECT}.pkg.util.assist"
@@ -652,7 +655,8 @@ def test_real_class_rename_passes_its_contract(temp_repo: Path) -> None:
         reingest=updater.reingest,
     )
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
     assert (root / "pkg" / "util.py").read_text().startswith("class Assist:")
     assert "Assist().two()" in (root / "pkg" / "app.py").read_text()
 
@@ -679,7 +683,8 @@ def test_real_rename_survives_a_pre_existing_duplicate(temp_repo: Path) -> None:
     )
     # `twin` duplicated `helper` before the edit; the rename introduced nothing.
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
 
 
 def test_real_rename_survives_a_pre_existing_arity_fault(temp_repo: Path) -> None:
@@ -703,7 +708,8 @@ def test_real_rename_survives_a_pre_existing_arity_fault(temp_repo: Path) -> Non
     )
     # `broken()` was wrong before the edit; a rename maps no sites.
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
 
 
 def test_a_measurement_failure_is_reported_not_raised(temp_repo: Path) -> None:
@@ -730,7 +736,8 @@ def test_a_measurement_failure_is_reported_not_raised(temp_repo: Path) -> None:
         reingest=broken_reingest,
     )
     # The transaction landed; the unmeasured contract is a message, not a traceback.
-    assert report.applied and report.transaction_id
+    assert report.applied
+    assert report.transaction_id
     assert report.verdict is None
     assert "memgraph went away" in report.message
     assert (root / "pkg" / "util.py").read_text().startswith("def assist(a):")
@@ -785,7 +792,8 @@ def test_real_empty_class_rename_passes_its_contract(temp_repo: Path) -> None:
         reingest=updater.reingest,
     )
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.verdict
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
 
 
 def test_a_failed_contract_refuses_to_roll_back_over_a_later_edit(
@@ -822,7 +830,8 @@ def test_a_failed_contract_refuses_to_roll_back_over_a_later_edit(
     )
     # Not rolled back: the later edit would have been undone instead.
     assert report.applied
-    assert report.verdict is not None and not report.verdict.ok
+    assert report.verdict is not None
+    assert not report.verdict.ok
     assert "not rolled back" in report.message
     assert (root / "pkg" / "note.py").read_text() == "# later edit\n"
     assert (

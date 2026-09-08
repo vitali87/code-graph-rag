@@ -282,19 +282,10 @@ def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Sna
 # --- symbols ------------------------------------------------------------------
 
 
-def _renames(
-    removed: list[str], added: list[str], before: Snapshot, after: Snapshot
-) -> list[RenameFinding]:
-    # A rename keeps the body: the same whole-skeleton fingerprint under a
-    # new name in the same file. Paired one-to-one in sorted order so a
-    # duplicated body cannot be reported as two renames of one symbol.
-    by_shape: dict[tuple[str, str], list[str]] = {}
-    for qn in added:
-        definition = after.definitions[qn]
-        if definition.fingerprint:
-            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
-                qn
-            )
+def _pair_by_shape(
+    removed: list[str], by_shape: dict[tuple[str, str], list[str]], before: Snapshot
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 1: same fingerprint, same file, new name -- a plain rename."""
     renames: list[RenameFinding] = []
     unpaired: list[str] = []
     for qn in removed:
@@ -306,8 +297,16 @@ def _renames(
             )
         else:
             unpaired.append(qn)
-    # A move keeps the name and the body but changes the file: pair what is
-    # left by name and fingerprint across files (issue #1534).
+    return renames, unpaired
+
+
+def _pair_by_move(
+    unpaired: list[str],
+    by_shape: dict[tuple[str, str], list[str]],
+    before: Snapshot,
+    after: Snapshot,
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 2: same name and body, different file -- a move (issue #1534)."""
     by_name_shape: dict[tuple[str, str], list[str]] = {}
     for candidates in by_shape.values():
         for qn in candidates:
@@ -315,6 +314,7 @@ def _renames(
             by_name_shape.setdefault(
                 (definition.name, definition.fingerprint), []
             ).append(qn)
+    renames: list[RenameFinding] = []
     still_unpaired: list[str] = []
     for qn in unpaired:
         definition = before.definitions[qn]
@@ -325,38 +325,60 @@ def _renames(
             renames.append(RenameFinding(old=qn, new=new, path=definition.path))
         else:
             still_unpaired.append(qn)
-    # A class carries no fingerprint of its own, so a renamed class reads as
-    # removed plus added; its methods do carry one and were paired above.
-    # When every renamed descendant of a removed container lands under the
-    # same added container, the container moved with them.
-    paired_new = {r["new"] for r in renames}
-    for qn in still_unpaired:
-        definition = before.definitions[qn]
-        if definition.fingerprint:
-            continue
-        prefix = qn + cs.SEPARATOR_DOT
-        targets = {
-            r["new"][: len(r["new"]) - (len(r["old"]) - len(qn))]
-            for r in renames
-            if r["old"].startswith(prefix)
-        }
-        if len(targets) != 1:
-            continue
-        (target,) = targets
-        candidate = after.definitions.get(target)
-        if (
-            candidate is None
-            or candidate.fingerprint
-            or candidate.label != definition.label
-            or target in paired_new
-            or target not in added
-        ):
-            continue
-        renames.append(RenameFinding(old=qn, new=target, path=definition.path))
-        paired_new.add(target)
-    # An EMPTY container has no descendants to carry it; when exactly one
-    # fingerprint-less container of a label disappeared from a file and
-    # exactly one appeared, the pairing is unambiguous.
+    return renames, still_unpaired
+
+
+def _carried_container(
+    qn: str,
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+) -> str | None:
+    """The added container a removed one moved to, when its members agree.
+
+    A class carries no fingerprint of its own, so a renamed class reads as
+    removed plus added; its methods do carry one and were paired already.
+    """
+    definition = before.definitions[qn]
+    if definition.fingerprint:
+        return None
+    prefix = qn + cs.SEPARATOR_DOT
+    targets = {
+        r["new"][: len(r["new"]) - (len(r["old"]) - len(qn))]
+        for r in renames
+        if r["old"].startswith(prefix)
+    }
+    if len(targets) != 1:
+        return None
+    (target,) = targets
+    candidate = after.definitions.get(target)
+    if (
+        candidate is None
+        or candidate.fingerprint
+        or candidate.label != definition.label
+        or target in paired_new
+        or target not in added
+    ):
+        return None
+    return target
+
+
+def _pair_lone_containers(
+    still_unpaired: list[str],
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+) -> list[RenameFinding]:
+    """Pass 4: an EMPTY container, paired only when the match is unambiguous.
+
+    With no descendants to carry it, the pairing is safe only when exactly
+    one fingerprint-less container of a label left a file and exactly one
+    appeared in it.
+    """
     lone_removed = [
         qn
         for qn in still_unpaired
@@ -368,6 +390,7 @@ def _renames(
         for qn in added
         if qn not in paired_new and not after.definitions[qn].fingerprint
     ]
+    found: list[RenameFinding] = []
     for qn in lone_removed:
         definition = before.definitions[qn]
         matches = [
@@ -383,9 +406,46 @@ def _renames(
             and before.definitions[other].label == definition.label
         ]
         if len(matches) == 1 and len(peers) == 1:
-            renames.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
+            found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
             paired_new.add(matches[0])
             lone_added.remove(matches[0])
+    return found
+
+
+def _renames(
+    removed: list[str], added: list[str], before: Snapshot, after: Snapshot
+) -> list[RenameFinding]:
+    # A rename keeps the body: the same whole-skeleton fingerprint under a
+    # new name in the same file. Paired one-to-one in sorted order so a
+    # duplicated body cannot be reported as two renames of one symbol.
+    #
+    # Four passes, each narrower than the last and each extracted to its own
+    # function (S3776): plain rename, move, container carried by its members,
+    # then the lone empty container.
+    by_shape: dict[tuple[str, str], list[str]] = {}
+    for qn in added:
+        definition = after.definitions[qn]
+        if definition.fingerprint:
+            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
+                qn
+            )
+
+    renames, unpaired = _pair_by_shape(removed, by_shape, before)
+    moved, still_unpaired = _pair_by_move(unpaired, by_shape, before, after)
+    renames.extend(moved)
+
+    paired_new = {r["new"] for r in renames}
+    for qn in still_unpaired:
+        target = _carried_container(qn, renames, paired_new, added, before, after)
+        if target is not None:
+            renames.append(
+                RenameFinding(old=qn, new=target, path=before.definitions[qn].path)
+            )
+            paired_new.add(target)
+
+    renames.extend(
+        _pair_lone_containers(still_unpaired, renames, paired_new, added, before, after)
+    )
     return renames
 
 

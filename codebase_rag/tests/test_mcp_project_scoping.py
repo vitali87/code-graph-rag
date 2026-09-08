@@ -2474,3 +2474,86 @@ class TestTheCachedUpdatersProject:
     ) -> None:
         registry = self._registry(tmp_path, cached_project=ALPHA)
         assert registry._updater_for_reingest() is registry._live_updater
+
+
+# A graph known to be partial must not be READ as if it were whole.
+#
+# `_reingest` has always refused on `_graph_incomplete`, but every read tool
+# dispatched regardless, so after a failed run -- or a rename whose rollback
+# re-ingest failed -- `definition`, `callers`, `resolve` and
+# `query_code_graph` answered from the partial graph. A missing definition
+# is indistinguishable from one that never existed, so the caller cannot
+# tell a restored graph from a complete one (Greptile, PR #1547).
+def _registry_with_incomplete_flag(*, in_process: bool, persisted: bool):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = in_process
+    handler._persisted_incomplete = MagicMock(return_value=persisted)
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_read_refuses_while_this_process_knows_the_graph_is_partial() -> None:
+    handler = _registry_with_incomplete_flag(in_process=True, persisted=False)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, ALPHA, lambda name: ran.append(name)
+    )
+
+    assert ran == [], "the query ran against a graph known to be incomplete"
+    assert cs.DICT_KEY_ERROR in result
+    assert ALPHA in result[cs.DICT_KEY_ERROR]
+
+
+@pytest.mark.asyncio
+async def test_a_read_refuses_on_a_marker_left_by_an_EARLIER_process() -> None:
+    # The in-process flag is lost on restart; the durable marker is not.
+    handler = _registry_with_incomplete_flag(in_process=False, persisted=True)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.CALLERS, ALPHA, lambda name: ran.append(name)
+    )
+
+    assert ran == []
+    assert cs.DICT_KEY_ERROR in result
+
+
+@pytest.mark.asyncio
+async def test_a_read_runs_normally_when_the_graph_is_whole() -> None:
+    # The control: without it, a guard that refused EVERYTHING would pass
+    # both tests above.
+    handler = _registry_with_incomplete_flag(in_process=False, persisted=False)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, ALPHA, lambda name: ran.append(name) or {"ok": True}
+    )
+
+    assert ran == [ALPHA]
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_the_incomplete_guard_does_not_intercept_a_WRITE() -> None:
+    # `rename` shares `_graph_query` for the ingestor lock but is a write:
+    # guarding it too replaced its own refusal payload (carrying `ambiguous`
+    # and `unlocatable`) with a generic error, breaking three rename tests.
+    # The guard is keyed on an explicit read-tool set for exactly this reason.
+    handler = _registry_with_incomplete_flag(in_process=True, persisted=True)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.RENAME, ALPHA, lambda name: ran.append(name) or {"applied": True}
+    )
+
+    assert ran == [ALPHA], "the write was refused by the read guard"
+    assert result == {"applied": True}
