@@ -31,8 +31,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater, get_node_names
-from codebase_rag.types_defs import NodeType
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    get_node_names,
+    get_relationships,
+)
+from codebase_rag.types_defs import NodeType, RelationshipType
 
 # The bad bytes precede the dot, so they land inside the node
 # `_generic_get_name` decodes AS A WHOLE. That is what makes the decode raise
@@ -40,9 +44,15 @@ from codebase_rag.types_defs import NodeType
 # splits them out of the identifier token and the decode quietly succeeds on
 # a shortened name. Only this placement reproduces #1797's total loss.
 _BAD = (
-    b"function Greeter\xff\xff.greet(n) return 1 end\nfunction other() return 2 end\n"
+    b"function Greeter\xff\xff.greet(n) return 1 end\n"
+    b"function other() return 2 end\n"
+    b"function caller() return other() end\n"
 )
-_CLEAN = b"function Greeter.greet(n) return 1 end\nfunction other() return 2 end\n"
+_CLEAN = (
+    b"function Greeter.greet(n) return 1 end\n"
+    b"function other() return 2 end\n"
+    b"function caller() return other() end\n"
+)
 
 _UNTOUCHED_SIBLING = "proj.a.other"
 
@@ -85,4 +95,24 @@ def test_a_clean_file_is_unchanged_by_the_fix(
     # Control: well-formed input must decode exactly as before, with no
     # replacement characters anywhere.
     found = _index(temp_repo, mock_ingestor, _CLEAN)
-    assert found == {"proj.a.Greeter.greet", _UNTOUCHED_SIBLING}
+    assert found == {
+        "proj.a.Greeter.greet",
+        _UNTOUCHED_SIBLING,
+        "proj.a.caller",
+    }
+
+
+def test_the_call_pass_still_links_the_file(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # The definition pass and the call pass decode names independently, so
+    # fixing only `language_spec` left this pass raising and the file's CALLS
+    # edges stranded. Without this, nothing in THIS module goes red for that
+    # half of the fix -- only the conftest per-pass guard catches it, and a
+    # guard living outside the test file is easy to silence by accident.
+    _index(temp_repo, mock_ingestor, _BAD)
+    edges = {
+        (call.args[0][2], call.args[2][2])
+        for call in get_relationships(mock_ingestor, RelationshipType.CALLS.value)
+    }
+    assert ("proj.a.caller", _UNTOUCHED_SIBLING) in edges
