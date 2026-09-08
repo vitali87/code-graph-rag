@@ -379,20 +379,7 @@ class CSharpTypeInferenceEngine:
         # Polly's hide-object-members regions) and the call must emit nothing;
         # the trie fallback was self-looping it onto the caller's own override.
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
-            if class_qn := self._containing_class_qn(caller_qn):
-                seen: set[str] = set()
-                for root in self._partial_roots(class_qn):
-                    for base_qn in self.class_inheritance.get(root, []):
-                        if hit := self._find_method_by_arity(
-                            base_qn, method_name, arg_count, seen
-                        ):
-                            return cs.NodeLabel.METHOD.value, hit
-                seen = set()
-                for root in self._partial_roots(class_qn):
-                    for base_qn in self.class_inheritance.get(root, []):
-                        if hit := self._find_method_by_name(base_qn, method_name, seen):
-                            return cs.NodeLabel.METHOD.value, hit
-            return CSHARP_EXTERNAL_TARGET
+            return self._resolve_base_call(method_name, arg_count, caller_qn)
 
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
@@ -445,6 +432,39 @@ class CSharpTypeInferenceEngine:
         ):
             return CSHARP_EXTERNAL_TARGET
         return None
+
+    def _resolve_base_call(
+        self, method_name: str, arg_count: int, caller_qn: str | None
+    ) -> tuple[str, str] | None:
+        """Resolve `base.X()` against the BASE chain only.
+
+        Split out of `_resolve_csharp_method_call` to keep that function under
+        the cognitive-complexity limit; the two nested walks below are its
+        densest part and are self-contained.
+
+        A first-party base's member wins when one exists; otherwise the base is
+        external (`object.Equals` in Polly's hide-object-members regions) and
+        the call must emit nothing, because the trie fallback was self-looping
+        it onto the caller's own override. Arity-exact matches are tried across
+        every partial part first, then name-only, mirroring the order the
+        instance path uses.
+        """
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return CSHARP_EXTERNAL_TARGET
+        seen: set[str] = set()
+        for root in self._partial_roots(class_qn):
+            for base_qn in self.class_inheritance.get(root, []):
+                if hit := self._find_method_by_arity(
+                    base_qn, method_name, arg_count, seen
+                ):
+                    return cs.NodeLabel.METHOD.value, hit
+        seen = set()
+        for root in self._partial_roots(class_qn):
+            for base_qn in self.class_inheritance.get(root, []):
+                if hit := self._find_method_by_name(base_qn, method_name, seen):
+                    return cs.NodeLabel.METHOD.value, hit
+        return CSHARP_EXTERNAL_TARGET
 
     def _externally_targeted(
         self,
