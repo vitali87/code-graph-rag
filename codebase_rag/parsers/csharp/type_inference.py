@@ -62,6 +62,25 @@ def _arity(leaf: str) -> int:
     return count
 
 
+class _Sentinel:
+    """Distinct from every real result, including None."""
+
+    __slots__ = ()
+
+
+# A miss, as distinct from a cached None: None is a legitimate answer
+# ("unresolved"), and caching it is most of the win on a chain whose links
+# do not resolve.
+_MISSING = _Sentinel()
+# Set while a node's own resolution is on the stack; see the docstring on
+# resolve_csharp_method_call.
+_IN_PROGRESS = _Sentinel()
+
+# What the memo stores: a resolved (label, qn), an unresolved None, or the
+# in-progress marker.
+type _MemoEntry = tuple[str, str] | None | _Sentinel
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -85,6 +104,7 @@ class CSharpTypeInferenceEngine:
         "method_return_types",
         "function_locations",
         "_rel_to_module",
+        "_call_memo",
     )
 
     def __init__(
@@ -111,6 +131,22 @@ class CSharpTypeInferenceEngine:
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
+        # Memo for `resolve_csharp_method_call` (issue #1800). A chained
+        # invocation types its receiver by resolving it, and THREE branches do
+        # that independently for the same receiver node (the class-qn path,
+        # the type-name path and the arity path), so an n-link fluent chain
+        # re-resolved its whole prefix 3^(n/2)-ish times: measured 58 calls at
+        # 4 links rising to 3,587,219 at 14, and a real Aspire file wedged
+        # Pass 3 at 100% CPU for over half an hour. Memoising the entry point
+        # collapses all three branches at once and makes the walk linear.
+        #
+        # Keyed by byte span rather than `id(node)`: CPython recycles ids of
+        # freed objects, and this repo has already been bitten by that (see
+        # `reset_resolution_caches`, "wildcard entries keyed by dict id, which
+        # recycles"). A span is unique within a file, and `module_qn` scopes it
+        # to one; `caller_qn` is included because the same node resolves
+        # differently per enclosing method (`this`, locals, imports).
+        self._call_memo: dict[tuple[str, str | None, int, int], _MemoEntry] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -274,6 +310,36 @@ class CSharpTypeInferenceEngine:
     # --- typed method-call resolution ------------------------------------
 
     def resolve_csharp_method_call(
+        self,
+        call_node: Node,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+        caller_qn: str | None = None,
+    ) -> tuple[str, str] | None:
+        """Memoising front for `_resolve_csharp_method_call` (issue #1800).
+
+        Wrapping the entry point rather than editing the three recursive
+        branches means every path in and every path back out shares one memo,
+        including future callers.
+
+        `_IN_PROGRESS` doubles as a cycle guard. A chain cannot be cyclic in
+        valid C#, but a malformed or recovered parse tree can present one, and
+        without this the recursion would not terminate. Returning None for a
+        re-entered node degrades that site to an unresolved call, which is what
+        the issue asks a pathological input to do instead of hanging.
+        """
+        key = (module_qn, caller_qn, call_node.start_byte, call_node.end_byte)
+        cached = self._call_memo.get(key, _MISSING)
+        if cached is not _MISSING:
+            return None if cached is _IN_PROGRESS else cached  # type: ignore[return-value]
+        self._call_memo[key] = _IN_PROGRESS
+        result = self._resolve_csharp_method_call(
+            call_node, local_var_types, module_qn, caller_qn
+        )
+        self._call_memo[key] = result
+        return result
+
+    def _resolve_csharp_method_call(
         self,
         call_node: Node,
         local_var_types: dict[str, str] | None,
