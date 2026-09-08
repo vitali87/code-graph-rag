@@ -91,6 +91,18 @@ class DefinitionProcessor(
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
+        # {class qn: module qn of the file that DECLARED it}, written for
+        # EVERY language at class ingest. `class_inheritance` and
+        # `class_field_types` are keyed by a class qn, and a class records
+        # no function span, so the span-based ownership the registry sweep
+        # uses cannot attribute one. Nor can a prefix rule: a C# class qn
+        # embeds its namespace, so `proj/Core.cs` with `namespace Util`
+        # yields `proj.Core.Util.Helper`, sitting under the SIBLING module
+        # `proj.Core.Util` (#1769 review). This is the C#-only
+        # `csharp_class_owner_module`'s cross-language counterpart, needed
+        # because both maps above are written by every language's ingest
+        # (#1772).
+        self.class_owner_module: dict[str, str] = {}
         # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
         # whether they override an EXTERNAL base is only decidable once every
         # class is registered, so resolve_deferred_inherits consumes this.

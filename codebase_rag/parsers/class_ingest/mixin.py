@@ -161,6 +161,7 @@ class ClassIngestMixin:
     flow_capture_enabled: bool
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    class_owner_module: dict[str, str]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
     class_field_types: dict[str, dict[str, str]]
@@ -1103,6 +1104,13 @@ class ClassIngestMixin:
             if cs.SEPARATOR_DOUBLE_COLON in class_name:
                 leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
                 self.simple_name_lookup[leaf].add(class_qn)
+
+        # The declaring module, for the class-keyed maps' prune (#1772).
+        # Recorded here rather than in the per-language field-type branches
+        # below, because `class_inheritance` is written for EVERY language
+        # while those branches cover only five, and a class carries no span
+        # record for the sweep to attribute it by.
+        self.class_owner_module[class_qn] = module_qn
 
         parent_label, parent_qn, parent_span = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
