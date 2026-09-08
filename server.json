@@ -8,13 +8,13 @@
     "url": "https://github.com/vitali87/code-graph-rag",
     "source": "github"
   },
-  "version": "0.0.887",
+  "version": "0.0.888",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "code-graph-rag",
-      "version": "0.0.887",
+      "version": "0.0.888",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
