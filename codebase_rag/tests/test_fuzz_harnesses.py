@@ -152,7 +152,8 @@ def _load(name: str) -> ModuleType:
     sys.modules["atheris"] = _stub_atheris()
     try:
         spec = importlib.util.spec_from_file_location(f"_fuzz_{name}", path)
-        assert spec is not None and spec.loader is not None
+        assert spec is not None, f"no import spec for {path}"
+        assert spec.loader is not None, f"import spec for {path} has no loader"
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
