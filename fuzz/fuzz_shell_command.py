@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+from pathlib import Path
 
 # `shell_command` imports pydantic_ai, which reaches logfire's pydantic plugin.
 # That plugin patches pydantic at import time via `inspect.getsource`, which
@@ -40,7 +41,9 @@ with atheris.instrument_imports():
     from codebase_rag.tools.shell_command import (
         _check_pipeline_patterns,
         _check_segment_patterns,
+        _has_subshell,
         _is_dangerous_command,
+        _is_dangerous_rm_path,
         _parse_command,
         _validate_segment,
     )
@@ -72,13 +75,47 @@ ALWAYS_DANGEROUS = (
 )
 
 
+# The project root reaches the two root-aware guards by DIFFERENT routes, and
+# they are not interchangeable. `_validate_segment` calls
+# `_git_escapes_project` itself when given a root, so passing one is enough.
+# `_is_dangerous_rm_path` has a single call site -- inside
+# `ShellCommander.execute`, after `_validate_segment` -- so the harness has to
+# call it explicitly; passing a root does NOT reach it. An earlier version of
+# this file claimed it did, and `rm *`, `rm /` and
+# `rm -r -- -x/../../outside/victim` were classified safe while production
+# blocked them. The root is never written to and never chdir'd into: every
+# command is classified, none is executed.
+#
+# Deliberately a FIXED path rather than one derived from `__file__`. Under
+# PyInstaller -- which is how ClusterFuzzLite ships these targets -- `__file__`
+# resolves into the per-run `_MEIPASS` extraction directory, an ephemeral temp
+# path that nothing else lives under. Measured consequence: with such a root
+# `git -C . diff` flips from allowed to blocked, because `.` resolves against
+# the CWD and lands outside it. The classifier gets uniformly stricter, the
+# safe branch is reached far less often, and the properties asserted on safe
+# verdicts stop being exercised -- while the target still exits 0 and looks
+# like it is fuzzing. A fixed root keeps local and bundled runs identical.
+#
+# The path need not exist: `_git_escapes_project` and `_is_dangerous_rm_path`
+# only ask whether a resolved TARGET lies inside the root, which is pure path
+# arithmetic. Verified that this root and the real checkout give identical
+# verdicts for `git -C /etc status`, `git -C . diff`,
+# `git --git-dir=/tmp/x log` and `rm -rf /`.
+PROJECT_ROOT = Path("/fuzz-project-root")
+
+
 def _classify(command: str) -> tuple[bool, str]:
     """Return (is_dangerous, reason) the way the tool path decides it.
 
-    Mirrors the ordering in `ShellCommander`: a pipeline pattern rejects the
-    whole command before segmentation, then each segment is validated and
-    classified on its own.
+    Mirrors `ShellCommander.execute`'s ordering exactly: the subshell guard
+    runs FIRST on the whole command, then pipeline patterns, then each
+    segment is validated and classified on its own. Passing `project_root`
+    is what brings `_git_escapes_project` and `_is_dangerous_rm_path` into
+    coverage -- without it `_validate_segment` skips both.
     """
+    if pattern := _has_subshell(command):
+        return True, f"subshell: {pattern}"
+
     if reason := _check_pipeline_patterns(command):
         return True, reason
 
@@ -95,7 +132,7 @@ def _classify(command: str) -> tuple[bool, str]:
                 continue
             if reason := _check_segment_patterns(segment):
                 return True, reason
-            if err := _validate_segment(segment, available):
+            if err := _validate_segment(segment, available, project_root=PROJECT_ROOT):
                 return True, err
             try:
                 parts = shlex.split(segment)
@@ -104,6 +141,13 @@ def _classify(command: str) -> tuple[bool, str]:
                 return True, "invalid syntax"
             if not parts:
                 continue
+
+            # `execute` runs this guard here, on the split segment, after
+            # `_validate_segment` -- not from inside it. Mirrored rather than
+            # reached via `project_root`, which does not reach it.
+            dangerous, reason = _is_dangerous_rm_path(parts, PROJECT_ROOT)
+            if dangerous:
+                return True, reason
             dangerous, reason = _is_dangerous_command(parts, segment)
             if dangerous:
                 return True, reason

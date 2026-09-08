@@ -245,6 +245,18 @@ def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> 
         ("bash script.sh", True),
         ("python3 script.py", True),
         ("make install", True),
+        # Decided ONLY by the subshell guard, which runs before pipeline
+        # patterns. Nothing else in `_classify` refuses these, so they go red
+        # if that call is dropped or moved after segmentation.
+        ("echo $(whoami)", True),
+        ("echo `id`", True),
+        # Decided ONLY by `_is_dangerous_rm_path`. `rm -rf /` above is caught
+        # by `_check_segment_patterns` regardless, so it cannot stand in for
+        # these: each needs the guard the harness calls explicitly, because
+        # `_validate_segment` does not call it.
+        ("rm /tmp/zzz", True),
+        ("rm *", True),
+        ("rm -r -- -x/../../outside/victim", True),
     ):
         dangerous, _reason = shell_harness._classify(command)
         assert dangerous is expected, f"{command!r} classified {dangerous}"
