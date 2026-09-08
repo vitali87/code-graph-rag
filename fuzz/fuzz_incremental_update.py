@@ -187,32 +187,37 @@ def _is_known_package_demotion(
 ) -> bool:
     """True when the delta is exactly #1798 and nothing else.
 
-    Deleting a package's `__init__.py` should demote the directory from
-    `Package` to `Folder`; `reingest` leaves it a `Package`, so the node and
-    every containment edge stay anchored to the wrong label. Recognised by
-    shape: the only extra node is a Package, the only missing node is a
-    Folder, and every differing edge is a containment edge whose endpoint is
-    one of those two. Anything else in the delta fails the match, so an
+    Deleting a package's `__init__.py` should retract the directory's
+    `Package` identity. It does not, and that surfaces in two shapes:
+
+    * the directory is MISLABELLED -- a `Package` where a clean index has a
+      `Folder`, so one node is extra and one missing;
+    * the directory is DUPLICATED -- when some file in it survives, the
+      `Folder` is emitted too and the stale `Package` simply remains, so a
+      node is extra and none is missing.
+
+    Both are recognised by: every extra node is a `Package`, every missing
+    node is a `Folder`, and every differing edge is a containment edge
+    between the project and that directory or between that directory and
+    what it holds. Anything else in the delta fails the match, so an
     unrelated disagreement in the same run is still reported.
 
     Delete this helper and its call site when #1798 is fixed.
     """
     extra_nodes = actual[0] - expected[0]
     missing_nodes = expected[0] - actual[0]
-    if len(extra_nodes) != 1 or len(missing_nodes) != 1:
+    if not extra_nodes:
         return False
-    if next(iter(extra_nodes))[0] != "Package":
+    if any(node[0] != "Package" for node in extra_nodes):
         return False
-    if next(iter(missing_nodes))[0] != "Folder":
+    if any(node[0] != "Folder" for node in missing_nodes):
         return False
 
     # The mislabelled directory shows up on both sides of its edges: as the
-    # SOURCE of what it contains (Package/Folder -CONTAINS_FILE/MODULE->) and
-    # as the TARGET of the project's own edge, whose relation type differs
-    # too (Project -CONTAINS_PACKAGE-> versus -CONTAINS_FOLDER->). An earlier
-    # version allowed only the first of those and so never matched; the
-    # difference was invisible because the harness' own message truncates
-    # each delta list to five entries.
+    # SOURCE of what it contains, and as the TARGET of the project's own
+    # edge, whose relation type differs too. An earlier version allowed only
+    # the first of those and so never matched; the difference was invisible
+    # because the harness' own message truncated each delta to five entries.
     allowed = {
         ("Package", "CONTAINS_FILE"),
         ("Package", "CONTAINS_MODULE"),
