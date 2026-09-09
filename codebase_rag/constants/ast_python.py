@@ -44,6 +44,10 @@ TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 # Call-site splats (`*args`, `**kwargs` in an argument list).
 TS_PY_LIST_SPLAT = "list_splat"
+# Early exits an extracted span may not contain (issue #1535).
+TS_PY_BREAK_STATEMENT = "break_statement"
+TS_PY_CONTINUE_STATEMENT = "continue_statement"
+TS_PY_YIELD = "yield"
 TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"

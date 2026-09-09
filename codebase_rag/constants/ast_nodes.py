@@ -196,6 +196,11 @@ TS_AWAIT_EXPRESSION = "await_expression"
 # out before indexing arguments or reading a single sub-expression.
 TS_COMMENT = "comment"
 TS_SPREAD_ELEMENT = "spread_element"
+TS_CONTINUE_STATEMENT = "continue_statement"
+# Loops a break/continue may target inside an extracted span (issue #1535).
+TS_FOR_STATEMENT = "for_statement"
+TS_FOR_IN_STATEMENT = "for_in_statement"
+TS_WHILE_STATEMENT = "while_statement"
 # `(expr)` wraps its value in a parenthesized_expression; the flow walk unwraps
 # it (like await) to reach the inner source/tainted expression.
 TS_PARENTHESIZED_EXPRESSION = "parenthesized_expression"

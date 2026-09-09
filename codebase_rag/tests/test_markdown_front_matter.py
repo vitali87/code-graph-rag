@@ -18,12 +18,12 @@
 # to a `minus_metadata` node, which `document_tier` currently ignores.
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.parsers import document_tier
 from codebase_rag.parsers.document_tier import parse_front_matter
 
 
@@ -351,9 +351,21 @@ class TestIngestion:
     they pin is easiest to break unnoticed.
     """
 
+    # Guard on the production loader, not on importability. `find_spec` sees
+    # only the ImportError path; a wheel whose ABI does not match the installed
+    # `tree_sitter` imports fine and then raises from `Language(...)`, which
+    # `_load_parser` catches and reports as None. Asking `find_spec` leaves the
+    # guard constant True while production flips, so the tier degrades to plain
+    # File nodes and these tests FAIL rather than skip -- a platform-dependent
+    # missing optional dependency reported as a product defect (#1591).
+    #
+    # `_load_inline_parser` is deliberately NOT consulted: per its docstring the
+    # inline grammar's absence disables link edges alone and never disables the
+    # tier, and front matter comes off the block parser. Guarding on both would
+    # skip these tests over a failure that cannot affect them.
     pytestmark = pytest.mark.skipif(
-        importlib.util.find_spec("tree_sitter_markdown") is None,
-        reason="markdown grammar ships in the treesitter-full extra",
+        document_tier._load_parser() is None,
+        reason="markdown grammar unavailable (absent, or an incompatible wheel)",
     )
 
     def test_front_matter_becomes_module_properties(

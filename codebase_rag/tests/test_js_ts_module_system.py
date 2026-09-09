@@ -1,13 +1,20 @@
-import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import run_updater
 
-JS_AVAILABLE = importlib.util.find_spec("tree_sitter_javascript") is not None
-TS_AVAILABLE = importlib.util.find_spec("tree_sitter_typescript") is not None
+# Ask the production loader, not `find_spec`. A grammar wheel whose ABI does
+# not match the installed `tree_sitter` imports fine and then raises from
+# `Language(lang_lib())` (`parser_loader.py:379`), which `_process_language`
+# catches -- so the language never lands in the store while `find_spec` still
+# reports it present. Guarding on importability leaves these tests running
+# against a parser that does not exist, failing instead of skipping (#1591).
+_PARSERS = load_parsers()[0]
+JS_AVAILABLE = "javascript" in _PARSERS
+TS_AVAILABLE = "typescript" in _PARSERS
 
 
 @pytest.fixture

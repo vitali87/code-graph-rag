@@ -23,6 +23,8 @@ class CLICommandName(StrEnum):
     RENAME = "rename"
     CHANGE_SIGNATURE = "change-signature"
     MOVE = "move"
+    EXTRACT = "extract"
+    INLINE = "inline"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -162,6 +164,25 @@ CMD_MOVE = (
 EXAMPLES_MOVE = (
     "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
     "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
+)
+CMD_EXTRACT = (
+    "Extract whole statements of a function (a line span) into a new function "
+    "placed after it; inputs become parameters, outputs are returned."
+)
+EXAMPLES_EXTRACT = (
+    "Examples:\n  cgr extract myproj.pkg.report.build 12 21 summarise --dry-run\n"
+    "  cgr extract myproj.pkg.report.build 12 21 summarise"
+)
+HELP_EXTRACT_START = "First line of the span (1-based, inclusive)."
+HELP_EXTRACT_END = "Last line of the span (1-based, inclusive)."
+HELP_EXTRACT_NEW_NAME = "Name of the new function."
+CMD_INLINE = (
+    "Inline a single-return function at every call site the graph knows and "
+    "delete the definition once no caller remains."
+)
+EXAMPLES_INLINE = (
+    "Examples:\n  cgr inline myproj.pkg.util.wrapper --dry-run\n"
+    "  cgr inline myproj.pkg.util.wrapper"
 )
 HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
 HELP_MOVE_KEEP_ALIAS = (
@@ -496,6 +517,8 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.RENAME: CMD_RENAME,
     CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.MOVE: CMD_MOVE,
+    CLICommandName.EXTRACT: CMD_EXTRACT,
+    CLICommandName.INLINE: CMD_INLINE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,

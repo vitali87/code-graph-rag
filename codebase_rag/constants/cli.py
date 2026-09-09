@@ -500,6 +500,23 @@ PATCH_NOT_AN_IDENTIFIER = "{path}:{line}:{col} is not a whole identifier"
 PATCH_PARSE_FAILED = "{path} no longer parses after the patch"
 PATCH_FORMAT_DRIFT = "{path} applied, but {tool} would reformat it"
 PATCH_OK = "{path}: {count} edit(s) applied"
+# `parses is None` means no grammar was available, so the patch was checked
+# by nothing. Reported apart from PATCH_OK because reporting both as OK is
+# what turned an unverifiable write into an apparently verified one; the
+# write itself is still allowed, since refusing would make edits a silent
+# no-op on a base install where Rust and Go grammars are absent (#1580).
+# The one wording for "checked by nothing", shared so the two messages that
+# carry it cannot drift apart and a caller can match on either.
+PATCH_UNVERIFIED_FRAGMENT = "unverified (no parser for it)"
+PATCH_UNVERIFIED = "{path}: {count} edit(s) applied, " + PATCH_UNVERIFIED_FRAGMENT
+# Both facts, because either alone is misleading here: drift on its own reads
+# as "parsed fine, just reformat it", and a language with no grammar is
+# exactly the case that also has a formatter installed (Rust, Go).
+PATCH_UNVERIFIED_DRIFT = (
+    "{path}: {count} edit(s) applied, "
+    + PATCH_UNVERIFIED_FRAGMENT
+    + "; {tool} would also reformat it"
+)
 # Edit transactions (issue #1528).
 EDIT_NOT_A_FILE = "Staged path is not a regular file: {path}"
 EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
@@ -556,6 +573,27 @@ SIGNATURE_SPLAT = "the site spreads its arguments"
 SIGNATURE_UNKNOWN_KEYWORD = "the site passes an unknown keyword {name}"
 SIGNATURE_NEEDS_KEYWORDS = "the mapping needs keyword arguments this language lacks"
 SIGNATURE_UNMAPPED_PARAM = "the site passes no value for {name}"
+# extract and inline (issue #1535).
+EXTRACT_UNKNOWN = "No definition named {qn} in the graph"
+EXTRACT_NO_GRAMMAR = "No grammar for {path}; the span cannot be extracted"
+EXTRACT_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
+EXTRACT_SPLITS_STATEMENT = "The span cuts through the statement at lines {line}-{end}; extract whole statements"
+EXTRACT_EMPTY_SPAN = "No statement of the function lies within lines {start}-{end}"
+EXTRACT_EARLY_EXIT = (
+    "The span leaves the function early ({kind} at line {line}) and cannot be one call"
+)
+EXTRACT_PLANNED = (
+    "{inputs} input(s) become parameters, {outputs} output(s) are returned"
+)
+EXTRACT_PARSE_FAILED = "Extract rolled back: {files} would no longer parse"
+EXTRACT_CONTRACT_FAILED = "Extract rolled back, postcondition failed: {reasons}"
+INLINE_NOT_SINGLE_RETURN = "{qn} is not a single-return function; only those inline"
+INLINE_GUESSED_CALLERS = (
+    "Refusing to inline: callers resolved by guesswork or trace only: {sites}"
+)
+INLINE_PLANNED = "{count} call site(s) would be inlined; definition removed: {removed}"
+INLINE_PARSE_FAILED = "Inline rolled back: {files} would no longer parse"
+INLINE_CONTRACT_FAILED = "Inline rolled back, postcondition failed: {reasons}"
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
 MOVE_METHOD = "{qn} is a method; move its class instead"
@@ -571,6 +609,8 @@ SIGNATURE_DEFAULT_ORDER = "Parameter {name} has no default but follows one that 
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
 CONTRACT_OP_MOVE = "move"
+CONTRACT_OP_EXTRACT = "extract"
+CONTRACT_OP_INLINE = "inline"
 CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"

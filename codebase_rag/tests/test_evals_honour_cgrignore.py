@@ -1,0 +1,128 @@
+"""Grading must cover the file set indexing covers, not a wider one.
+
+No eval arm consulted `.cgrignore`, so a reported precision/recall was
+measured over files the product would never put in a graph (issue #1520).
+An excluded directory is usually vendored or generated code whose shape
+differs from first-party source, so the error is not benign in either
+direction.
+
+Every test here carries a VISIBLE row as a control. An empty result cannot
+distinguish "excluded correctly" from "the fixture produced nothing", and
+the issue reports a first attempt that passed for exactly that wrong
+reason: the fixture returned `[]` with and without `.cgrignore`.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from evals.inheritance import cgr_inheritance, oracle_inheritance
+
+_VISIBLE = "class Base2:\n    pass\n\n\nclass Vis(Base2):\n    pass\n"
+_HIDDEN = "class B3:\n    pass\n\n\nclass Hid2(B3):\n    pass\n"
+
+_VISIBLE_EDGE = ("proj.visible.Vis", "proj.visible.Base2")
+_HIDDEN_EDGE = ("proj.ignored.hidden.Hid2", "proj.ignored.hidden.B3")
+
+
+def _make_repo(root: Path, *, cgrignore: str | None) -> None:
+    (root / "ignored").mkdir(parents=True)
+    (root / "visible.py").write_text(_VISIBLE, encoding="utf-8")
+    (root / "ignored" / "hidden.py").write_text(_HIDDEN, encoding="utf-8")
+    if cgrignore is not None:
+        (root / ".cgrignore").write_text(cgrignore, encoding="utf-8")
+
+
+def test_the_oracle_without_cgrignore_sees_both(tmp_path: Path) -> None:
+    """The control. Without it, exclusion and an empty fixture look alike."""
+    src = tmp_path / "proj"
+    _make_repo(src, cgrignore=None)
+
+    inherits = oracle_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in inherits, inherits
+    assert _HIDDEN_EDGE in inherits, inherits
+
+
+def test_the_oracle_honours_cgrignore(tmp_path: Path) -> None:
+    src = tmp_path / "proj"
+    _make_repo(src, cgrignore="ignored/\n")
+
+    inherits = oracle_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in inherits, "the fixture stopped producing any row"
+    assert _HIDDEN_EDGE not in inherits, inherits
+
+
+def test_cgr_without_cgrignore_sees_both(tmp_path: Path) -> None:
+    """The control for the cgr side."""
+    src = tmp_path / "proj"
+    _make_repo(src, cgrignore=None)
+
+    inherits = cgr_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in inherits, inherits
+    assert _HIDDEN_EDGE in inherits, inherits
+
+
+def test_cgr_honours_cgrignore(tmp_path: Path) -> None:
+    src = tmp_path / "proj"
+    _make_repo(src, cgrignore="ignored/\n")
+
+    inherits = cgr_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in inherits, "the fixture stopped producing any row"
+    assert _HIDDEN_EDGE not in inherits, inherits
+
+
+def test_both_sides_agree_under_cgrignore(tmp_path: Path) -> None:
+    """The halves must move together or grading regresses.
+
+    Excluding only the cgr capture drops true positives while the oracle
+    still emits the ignored row, which scores as a recall regression and
+    reads like a grading bug rather than a scope fix. A test that changes
+    one side would look like it caught something and have made it worse.
+    """
+    src = tmp_path / "proj"
+    _make_repo(src, cgrignore="ignored/\n")
+
+    oracle = oracle_inheritance(src, "proj").inherits
+    cgr = cgr_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in oracle, "the oracle stopped producing any row"
+    assert _VISIBLE_EDGE in cgr, "cgr stopped producing any row"
+    assert _HIDDEN_EDGE not in oracle, oracle
+    assert _HIDDEN_EDGE not in cgr, cgr
+    assert oracle == cgr, oracle ^ cgr
+
+
+_RESCUED = "class B4:\n    pass\n\n\nclass Res(B4):\n    pass\n"
+_RESCUED_EDGE = ("proj.build.keep.Res", "proj.build.keep.B4")
+
+
+def test_an_unignored_file_under_a_built_in_ignored_dir_reaches_both(
+    tmp_path: Path,
+) -> None:
+    """The case a second filter cannot rescue.
+
+    `build/` is a built-in ignore, and `should_skip_path` applies those only
+    AFTER `unignore_paths` has had its say, so `!build/keep.py` reaches the
+    graph. A pre-filter running before it drops the file from the oracle
+    only, which is the oracle-versus-cgr divergence this issue closes,
+    reintroduced one layer up (CodeRabbit, PR #1563).
+
+    The visible edge is asserted alongside so a fixture that produced
+    nothing cannot satisfy this by emptiness.
+    """
+    src = tmp_path / "proj"
+    (src / "build").mkdir(parents=True)
+    (src / "visible.py").write_text(_VISIBLE, encoding="utf-8")
+    (src / "build" / "keep.py").write_text(_RESCUED, encoding="utf-8")
+    (src / ".cgrignore").write_text("!build/keep.py\n", encoding="utf-8")
+
+    oracle = oracle_inheritance(src, "proj").inherits
+    cgr = cgr_inheritance(src, "proj").inherits
+
+    assert _VISIBLE_EDGE in oracle, "the fixture stopped producing any row"
+    assert _RESCUED_EDGE in oracle, f"the oracle dropped the rescued file: {oracle}"
+    assert _RESCUED_EDGE in cgr, f"cgr dropped the rescued file: {cgr}"
