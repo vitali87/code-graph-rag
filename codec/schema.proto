@@ -126,6 +126,7 @@ message GraphCodeIndex {
       Pattern pattern = 19;
       CodeSmell code_smell = 20;
       SecurityIssue security_issue = 21;
+      Gloss gloss = 22;
     }
   }
 
@@ -166,6 +167,10 @@ message GraphCodeIndex {
       // Function/Method -> the project type its annotation names (#1527).
       RETURNS = 28;
       ACCEPTS = 29;
+
+      // Agent-written glosses (issue #1808).
+      ANNOTATES = 30;
+      MENTIONS = 31;
     }
 
     RelationshipType type = 1;
@@ -312,6 +317,33 @@ message GraphCodeIndex {
     int32 end_line = 5;
     string path = 6;
     string snippet = 7;
+  }
+
+  // An agent-written note about a symbol (issue #1808). Unlike every other
+  // payload here it is not derived from source: it is written into the graph
+  // and read back later, so it must survive re-indexing rather than being
+  // rebuilt by it.
+  message Gloss {
+    // Primary Key
+    string qualified_name = 1;
+
+    string kind = 2;
+    string status = 3;
+    string body = 4;
+    string created_by = 5;
+    string created_at = 6;
+    string commit_sha = 7;
+
+    // The symbol this gloss is about, and the evidence for still being
+    // attached to it. `anchor_state` is EXACT|MOVED|STALE|AMBIGUOUS|LOST; a
+    // gloss that cannot be re-anchored goes LOST rather than being re-bound
+    // to a wrong symbol on a confident guess.
+    string target_qn = 8;
+    string target_hash = 9;
+    string anchor_quote = 10;
+    string anchor_prefix = 11;
+    string anchor_suffix = 12;
+    string anchor_state = 13;
   }
 
   // An external I/O resource a callable reads from or writes to
