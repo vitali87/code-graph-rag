@@ -21,6 +21,12 @@ because both failure modes above leave everything looking green.
 So this asserts the keys it cares about are PRESENT and correctly SHAPED,
 and treats the schema as an additional check rather than the only one.
 `check-yaml` in pre-commit covers syntax and nothing else.
+
+The root key set is reproduced here rather than vendored from the 77KB
+vendor document, which would drift silently against upstream. Only the
+root matters: that is the one level the vendor marks
+`additionalProperties: false`, so it is the only level where a schema
+check adds anything the key checks above do not already cover.
 """
 
 from __future__ import annotations
@@ -35,6 +41,34 @@ from typing import Any
 DOCSTRINGS_MODE_PATH = "reviews.pre_merge_checks.docstrings.mode"
 DOCSTRINGS_MODE_EXPECTED = "off"
 BASE_BRANCHES_PATH = "reviews.auto_review.base_branches"
+
+# The vendor schema's root key set, as published at
+# https://coderabbit.ai/integrations/schema.v2.json (note the 301: fetching
+# it by hand needs `curl -L`). `additionalProperties: false` is set on the
+# root object ALONE -- absent under `reviews`, `reviews.auto_review`,
+# `reviews.pre_merge_checks` and `docstrings` -- so this is exactly the level
+# at which a schema check catches something the key checks cannot.
+# `test_the_real_schema_is_still_root_only` fails if upstream changes either
+# the flag or this key set.
+VENDOR_ROOT_KEYS = frozenset(
+    {
+        "chat",
+        "code_generation",
+        "early_access",
+        "enable_free_tier",
+        "inheritance",
+        "issue_enrichment",
+        "knowledge_base",
+        "language",
+        "reviews",
+        "tone_instructions",
+    }
+)
+ROOT_KEY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": dict.fromkeys(sorted(VENDOR_ROOT_KEYS), {}),
+}
 
 
 class ConfigError(ValueError):
@@ -81,6 +115,9 @@ def _check_docstrings_mode(data: Any) -> None:
             f"string the schema requires (issue #1617)."
         )
     if not isinstance(mode, str):
+        # Distinct from the value check below: a non-string here is a YAML
+        # typing accident (a number, a list, a null), and saying which type
+        # arrived points at the line rather than at the setting.
         raise ConfigError(
             f"{DOCSTRINGS_MODE_PATH}: must be the string "
             f'"{DOCSTRINGS_MODE_EXPECTED}", got {type(mode).__name__} {mode!r}'
@@ -173,7 +210,9 @@ def main() -> int:
     """Validate the shipped config, printing the failure and returning 1."""
     config = Path(__file__).parent.parent / ".coderabbit.yaml"
     try:
-        count = validate_coderabbit_config(config.read_text(encoding="utf-8"))
+        count = validate_coderabbit_config(
+            config.read_text(encoding="utf-8"), schema=ROOT_KEY_SCHEMA
+        )
     except ConfigError as exc:
         sys.stderr.write(f"{config.name}: {exc}\n")
         return 1

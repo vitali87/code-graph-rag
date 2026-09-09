@@ -17,6 +17,8 @@ from typing import Any
 import pytest
 
 from scripts.validate_coderabbit_config import (
+    ROOT_KEY_SCHEMA,
+    VENDOR_ROOT_KEYS,
     ConfigError,
     validate_coderabbit_config,
 )
@@ -75,6 +77,23 @@ class TestDocstringsMode:
 
         data = yaml.safe_load(VALID.replace('mode: "off"', "mode: off"))
         assert data["reviews"]["pre_merge_checks"]["docstrings"]["mode"] is False
+
+    def test_a_non_string_mode_names_the_type(self) -> None:
+        """A YAML typing accident gets its own message, not the value one.
+
+        Without this the `isinstance` branch is unreachable under mutation:
+        the value comparison below catches the same inputs, so deleting the
+        type check leaves the suite green.
+        """
+        text = VALID.replace('mode: "off"', "mode: 3")
+        with pytest.raises(ConfigError, match="got int"):
+            validate_coderabbit_config(text)
+
+    def test_a_null_mode_names_the_type(self) -> None:
+        """`mode:` with nothing after it parses as None, not as absent."""
+        text = VALID.replace('mode: "off"', "mode:")
+        with pytest.raises(ConfigError, match="got NoneType"):
+            validate_coderabbit_config(text)
 
     def test_a_different_mode_is_rejected(self) -> None:
         """Only 'off' clears the check; 'warning' silently restores #1617."""
@@ -217,11 +236,17 @@ class TestSchemaAloneIsInsufficient:
         try:
             with urlopen(SCHEMA_URL, timeout=10) as response:
                 live = json.loads(response.read().decode("utf-8"))
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # JSONDecodeError subclasses ValueError, not OSError: a proxy or
+            # captive portal returning HTML must skip, not redden the build.
             pytest.skip(f"vendor schema unreachable: {exc}")
         assert live.get("additionalProperties") is False
         auto_review = live["properties"]["reviews"]["properties"]["auto_review"]
         assert "additionalProperties" not in auto_review
+        assert set(live["properties"]) == set(VENDOR_ROOT_KEYS), (
+            "the vendor's root key set has changed; update VENDOR_ROOT_KEYS "
+            "or the shipped check will reject a newly valid setting"
+        )
 
     def test_the_typo_passes_the_vendor_schema(self) -> None:
         """A schema check alone would report `base_branchez` as valid."""
@@ -269,3 +294,39 @@ class TestWiring:
             encoding="utf-8"
         )
         assert "scripts/validate_coderabbit_config.py" in text
+
+
+class TestShippedEntrypointEnforcesTheSchema:
+    """The schema check must run in pre-commit and CI, not only in tests.
+
+    It was reachable only from tests in the first cut of this script: `main()`
+    passed no schema, so an unknown root key that CodeRabbit itself rejects
+    went through the hook and CI clean. A check that exists but is never
+    called is the same defect as a check that cannot fail.
+    """
+
+    def test_an_unknown_root_key_is_rejected_by_the_shipped_schema(self) -> None:
+        with pytest.raises(ConfigError, match="schema violation"):
+            validate_coderabbit_config(
+                VALID + "\nnonsense_root_key: 1\n", schema=ROOT_KEY_SCHEMA
+            )
+
+    def test_every_known_root_key_is_accepted(self) -> None:
+        """The check must not reject a setting the vendor allows."""
+        for key in sorted(VENDOR_ROOT_KEYS):
+            if key == "reviews":
+                continue
+            assert (
+                validate_coderabbit_config(f"{VALID}\n{key}: {{}}\n", ROOT_KEY_SCHEMA)
+                == 2
+            ), f"root key {key!r} should be accepted"
+
+    def test_main_passes_a_schema(self) -> None:
+        """Pin the wiring: the entrypoint must supply the schema."""
+        source = (
+            REPO_ROOT / "scripts" / "validate_coderabbit_config.py"
+        ).read_text(encoding="utf-8")
+        assert "schema=ROOT_KEY_SCHEMA" in source
+
+    def test_the_shipped_config_passes_the_shipped_schema(self) -> None:
+        assert validate_coderabbit_config(shipped(), ROOT_KEY_SCHEMA) >= 1
