@@ -200,6 +200,36 @@ def context_name(entry: dict[str, object]) -> str:
     return ""
 
 
+def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
+    """Why `context` is missing: still coming, never arriving, or no run.
+
+    "Absent" collapses two states needing opposite responses. `All Checks
+    Pass` is an aggregate that reports only once its dependencies finish,
+    so it is legitimately missing for the whole run -- yet the same
+    sentence covers the #1582 case, where every job concluded and the
+    aggregate never appeared. One says wait, the other says investigate,
+    and the reassuring reading is the one a reader defaults to (#1827).
+
+    The three are separable from the rollup already fetched, so this costs
+    no extra API call. Measured on #1547: 20 unconcluded entries alongside
+    a passing `CI Ran At Head`, reported as though nothing had run.
+    """
+    if not rollup:
+        return f"no check reported at the head at all, so '{context}' cannot appear"
+    pending = [context_name(entry) for entry in rollup if not is_concluded(entry)]
+    if pending:
+        shown = ", ".join(sorted(name for name in pending if name)[:3])
+        return (
+            f"'{context}' has not reported YET: {len(pending)} check(s) at the "
+            f"head are still running ({shown}...). This is CI in flight, not a "
+            "missing run -- re-check rather than investigate"
+        )
+    return (
+        f"'{context}' is absent although every check at the head has "
+        "concluded, so it is not going to appear"
+    )
+
+
 def is_concluded(entry: dict[str, object]) -> bool:
     """Whether a check has finished.
 
@@ -470,7 +500,10 @@ def check(pr: str) -> tuple[list[str], list[str]]:
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
-        reasons.append(f"required context absent at the head: {missing}")
+        reasons.append(
+            f"required context absent at the head: {missing}; "
+            + absent_context_reason(REQUIRED_CONTEXT, rollup)
+        )
     else:
         for entry in rollup:
             if context_name(entry) != REQUIRED_CONTEXT:

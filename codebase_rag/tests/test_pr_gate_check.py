@@ -32,6 +32,7 @@ from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
     BLOCKED_VALIDATION_MARKERS,
+    absent_context_reason,
     context_name,
     is_concluded,
     is_real_review,
@@ -754,3 +755,145 @@ class TestEveryCheckReturnPathIsATuple:
         self._gh_is_broken(monkeypatch)
 
         assert check_pr_gated.main(["check_pr_gated.py", "9999"]) == 1
+
+
+# Captured from #1547 at 41ad9750 on 2026-09-10, the run that motivated
+# #1827: `CI Ran At Head` had passed and twenty jobs were mid-flight, and
+# the tool reported the same sentence it prints when nothing ran at all.
+REAL_ROLLUP_MID_RUN = [
+    {"__typename": "CheckRun", "name": "CI Ran At Head", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Analyze (python)", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": ""},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": ""},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.13)",
+        "conclusion": "",
+    },
+]
+
+# The #1582 shape: everything concluded, the aggregate never appeared.
+REAL_ROLLUP_ALL_CONCLUDED = [
+    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
+    {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
+]
+
+
+class TestAbsentContextReason:
+    """ "Absent" hides three states, two of which need opposite action.
+
+    `All Checks Pass` is an aggregate that reports only once its
+    dependencies finish, so it is legitimately missing for a whole run.
+    The same sentence also covers #1582, where every job concluded and it
+    never arrived. One means wait; the other means investigate.
+    """
+
+    def test_mid_run_says_the_checks_are_still_coming(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "has not reported YET" in reason
+        assert "3 check(s)" in reason
+
+    def test_mid_run_names_the_checks_still_running(self) -> None:
+        """A count alone leaves the reader to go and look anyway."""
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "Lint & Format" in reason
+
+    def test_mid_run_does_not_name_a_finished_check_as_pending(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "CI Ran At Head" not in reason
+
+    def test_all_concluded_says_it_is_never_arriving(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+    def test_an_empty_rollup_says_nothing_ran(self) -> None:
+        reason = absent_context_reason("All Checks Pass", [])
+
+        assert "no check reported at the head at all" in reason
+
+    def test_the_three_states_are_mutually_distinguishable(self) -> None:
+        """The whole point is that a reader can tell them apart.
+
+        Asserting each in isolation would pass if two returned the same
+        sentence, which is precisely the defect being fixed.
+        """
+        said = {
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN),
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED),
+            absent_context_reason("All Checks Pass", []),
+        }
+
+        assert len(said) == 3
+
+    def test_a_queued_check_counts_as_pending(self) -> None:
+        """A queued check reports `conclusion: ""`, an empty STRING.
+
+        Read as concluded, a fully-queued run reports as "not going to
+        appear" -- the alarming wording, for the most ordinary state.
+        """
+        queued = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "has not reported YET" in absent_context_reason("X", queued)
+
+
+class TestCheckDistinguishesPendingFromNeverRan:
+    """`check` must consult the helper, not merely be able to.
+
+    The class above stays green when the call site is deleted. This one
+    stubs the I/O seam and asserts on `check`'s own return, so removing
+    the call reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, rollup: list[dict[str, object]]) -> None:
+        view = {
+            "headRefOid": "e" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": rollup,
+            "comments": [],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_says_in_flight_for_a_mid_run_pr(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert any("has not reported YET" in r for r in reasons)
+
+    def test_check_does_not_say_in_flight_once_everything_concluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_ALL_CONCLUDED)
+
+        reasons, _ = check_pr_gated.check("1582")
+
+        assert not any("has not reported YET" in r for r in reasons)
+        assert any("not going to appear" in r for r in reasons)
+
+    def test_a_mid_run_pr_is_still_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wording only. A PR mid-run is not verifiably gated, and the
+        tool is right to refuse it -- the defect was that it could not say
+        why, not that it refused.
+        """
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert reasons
