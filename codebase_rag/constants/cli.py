@@ -599,6 +599,18 @@ SIGNATURE_UNKNOWN = "No function or method named {qn} in the graph"
 SIGNATURE_NO_GRAMMAR = "No grammar for {path}; the signature cannot be rewritten"
 SIGNATURE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
 SIGNATURE_DUPLICATE_PARAM = "Parameter {name} is listed twice"
+SIGNATURE_POSITIONAL_ONLY_MOVED = (
+    "The definition marks its leading parameters positional-only with `/`, "
+    "and this rewrite moves a parameter across that boundary. Rebuilding it "
+    "would change which arguments callers may pass by name. Rewrite the "
+    "parameters before `/` in place, or remove the marker first."
+)
+SIGNATURE_DUPLICATE_SOURCE = (
+    "Parameters {names} all map to {source}, which holds one value per "
+    "call site: mapping it to several would leave every caller short of "
+    "arguments. Map each new parameter to its own source, or give the "
+    "extras a literal default."
+)
 SIGNATURE_UNKNOWN_SOURCE = (
     "No old parameter {source!r}; the old parameters are: {names}"
 )
