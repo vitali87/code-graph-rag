@@ -173,10 +173,7 @@ class MemgraphIngestor:
             # workers; the pooled driver behind them is owned here and
             # would otherwise leak its connection pool for the life of
             # the process.
-            driver = self._driver
-            if driver is not None:
-                cast("Neo4jDriver", driver).close()
-                self._driver = None
+            self.close_driver()
 
     async def __aenter__(self) -> MemgraphIngestor:
         return self.__enter__()
@@ -251,6 +248,19 @@ class MemgraphIngestor:
             conn = mgclient.connect(host=self._host, port=self._port)
         conn.autocommit = True
         return conn
+
+    def close_driver(self) -> None:
+        """Release the Neo4j connection pool, if one was ever built.
+
+        Sessions handed to flush workers are closed by those workers; the
+        pooled driver behind them is owned by this object and would
+        otherwise outlive it. A Memgraph run never builds one, so this is
+        a no-op there.
+        """
+        driver = self._driver
+        if driver is not None:
+            cast("Neo4jDriver", driver).close()
+            self._driver = None
 
     def _neo4j_driver(self) -> Neo4jDriver:
         """The process-wide Neo4j driver, created on first use.

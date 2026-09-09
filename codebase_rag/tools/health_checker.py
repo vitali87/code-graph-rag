@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
@@ -9,22 +11,43 @@ from loguru import logger
 from .. import constants as cs
 from .. import graph_audit
 from ..config import settings
+from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, ResultRow
 
 
-def _backend_connection() -> ConnectionProtocol:
+@contextmanager
+def _backend_connection() -> Iterator[ConnectionProtocol]:
     """Open a connection to whichever graph engine is configured.
 
     Health output must describe the backend actually in use, so this
     reuses the ingestor's own connection factory rather than reaching for
     `mgclient` directly -- otherwise `cgr health` would report on a
     Memgraph server that a Neo4j install never talks to.
+
+    A context manager because the ingestor OWNS the Neo4j connection
+    pool: returning a bare connection would close the one session and
+    leak a whole driver per health check.
     """
-    return MemgraphIngestor(
+    ingestor = MemgraphIngestor(
         host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
-    )._create_connection()
+    )
+    conn = ingestor._create_connection()
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        finally:
+            ingestor.close_driver()
+
+
+def _backend_endpoint() -> str:
+    """The address health output should name, for the configured engine."""
+    if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        return settings.NEO4J_URI
+    return f"{settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
 
 
 class HealthChecker:
@@ -83,18 +106,16 @@ class HealthChecker:
         conn = None
         cursor = None
         try:
-            conn = _backend_connection()
-
-            cursor = conn.cursor()
-            cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
-            list(cursor.fetchall())
+            with _backend_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
+                list(cursor.fetchall())
 
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_MEMGRAPH_SUCCESSFUL,
                 passed=True,
                 message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
-                    host=settings.MEMGRAPH_HOST,
-                    port=settings.MEMGRAPH_PORT,
+                    endpoint=_backend_endpoint(),
                 ),
             )
 
@@ -204,20 +225,37 @@ class HealthChecker:
         Returns no results when Memgraph is unreachable: connectivity is
         already reported by check_memgraph_connection.
         """
+        # Enter the context here, not inside the audit's try: an
+        # unreachable server must yield no results (connectivity is
+        # already reported by check_memgraph_connection), not an
+        # "audit queries failed" result.
+        connection = _backend_connection()
         try:
-            conn = _backend_connection()
+            conn = connection.__enter__()
         except Exception:
             return []
-        cursor = conn.cursor()
 
-        def fetch_all(query: str) -> list[ResultRow]:
-            cursor.execute(query)
-            # mgclient.Column is not subscriptable; the name is an attribute.
-            columns = [column.name for column in cursor.description or []]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
+        # `with`, not a manually closed ExitStack: the connection AND the
+        # driver behind it are released by leaving the block, so a later
+        # edit cannot drop the release by changing one call.
         try:
-            violations = graph_audit.collect_live_violations(fetch_all)
+            try:
+                cursor = conn.cursor()
+
+                def fetch_all(query: str) -> list[ResultRow]:
+                    cursor.execute(query)
+                    # mgclient.Column is not subscriptable; the name is
+                    # an attribute.
+                    columns = [column.name for column in cursor.description or []]
+                    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+                try:
+                    violations = graph_audit.collect_live_violations(fetch_all)
+                finally:
+                    cursor.close()
+            finally:
+                # Releases the connection AND the driver behind it.
+                connection.__exit__(None, None, None)
         except Exception as e:
             return [
                 HealthCheckResult(
@@ -227,9 +265,6 @@ class HealthChecker:
                     error=str(e),
                 )
             ]
-        finally:
-            cursor.close()
-            conn.close()
         if not violations:
             return [
                 HealthCheckResult(

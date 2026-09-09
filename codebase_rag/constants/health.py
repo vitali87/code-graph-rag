@@ -15,7 +15,7 @@ HEALTH_CHECK_DOCKER_EXIT_CODE = "Non-zero exit code"
 
 HEALTH_CHECK_MEMGRAPH_SUCCESSFUL = "Memgraph connection successful"
 HEALTH_CHECK_MEMGRAPH_FAILED = "Memgraph connection failed"
-HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {host}:{port}"
+HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {endpoint}"
 HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
 HEALTH_CHECK_MEMGRAPH_ERROR = "Memgraph error: {error}"
