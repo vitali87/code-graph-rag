@@ -221,3 +221,86 @@ class TestTheCounterRunsForEveryProvider:
             "an unreadable config left the counter at 0 rather than falling "
             "back to the estimate, which needs no config at all"
         )
+
+
+class TestEveryPartTypeIsCounted:
+    """The axis the first version of this file left unvaried.
+
+    Every test above builds `ModelRequest(parts=[UserPromptPart(...)])` -- the
+    one shape the estimator handled correctly -- so all six passed while tool
+    calls counted as zero. A suite that only ever exercises the working shape
+    cannot see the defect, however many assertions it makes (greptile-local,
+    #1500).
+    """
+
+    def test_a_tool_call_is_not_free(self) -> None:
+        """`ToolCallPart` carries its payload in `args`, not `content`.
+
+        It is the only part type with no `content` field, so a loop reading
+        `content` alone scored it 0. Tool arguments carry whole file bodies
+        on this codebase, so this is the bulk of a long session's context,
+        not an edge case.
+        """
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+        from codebase_rag.utils.token_utils import (
+            count_tokens,
+            estimate_message_tokens,
+        )
+
+        body = "x = 1\n" * 5000
+        part = ToolCallPart(
+            tool_name="create_new_file",
+            args={"file_path": "big.py", "content": body},
+        )
+        counted = estimate_message_tokens([ModelResponse(parts=[part])])
+
+        assert counted > count_tokens(body) * 0.5, (
+            f"a tool call carrying {len(body)} characters of file content was "
+            f"counted as {counted} tokens, so a history of file writes reads "
+            "as an almost empty context and never triggers compaction"
+        )
+
+    def test_no_part_type_counts_as_zero(self) -> None:
+        """A sweep, so the next part type added cannot silently score zero.
+
+        Written as an enumeration rather than one assertion per type: the
+        failure mode is a NEW shape whose payload field nobody thought about,
+        and a test naming today's types would not catch it either -- but it
+        will catch a change to any of them, and it names the field each one
+        was counted through.
+        """
+        from pydantic_ai.messages import (
+            ModelRequest,
+            ModelResponse,
+            RetryPromptPart,
+            SystemPromptPart,
+            TextPart,
+            ToolCallPart,
+            ToolReturnPart,
+            UserPromptPart,
+        )
+
+        from codebase_rag.utils.token_utils import estimate_message_tokens
+
+        filler = "token " * 300
+        cases = {
+            "UserPromptPart": ModelRequest(parts=[UserPromptPart(content=filler)]),
+            "SystemPromptPart": ModelRequest(parts=[SystemPromptPart(content=filler)]),
+            "TextPart": ModelResponse(parts=[TextPart(content=filler)]),
+            "ToolCallPart": ModelResponse(
+                parts=[ToolCallPart(tool_name="t", args={"a": filler})]
+            ),
+            "ToolReturnPart": ModelRequest(
+                parts=[ToolReturnPart(tool_name="t", content=filler, tool_call_id="c1")]
+            ),
+            "RetryPromptPart": ModelRequest(
+                parts=[RetryPromptPart(content=filler, tool_call_id="c2")]
+            ),
+        }
+
+        zero = {name: estimate_message_tokens([m]) for name, m in cases.items()}
+        assert all(count > 0 for count in zero.values()), (
+            f"some part types contribute nothing to the context estimate: "
+            f"{ {n: c for n, c in zero.items() if c == 0} }"
+        )
