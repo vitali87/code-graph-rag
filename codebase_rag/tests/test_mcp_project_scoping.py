@@ -2528,9 +2528,7 @@ async def test_a_read_refuses_while_this_process_knows_the_graph_is_partial() ->
     handler = _registry_with_incomplete_flag(in_process=True, persisted=False)
     ran = []
 
-    result = await handler._graph_query(
-        cs.MCPToolName.DEFINITION, ALPHA, lambda name: ran.append(name)
-    )
+    result = await handler._graph_query(cs.MCPToolName.DEFINITION, ALPHA, ran.append)
 
     assert ran == [], "the query ran against a graph known to be incomplete"
     assert cs.DICT_KEY_ERROR in result
@@ -2543,9 +2541,7 @@ async def test_a_read_refuses_on_a_marker_left_by_an_EARLIER_process() -> None:
     handler = _registry_with_incomplete_flag(in_process=False, persisted=True)
     ran = []
 
-    result = await handler._graph_query(
-        cs.MCPToolName.CALLERS, ALPHA, lambda name: ran.append(name)
-    )
+    result = await handler._graph_query(cs.MCPToolName.CALLERS, ALPHA, ran.append)
 
     assert ran == []
     assert cs.DICT_KEY_ERROR in result
@@ -2934,9 +2930,7 @@ async def test_graph_query_refuses_only_the_DAMAGED_project() -> None:
     handler._persisted_incomplete = MagicMock(return_value=False)
 
     ran: list[str] = []
-    damaged = await handler._graph_query(
-        cs.MCPToolName.DEFINITION, ALPHA, lambda n: ran.append(n)
-    )
+    damaged = await handler._graph_query(cs.MCPToolName.DEFINITION, ALPHA, ran.append)
     healthy = await handler._graph_query(
         cs.MCPToolName.DEFINITION, BETA, lambda n: ran.append(n) or {"ok": True}
     )
@@ -2997,3 +2991,263 @@ def test_every_guard_sits_inside_its_lock() -> None:
         "these handlers decide before pinning the graph: "
         + ", ".join(sorted(offenders))
     )
+
+
+# A successful clear for ONE project must not speak for another, and a
+# project-scoped latch must not block an unrelated project's recovery
+# (Greptile, PR #1547).
+def _registry_for_marker_clear(cleared: bool):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persist_incomplete = MagicMock(return_value=cleared)
+    # Healthy on disk: the in-process flag is the only thing in play.
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_clearing_one_project_keeps_anothers_warning() -> None:
+    """ALPHA is partial in-process only; clearing healthy BETA must not heal it.
+
+    The damaging failure could not write ALPHA's durable marker, so the
+    in-process flag is the ONLY record that ALPHA is partial. A blanket
+    reset on BETA's success discards it and lets reads onto ALPHA's
+    partial graph.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+
+    assert handler._require_marker_cleared(BETA) is None
+
+    assert handler._graph_incomplete is True, "BETA's clear healed ALPHA's flag"
+    assert handler._incomplete_project == ALPHA
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+
+
+def test_clearing_a_project_still_heals_its_own_warning() -> None:
+    """The control: a clear for the project the flag is ABOUT must heal it.
+
+    Without this, scoping the reset could be implemented as "never reset",
+    which passes the test above and breaks recovery entirely.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+
+    assert handler._require_marker_cleared(ALPHA) is None
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_clearing_a_project_still_heals_unattributed_damage() -> None:
+    """An unattributed flag is owned by nobody, so any clear may settle it.
+
+    This is the pre-existing behaviour for the common single-project case,
+    where the flag is set with no name and cleared by the run that earned it.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+
+    assert handler._require_marker_cleared(ALPHA) is None
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+
+
+def test_a_failed_clear_from_clean_attributes_the_flag_to_itself() -> None:
+    """A stuck marker on an otherwise clean registry is this project's to own.
+
+    Nothing else has claimed the flag, so the refusal and the
+    `_flag_from_failed_clear` recovery are both about the project whose
+    marker is actually stuck.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+
+    assert handler._require_marker_cleared(BETA) is not None
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == BETA
+    assert handler._flag_from_failed_clear == BETA
+
+
+def test_a_failed_clear_does_not_steal_an_earlier_owners_flag() -> None:
+    """A flag already up records damage this run did not cause.
+
+    Claiming it would let BETA's recoverable marker lift the refusal ALPHA
+    earned: `_hydrate_reingest_updater` heals a flag whose
+    `_flag_from_failed_clear` names the project being re-ingested, so
+    attributing ALPHA's flag to BETA hands BETA the licence to clear it.
+    `_abandon_before_writing` already takes exactly this care.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._flag_from_failed_clear = None
+
+    assert handler._require_marker_cleared(BETA) is not None
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA, "BETA stole ALPHA's attribution"
+    assert handler._flag_from_failed_clear is None, "BETA gained a licence to heal"
+
+
+def _registry_for_hydration(incomplete_project: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = True
+    handler._incomplete_project = incomplete_project
+    handler._flag_from_failed_clear = None
+    # Healthy on disk for whichever project is asked: the in-process latch
+    # is the only thing that could refuse.
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_one_projects_damage_does_not_block_anothers_reingest() -> None:
+    """ALPHA's latch must not stop BETA re-ingesting its own healthy graph.
+
+    Refusing here is not a safe default: a scoped re-ingest is how a
+    project recovers, so blocking BETA on ALPHA's damage removes BETA's
+    only route back to a complete graph.
+    """
+    handler = _registry_for_hydration(ALPHA)
+
+    with pytest.raises(ValueError) as damaged:
+        handler._hydrate_reingest_updater(ALPHA)
+    assert ALPHA in str(damaged.value)
+
+    # BETA must get past the incomplete-graph guard. It stops at the next
+    # one only because this fake has no parsers to build an updater with;
+    # what matters is WHICH refusal it earns.
+    try:
+        handler._hydrate_reingest_updater(BETA)
+    except ValueError as exc:
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+            "healthy BETA was refused for ALPHA's damage"
+        )
+    except Exception:
+        pass
+
+
+def test_unattributed_damage_still_blocks_every_reingest() -> None:
+    """The control: a wipe-shaped failure names no project and blocks all."""
+    handler = _registry_for_hydration(None)
+
+    for project in (ALPHA, BETA):
+        with pytest.raises(ValueError) as refused:
+            handler._hydrate_reingest_updater(project)
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project) == str(
+            refused.value
+        )
+
+
+def test_the_cached_path_also_scopes_the_latch() -> None:
+    """`_updater_for_reingest` carries its own copy of the same guard."""
+    handler = _registry_for_hydration(ALPHA)
+
+    with pytest.raises(ValueError) as damaged:
+        handler._updater_for_reingest(ALPHA)
+    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(damaged.value)
+
+    try:
+        handler._updater_for_reingest(BETA)
+    except ValueError as exc:
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+            "healthy BETA was refused for ALPHA's damage"
+        )
+    except Exception:
+        pass
+
+
+# The attribution field holds ONE project, so it can only ever narrow to a
+# name when nothing broader already owns the flag (Greptile, PR #1547).
+def _registry_for_invalidation(flagged: bool, owner: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler._graph_incomplete = flagged
+    handler._incomplete_project = owner
+    handler._flag_from_failed_clear = None
+    return handler
+
+
+def test_a_named_failure_does_not_narrow_a_wipes_unattributed_flag() -> None:
+    """A wipe spans every project; naming one would declare the rest healthy.
+
+    This is what the reingest and read guards now key off, so overwriting
+    the `None` lets a scoped reingest run over the half-wiped graph the
+    wipe left behind.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=None)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, "a wipe's flag was narrowed"
+
+
+def test_a_second_damaged_project_widens_to_unattributed() -> None:
+    """Two damaged projects cannot both be named in a one-project field.
+
+    Keeping ALPHA would declare BETA healthy and replacing it would declare
+    ALPHA healthy, so the only safe answer is that neither is.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=ALPHA)
+
+    handler._invalidate_graph_for(BETA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None
+
+
+def test_a_first_failure_still_attributes_to_its_project() -> None:
+    """The control: with no flag up, the damage IS this project's.
+
+    Without this, the widening rule could be implemented as "never
+    attribute", which passes both tests above and makes every failure block
+    every project -- the bug the scoping was added to fix.
+    """
+    handler = _registry_for_invalidation(flagged=False, owner=None)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA
+
+
+def test_re_flagging_the_same_project_keeps_its_name() -> None:
+    """The second control: repeated damage to ONE project must not widen.
+
+    A project that fails twice is still the only damaged project, and
+    widening would block every other project for no reason.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=ALPHA)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA
