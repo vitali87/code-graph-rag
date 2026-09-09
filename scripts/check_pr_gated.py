@@ -95,9 +95,14 @@ TRUSTED_REVIEWERS = frozenset(
 # (#1824). These substrings are how that note has actually been worded on
 # this repo, in the reviewers' own text:
 #
-#   "imports could not start because prompt_toolkit was absent"
 #   "the test suite remains blocked in this environment"
-#   "failed during import with ModuleNotFoundError"
+#   "failed during import with ModuleNotFoundError: No module named ..."
+#
+# Every marker must name the REVIEWER'S OWN environment. Bare phrases like
+# "could not start" or "modulenotfounderror" also match a finding
+# DESCRIBING a bug ("the server could not start; it raises KeyError"),
+# which flags an executed review as unexecuted -- the opposite of the
+# intent, and worse than saying nothing.
 #
 # Unlike REVIEW_VERDICT_MARKERS this IS a blocklist, and it fails in the
 # permissive direction on purpose. A missed variant reports the review as
@@ -106,12 +111,8 @@ TRUSTED_REVIEWERS = frozenset(
 # common: a YAML-only PR has no Python surface to exercise, so this can
 # never be a merge blocker. It is surfaced as a caveat, not a reason.
 BLOCKED_VALIDATION_MARKERS = (
-    "could not start",
-    "could not run",
-    "remains blocked in this environment",
     "blocked in this environment",
-    "failed during import",
-    "modulenotfounderror",
+    "failed during import with modulenotfounderror",
     "dependency installation is blocked",
     "validation blocked",
     "could not be behaviorally disproved",
@@ -129,6 +130,34 @@ def validation_was_blocked(body: str) -> bool:
     """
     lowered = body.strip().lower()
     return any(marker in lowered for marker in BLOCKED_VALIDATION_MARKERS)
+
+
+def review_execution_caveats(real_reviews: list[tuple[str, str]]) -> list[str]:
+    """Caveats about reviews that say their own checks could not execute.
+
+    Separate from `check` so the WIRING is testable, not only the
+    detector. A test that exercises `validation_was_blocked` alone stays
+    green when the caveat is never consulted, which is coverage that
+    cannot fail for its stated reason.
+    """
+    if not real_reviews:
+        return []
+    blocked_by = sorted(
+        {author for body, author in real_reviews if validation_was_blocked(body)}
+    )
+    if not blocked_by:
+        return []
+    if all(validation_was_blocked(body) for body, _ in real_reviews):
+        return [
+            f"every review artifact present says its own checks could not "
+            f"execute ({', '.join(blocked_by)}); its findings may be right, "
+            "but they rest on reasoning the reviewer could not confirm -- "
+            "verify them yourself rather than reading the score as checked"
+        ]
+    return [
+        f"a review by {', '.join(blocked_by)} says its own checks could "
+        "not execute; treat its findings as reasoning-only"
+    ]
 
 
 def _gh_stdout_or_empty(*args: str) -> str:
@@ -469,23 +498,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
         )
     else:
-        blocked_by = sorted(
-            {author for body, author in real_reviews if validation_was_blocked(body)}
-        )
-        if blocked_by and len(blocked_by) == len(
-            {author for _, author in real_reviews}
-        ):
-            caveats.append(
-                f"every review artifact present says its own checks could not "
-                f"execute ({', '.join(blocked_by)}); its findings may be right, "
-                "but they rest on reasoning the reviewer could not confirm -- "
-                "verify them yourself rather than reading the score as checked"
-            )
-        elif blocked_by:
-            caveats.append(
-                f"a review by {', '.join(blocked_by)} says its own checks could "
-                "not execute; treat its findings as reasoning-only"
-            )
+        caveats.extend(review_execution_caveats(real_reviews))
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:

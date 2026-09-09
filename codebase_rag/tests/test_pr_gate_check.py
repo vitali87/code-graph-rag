@@ -24,15 +24,20 @@ The four that bite, and which a naive implementation gets wrong:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
+    BLOCKED_VALIDATION_MARKERS,
     context_name,
     is_concluded,
     is_real_review,
     missing_aggregated_jobs,
     required_contexts_present,
+    review_execution_caveats,
     unit_test_contexts,
     unresolved_in_page,
     validation_was_blocked,
@@ -478,6 +483,202 @@ class TestValidationWasBlocked:
         legitimate anyway when a PR has no Python surface to exercise.
         """
         assert (
-            is_real_review(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps")
-            is True
+            is_real_review(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps") is True
         )
+
+
+class TestReviewExecutionCaveats:
+    """The WIRING, not the detector.
+
+    Without these, deleting the caveat call from `check` leaves every
+    other test in this file green -- coverage that cannot fail for the
+    reason it exists (found by mutating the call site, not by reading).
+    """
+
+    def test_a_blocked_review_produces_a_caveat(self) -> None:
+        caveats = review_execution_caveats(
+            [(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps")]
+        )
+
+        assert len(caveats) == 1
+        assert "could not execute" in caveats[0]
+
+    def test_a_review_that_ran_produces_none(self) -> None:
+        assert (
+            review_execution_caveats(
+                [(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai")]
+            )
+            == []
+        )
+
+    def test_no_reviews_produces_none(self) -> None:
+        assert review_execution_caveats([]) == []
+
+    def test_all_reviewers_blocked_says_so(self) -> None:
+        """Distinct wording from the partial case: if EVERY review was
+        blocked there is no executed second opinion to fall back on."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR, "coderabbitai"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("every review artifact present")
+
+    def test_one_blocked_among_several_is_the_partial_case(self) -> None:
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+
+class TestCheckSurfacesTheCaveat:
+    """`check` itself must consult the caveat, not merely be able to.
+
+    The class above tests the helper in isolation and stays green when
+    the call site is deleted -- the exact "two guards, remove either and
+    it is still green" shape. This one stubs the only I/O seam
+    (`_gh_stdout_or_empty`) and asserts on `check`'s own return value, so
+    removing the call from `check` reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, review_body: str) -> None:
+        view = {
+            "headRefOid": "d" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [{"body": review_body, "author": {"login": "greptile-apps"}}],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_reports_the_caveat_for_a_blocked_review(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert any("could not execute" in c for c in caveats)
+
+    def test_check_reports_no_caveat_for_a_review_that_ran(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_EMPTY_BUT_COMPLETED_REVIEW)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert caveats == []
+
+    def test_a_blocked_review_is_never_a_blocking_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The core contract: unverified is not wrong, so it must not
+        appear among the reasons that refuse a PR."""
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert not any("could not execute" in r for r in reasons)
+
+
+# A review that RAN and is describing a bug it found. Every phrase here
+# is about the reviewed code's behaviour, not the reviewer's environment.
+REAL_REVIEW_DESCRIBING_A_CRASH = (
+    "## Confidence score: 4/5\n\n"
+    "Last reviewed commit: abc1234\n\n"
+    "- The server could not start when the config key is absent; it raises "
+    "KeyError before binding.\n"
+    "- The worker could not run the queued task, and users get a raw "
+    "ModuleNotFoundError traceback.\n"
+    "- The plugin failed during import when the entry point is misspelled.\n"
+)
+
+
+class TestMarkersDoNotMatchBugDescriptions:
+    """The false-positive direction, which nothing else covers.
+
+    Bare substrings like "could not start" match a finding DESCRIBING a
+    crash just as readily as a reviewer describing its own broken
+    environment. Flagging an executed review as unexecuted is worse than
+    staying silent, so every marker must name the reviewer's environment.
+    """
+
+    def test_a_review_describing_a_crash_is_not_flagged(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_DESCRIBING_A_CRASH) is False
+
+    def test_the_two_real_blocked_reviews_are_still_caught(self) -> None:
+        """The narrowing must not cost detection on the motivating cases."""
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is True
+
+    def test_no_marker_subsumes_another(self) -> None:
+        """A marker that is a superstring of another can never be the one
+        that matches, so it is dead configuration that reads as coverage."""
+        dead = [
+            longer
+            for longer in BLOCKED_VALIDATION_MARKERS
+            for shorter in BLOCKED_VALIDATION_MARKERS
+            if longer != shorter and shorter in longer
+        ]
+
+        assert dead == []
+
+    def test_one_blocked_artifact_among_an_authors_own_is_partial(self) -> None:
+        """Greptile re-scores in place and posts repeatedly, so the same
+        author routinely has both a blocked and an executed artifact.
+        Counting distinct AUTHORS called that "every review blocked"."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_REVIEW_DESCRIBING_A_CRASH, "greptile-apps"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+    def test_every_marker_is_load_bearing(self) -> None:
+        """Each marker must be the SOLE reason some real phrasing is
+        caught. Without this, any one could be deleted with the suite
+        green -- the fixtures match several markers each, so they cannot
+        distinguish a marker that works from one nobody needs.
+        """
+        sole_evidence = {
+            "blocked in this environment": (
+                "The test suite remains blocked in this environment."
+            ),
+            "failed during import with modulenotfounderror": (
+                "Both commands failed during import with ModuleNotFoundError."
+            ),
+            "dependency installation is blocked": (
+                "Dependency installation is blocked; building it needs CMake."
+            ),
+            "validation blocked": "T-Rex validation blocked.",
+            "could not be behaviorally disproved": (
+                "Historic paths could not be behaviorally disproved."
+            ),
+            "without a runnable import/test environment": (
+                "No bug can be claimed without a runnable import/test environment."
+            ),
+        }
+
+        assert set(sole_evidence) == set(BLOCKED_VALIDATION_MARKERS)
+        for marker, phrasing in sole_evidence.items():
+            assert validation_was_blocked(phrasing) is True, marker
+            others = tuple(m for m in BLOCKED_VALIDATION_MARKERS if m != marker)
+            assert not any(m in phrasing.lower() for m in others), marker
