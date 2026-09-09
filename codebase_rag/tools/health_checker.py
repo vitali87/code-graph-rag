@@ -53,6 +53,10 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     connection problem. Imported lazily because `neo4j` is an optional
     extra.
     """
+    # Accumulated rather than returned as differently-shaped tuples: this
+    # is a variadic `except` argument, not a fixed-arity value, and the
+    # list makes that intent explicit (python:S8495).
+    types: list[type[BaseException]] = [mgclient.Error]
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         try:
             from neo4j.exceptions import (  # ty: ignore[unresolved-import]
@@ -60,9 +64,10 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
                 Neo4jError,
             )
         except ImportError:  # pragma: no cover - depends on extras
-            return (mgclient.Error,)
-        return (mgclient.Error, DriverError, Neo4jError)
-    return (mgclient.Error,)
+            pass
+        else:
+            types += [DriverError, Neo4jError]
+    return tuple(types)
 
 
 def _backend_engine_name() -> str:
