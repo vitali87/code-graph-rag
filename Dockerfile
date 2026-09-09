@@ -11,6 +11,21 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# uv installs its managed Python interpreter outside the project directory by
+# default ($HOME/.local/share/uv/python, i.e. /root/.local when run as root).
+# .venv only symlinks to that interpreter, so pin the install dir under /app
+# and copy it into the final stage too, or the venv's python symlink dangles
+# once /root is left behind.
+#
+# uv only populates this directory when it actually downloads a managed
+# interpreter -- if the pinned Python version ever matched this image's
+# system Python, uv would use that instead and never create the
+# directory, and the unconditional COPY below would fail the build
+# outright. only-managed rules that out: uv always uses (and downloads
+# if needed) its own interpreter, never the system one.
+ENV UV_PYTHON_INSTALL_DIR=/app/.uv-python
+ENV UV_PYTHON_PREFERENCE=only-managed
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --extra treesitter-full --no-install-project --no-binary-package pymgclient
 
@@ -27,6 +42,7 @@ RUN useradd --create-home appuser
 USER appuser
 WORKDIR /app
 
+COPY --from=builder --chown=appuser:appuser /app/.uv-python /app/.uv-python
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/codebase_rag /app/codebase_rag
 COPY --from=builder --chown=appuser:appuser /app/codec /app/codec
