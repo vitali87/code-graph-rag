@@ -2767,3 +2767,65 @@ def test_a_clean_rename_marks_NOTHING() -> None:
     handler._persist_incomplete.assert_not_called()
     assert handler._graph_incomplete is False
     assert cs.DICT_KEY_ERROR not in payload
+
+
+def test_every_graph_reader_is_guarded() -> None:
+    """A tool that reads the graph must refuse while the graph is partial.
+
+    The point is the FAILURE MODE, not today's list. An explicit inventory of
+    guarded readers fails open: seven readers went unguarded from the day the
+    refusal was written because nobody added them to it (PR #1547). Here a
+    new `MCPToolName` counts as a reader by default, so this test fails until
+    it is either routed through `_graph_query`, calls `_incomplete_refusal`
+    itself, or is named a non-reader deliberately.
+    """
+    import ast
+    import inspect
+
+    from codebase_rag.mcp import tools as mcp_tools
+
+    # AST, not a substring search. Every tool also names itself in its
+    # `_tools[...]` registration, so `"cs.MCPToolName.X" in source` is true
+    # for all of them and the check could never fail -- verified by removing
+    # a guard and watching it still pass.
+    tree = ast.parse(inspect.getsource(mcp_tools))
+    refused: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else None
+        if name != "_incomplete_refusal":
+            # `asyncio.to_thread(self._incomplete_refusal, project, TOOL)`
+            # passes it as an argument rather than calling it directly.
+            passed = any(
+                isinstance(a, ast.Attribute) and a.attr == "_incomplete_refusal"
+                for a in node.args
+            )
+            if not passed:
+                continue
+        for arg in node.args:
+            if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Attribute):
+                if arg.value.attr == "MCPToolName":
+                    refused.add(arg.attr)
+
+    unguarded = []
+    for tool in mcp_tools._GRAPH_READING_TOOLS:
+        if tool in mcp_tools._READS_THE_GRAPH:
+            continue  # guarded by the `_graph_query` dispatcher
+        if tool.name not in refused:
+            unguarded.append(tool.value)
+    assert not unguarded, (
+        f"these tools read the graph but never refuse on a partial one: "
+        f"{sorted(unguarded)}. Guard them, or add them to _NOT_GRAPH_READERS."
+    )
+
+
+def test_the_reader_inventory_covers_every_tool() -> None:
+    # Neither set may drift from the enum: a member in neither would be
+    # silently skipped by the test above.
+    from codebase_rag.mcp import tools as mcp_tools
+
+    covered = mcp_tools._GRAPH_READING_TOOLS | mcp_tools._NOT_GRAPH_READERS
+    assert covered == frozenset(cs.MCPToolName)
+    assert not (mcp_tools._GRAPH_READING_TOOLS & mcp_tools._NOT_GRAPH_READERS)
