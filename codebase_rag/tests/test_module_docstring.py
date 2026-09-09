@@ -572,3 +572,21 @@ class TestModuleDocstringPerLanguage:
         assert (
             self._extract("dart", b"/// File docs.\r\nvar x = 1;\r\n") == "File docs."
         )
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            b"/**/\npackage p;\n",
+            b"/***/\npackage p;\n",
+            b"/****/\npackage p;\n",
+            b"/* */\npackage p;\n",
+        ],
+    )
+    def test_an_empty_block_comment_is_not_documentation(self, source: bytes) -> None:
+        """An empty comment must leave the docstring unset, not set to `/`.
+
+        `_BLOCK_OPEN` takes every asterisk of `/**/`, so the closing delimiter
+        arrives at `_strip_block_close` as a bare `/` with no asterisk in front
+        of it. Left there, that slash became the file's documentation.
+        """
+        assert self._extract("java", source) is None

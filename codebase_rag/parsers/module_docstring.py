@@ -266,6 +266,10 @@ _BLOCK_OPEN = re.compile(r"^/\*+!?")
 def _strip_block_close(body: str) -> str:
     """Drop the trailing `**/` of a block comment.
 
+    Also the bare `/` that `_BLOCK_OPEN` leaves on an empty `/**/`, whose
+    asterisks it has already taken: without that, the slash survives as the
+    file's documentation.
+
     A scan rather than a regex. `\\*+/$` backtracks once per asterisk on a
     long rule with no closing slash -- `/****...` with no terminator is a
     separator inside a block comment, not a rarity -- and every regex spelling
@@ -275,10 +279,10 @@ def _strip_block_close(body: str) -> str:
     """
     if not body.endswith("/"):
         return body
-    index = end = len(body) - 1
+    index = len(body) - 1
     while index > 0 and body[index - 1] == "*":
         index -= 1
-    return body[:index] if index < end else body
+    return body[:index]
 
 
 def _strip_line(text: str, markers: tuple[str, ...]) -> str:
