@@ -2653,3 +2653,117 @@ class _GraphData:
             "results": self._results,
             "summary": "",
         }
+
+
+def test_a_failed_rollback_reingest_is_marked_DURABLY() -> None:
+    # The in-process flag dies with the process; the half-restored graph does
+    # not. Without a durable marker a fresh registry sees a project that looks
+    # whole and serves reads from it (Greptile, PR #1547).
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=True)
+
+    report = MagicMock()
+    report.graph_incomplete = True
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    # Durable, not merely in-process: this is the whole point of the finding.
+    handler._persist_incomplete.assert_called_once()
+    assert handler._persist_incomplete.call_args.args[0] == ALPHA
+    assert handler._persist_incomplete.call_args.args[1] is True
+    assert handler._persist_incomplete.call_args.kwargs["writing"] is True
+    assert handler._graph_incomplete is True
+    assert isinstance(payload, dict)
+
+
+def test_a_marker_that_cannot_be_written_is_REPORTED() -> None:
+    # Graph partial AND unrecordable: the caller must be told, because a
+    # restarted process cannot infer it.
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=False)
+
+    report = MagicMock()
+    report.graph_incomplete = True
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    assert cs.DICT_KEY_ERROR in payload
+    assert ALPHA in payload[cs.DICT_KEY_ERROR]
+
+
+def test_a_clean_rename_marks_NOTHING() -> None:
+    # The control: without it a fix that always marked would pass both above.
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=True)
+
+    report = MagicMock()
+    report.graph_incomplete = False
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    handler._persist_incomplete.assert_not_called()
+    assert handler._graph_incomplete is False
+    assert cs.DICT_KEY_ERROR not in payload

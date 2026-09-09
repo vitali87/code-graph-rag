@@ -2017,15 +2017,27 @@ class MCPToolsRegistry:
                 cs.KEY_AMBIGUOUS: sites_for(refused.ambiguous),
                 cs.KEY_UNLOCATABLE: list(refused.unlocatable),
             }
+        payload_marker_error: str | None = None
         if getattr(report, "graph_incomplete", False):
             # The rollback's re-ingest failed: the same invalidation the
             # scoped re-ingest applies, so no later call reuses a partial graph.
             self._live_updater = None
             self._graph_incomplete = True
+            # ...and DURABLY, because that flag dies with this process while
+            # the half-restored graph does not. A fresh registry would see a
+            # project that looks whole, serve reads from it and hydrate a
+            # scoped updater from the partial graph (Greptile, PR #1547).
+            # `writing=True`: the failed re-ingest had already begun mutating.
+            payload_marker_error = self._require_marker(project_name, writing=True)
         payload = dict(report._asdict())
         payload[cs.KEY_SITES] = sites_for(report.sites)
         payload[cs.KEY_AMBIGUOUS] = sites_for(report.ambiguous)
         payload["verdict"] = report.verdict._asdict() if report.verdict else None
+        if payload_marker_error is not None:
+            # The graph is partial AND the record of it could not be written.
+            # Reported, never swallowed: this needs operational recovery and
+            # a restarted process cannot infer it.
+            payload[cs.DICT_KEY_ERROR] = payload_marker_error
         return payload
 
     async def query_code_graph(
