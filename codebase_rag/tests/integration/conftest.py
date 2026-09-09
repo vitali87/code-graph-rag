@@ -83,6 +83,86 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     container.stop()
 
 
+@pytest.fixture(scope="session")
+def neo4j_container() -> Generator[dict[str, str | int], None, None]:
+    """A real Neo4j 5 server for the backend-parity tests (issue #1590).
+
+    Skipped rather than failed when the driver or Docker is unavailable:
+    `neo4j` is an optional extra, so a default install must still be able
+    to run the suite.
+    """
+    pytest.importorskip("testcontainers")
+    pytest.importorskip("neo4j")
+
+    from testcontainers.core.container import DockerContainer
+    from testcontainers.core.docker_client import DockerClient
+    from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+
+    reap_orphaned_containers(DockerClient().client)
+
+    container = DockerContainer("neo4j:5.26")
+    container.with_exposed_ports(7687)
+    container.with_kwargs(labels=cgr_container_labels())
+    # Auth off keeps the fixture in step with the unauthenticated Memgraph
+    # container above, so the parity tests differ only by engine.
+    container.with_env("NEO4J_AUTH", "none")
+    container.waiting_for(LogMessageWaitStrategy("Started."))
+    container.start()
+
+    host = container.get_container_host_ip()
+    port = int(container.get_exposed_port(7687))
+
+    # "Started." precedes Bolt actually accepting queries, so probe with a
+    # real statement rather than trusting the log line or a bare socket.
+    from neo4j import GraphDatabase
+
+    max_retries = 30
+    for attempt in range(max_retries):
+        try:
+            driver = GraphDatabase.driver(f"bolt://{host}:{port}", auth=None)
+            with driver.session() as session:
+                session.run("RETURN 1").consume()
+            driver.close()
+            break
+        except Exception as exc:
+            if attempt == max_retries - 1:
+                container.stop()
+                pytest.fail(f"Neo4j not ready after {max_retries} attempts: {exc}")
+            time.sleep(1.0)
+
+    yield {"host": host, "port": port}
+
+    container.stop()
+
+
+@pytest.fixture
+def neo4j_ingestor(
+    neo4j_container: dict[str, str | int],
+) -> Generator[MemgraphIngestor, None, None]:
+    """The ingestor pointed at Neo4j, wiped before and after each test."""
+    from codebase_rag.config import settings
+    from codebase_rag.graph_dialects import DIALECT_NEO4J, get_dialect
+
+    host = str(neo4j_container["host"])
+    port = int(neo4j_container["port"])
+
+    previous_uri = settings.NEO4J_URI
+    settings.NEO4J_URI = f"bolt://{host}:{port}"
+    ingestor = MemgraphIngestor(
+        host=host, port=port, dialect=get_dialect(DIALECT_NEO4J)
+    )
+    ingestor.__enter__()
+    try:
+        ingestor._execute_query("MATCH (n) DETACH DELETE n")
+        yield ingestor
+    finally:
+        try:
+            ingestor._execute_query("MATCH (n) DETACH DELETE n")
+        finally:
+            ingestor.__exit__(None, None, None)
+            settings.NEO4J_URI = previous_uri
+
+
 @pytest.fixture(scope="function")
 def memgraph_connection(
     memgraph_container: dict[str, str | int],
