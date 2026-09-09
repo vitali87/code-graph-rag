@@ -389,8 +389,10 @@ class TestReachabilityNeedsAQuery:
         )
         try:
             conn = driver.connect()  # lazy: must NOT raise
+            cursor = conn.cursor()  # also lazy: still no socket
+            # Only the query reaches the network, so only it belongs in
+            # the raises block (python:S5778).
             with pytest.raises(Exception, match="(?i)unavailable|connect"):
-                cursor = conn.cursor()
                 cursor.execute("RETURN 1")
         finally:
             driver.close()
