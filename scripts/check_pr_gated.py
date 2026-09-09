@@ -216,12 +216,14 @@ def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
     """
     if not rollup:
         return f"no check reported at the head at all, so '{context}' cannot appear"
-    pending = [context_name(entry) for entry in rollup if not is_concluded(entry)]
+    pending = [entry for entry in rollup if not entry_finished(entry)]
     if pending:
-        shown = ", ".join(sorted(name for name in pending if name)[:3])
+        names = sorted(name for name in map(context_name, pending) if name)
+        shown = ", ".join(names[:3]) + ("..." if len(names) > 3 else "")
+        named = f" ({shown})" if names else ""
         return (
             f"'{context}' has not reported YET: {len(pending)} check(s) at the "
-            f"head are still running ({shown}...). This is CI in flight, not a "
+            f"head are still running{named}. This is CI in flight, not a "
             "missing run -- re-check rather than investigate"
         )
     return (
@@ -239,6 +241,25 @@ def is_concluded(entry: dict[str, object]) -> bool:
     """
     conclusion = entry.get("conclusion")
     return isinstance(conclusion, str) and conclusion != ""
+
+
+def entry_finished(entry: dict[str, object]) -> bool:
+    """Whether a rollup entry has finished, whichever shape it is.
+
+    `is_concluded` reads `conclusion`, which a `StatusContext` does not
+    have -- it carries `state`. Judged by that predicate every third-party
+    status is unfinished forever, so a rollup containing one can never
+    reach the all-concluded branch and #1582 reports as "still running":
+    the reassuring reading, in the one case that needs investigating.
+
+    The older call site is guarded by a name test that only ever matches a
+    `CheckRun`, so the gap was latent until `absent_context_reason` began
+    judging EVERY entry (Greptile-local, PR for #1827).
+    """
+    if "conclusion" in entry or entry.get("__typename") == "CheckRun":
+        return is_concluded(entry)
+    state = entry.get("state")
+    return isinstance(state, str) and state not in ("", "PENDING", "EXPECTED")
 
 
 def unit_test_contexts(rollup: list[dict[str, object]]) -> list[str]:

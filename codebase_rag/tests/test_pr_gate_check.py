@@ -896,4 +896,68 @@ class TestCheckDistinguishesPendingFromNeverRan:
 
         reasons, _ = check_pr_gated.check("1547")
 
-        assert reasons
+        assert any("required context absent at the head" in r for r in reasons)
+
+
+class TestEntryFinishedHandlesBothRollupShapes:
+    """A `StatusContext` carries `state`, never `conclusion`.
+
+    Judged by `is_concluded` alone, every third-party status is unfinished
+    forever, so a rollup containing one can never reach the all-concluded
+    branch: #1582 then reports as "still running, re-check" -- the
+    reassuring reading, in the one case that needs investigating. The
+    older `is_concluded` call site filters to a name only a `CheckRun`
+    ever has, which is why the gap stayed latent.
+    """
+
+    def test_a_finished_status_context_is_finished(self) -> None:
+        assert check_pr_gated.entry_finished(REAL_STATUS_CONTEXT) is True
+
+    def test_a_pending_status_context_is_not_finished(self) -> None:
+        pending = {"__typename": "StatusContext", "context": "X", "state": "PENDING"}
+
+        assert check_pr_gated.entry_finished(pending) is False
+
+    def test_a_queued_check_run_is_not_finished(self) -> None:
+        """The empty-STRING conclusion trap, still handled."""
+        queued = {"__typename": "CheckRun", "name": "X", "conclusion": ""}
+
+        assert check_pr_gated.entry_finished(queued) is False
+
+    def test_a_finished_status_context_does_not_block_the_verdict(self) -> None:
+        """The bug this predicate exists for, at the level that matters.
+
+        With the real captured fixture in an otherwise-concluded rollup,
+        the all-concluded branch must still be reachable.
+        """
+        rollup = [*REAL_ROLLUP_ALL_CONCLUDED, REAL_STATUS_CONTEXT]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+
+class TestPendingNamesReadHonestly:
+    """The parenthetical must not claim names it does not have."""
+
+    def test_no_ellipsis_when_every_pending_check_is_named(self) -> None:
+        one = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "(Type Check)" in absent_context_reason("X", one)
+
+    def test_ellipsis_only_once_names_are_omitted(self) -> None:
+        four = [
+            {"__typename": "CheckRun", "name": f"Check {n}", "conclusion": ""}
+            for n in range(4)
+        ]
+
+        assert "..." in absent_context_reason("X", four)
+
+    def test_no_empty_parentheses_when_no_name_is_known(self) -> None:
+        nameless = [{"conclusion": ""}, {"conclusion": ""}]
+
+        reason = absent_context_reason("X", nameless)
+
+        assert "2 check(s)" in reason
+        assert "()" not in reason
