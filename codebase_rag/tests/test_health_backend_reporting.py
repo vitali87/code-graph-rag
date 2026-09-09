@@ -10,6 +10,7 @@ from __future__ import annotations
 import mgclient
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
@@ -321,3 +322,45 @@ class TestCleanupDoesNotMaskTheAuditResult:
             explode,
         )
         assert HealthChecker().check_graph_integrity() == []
+
+
+class TestReachabilityNeedsAQuery:
+    """Opening a connection does not prove a Neo4j server is reachable.
+
+    The Neo4j driver connects lazily, so `session()` succeeds against a
+    dead server and the failure only surfaces when a query runs.
+    `mgclient.connect()` fails immediately. A probe that merely opens a
+    connection therefore detects a dead Memgraph and reports a dead Neo4j
+    as healthy -- silently, and in the reassuring direction.
+    """
+
+    def test_the_health_check_issues_a_query(self) -> None:
+        # Pinned structurally: a future edit that drops the query in
+        # favour of "the connection opened, so we are fine" would pass
+        # every behavioural test using a fake connection, because a fake
+        # cannot reproduce the driver's laziness.
+        import inspect
+
+        source = inspect.getsource(HealthChecker.check_memgraph_connection)
+        assert "cursor.execute(" in source
+        assert "HEALTH_CHECK_MEMGRAPH_QUERY" in source
+
+    def test_the_probe_query_is_trivial(self) -> None:
+        # It must exercise the round trip without depending on any data.
+        assert cs.HEALTH_CHECK_MEMGRAPH_QUERY.upper().startswith("RETURN 1")
+
+    def test_opening_a_session_does_not_touch_the_network(self) -> None:
+        """The asymmetry itself, against a port with nothing listening."""
+        pytest.importorskip("neo4j")
+        from codebase_rag.services.neo4j_driver import Neo4jDriver
+
+        driver = Neo4jDriver(
+            uri="bolt://127.0.0.1:9", username=None, password=None, database="neo4j"
+        )
+        try:
+            conn = driver.connect()  # lazy: must NOT raise
+            with pytest.raises(Exception, match="(?i)unavailable|connect"):
+                cursor = conn.cursor()
+                cursor.execute("RETURN 1")
+        finally:
+            driver.close()
