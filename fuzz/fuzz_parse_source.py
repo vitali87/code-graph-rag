@@ -139,6 +139,8 @@ _UTF8_MAX_SEQUENCE_BYTES = 4
 # A definition's own name is at most a step or two above it (the JS/TS
 # field-definition wrapper is one).
 _NAME_SPAN_ANCESTOR_LIMIT = 3
+# Sigils an ingestor prepends to a synthesized name (a C# destructor).
+_SYNTHETIC_NAME_PREFIXES = "~"
 
 
 def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
@@ -163,6 +165,12 @@ def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
 
 def _name_span(node: object, name: str) -> tuple[int, int] | None:
     """Byte span the extracted `name` came from, or None."""
+    # A synthesized name need not appear in the source: C# destructor ingestion
+    # builds `~Greeter` while the source leaf is bare. Mirrors production's
+    # strip so the oracle exercises that path too.
+    name = name.lstrip(_SYNTHETIC_NAME_PREFIXES)
+    if not name:
+        return None
     encoded = name.encode(cs.ENCODING_UTF8)
     direct = node.child_by_field_name("name")  # type: ignore[attr-defined]
     if direct is not None and direct.text == encoded:
