@@ -3251,3 +3251,140 @@ def test_re_flagging_the_same_project_keeps_its_name() -> None:
 
     assert handler._graph_incomplete is True
     assert handler._incomplete_project == ALPHA
+
+
+# Three writers that were harmless while the guards read the bare flag, and
+# became correctness bugs once the guards trusted the attribution
+# (greptile-local, PR #1547).
+@pytest.mark.asyncio
+async def test_a_failed_wipe_widens_an_existing_attribution() -> None:
+    """A wipe spans every project, so it cannot leave one project's name up.
+
+    The try-block raises the flag but never touches the attribution, so a
+    prior failure's name survives and records the wipe's damage under it --
+    telling the guards every other project is healthy.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.ingestor.clean_database = MagicMock(side_effect=RuntimeError("wipe died"))
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.clear_all_embeddings"):
+        await handler.wipe_database(confirm=True)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, (
+        "the wipe's damage was recorded under one project's name"
+    )
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_successful_wipe_still_clears_everything() -> None:
+    """The control: a completed wipe leaves an empty graph, so nothing is partial."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.clear_all_embeddings"):
+        await handler.wipe_database(confirm=True)
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_a_delta_failure_does_not_overwrite_another_projects_attribution() -> None:
+    """A delta failure names its own root, which must not erase a prior owner.
+
+    Its comment already argues that leaving an earlier attribution in place
+    matters -- but it reasoned only about the healing licence, and assigned
+    the owner unconditionally. Driven through the real handler, not through
+    the helper: the helper already narrows correctly, so a test calling it
+    passes whether or not this site was ever fixed.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = MagicMock()
+    handler._live_updater.reingest = MagicMock(side_effect=RuntimeError("delta died"))
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._require_marker = MagicMock(return_value=None)
+    # ALPHA's marker-less damage is the only record that ALPHA is partial.
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.derive_project_name", return_value=BETA):
+        handler._delta_after_write([Path("/repo/f.py")])
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, (
+        "a delta failure for BETA erased ALPHA's attribution"
+    )
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+
+
+def test_widening_the_owner_drops_a_stale_healing_licence() -> None:
+    """A licence naming a project the flag is no longer about must not survive.
+
+    `recoverable_here` keys off the licence alone, so a surviving one lets
+    that project's reingest clear a flag that now covers everything. This
+    asserts the INVARIANT over the state the rollback site produces, which
+    is where the divergent inline copy lives.
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = True
+    handler._incomplete_project = BETA
+    handler._flag_from_failed_clear = BETA
+    handler._persisted_incomplete = MagicMock(return_value=False)
+
+    # The rollback site's inline narrowing, for a DIFFERENT project.
+    handler._widen_or_attribute(ALPHA)
+
+    assert handler._incomplete_project is None
+    assert handler._flag_from_failed_clear is None, (
+        "a licence for BETA survived a widening BETA no longer owns"
+    )
+    # The consequence the licence would have had.
+    with pytest.raises(ValueError):
+        handler._hydrate_reingest_updater(BETA)

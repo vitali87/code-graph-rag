@@ -929,6 +929,11 @@ class MCPToolsRegistry:
                 self._incomplete_project = None
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
+            # A wipe spans every project and writes no marker, so its damage
+            # cannot be recorded under one project's name: an attribution
+            # left over from an earlier failure would tell the guards every
+            # OTHER project is healthy (greptile-local, PR #1547).
+            self._incomplete_project = None
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
@@ -1288,6 +1293,27 @@ class MCPToolsRegistry:
         if (refusal := self._require_writing(project_name)) is not None:
             raise RuntimeError(refusal)
         delete_project_embeddings(project_name, node_ids)
+
+    def _widen_or_attribute(self, project_name: str) -> None:
+        """The attribution half of `_invalidate_graph_for`, without the licence.
+
+        A caller that strands no marker must not clear a licence some other
+        path earned, so this leaves `_flag_from_failed_clear` in place --
+        EXCEPT when the owner widens to unattributed. `recoverable_here`
+        keys off the licence alone, so a licence naming a project the flag
+        is no longer about would let that project's reingest clear a flag
+        now covering every project (greptile-local, PR #1547).
+        """
+        already_flagged = self._graph_incomplete
+        owner = self._incomplete_project
+        self._graph_incomplete = True
+        if not already_flagged:
+            self._incomplete_project = project_name
+        elif owner is not None and owner != project_name:
+            self._incomplete_project = None
+            # The flag is no longer about any one project, so a licence
+            # naming one cannot authorise clearing it.
+            self._flag_from_failed_clear = None
 
     def _invalidate_graph_for(self, project_name: str) -> None:
         """Raise the incomplete flag and attribute it to `project_name`.
@@ -1906,10 +1932,12 @@ class MCPToolsRegistry:
             # or write reuses a partial graph (issue #1525).
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
             self._live_updater = None
-            self._graph_incomplete = True
-            # This handler writes into THIS server's repository, so the damage
-            # is confined to the project that root derives to.
-            self._incomplete_project = derive_project_name(root)
+            # This handler writes into THIS server's repository, so the
+            # damage is confined to the project that root derives to -- but
+            # only NARROWS to it when nothing broader already holds the flag,
+            # or a delta failure here would erase another project's
+            # marker-less damage (greptile-local, PR #1547).
+            self._invalidate_graph_for(derive_project_name(root))
             # Not a stranded marker: this flag must not be healed by one.
             # This path invalidates precisely BECAUSE a subtree may have been
             # deleted and not rebuilt, so the flag records real damage that no
@@ -2248,17 +2276,11 @@ class MCPToolsRegistry:
             # scoped re-ingest applies, so no later call reuses a partial graph.
             self._live_updater = None
             # Narrows to this project only when nothing broader holds the
-            # flag; see `_invalidate_graph_for`. Unlike that helper's callers
-            # this path leaves `_flag_from_failed_clear` alone, as it always
-            # has: a rollback's failed re-ingest is not a stranded marker,
-            # and any attribution present belongs to whatever set it.
-            already_flagged = self._graph_incomplete
-            owner = self._incomplete_project
-            self._graph_incomplete = True
-            if not already_flagged:
-                self._incomplete_project = project_name
-            elif owner is not None and owner != project_name:
-                self._incomplete_project = None
+            # flag. Unlike `_invalidate_graph_for` this path does not clear
+            # the healing licence outright, as it never has: a rollback's
+            # failed re-ingest strands no marker, so an existing licence
+            # belongs to whatever set it and is still valid for that project.
+            self._widen_or_attribute(project_name)
             # ...and DURABLY, because that flag dies with this process while
             # the half-restored graph does not. A fresh registry would see a
             # project that looks whole, serve reads from it and hydrate a
