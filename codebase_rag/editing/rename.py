@@ -41,7 +41,7 @@ from ..parser_loader import load_parsers
 from ..types_defs import PropertyDict, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
-from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove
+from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
 from .transaction import (
     EditTransaction,
@@ -860,12 +860,20 @@ class Renamer:
         )
 
     def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:
-        """Whether an import statement binds the old name again.
+        """Whether the statement IMPORTS the old name again.
 
-        Matched as a WORD on the statement's line rather than at a column:
-        the recorded column is the statement's start, and the name can sit
-        anywhere after it (`from m import a, helper as h`). A bare substring
-        would accept `helperX`, so the boundaries are load-bearing.
+        Read per ENTRY rather than as a token anywhere on the line. The
+        recorded column is the statement's start, so a column read is
+        useless here; but a line-level search accepts a binding that is not
+        the target at all -- in
+        `from util import assist, helper_of_other as helper` the symbol is
+        still imported as `assist`, and the `helper` on that line is an
+        unrelated alias (Greptile, PR #1547).
+
+        What each entry IMPORTS is the question, and what it binds locally is
+        not: `helper as h` does import the old name. `_imported` is the same
+        parse `ImportRewriter` uses to decide what to rewrite, so the check
+        and the rewrite agree by construction.
         """
         try:
             lines = (
@@ -875,7 +883,18 @@ class Renamer:
             return False
         if not 0 < site.line <= len(lines):
             return False
-        return bool(re.search(rf"\b{re.escape(old_name)}\b", lines[site.line - 1]))
+        line = lines[site.line - 1]
+        _head, _sep, tail = line.partition("import ")
+        # No `import` on the line: fall back to a word match rather than
+        # claiming restored, since a language whose form this cannot parse
+        # must not be read as evidence either way.
+        if not _sep:
+            return bool(re.search(rf"\b{re.escape(old_name)}\b", line))
+        return any(
+            _imported(entry.strip()) == old_name
+            for entry in tail.split(",")
+            if entry.strip()
+        )
 
     def _file_has_old_name_at(
         self, relative: str, sites: list[RenameSite], old_bytes: bytes

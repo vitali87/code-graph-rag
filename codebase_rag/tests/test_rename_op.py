@@ -1283,3 +1283,74 @@ def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> No
     ]
 
     assert run._old_name_is_back(report) is False
+
+
+def test_an_alias_matching_the_old_name_is_not_the_restored_import(
+    tmp_path: Path,
+) -> None:
+    """Matching a token on the line accepts a binding that is not the target.
+
+    `from util import assist, helper_of_other as helper` still imports the
+    NEW name for the symbol being rolled back; the `helper` on that line is
+    an unrelated alias. A line-level search reads it as restored and reports
+    the whole rename reversed (Greptile, PR #1547).
+
+    The check now asks what each entry IMPORTS, ignoring what it binds
+    locally, which is the question the rewriter itself answers.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text(
+        "from util import assist, helper_of_other as helper\n"
+        "\n\ndef run():\n    return helper(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    # Only the definition and the import: every non-import site must be
+    # RESTORED, or the check short-circuits before the import logic runs and
+    # the test passes for the wrong reason (measured -- an earlier version of
+    # this fixture put the call site on a line that did not carry the name).
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is False
+
+
+def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
+    tmp_path: Path,
+) -> None:
+    """The control: `helper as h` DOES import the old name.
+
+    What the entry binds locally is irrelevant; what it imports is the
+    question. Without this, "require a bare old name" passes the test above
+    and breaks every aliased import.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text(
+        "from util import helper as h\n\n\ndef run():\n    return h(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is True
