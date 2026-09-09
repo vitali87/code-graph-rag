@@ -2943,3 +2943,63 @@ async def test_graph_query_refuses_only_the_DAMAGED_project() -> None:
     assert cs.DICT_KEY_ERROR in damaged
     assert healthy == {"ok": True}, "a healthy project was refused"
     assert ran == [BETA]
+
+
+def test_every_guard_sits_inside_its_lock() -> None:
+    """A guard evaluated before the lock decides on a graph it has not pinned.
+
+    An index or update can acquire the lock, mark the graph incomplete and
+    release it between the check and the read, after which the approved read
+    runs against the partial graph. I fixed four readers this way and missed
+    three, and reported the race closed (Greptile, PR #1547) -- so this is
+    structural rather than a test per reader.
+    """
+    import ast
+    import inspect
+
+    from codebase_rag.mcp import tools as mcp_tools
+
+    tree = ast.parse(inspect.getsource(mcp_tools))
+    offenders: list[str] = []
+
+    def guard_lines(node: ast.AST) -> list[int]:
+        found = []
+        for n in ast.walk(node):
+            if isinstance(n, ast.Call):
+                names = [
+                    a.attr for a in [n.func, *n.args] if isinstance(a, ast.Attribute)
+                ]
+                if {"_incomplete_refusal", "_refusal_under_lock"} & set(names):
+                    found.append(n.lineno)
+        return found
+
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        guards = guard_lines(fn)
+        if not guards:
+            continue
+        # `_refusal_under_lock` takes the lock itself, so a caller using it
+        # needs no `async with` of its own.
+        if any(
+            isinstance(n, ast.Attribute) and n.attr == "_refusal_under_lock"
+            for n in ast.walk(fn)
+        ):
+            continue
+        locks = [
+            n.lineno
+            for n in ast.walk(fn)
+            if isinstance(n, ast.AsyncWith) and "_ingestor_lock" in ast.dump(n)
+        ]
+        if not locks:
+            continue  # no lock in this handler at all
+        # Every guard must come after the lock statement that encloses it.
+        if min(guards) < min(locks):
+            offenders.append(
+                f"{fn.name} (guard line {min(guards)} < lock {min(locks)})"
+            )
+
+    assert not offenders, (
+        "these handlers decide before pinning the graph: "
+        + ", ".join(sorted(offenders))
+    )

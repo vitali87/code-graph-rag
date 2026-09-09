@@ -757,14 +757,17 @@ class MCPToolsRegistry:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
         project = derive_project_name(Path(self.project_root))
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
-        ):
-            return {cs.DICT_KEY_ERROR: refusal}
         # The edge scan and coverage read must see one consistent graph:
         # index/update handlers hold this lock while they delete and
-        # rebuild, and an interleaved read would mix generations.
+        # rebuild, and an interleaved read would mix generations. The guard
+        # is inside the lock for the same reason: a rebuild landing between
+        # the check and the read leaves an approved read running against the
+        # partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal, project, cs.MCPToolName.FLOW_VERDICT
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
             result = await asyncio.to_thread(
                 flow_reachability_verdict,
                 self.ingestor.fetch_all,
@@ -782,11 +785,11 @@ class MCPToolsRegistry:
         from codebase_rag.crash_correlation import explain_traceback
 
         project = derive_project_name(Path(self.project_root))
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
-        ):
-            return {cs.DICT_KEY_ERROR: refusal}
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
             report = await asyncio.to_thread(
                 explain_traceback,
                 self.ingestor.fetch_all,
@@ -812,11 +815,11 @@ class MCPToolsRegistry:
         from codebase_rag.crash_correlation import rank_root_causes
 
         project = derive_project_name(Path(self.project_root))
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
-        ):
-            return {cs.DICT_KEY_ERROR: refusal}
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
+            ):
+                return {cs.DICT_KEY_ERROR: refusal}
             report = await asyncio.to_thread(
                 rank_root_causes,
                 self.ingestor.fetch_all,
