@@ -3388,3 +3388,138 @@ def test_widening_the_owner_drops_a_stale_healing_licence() -> None:
     # The consequence the licence would have had.
     with pytest.raises(ValueError):
         handler._hydrate_reingest_updater(BETA)
+
+
+# `ask_agent` hands the agent the RAW tool objects, so its graph reads bypass
+# every guarded wrapper: the refusal has to be made before the run starts
+# (Greptile, PR #1547).
+def _registry_for_ask_agent(incomplete: bool):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = incomplete
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    response = MagicMock()
+    response.output = "an authoritative-looking answer"
+    handler.rag_agent = MagicMock()
+    handler.rag_agent.run = AsyncMock(return_value=response)
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_refuses_on_an_incomplete_graph() -> None:
+    """The agent must not answer from a graph known to be partial.
+
+    Its answer is composed across several raw tool calls and comes back
+    with no indication that the definitions behind it were missing, which
+    is worse than a single unguarded read: the caller cannot tell.
+    """
+    handler = _registry_for_ask_agent(incomplete=True)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert cs.DICT_KEY_ERROR in result
+    handler.rag_agent.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_runs_when_the_graph_is_whole() -> None:
+    """The control: the guard must not refuse a healthy graph.
+
+    Without this, "refuse always" passes the test above and removes the
+    tool entirely.
+    """
+    handler = _registry_for_ask_agent(incomplete=False)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert result == {"output": "an authoritative-looking answer"}
+    handler.rag_agent.run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_refuses_on_a_durable_marker_alone() -> None:
+    """A marker from an EARLIER process must refuse too.
+
+    `_graph_incomplete` is False in a fresh registry after a crash, so the
+    in-process latch alone would let the agent answer from the partial
+    graph that crash left behind.
+    """
+    from unittest.mock import MagicMock
+
+    handler = _registry_for_ask_agent(incomplete=False)
+    handler._persisted_incomplete = MagicMock(return_value=True)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert cs.DICT_KEY_ERROR in result
+    handler.rag_agent.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_cached_path_honours_a_marker_from_an_earlier_process() -> None:
+    """`_graph_incomplete` is False in a fresh registry after a crash.
+
+    `_hydrate_reingest_updater` checks the durable marker for exactly this
+    reason (#1679); the cached path did not, so the rename and delta
+    callers would build an updater over the graph a previous process left
+    partial (Greptile, PR #1547).
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    # Nothing in THIS process failed: the crash was in an earlier one.
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=True)
+
+    with pytest.raises(ValueError) as refused:
+        handler._updater_for_reingest(ALPHA)
+
+    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_the_cached_path_still_builds_on_a_clean_durable_state() -> None:
+    """The control: a healthy project must still get its updater.
+
+    Without this, "always consult the marker and always refuse" passes the
+    test above while breaking every legitimate re-ingest.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._ignore_sets = MagicMock(return_value=(None, None))
+    handler.parsers = {}
+    handler.queries = {}
+
+    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        built = handler._updater_for_reingest(ALPHA)
+
+    assert built is updater_cls.return_value
+    handler._persisted_incomplete.assert_called_once_with(ALPHA)

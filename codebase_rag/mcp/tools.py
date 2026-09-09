@@ -1597,10 +1597,16 @@ class MCPToolsRegistry:
             # Same scoping as `_hydrate_reingest_updater` above, for the same
             # reason: another project's damage must not block this one's
             # recovery (Greptile, PR #1547).
-            if self._graph_incomplete and self._incomplete_project in (
+            latched_here = self._graph_incomplete and self._incomplete_project in (
                 None,
                 project_name,
-            ):
+            )
+            # ...and the durable marker for the same reason that path checks
+            # it: `_graph_incomplete` is False in a fresh registry after a
+            # crash, because nothing in THIS process failed, so the local
+            # latch alone would build an updater over the graph an earlier
+            # process left partial (#1679, Greptile PR #1547).
+            if latched_here or self._persisted_incomplete(project_name):
                 raise ValueError(
                     cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
                 )
@@ -1954,6 +1960,21 @@ class MCPToolsRegistry:
             # individually would still let a rebuild land between them, which
             # is the case this is meant to exclude.
             async with self._ingestor_lock:
+                # Guarded HERE, not in a wrapper, precisely because the agent
+                # holds the raw tools: there is no wrapper of ours between it
+                # and the graph. And inside the lock like every other reader,
+                # so a rebuild cannot land between the check and the run.
+                # An agent answer is composed across several tool calls and
+                # comes back with no sign that the definitions behind it were
+                # missing, so a partial graph is worse here than for a single
+                # read -- the caller cannot tell (Greptile, PR #1547).
+                project = derive_project_name(Path(self.project_root))
+                if (
+                    refusal := self._incomplete_refusal(
+                        project, cs.MCPToolName.ASK_AGENT
+                    )
+                ) is not None:
+                    return {cs.DICT_KEY_ERROR: refusal}
                 response = await self.rag_agent.run(question, message_history=[])
             return {"output": str(response.output)}
         except Exception as e:

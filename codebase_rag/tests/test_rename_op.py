@@ -64,6 +64,12 @@ class RecordedGraph:
         qn = str(p.get(cs.KEY_QN, ""))
         if query == cq.CYPHER_PROJECT_ROOT_PATH:
             return [{cs.KEY_ROOT_PATH: self.root_path}] if self.root_path else []
+        if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
+            # No marker: this fixture's graph was indexed by a run that
+            # finished. An unanswered query would raise, and
+            # `_persisted_incomplete` reads a raise as "cannot tell, refuse",
+            # so leaving it out makes every reingest here refuse.
+            return []
         if query == cq.CYPHER_GRAPH_DEFINITION:
             return [self._node_row(qn)] if qn in self.nodes else []
         if query in (
