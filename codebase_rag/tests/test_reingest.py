@@ -696,6 +696,49 @@ def test_reingest_reports_a_present_deleted_path_as_reparsed_not_removed(
     assert "pkg/util.py" in report.reparsed
 
 
+def test_reingest_does_not_report_an_unreadable_file_as_reparsed(
+    fixture_root: Path,
+) -> None:
+    # A path classified from disk can stop being readable before the read: an
+    # editor replaces it with a directory, or deletes it, between the split
+    # and the re-parse. `_reingest_delete` has already removed its entities by
+    # then, so reporting it as re-parsed tells the caller the graph holds
+    # definitions it no longer has.
+    #
+    # Pre-existing on the `paths` route (a path named in `paths` is classified
+    # by is_file() the same way); the #1799 fix gives it a second entrance via
+    # `deleted`, so it is closed here for both.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.helper") in store.nodes
+
+    real_split = GraphUpdater._reingest_split
+
+    def racing_split(
+        self: GraphUpdater, paths: object, deleted: object
+    ) -> tuple[dict[str, Path], dict[str, Path], set[str]]:
+        present, gone, skipped = real_split(self, paths, deleted)
+        for key, path in present.items():
+            if key == "pkg/util.py":
+                # Win the race: a directory now sits where the file was.
+                path.unlink()
+                path.mkdir()
+        return present, gone, skipped
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(GraphUpdater, "_reingest_split", racing_split)
+    try:
+        report = updater.reingest([], deleted=["pkg/util.py"])
+    finally:
+        monkey.undo()
+
+    assert "pkg/util.py" not in report.reparsed, (
+        "the file never re-entered the graph, so reporting it as re-parsed "
+        "tells the caller the graph holds definitions it does not"
+    )
+
+
 def test_reingest_deletes_a_file_a_directory_has_replaced(fixture_root: Path) -> None:
     # The watcher's DELETE event can arrive after a directory of the same
     # name has been created; the deletion is an instruction, so the stale

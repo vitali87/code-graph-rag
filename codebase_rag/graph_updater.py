@@ -4702,7 +4702,16 @@ class GraphUpdater:
             # recorded in the cache as already indexed.
             try:
                 parsed[key] = path.read_bytes()
-            except OSError:
+            except OSError as exc:
+                # The file was classified from disk and has since become
+                # unreadable -- deleted, or replaced by a directory, between
+                # the split and this read. Its old entities are already gone
+                # (`_reingest_delete` ran above), so staying silent here
+                # reports the path as re-parsed while the graph no longer
+                # holds it. `parsed` is what the report is built from, so
+                # omitting the key is what makes the answer honest; the log
+                # says why the caller sees one fewer file than it named.
+                logger.warning(ls.REINGEST_UNREADABLE, path=str(path), error=str(exc))
                 continue
             # The delombok overlay stands in for the checked-in bytes exactly
             # as the batch path does (issue #1140).
@@ -4929,7 +4938,11 @@ class GraphUpdater:
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
-            reparsed=tuple(sorted(present)),
+            # `parsed`, not `present`: a file that became unreadable between
+            # the split and the read never re-entered the graph, and its old
+            # entities were already deleted. Reporting it as re-parsed would
+            # tell the caller the graph holds something it does not.
+            reparsed=tuple(sorted(present.keys() & parsed.keys())),
             # Survivors of a stem in flux re-parsed with the dependents and
             # are reported with them: the caller sees every file this call
             # touched.
