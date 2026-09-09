@@ -10,7 +10,7 @@ from ...language_spec import LANGUAGE_FQN_SPECS
 from .. import export_detection
 from ..cpp import utils as cpp_utils
 from ..rs import utils as rs_utils
-from ..utils import safe_decode_text
+from ..utils import safe_decode_text, warn_if_name_truncated
 
 if TYPE_CHECKING:
     from ...language_spec import LanguageSpec
@@ -25,6 +25,7 @@ def resolve_class_identity(
 ) -> tuple[str, str, bool] | None:
     if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
         class_name = fqn_config.get_name(class_node)
+        warn_if_name_truncated(class_node, class_name, file_path)
         if class_name:
             parts = [class_name]
             current = class_node.parent
