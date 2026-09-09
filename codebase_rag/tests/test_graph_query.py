@@ -106,6 +106,13 @@ PROJECT_ROOT = "/elsewhere/foreign-checkout"
 def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
     """The fixture graph answering exactly the fixed queries the tools issue."""
     p = params or {}
+    # The incomplete-run marker is keyed on the project NAME, not the
+    # qualified-name prefix every other query scopes by, so it is answered
+    # before the prefix assertion below. A complete graph: the tools refuse
+    # outright when this says otherwise, and the tests here are about what
+    # they return when they do run.
+    if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
+        return []
     prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
     assert prefix == f"{P}.", "every query is project-scoped"
     qn = str(p.get(cs.KEY_QN, ""))

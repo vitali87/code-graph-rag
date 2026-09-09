@@ -1229,6 +1229,23 @@ class MCPToolsRegistry:
             return None
         return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
+    def _marker_says_incomplete(self, project_name: str) -> bool:
+        """`_persisted_incomplete`, but an unreachable store is not a verdict.
+
+        That method returns True when it cannot tell, so a reingest refuses
+        rather than starting on an unknown graph. A READ wants the opposite
+        default: a store that is down should surface as the store being down,
+        not as a spurious incomplete-graph refusal that hides it.
+        """
+        try:
+            self.ingestor.fetch_all(
+                cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception:  # noqa: BLE001 -- let the read itself report this
+            return False
+        return self._persisted_incomplete(project_name)
+
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
 
@@ -1797,9 +1814,18 @@ class MCPToolsRegistry:
                 # already refuses on this flag; the read paths dispatched
                 # regardless, so a caller could not tell a restored graph
                 # from a complete one.
+                # The durable marker is consulted only when this process has
+                # no opinion. `_persisted_incomplete` answers True when the
+                # store cannot be reached -- right for a reingest, which must
+                # not start on an unknown state, but wrong here: it would
+                # report every store outage as "graph incomplete" and bury
+                # the real error the caller needs to see. A read that cannot
+                # reach the store fails below as itself.
                 if tool in _READS_THE_GRAPH and (
                     self._graph_incomplete
-                    or await asyncio.to_thread(self._persisted_incomplete, project_name)
+                    or await asyncio.to_thread(
+                        self._marker_says_incomplete, project_name
+                    )
                 ):
                     return {
                         cs.DICT_KEY_ERROR: cs.MCP_QUERY_AFTER_FAILED_RUN.format(
