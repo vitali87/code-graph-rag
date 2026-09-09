@@ -152,6 +152,30 @@ class MCPToolsRegistry:
     # real value; this only makes omission harmless.
     _incomplete_project: str | None = None
 
+    # True when the unattributed flag covers MORE THAN ONE project: two named
+    # projects were damaged and the pair cannot fit in one field, or a wipe
+    # died part way and spans them all. As opposed to a flag that was simply
+    # never attributed to anyone.
+    #
+    # Both states leave `_incomplete_project` None and they mean opposite
+    # things to a clear. An unattributed flag in the single-project case is
+    # settled by the run that earned it; a flag spanning projects is the only
+    # record that another project is partial, and no single project's
+    # successful clear may retire it (4-55, PR #1547).
+    #
+    # Named for the PROPERTY rather than for the widening that first exposed
+    # it: three different sites reach this state, and a name describing one of
+    # them invites the next reader to think the other two are a different
+    # thing (they are not -- a failed wipe was missed exactly that way while
+    # this field was called `_incomplete_widened`).
+    #
+    # A separate field rather than a sentinel in `_incomplete_project`: every
+    # reader that treats None as "blocks every project" is already correct for
+    # both states, so redefining the field would have meant auditing all of
+    # them to preserve behaviour they already have. This adds a fact instead
+    # of changing the meaning of an existing one.
+    _incomplete_spans_projects: bool = False
+
     def __init__(
         self,
         project_root: str,
@@ -187,6 +211,7 @@ class MCPToolsRegistry:
         # project unreadable, and a healthy project's success must not clear
         # the warning the damaged one earned (Greptile, PR #1547).
         self._incomplete_project: str | None = None
+        self._incomplete_spans_projects: bool = False
 
         self.parsers, self.queries = load_parsers()
 
@@ -927,6 +952,10 @@ class MCPToolsRegistry:
                 await asyncio.to_thread(clear_all_embeddings)
                 self._graph_incomplete = False
                 self._incomplete_project = None
+                # A completed wipe spans every project, so it settles damage
+                # to all of them -- the one clear that is entitled to retire a
+                # widened flag.
+                self._incomplete_spans_projects = False
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             # A wipe spans every project and writes no marker, so its damage
@@ -934,6 +963,10 @@ class MCPToolsRegistry:
             # left over from an earlier failure would tell the guards every
             # OTHER project is healthy (greptile-local, PR #1547).
             self._incomplete_project = None
+            # A half-done wipe is the broadest damage there is: it spans every
+            # project and writes no marker, so the in-process flag is the only
+            # record and NO single project's successful clear may retire it.
+            self._incomplete_spans_projects = True
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
@@ -1259,6 +1292,9 @@ class MCPToolsRegistry:
                 self._flag_from_failed_clear = project_name
             elif incomplete_project_before not in (None, project_name):
                 self._incomplete_project = None
+                # Widened for the same reason as `_invalidate_graph_for`, so
+                # it must be recorded the same way (two damaged projects).
+                self._incomplete_spans_projects = True
         else:
             self._graph_incomplete = flag_before
             self._incomplete_project = incomplete_project_before
@@ -1321,8 +1357,13 @@ class MCPToolsRegistry:
         self._graph_incomplete = True
         if not already_flagged:
             self._incomplete_project = project_name
+            self._incomplete_spans_projects = False
         elif owner is not None and owner != project_name:
             self._incomplete_project = None
+            # Two named projects are damaged. The None written here is the
+            # BROAD state, and this records which of the two Nones it is so
+            # a later clear cannot mistake it for the never-attributed one.
+            self._incomplete_spans_projects = True
         # An existing flag attributed to this same project, or already
         # unattributed, keeps the attribution it has.
         self._flag_from_failed_clear = None
@@ -1355,12 +1396,29 @@ class MCPToolsRegistry:
         # attributed to a different one is the sole record that the other
         # project is partial whenever the damaging failure could not write
         # its durable marker, so healing it here would open reads onto a
-        # partial graph (Greptile, PR #1547). An unattributed flag is owned
-        # by nobody -- the single-project case, where the run that earned it
-        # is the run clearing it -- so this clear does settle that.
-        if self._incomplete_project in (None, project_name):
+        # partial graph (Greptile, PR #1547).
+        #
+        # An UNATTRIBUTED flag is not this project's to settle either, and
+        # reading it as "owned by nobody, so mine to clear" was a bug (4-55,
+        # #1547 review). `_invalidate_graph_for` widens the attribution to
+        # None precisely BECAUSE a second project is damaged, and a wipe is
+        # unattributed because it spans every project. None is therefore the
+        # BROADEST state, not the narrowest: it says the damage could not be
+        # pinned to one project, so evidence about one project cannot retire
+        # it. The two functions read the same field oppositely, and the
+        # `_abandon_before_writing` docstring records that letting them
+        # diverge is what produced the previous bug here.
+        #
+        # Only the run that owns the flag settles it -- plus the genuinely
+        # unattributed single-project case, where the run that earned the flag
+        # is the run clearing it and no other project was ever implicated.
+        # `_incomplete_spans_projects` is what separates that from the broad None.
+        if self._incomplete_project == project_name or (
+            self._incomplete_project is None and not self._incomplete_spans_projects
+        ):
             self._graph_incomplete = False
             self._incomplete_project = None
+            self._incomplete_spans_projects = False
             self._flag_from_failed_clear = None
         elif self._flag_from_failed_clear == project_name:
             # This project's stranded marker is gone, so the reason recorded
@@ -1533,7 +1591,15 @@ class MCPToolsRegistry:
         # the graph is partial.
         recoverable_here = self._flag_from_failed_clear == project_name
         persisted_incomplete = self._persisted_incomplete(project_name)
-        if not persisted_incomplete and recoverable_here:
+        # A widened flag records damage to a SECOND project, and this recovery
+        # is evidence about one. Same reasoning as the clear in
+        # `_require_marker_cleared`, and the same trap: without this the
+        # recovered marker retires a refusal another project earned.
+        if (
+            not persisted_incomplete
+            and recoverable_here
+            and not self._incomplete_spans_projects
+        ):
             self._graph_incomplete = False
             self._incomplete_project = None
             self._flag_from_failed_clear = None

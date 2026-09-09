@@ -3067,6 +3067,140 @@ def test_clearing_a_project_still_heals_unattributed_damage() -> None:
     assert handler._incomplete_project is None
 
 
+def test_two_damaged_projects_block_either_projects_clear() -> None:
+    """The two-named-projects route into the broad unattributed state.
+
+    `_invalidate_graph_for` widens the attribution to None when a SECOND,
+    different project is damaged. That None means "more than one project is
+    partial", and neither project's successful clear may retire it.
+
+    Distinct from the failed-wipe route asserted in
+    `test_a_successful_clear_cannot_settle_a_widened_flag`: both end at
+    `_incomplete_project is None`, and mutating this widening was invisible
+    to every other test in the suite. Both directions are checked below,
+    because a guard reading the flag for ALPHA and not for BETA would be
+    satisfied by testing only one.
+    """
+    for clearing in (ALPHA, BETA):
+        handler = _registry_for_marker_clear(cleared=True)
+        handler._invalidate_graph_for(ALPHA)
+        handler._invalidate_graph_for(BETA)
+
+        assert handler._incomplete_project is None, (
+            "fixture guard: two different damaged projects must widen the "
+            "attribution to None, or the clear takes the attributed branch "
+            "and this proves nothing"
+        )
+
+        assert handler._require_marker_cleared(clearing) is None
+
+        assert handler._graph_incomplete is True, (
+            f"{clearing} cleared its own marker and settled a flag that "
+            "records damage to two projects"
+        )
+
+
+def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
+    """The over-correction control for the whole spans-projects mechanism.
+
+    A wipe rebuilds every project, so it is the one operation entitled to
+    retire a flag covering all of them. Without this, "never settle a
+    spanning flag" latches the refusal for the life of the process and the
+    only escape hatch is gone -- the mirror-image bug, and the one that
+    survives a suite full of tests asserting refusals.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._invalidate_graph_for(ALPHA)
+    handler._invalidate_graph_for(BETA)
+    assert handler._incomplete_spans_projects is True, (
+        "fixture guard: the flag must span projects before the wipe"
+    )
+
+    # Drive the REAL wipe. Resetting the three fields by hand here would
+    # assert nothing about the production reset: the test would pass with the
+    # reset line deleted, which is how this started out (measured).
+    import asyncio
+
+    asyncio.run(handler.wipe_database(confirm=True))
+
+    assert handler._graph_incomplete is False, (
+        "a completed wipe left the graph flagged incomplete, so no project "
+        "can ever read again"
+    )
+    assert handler._incomplete_spans_projects is False, (
+        "the wipe cleared the flag but left the spans-projects record set, so "
+        "the next damaged project inherits a refusal no damage explains"
+    )
+
+
+def test_a_recovered_marker_cannot_retire_a_flag_spanning_projects() -> None:
+    """`_hydrate_reingest_updater`, the third reader, on the same trap.
+
+    A stranded marker that this project later recovers lifts the flag its
+    own failed clear raised. But if a SECOND project was damaged in between,
+    the flag no longer describes only this project's stranded marker, and
+    recovering the marker is evidence about one project rather than two.
+
+    The route into the state matters: the flag must be spanning at the
+    moment of recovery, with `_flag_from_failed_clear` still naming this
+    project, or the guard is never reached and the test is vacuous.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+
+    # ALPHA's clear fails, stranding a marker it is licensed to recover.
+    assert handler._require_marker_cleared(ALPHA) is not None
+    assert handler._flag_from_failed_clear == ALPHA, (
+        "fixture guard: ALPHA must hold the recovery licence, or the guard "
+        "under test is never reached"
+    )
+
+    # BETA is damaged too, so the flag now spans both.
+    handler._invalidate_graph_for(BETA)
+    handler._flag_from_failed_clear = ALPHA
+    assert handler._incomplete_spans_projects is True, (
+        "fixture guard: the flag must span projects before the recovery"
+    )
+
+    handler._live_updater = None
+    # The refusal is the wanted outcome, and it is stronger evidence than a
+    # state read: it can only be raised from the state under test, so it
+    # cannot be produced by a fixture that never reached the guard.
+    with pytest.raises(ValueError, match="incomplete"):
+        handler._hydrate_reingest_updater(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "ALPHA recovering its own stranded marker retired a flag that also "
+        "records BETA's damage"
+    )
+
+
+def test_a_rollback_widening_is_recorded_like_any_other() -> None:
+    """`_abandon_before_writing` widens to None too, and must say so.
+
+    It reaches the broad unattributed state by the same reasoning as
+    `_invalidate_graph_for` -- an owner already in place naming a different
+    project cannot be replaced, so the pair becomes None. Recording it there
+    and not here would leave one route into the state indistinguishable from
+    a never-attributed flag, which is the original bug with a different
+    entry point.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._flag_from_failed_clear = None
+
+    handler._abandon_before_writing(BETA)
+
+    assert handler._incomplete_project is None, (
+        "fixture guard: an abandon naming a different project, over a flag "
+        "already owned by ALPHA, must widen the attribution to None"
+    )
+    assert handler._incomplete_spans_projects is True, (
+        "the rollback widened the attribution without recording that it "
+        "spans projects, so the next successful clear settles it"
+    )
+
+
 def test_a_failed_clear_from_clean_attributes_the_flag_to_itself() -> None:
     """A stuck marker on an otherwise clean registry is this project's to own.
 
