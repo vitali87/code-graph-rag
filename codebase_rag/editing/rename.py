@@ -821,15 +821,22 @@ class Renamer:
         rollback that may not have happened.
         """
         by_path: dict[str, list[RenameSite]] = {}
+        import_sites: list[RenameSite] = []
         for site in report.sites:
-            # The same exclusion `_stage_sites` applies, and for the same
-            # reason: an `import` site's column is the start of the import
-            # STATEMENT and an `unlocatable` one has no usable position, so
-            # neither was ever rewritten and neither can show a reversal.
-            # Requiring them to carry the old name made a genuine full undo
-            # look partial, because their slice never matches whatever the
-            # tree says (measured: an import site sliced `from p`).
-            if site.kind in ("unlocatable", "import"):
+            # An `unlocatable` site has no usable position at all, so nothing
+            # can be read at it either way.
+            if site.kind == "unlocatable":
+                continue
+            # An `import` site IS rewritten -- by `ImportRewriter.retarget`,
+            # not by the identifier patcher -- so it must show a reversal like
+            # any other. `_stage_sites` skips it only because its recorded
+            # column points at the import STATEMENT, which the patcher cannot
+            # use; reading a slice there yields `from p` and never the name.
+            # Excluding it outright let a tree whose import still carried the
+            # NEW name report as fully reversed (Greptile, PR #1547), so it is
+            # checked by LINE CONTENT instead of by column.
+            if site.kind == "import":
+                import_sites.append(site)
                 continue
             by_path.setdefault(site.path, []).append(site)
         if not by_path:
@@ -842,10 +849,33 @@ class Renamer:
         # site is a PARTIAL undo, and reporting `applied=False` for it tells
         # the caller every file is back when other definitions and references
         # are still renamed (Greptile, PR #1547).
-        return all(
+        if not all(
             self._file_has_old_name_at(relative, sites, old_bytes)
             for relative, sites in by_path.items()
+        ):
+            return False
+        return all(
+            self._import_names_the_old_name(site, report.old_name)
+            for site in import_sites
         )
+
+    def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:
+        """Whether an import statement binds the old name again.
+
+        Matched as a WORD on the statement's line rather than at a column:
+        the recorded column is the statement's start, and the name can sit
+        anywhere after it (`from m import a, helper as h`). A bare substring
+        would accept `helperX`, so the boundaries are load-bearing.
+        """
+        try:
+            lines = (
+                (self.repo_root / site.path).read_text(encoding="utf-8").splitlines()
+            )
+        except OSError:
+            return False
+        if not 0 < site.line <= len(lines):
+            return False
+        return bool(re.search(rf"\b{re.escape(old_name)}\b", lines[site.line - 1]))
 
     def _file_has_old_name_at(
         self, relative: str, sites: list[RenameSite], old_bytes: bytes

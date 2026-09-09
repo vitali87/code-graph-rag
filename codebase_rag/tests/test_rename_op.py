@@ -1186,3 +1186,100 @@ def test_a_rename_of_only_import_sites_is_not_a_full_undo(tmp_path: Path) -> Non
     report.sites = [RenameSite("import", "app.py", 1, 0, "app", None)]
 
     assert run._old_name_is_back(report) is False
+
+
+def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
+    tmp_path: Path,
+) -> None:
+    """Import sites ARE rewritten -- by the import rewriter, not the patcher.
+
+    `_stage_sites` skips them only because their recorded column points at
+    the import STATEMENT, so the identifier patcher cannot use it;
+    `ImportRewriter.retarget` rewrites them straight after. Excluding them
+    from the restoration check therefore let a tree with every definition and
+    reference restored, but an import still on the NEW name, report as fully
+    reversed (Greptile, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    # Definition and call restored; the import was not.
+    (tmp_path / "app.py").write_text(
+        "from util import assist\n\n\ndef run():\n    return helper(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("call", "app.py", 5, 11, "app.run", None),
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is False
+
+
+def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
+    """The control: with the import back on the old name too, it IS undone.
+
+    Without this, "always fail when an import site exists" passes the test
+    above and no rename with an importer could ever report as reversed.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text(
+        "from util import helper\n\n\ndef run():\n    return helper(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("call", "app.py", 5, 11, "app.run", None),
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is True
+
+
+def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> None:
+    """`helperX` contains `helper` and is a different symbol.
+
+    The import check matches on the statement's LINE rather than at a column,
+    so a bare substring search would accept any name the old one is a prefix
+    of and report the rename reversed while the import still binds the new
+    name. The word boundaries are what stop it (#1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    # The import binds `helperX` -- NOT the restored `helper`.
+    (tmp_path / "app.py").write_text(
+        "from util import helperX\n\n\ndef run():\n    return helper(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("call", "app.py", 5, 11, "app.run", None),
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is False
