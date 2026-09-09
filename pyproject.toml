@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.893"
+version = "0.0.897"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -108,6 +108,12 @@ test = [
 
 cpp = [
     "libclang>=18.1.1",
+]
+
+# Neo4j is an optional backend (issue #1590): Memgraph remains the default,
+# so a default install must not pay for a driver it will never load.
+neo4j = [
+    "neo4j>=5.28.1",
 ]
 
 treesitter-full = [

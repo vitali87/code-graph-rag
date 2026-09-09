@@ -245,6 +245,22 @@ def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> 
         ("bash script.sh", True),
         ("python3 script.py", True),
         ("make install", True),
+        # Decided ONLY by the subshell guard, which runs before pipeline
+        # patterns. Nothing else in `_classify` refuses these, so they go red
+        # if that call is dropped or moved after segmentation.
+        ("echo $(whoami)", True),
+        ("echo `id`", True),
+        # Decided ONLY by `_is_dangerous_rm_path`. `rm -rf /` above is caught
+        # by `_check_segment_patterns` regardless, so it cannot stand in for
+        # these: each needs the guard the harness calls explicitly, because
+        # `_validate_segment` does not call it.
+        ("rm /tmp/zzz", True),
+        ("rm *", True),
+        ("rm -r -- -x/../../outside/victim", True),
+        # No executable segment: production returns COMMAND_EMPTY, so these
+        # are refused, not allowed. Only the no-groups branch decides them.
+        ("", True),
+        ("| && ;", True),
     ):
         dangerous, _reason = shell_harness._classify(command)
         assert dangerous is expected, f"{command!r} classified {dangerous}"
@@ -494,107 +510,59 @@ def test_incremental_seeds_decode_to_the_plan_they_are_named_for() -> None:
     )
 
 
-def test_resurrected_filter_keeps_unrelated_rows_sharing_the_stem(
-    tmp_path: Path,
-) -> None:
-    """The #1799 suppression must not swallow a bare name it merely matches.
+def test_incremental_harness_runs_every_seed() -> None:
+    """Every seed drives the harness without tripping its oracle.
 
-    A suppression that is too wide is worse than none: it makes the fuzzer
-    report clean on a real regression. Only the phantom `ExternalModule` the
-    dropped module was downgraded to carries a bare stem, so every other row
-    named `util` -- a Function, a Module, an edge endpoint -- has to survive.
+    Includes `repro_1799_deleted_but_present.bin`, whose defect is fixed and
+    whose suppression is gone: if #1799 regresses, the differential oracle
+    sees the delta and this test fails. That is the point of removing the
+    filter rather than keeping it as documentation.
     """
     harness = import_harness_module("fuzz_incremental_update")
-
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
-    deleted = ["pkg/util.py"]
-
-    unrelated_node = ("Function", "util")
-    unrelated_edge = ("Function", "util", "CALLS", "Function", "other")
-    same_name_other_label = ("Module", "util")
-
-    missing_nodes = {unrelated_node}
-    missing_edges = {unrelated_edge}
-    extra_nodes = {same_name_other_label}
-    extra_edges: set = set()
-
-    harness._resurrected_file_residue(
-        tmp_path, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
-    )
-
-    assert unrelated_node in missing_nodes
-    assert unrelated_edge in missing_edges
-    assert same_name_other_label in extra_nodes
+    seeds = sorted((FUZZ_DIR / "corpus" / "fuzz_incremental_update").iterdir())
+    assert seeds, "the incremental corpus is empty; run fuzz/build_corpus.py"
+    for seed in seeds:
+        harness.fuzz_incremental_update(seed.read_bytes())
 
 
-def test_resurrected_filter_discards_the_phantom_external_module(
-    tmp_path: Path,
-) -> None:
-    """The complement: the rows #1799 really does explain must be discarded.
+def test_the_1799_seed_really_reaches_a_deleted_path_that_exists() -> None:
+    """The reproducer must actually drive the fixed code path.
 
-    Without this the previous test passes on a filter that does nothing, and
-    the harness would fail on every delete-and-recreate plan instead.
+    Written because the first seed committed under this name did NOT: it
+    decoded to two plain deletes, so both paths were genuinely absent by the
+    time `reingest` ran and the race was never exercised. The harness passed
+    for a reason unrelated to #1799, which is indistinguishable from passing
+    because the fix works.
+
+    Asserting the decoded plan is not enough either -- what matters is the
+    state at the call, so this observes the arguments `reingest` actually
+    receives and checks the path is on disk at that moment.
     """
     harness = import_harness_module("fuzz_incremental_update")
-
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
-    deleted = ["pkg/util.py"]
-
-    extra_nodes = {("ExternalModule", "util")}
-    extra_edges = {
-        ("Module", "proj.pkg.app", "IMPORTS", "ExternalModule", "util", "alias=helper")
-    }
-    missing_nodes = {
-        ("Module", "proj.pkg.util"),
-        ("Function", "proj.pkg.util.helper"),
-        ("File", str(tmp_path / "pkg" / "util.py")),
-    }
-    missing_edges = {
-        ("Module", "proj.pkg.util", "DEFINES", "Function", "proj.pkg.util.helper")
-    }
-
-    harness._resurrected_file_residue(
-        tmp_path, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
+    seed = (
+        FUZZ_DIR
+        / "corpus"
+        / "fuzz_incremental_update"
+        / "repro_1799_deleted_but_present.bin"
     )
+    assert seed.exists(), f"missing seed {seed.name}"
 
-    assert not extra_nodes
-    assert not extra_edges
-    assert not missing_nodes
-    assert not missing_edges
+    real = harness.GraphUpdater.reingest
+    seen: dict[str, bool] = {}
 
+    def spy(self, paths, deleted=(), before_write=None):
+        for raw in deleted:
+            seen[str(raw)] = (self.repo_path / str(raw)).is_file()
+        return real(self, paths, deleted=deleted, before_write=before_write)
 
-def test_resurrected_filter_keeps_a_lost_edge_to_a_real_external_module(
-    tmp_path: Path,
-) -> None:
-    """#1799 adds a phantom import edge; a LOST one is a genuine finding.
+    harness.GraphUpdater.reingest = spy
+    try:
+        harness.fuzz_incremental_update(seed.read_bytes())
+    finally:
+        harness.GraphUpdater.reingest = real
 
-    The defect can only ever produce an EXTRA `ExternalModule` and an EXTRA
-    `IMPORTS` edge to it. An edge in the opposite direction -- one a clean
-    index has and the reingest dropped -- is a real regression even when its
-    endpoint shares the resurrected module's bare name, so the phantom rule
-    must not reach the missing side.
-    """
-    harness = import_harness_module("fuzz_incremental_update")
-
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "util.py").write_text("def helper():\n    return 1\n")
-
-    lost_edge = (
-        "Module",
-        "proj.pkg.app",
-        "IMPORTS",
-        "ExternalModule",
-        "util",
-        "alias=util",
+    assert seen, "the seed never reached reingest with a deleted path"
+    assert any(seen.values()), (
+        f"the #1799 seed names {seen}, none of them present on disk, "
+        "so it never exercises the atomic-save race"
     )
-    missing_edges = {lost_edge}
-    missing_nodes = {("ExternalModule", "util")}
-
-    harness._resurrected_file_residue(
-        tmp_path, ["pkg/util.py"], set(), missing_nodes, set(), missing_edges
-    )
-
-    assert lost_edge in missing_edges
-    assert ("ExternalModule", "util") in missing_nodes

@@ -250,6 +250,14 @@ def _package_demotion_residue(
         ("Project", "CONTAINS_PACKAGE"),
         ("Project", "CONTAINS_FOLDER"),
     }
+    # Measured on both #1798 shapes (init deleted with the directory gone, and
+    # init deleted with a sibling keeping it alive), the containment rows land
+    # on the MISSING side only -- no extra containment edge was produced by
+    # either. The extra side is kept anyway because two shapes are not the
+    # whole defect, and a clause that is merely unused costs nothing, while
+    # dropping one the defect does produce would turn a known bug red. Unlike
+    # the phantom rule in `_resurrected_file_residue`, no lost row is known to
+    # be swallowed here; narrow this the moment one is.
     for edges in (extra_edges, missing_edges):
         for edge in {
             e
@@ -283,86 +291,6 @@ def _stale_edge_residue(root: Path, changed: list[str], extra_edges: set) -> Non
         extra_edges.discard(edge)
 
 
-def _resurrected_file_residue(
-    root: Path,
-    deleted: list[str],
-    extra_nodes: set,
-    missing_nodes: set,
-    extra_edges: set,
-    missing_edges: set,
-) -> None:
-    """Discard the parts of the delta that #1799 explains, in place.
-
-    A path named in `deleted` whose file still exists is retracted anyway and
-    never re-indexed, so the graph loses that file's File and definition
-    nodes and downgrades its importers to a phantom ExternalModule.
-
-    Correlated to the specific resurrected paths, like the #1798 filter: only
-    rows naming those files, their module prefix, or the ExternalModule that
-    replaced them are removed.
-    """
-    resurrected = [
-        rel for rel in deleted if rel.endswith(".py") and (root / rel).exists()
-    ]
-    if not resurrected:
-        return
-
-    paths = {str(root / rel) for rel in resurrected}
-    paths |= {str((root / rel).resolve()) for rel in resurrected}
-    prefixes = set()
-    stems = set()
-    for rel in resurrected:
-        parts = rel[: -len(".py")].split("/")
-        if parts[-1] == "__init__":
-            parts.pop()
-        if parts:
-            stems.add(parts[-1])
-            prefixes.add(".".join([PROJECT, *parts]))
-
-    def _theirs(value: object) -> bool:
-        """True for an identity that names one of the resurrected files.
-
-        Qualified identities only: the absolute path, the module FQN, or a
-        symbol beneath it. A bare stem like `util` is deliberately NOT
-        accepted here -- `proj.other.util` and a Function literally named
-        `util` share that stem without being this file, so matching it would
-        discard genuine findings.
-        """
-        text = str(value)
-        if text in paths:
-            return True
-        return any(text == pre or text.startswith(f"{pre}.") for pre in prefixes)
-
-    def _phantom(label: object, value: object) -> bool:
-        """True for the ExternalModule the dropped module was downgraded to.
-
-        This is the one place a bare stem is right: the phantom carries the
-        import's trailing name (`util`), not a qualified one, so there is no
-        qualified form to match. Constrained to the ExternalModule label so a
-        same-named node of any other kind stays in the delta.
-        """
-        return label == "ExternalModule" and str(value) in stems
-
-    for node in {n for n in missing_nodes if _theirs(n[1])}:
-        missing_nodes.discard(node)
-    # The phantom ExternalModule stands in for the module that was dropped.
-    for node in {n for n in extra_nodes if _phantom(n[0], n[1])}:
-        extra_nodes.discard(node)
-    # #1799 ADDS the phantom and its IMPORTS edge; it never removes one. So
-    # the phantom clause applies to the extra side only -- a LOST edge to a
-    # legitimate ExternalModule of the same name is a genuine finding, and
-    # the node loops above already draw this distinction.
-    for edges, phantom_applies in ((extra_edges, True), (missing_edges, False)):
-        for edge in {
-            e
-            for e in edges
-            if _theirs(e[1])
-            or _theirs(e[4])
-            or (phantom_applies and (_phantom(e[0], e[1]) or _phantom(e[3], e[4])))
-        }:
-            edges.discard(edge)
-
-
 def _is_only_known_defects(
     root: Path,
     changed: list[str],
@@ -371,6 +299,9 @@ def _is_only_known_defects(
     expected: tuple[frozenset, frozenset],
 ) -> bool:
     """True when everything in the delta is explained by #1794 or #1798.
+
+    #1799 (a path named deleted while still present on disk) was fixed, so
+    its filter is gone and the harness detects a regression of it again.
 
     Subtractive rather than a disjunction of whole-delta matchers: one edit
     plan can trigger BOTH defects at once (truncate a file mid-`def` while
@@ -391,9 +322,6 @@ def _is_only_known_defects(
         root, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
     )
     _stale_edge_residue(root, changed, extra_edges)
-    _resurrected_file_residue(
-        root, deleted, extra_nodes, missing_nodes, extra_edges, missing_edges
-    )
 
     return not (extra_nodes or missing_nodes or extra_edges or missing_edges)
 

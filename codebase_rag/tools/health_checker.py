@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
@@ -9,8 +11,86 @@ from loguru import logger
 from .. import constants as cs
 from .. import graph_audit
 from ..config import settings
+from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
-from ..types_defs import ResultRow
+from ..services.graph_service import MemgraphIngestor
+from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
+
+
+@contextmanager
+def _backend_connection() -> Iterator[ConnectionProtocol]:
+    """Open a connection to whichever graph engine is configured.
+
+    Health output must describe the backend actually in use, so this
+    reuses the ingestor's own connection factory rather than reaching for
+    `mgclient` directly -- otherwise `cgr health` would report on a
+    Memgraph server that a Neo4j install never talks to.
+
+    A context manager because the ingestor OWNS the Neo4j connection
+    pool: returning a bare connection would close the one session and
+    leak a whole driver per health check.
+    """
+    ingestor = MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+    )
+    conn = ingestor._create_connection()
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        finally:
+            ingestor.close_driver()
+
+
+def _connection_error_types() -> tuple[type[BaseException], ...]:
+    """Exceptions that mean "the server is not reachable", per engine.
+
+    A Neo4j failure surfaces as `neo4j.exceptions.ServiceUnavailable`,
+    which is neither an `mgclient.Error` nor an `OSError`, so without
+    this it falls through to the generic "unexpected failure" branch and
+    an unreachable server is reported as a mystery rather than as a
+    connection problem. Imported lazily because `neo4j` is an optional
+    extra.
+
+    Scoped deliberately: this answers "can we reach the server", so it
+    covers transport failures and authentication, not every Neo4j error.
+    A Cypher failure is a query problem and keeps its own diagnostic.
+    """
+    # Accumulated rather than returned as differently-shaped tuples: this
+    # is a variadic `except` argument, not a fixed-arity value, and the
+    # list makes that intent explicit (python:S8495).
+    types: list[type[BaseException]] = [mgclient.Error]
+    if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        try:
+            from neo4j.exceptions import (  # ty: ignore[unresolved-import]
+                AuthError,
+                DriverError,
+            )
+        except ImportError:  # pragma: no cover - depends on extras
+            pass
+        else:
+            # `DriverError` is the client-side/transport branch --
+            # ServiceUnavailable and SessionExpired live here. `AuthError`
+            # is a server error but still means "cannot connect". The rest
+            # of `Neo4jError` (a Cypher syntax error, say) is a genuine
+            # query failure and must NOT be reported as a connectivity
+            # problem, so it deliberately falls through to the generic
+            # branch.
+            types += [DriverError, AuthError]
+    return tuple(types)
+
+
+def _backend_engine_name() -> str:
+    """The engine's display name, for health output."""
+    return cs.HEALTH_ENGINE_NAMES.get(settings.GRAPH_BACKEND, settings.GRAPH_BACKEND)
+
+
+def _backend_endpoint() -> str:
+    """The address health output should name, for the configured engine."""
+    if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        return settings.NEO4J_URI
+    return f"{settings.MEMGRAPH_HOST}:{settings.MEMGRAPH_PORT}"
 
 
 class HealthChecker:
@@ -69,34 +149,33 @@ class HealthChecker:
         conn = None
         cursor = None
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
-
-            cursor = conn.cursor()
-            cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
-            list(cursor.fetchall())
+            with _backend_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
+                list(cursor.fetchall())
 
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_SUCCESSFUL,
+                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(
+                    engine=_backend_engine_name()
+                ),
                 passed=True,
                 message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
-                    host=settings.MEMGRAPH_HOST,
-                    port=settings.MEMGRAPH_PORT,
+                    endpoint=_backend_endpoint(),
                 ),
             )
 
-        except mgclient.Error as e:
+        except _connection_error_types() as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
                 message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
-                error=cs.HEALTH_CHECK_MEMGRAPH_ERROR.format(error=str(e)),
+                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(
+                    engine=_backend_engine_name(), error=str(e)
+                ),
             )
         except Exception as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
                 message=cs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
                 error=str(e),
@@ -193,22 +272,30 @@ class HealthChecker:
         Returns no results when Memgraph is unreachable: connectivity is
         already reported by check_memgraph_connection.
         """
+        # Enter the context here, not inside the audit's try: an
+        # unreachable server must yield no results (connectivity is
+        # already reported by check_memgraph_connection), not an
+        # "audit queries failed" result.
+        connection = _backend_connection()
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+            conn = connection.__enter__()
         except Exception:
             return []
-        cursor = conn.cursor()
 
-        def fetch_all(query: str) -> list[ResultRow]:
-            cursor.execute(query)
-            # mgclient.Column is not subscriptable; the name is an attribute.
-            columns = [column.name for column in cursor.description or []]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
+        # Bound before the try: `conn.cursor()` can raise, and the
+        # cleanup below would then mask the real error with an
+        # UnboundLocalError.
+        cursor: CursorProtocol | None = None
         try:
+            cursor = conn.cursor()
+
+            def fetch_all(query: str) -> list[ResultRow]:
+                cursor.execute(query)
+                # mgclient.Column is not subscriptable; the name is an
+                # attribute.
+                columns = [column.name for column in cursor.description or []]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
             violations = graph_audit.collect_live_violations(fetch_all)
         except Exception as e:
             return [
@@ -220,8 +307,19 @@ class HealthChecker:
                 )
             ]
         finally:
-            cursor.close()
-            conn.close()
+            # Cleanup is deliberately OUTSIDE the audit's `except`: closing
+            # the cursor, the connection and (on Neo4j) the driver can
+            # raise, and a cleanup failure must not report a completed
+            # audit as failed. Logged rather than swallowed silently.
+            closers = [lambda: connection.__exit__(None, None, None)]
+            if cursor is not None:
+                closers.insert(0, cursor.close)
+            for close in closers:
+                try:
+                    close()
+                except Exception as cleanup_error:
+                    logger.warning(f"Graph audit cleanup failed: {cleanup_error}")
+
         if not violations:
             return [
                 HealthCheckResult(

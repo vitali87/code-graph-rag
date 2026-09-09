@@ -12,7 +12,13 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 from prompt_toolkit.styles import Style
 
@@ -175,6 +181,7 @@ class LoadableProtocol(Protocol):
     def _ensure_loaded(self) -> None: ...
 
 
+@runtime_checkable
 class CursorProtocol(Protocol):
     def execute(
         self,
@@ -188,6 +195,19 @@ class CursorProtocol(Protocol):
     @property
     def description(self) -> Sequence[ColumnDescriptor] | None: ...
     def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+
+
+@runtime_checkable
+class ConnectionProtocol(Protocol):
+    """The connection surface the graph ingestor relies on.
+
+    Deliberately DB-API-shaped: `MemgraphIngestor` was written against
+    `mgclient` connections, and `services.neo4j_driver` adapts the Neo4j
+    driver to the same shape so one ingestor serves both engines.
+    """
+
+    def cursor(self) -> CursorProtocol: ...
+    def close(self) -> None: ...
 
 
 class PathValidatorProtocol(Protocol):
@@ -884,7 +904,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,

@@ -14,7 +14,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
 | Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
@@ -127,6 +127,45 @@ The `io` capture group (opt-in; excluded from the default capture set) adds thre
 Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentionally conservative in this phase: flow inside a body is tracked by an intra-procedural walk, return taint composes transitively across functions and files, and argument hand-off is one level.
 
 See [I/O and Data-Flow Edges](data-flow-edges.md) for the detailed reference: the taint model, propagation and kill rules, the `kind`/`via` edge properties, scope attribution, and example queries.
+
+## Module Documentation
+
+Every `Module` node carries the documentation for the file as a whole in its
+optional `docstring` property, in whatever form the language uses.
+
+The grammars do not distinguish a documentation comment from an ordinary one
+-- tree-sitter reports Rust's `//!` and a throwaway `// note` both as
+`line_comment` -- so the marker prefix decides, not the node type.
+
+| Language | Marker | Notes |
+|----------|--------|-------|
+| Python | `"""docstring"""` | A string literal as the first statement |
+| Rust | `//!`, `/*!` | Inner docs only; `///` documents the next item, not the module |
+| Go | `//` above `package` | No marker: a blank line before `package` makes it a licence header instead |
+| Java, Scala | `/**`, `/*!`, `///` | Javadoc/Scaladoc |
+| JavaScript, TypeScript, TSX | `/**`, `/*!` | JSDoc. `///` is TypeScript's `<reference/>` directive, not a doc |
+| C, C++ | `/**`, `/*!`, `///` | Doxygen |
+| C# | `///`, `/**`, `/*!` | XML documentation comments |
+| Dart | `///`, `/**`, `/*!` | Library docs |
+| PHP | `/**`, `/*!`, `///` | Follows the `<?php` tag |
+| Lua | `---` | LuaDoc/LDoc; a plain `--` is an ordinary comment |
+| SQL | none | No module-documentation convention, so nothing is extracted |
+
+Consecutive line comments join into one block, and a blank line ends it. A
+shebang before the comment is skipped, so a CLI entry point keeps its
+documentation.
+
+A comment that does not carry its language's marker is left alone: recording a
+licence header or a `// TODO` as the file's documentation is a wrong answer
+that reads like a right one. Three further kinds are excluded for the same
+reason, even when they do carry the marker:
+
+- **Directives** -- `//go:generate`, `//nolint:`, `// Code generated ... DO NOT
+  EDIT.` -- are instructions to tooling. They are skipped rather than treated
+  as the end of the comment, so a real doc beneath one is still found.
+- **Separator rules** -- `--------`, `////////` -- are decoration, not prose.
+- **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
+  marker in JavaScript, TypeScript or TSX; `/**` is.
 
 ## Nested Definitions
 
