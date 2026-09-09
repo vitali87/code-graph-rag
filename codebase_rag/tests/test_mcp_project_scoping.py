@@ -3100,6 +3100,79 @@ def test_two_damaged_projects_block_either_projects_clear() -> None:
         )
 
 
+def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
+    """The mirror-image bug: a refusal with no way out.
+
+    The first version of this guard was a BOOLEAN saying "the damage spans
+    projects". Nothing could ever lower it -- no sequence of successful
+    repairs retires a flag that counts nothing -- so once two projects were
+    damaged, every project was refused for the life of the process, including
+    projects never damaged at all, with `wipe_database` the only escape.
+
+    That is worse than the leak it fixed: a leak lets a stale read through,
+    this makes the server useless until restarted. Recording WHICH projects
+    are outstanding is what makes the flag retirable.
+
+    Asserted through the refusal rather than the field, and on a project that
+    was never damaged as well as the two that were: an over-broad latch
+    refuses GAMMA too, and only a behavioural assertion notices.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._invalidate_graph_for(ALPHA)
+    handler._invalidate_graph_for(BETA)
+
+    def refused(project: str) -> bool:
+        return (
+            handler._incomplete_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
+        )
+
+    assert refused(ALPHA) and refused(BETA) and refused("gamma"), (
+        "fixture guard: with two projects damaged and unattributed, every "
+        "project must refuse -- otherwise the repair below proves nothing"
+    )
+
+    handler._require_marker_cleared(ALPHA)
+    assert refused(BETA), (
+        "repairing one of two damaged projects lifted the other's refusal"
+    )
+
+    handler._require_marker_cleared(BETA)
+
+    assert not refused(ALPHA) and not refused(BETA), (
+        "both damaged projects were repaired and their reads are still "
+        "refused; nothing short of a full wipe can clear this"
+    )
+    assert not refused("gamma"), (
+        "a project that was never damaged is still refused after every "
+        "damaged project was repaired"
+    )
+
+
+def test_a_failed_wipe_is_not_settled_by_repairing_named_projects() -> None:
+    """The unbounded case, which a set cannot enumerate.
+
+    A half-done wipe damages every project at once, including ones this
+    process has never named, so there is no set of repairs that proves the
+    graph whole. Only a completed wipe retires it.
+
+    Without this the outstanding set is empty after a failed wipe, and the
+    first successful clear by any project would settle a flag that records
+    damage to all of them -- the original bug, reached from the one route
+    that cannot be counted.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+    handler._incomplete_unbounded = True
+
+    handler._require_marker_cleared(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "a named project's successful clear settled a failed wipe's flag, "
+        "which records damage to every project including unnamed ones"
+    )
+
+
 def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
     """The over-correction control for the whole spans-projects mechanism.
 
@@ -3112,8 +3185,9 @@ def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
     handler = _registry_for_marker_clear(cleared=True)
     handler._invalidate_graph_for(ALPHA)
     handler._invalidate_graph_for(BETA)
-    assert handler._incomplete_spans_projects is True, (
-        "fixture guard: the flag must span projects before the wipe"
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "fixture guard: both damaged projects must be outstanding before the "
+        "wipe, or the wipe has nothing to retire and this proves nothing"
     )
 
     # Drive the REAL wipe. Resetting the three fields by hand here would
@@ -3127,9 +3201,9 @@ def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
         "a completed wipe left the graph flagged incomplete, so no project "
         "can ever read again"
     )
-    assert handler._incomplete_spans_projects is False, (
-        "the wipe cleared the flag but left the spans-projects record set, so "
-        "the next damaged project inherits a refusal no damage explains"
+    assert not handler._incomplete_projects and not handler._incomplete_unbounded, (
+        "the wipe cleared the flag but left damage outstanding, so the next "
+        "damaged project inherits a refusal no damage explains"
     )
 
 
@@ -3157,8 +3231,8 @@ def test_a_recovered_marker_cannot_retire_a_flag_spanning_projects() -> None:
     # BETA is damaged too, so the flag now spans both.
     handler._invalidate_graph_for(BETA)
     handler._flag_from_failed_clear = ALPHA
-    assert handler._incomplete_spans_projects is True, (
-        "fixture guard: the flag must span projects before the recovery"
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "fixture guard: both projects must be outstanding before the recovery"
     )
 
     handler._live_updater = None
@@ -3195,9 +3269,9 @@ def test_a_rollback_widening_is_recorded_like_any_other() -> None:
         "fixture guard: an abandon naming a different project, over a flag "
         "already owned by ALPHA, must widen the attribution to None"
     )
-    assert handler._incomplete_spans_projects is True, (
-        "the rollback widened the attribution without recording that it "
-        "spans projects, so the next successful clear settles it"
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "the rollback widened the attribution without recording WHICH "
+        "projects are outstanding, so the next successful clear settles it"
     )
 
 

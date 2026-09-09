@@ -2,7 +2,7 @@ import asyncio
 import itertools
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from loguru import logger
@@ -174,7 +174,21 @@ class MCPToolsRegistry:
     # both states, so redefining the field would have meant auditing all of
     # them to preserve behaviour they already have. This adds a fact instead
     # of changing the meaning of an existing one.
-    _incomplete_spans_projects: bool = False
+    #
+    # It is a SET of the projects still outstanding, not a boolean. A boolean
+    # records that the damage spans projects and nothing ever retires it: no
+    # sequence of successful repairs can lower a flag that counts nothing, so
+    # every project -- including ones never damaged -- stays refused for the
+    # life of the process, with `wipe_database` the only escape. That is the
+    # mirror-image of the bug this field fixes, and the review caught it in
+    # the same commit (greptile-local, PR #1547). Repairing a project
+    # discards it; the flag settles when the set empties.
+    _incomplete_projects: Collection[str] = frozenset()
+
+    # A wipe damages every project at once, including ones this process has
+    # never named, so the outstanding set cannot enumerate it. This says "the
+    # damage is unbounded", and only a completed wipe retires it.
+    _incomplete_unbounded: bool = False
 
     def __init__(
         self,
@@ -211,7 +225,8 @@ class MCPToolsRegistry:
         # project unreadable, and a healthy project's success must not clear
         # the warning the damaged one earned (Greptile, PR #1547).
         self._incomplete_project: str | None = None
-        self._incomplete_spans_projects: bool = False
+        self._incomplete_projects: set[str] = set()
+        self._incomplete_unbounded: bool = False
 
         self.parsers, self.queries = load_parsers()
 
@@ -955,7 +970,8 @@ class MCPToolsRegistry:
                 # A completed wipe spans every project, so it settles damage
                 # to all of them -- the one clear that is entitled to retire a
                 # widened flag.
-                self._incomplete_spans_projects = False
+                self._incomplete_projects = set()
+                self._incomplete_unbounded = False
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             # A wipe spans every project and writes no marker, so its damage
@@ -966,7 +982,7 @@ class MCPToolsRegistry:
             # A half-done wipe is the broadest damage there is: it spans every
             # project and writes no marker, so the in-process flag is the only
             # record and NO single project's successful clear may retire it.
-            self._incomplete_spans_projects = True
+            self._incomplete_unbounded = True
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
@@ -1293,8 +1309,10 @@ class MCPToolsRegistry:
             elif incomplete_project_before not in (None, project_name):
                 self._incomplete_project = None
                 # Widened for the same reason as `_invalidate_graph_for`, so
-                # it must be recorded the same way (two damaged projects).
-                self._incomplete_spans_projects = True
+                # it must be recorded the same way: BOTH names go in, because
+                # both are outstanding and the flag settles when the last one
+                # is repaired.
+                self._note_outstanding(incomplete_project_before, project_name)
         else:
             self._graph_incomplete = flag_before
             self._incomplete_project = incomplete_project_before
@@ -1357,16 +1375,28 @@ class MCPToolsRegistry:
         self._graph_incomplete = True
         if not already_flagged:
             self._incomplete_project = project_name
-            self._incomplete_spans_projects = False
+            self._incomplete_projects = set()
         elif owner is not None and owner != project_name:
             self._incomplete_project = None
             # Two named projects are damaged. The None written here is the
-            # BROAD state, and this records which of the two Nones it is so
-            # a later clear cannot mistake it for the never-attributed one.
-            self._incomplete_spans_projects = True
+            # BROAD state, and the outstanding set records WHICH projects, so
+            # a later clear cannot mistake it for the never-attributed one and
+            # repairing both can still settle it.
+            self._note_outstanding(owner, project_name)
         # An existing flag attributed to this same project, or already
         # unattributed, keeps the attribution it has.
         self._flag_from_failed_clear = None
+
+    def _note_outstanding(self, *project_names: str | None) -> None:
+        """Record projects whose damage is still outstanding.
+
+        Additive: an earlier name must survive, because the flag settles only
+        when the LAST outstanding project is repaired.
+        """
+        self._incomplete_projects = {
+            *self._incomplete_projects,
+            *(name for name in project_names if name),
+        }
 
     def _require_marker_cleared(self, project_name: str) -> str | None:
         """Invariant (b): a run is complete only once its marker is gone.
@@ -1412,13 +1442,21 @@ class MCPToolsRegistry:
         # Only the run that owns the flag settles it -- plus the genuinely
         # unattributed single-project case, where the run that earned the flag
         # is the run clearing it and no other project was ever implicated.
-        # `_incomplete_spans_projects` is what separates that from the broad None.
-        if self._incomplete_project == project_name or (
-            self._incomplete_project is None and not self._incomplete_spans_projects
+        # The outstanding set is what separates that from the broad None: a
+        # repair discards this project, and the flag settles only once nothing
+        # is left outstanding. A BOOLEAN here could never be lowered -- no
+        # sequence of successful repairs retires a flag that counts nothing --
+        # which latched every project's reads, including projects never
+        # damaged, for the life of the process (greptile-local, PR #1547).
+        self._incomplete_projects = {
+            name for name in self._incomplete_projects if name != project_name
+        }
+        if not self._incomplete_unbounded and (
+            self._incomplete_project == project_name
+            or (self._incomplete_project is None and not self._incomplete_projects)
         ):
             self._graph_incomplete = False
             self._incomplete_project = None
-            self._incomplete_spans_projects = False
             self._flag_from_failed_clear = None
         elif self._flag_from_failed_clear == project_name:
             # This project's stranded marker is gone, so the reason recorded
@@ -1598,7 +1636,8 @@ class MCPToolsRegistry:
         if (
             not persisted_incomplete
             and recoverable_here
-            and not self._incomplete_spans_projects
+            and not self._incomplete_unbounded
+            and not self._incomplete_projects
         ):
             self._graph_incomplete = False
             self._incomplete_project = None
