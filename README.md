@@ -51,12 +51,12 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Index Consistency**: Ensure incremental deletes match clean index states.
-- **Patch Reporting**: Distinguish between unverifiable and verified patches in reports.
-- **Windows Teardown**: Clear the read-only bit when removing a temp repo for successful Windows teardown.
-- **TypeScript Grading**: Grade TypeScript inheritance against the tsc oracle for improved accuracy.
-- **Exclude Set Handling**: Record the exclusion set to ensure `--exclude` flags are correctly applied across runs.
-- **MCP Indexing**: Honour `.cgrignore` and `.gitignore` in MCP index and update processes, matching the CLI.
+- **File System Operations**: Improved handling of file system operations with platform-neutral joins and safeguards against removing project root.
+- **Cache Management**: Enhanced cache management with atomic publishing, dedicated cache stamps, and improved deletion handling for orphan caches.
+- **Graph Querying**: Introduced deterministic graph query tools for more precise analysis of code relationships.
+- **Re-ingestion & Parsing**: Improved re-ingestion processes, including handling of deleted files, re-parsing of related files, and rebuilding of key data structures.
+- **Security & Stability**: Addressed security concerns by blocking removal of project root and improved stability by preventing skipped edits and handling orphaned caches.
+- **C++ & Go Integration**: Enhanced integration with C++ and Go, including parsing of module interfaces and handling of module-level class aliases.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
