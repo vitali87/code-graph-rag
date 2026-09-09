@@ -50,7 +50,12 @@ from ..cypher_queries import (
     build_merge_relationship_query,
     wrap_with_unwind,
 )
-from ..graph_dialects import DIALECT_NEO4J, GraphDialect, get_dialect
+from ..graph_dialects import (
+    DIALECT_MEMGRAPH,
+    DIALECT_NEO4J,
+    GraphDialect,
+    get_dialect,
+)
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -122,7 +127,13 @@ class MemgraphIngestor:
         self._port = port
         self._username = username.strip() if username and username.strip() else None
         self._password = password.strip() if password and password.strip() else None
-        if (self._username is None) != (self._password is None):
+        # Only for the engine these credentials belong to: Neo4j
+        # authenticates with NEO4J_USERNAME/NEO4J_PASSWORD, so a leftover
+        # half-set MEMGRAPH_* pair must not stop a valid Neo4j
+        # deployment from starting.
+        if self._dialect.name == DIALECT_MEMGRAPH and (
+            (self._username is None) != (self._password is None)
+        ):
             raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)

@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J
+from codebase_rag.graph_dialects import (
+    DIALECT_MEMGRAPH,
+    DIALECT_NEO4J,
+    get_dialect,
+)
+from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.tools.health_checker import (
     HealthChecker,
     _backend_connection,
@@ -90,6 +95,60 @@ class TestReportedEndpoint:
         assert "mg-host" not in result.message
 
 
+class TestReportedEngineName:
+    """`cgr doctor` renders `result.name`, so the label names the service."""
+
+    def _probe(self, monkeypatch, backend: str, uri: str = ""):
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", backend
+        )
+        monkeypatch.setattr("codebase_rag.tools.health_checker.settings.NEO4J_URI", uri)
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            lambda self: FakeConn(),
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            lambda self: None,
+        )
+        return HealthChecker().check_memgraph_connection()
+
+    def test_memgraph_keeps_its_label(self, monkeypatch) -> None:
+        assert self._probe(monkeypatch, DIALECT_MEMGRAPH).name == (
+            "Memgraph connection successful"
+        )
+
+    def test_neo4j_is_labelled_neo4j(self, monkeypatch) -> None:
+        # The regression: a Neo4j deployment shown a "Memgraph connection"
+        # check is sent looking for a server it does not run.
+        result = self._probe(monkeypatch, DIALECT_NEO4J, "bolt://neo:7999")
+        assert result.name == "Neo4j connection successful"
+        assert "Memgraph" not in result.name
+
+
+class TestCredentialValidationIsPerEngine:
+    def test_neo4j_ignores_a_half_set_memgraph_credential(self) -> None:
+        # Neo4j authenticates with NEO4J_USERNAME/NEO4J_PASSWORD, so a
+        # leftover MEMGRAPH_USERNAME must not block startup.
+        MemgraphIngestor(
+            host="h",
+            port=7687,
+            username="legacy",
+            password=None,
+            dialect=get_dialect(DIALECT_NEO4J),
+        )
+
+    def test_memgraph_still_rejects_a_half_set_credential(self) -> None:
+        with pytest.raises(ValueError, match="(?i)both"):
+            MemgraphIngestor(
+                host="h",
+                port=7687,
+                username="u",
+                password=None,
+                dialect=get_dialect(DIALECT_MEMGRAPH),
+            )
+
+
 class TestDriverIsReleased:
     def test_the_driver_is_closed_when_the_context_exits(self, monkeypatch) -> None:
         # Each health check builds its own ingestor, so without this every
@@ -123,9 +182,9 @@ class TestDriverIsReleased:
             lambda self: closed.append("driver"),
         )
 
-        with pytest.raises(RuntimeError):  # noqa: PT012
-            with _backend_connection():
-                raise RuntimeError("boom")
+        connection = _backend_connection()
+        with pytest.raises(RuntimeError), connection:
+            raise RuntimeError("boom")
 
         assert closed == ["driver"]
 

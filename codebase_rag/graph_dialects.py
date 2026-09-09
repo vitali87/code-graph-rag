@@ -158,6 +158,10 @@ class Neo4jDialect:
         return label in labels and row.get("properties") == [prop]
 
     def apply_memory_limit(self, query: str, mb: int) -> str:
+        # `mb` is part of the protocol every dialect implements; Neo4j has
+        # no per-query memory clause, so the bound is deliberately dropped
+        # here rather than translated.
+        del mb
         return query
 
 

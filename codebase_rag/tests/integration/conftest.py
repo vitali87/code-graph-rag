@@ -135,7 +135,7 @@ def neo4j_container() -> Generator[dict[str, str | int], None, None]:
     container.stop()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def neo4j_ingestor(
     neo4j_container: dict[str, str | int],
 ) -> Generator[MemgraphIngestor, None, None]:

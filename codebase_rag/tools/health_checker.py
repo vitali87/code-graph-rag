@@ -43,6 +43,11 @@ def _backend_connection() -> Iterator[ConnectionProtocol]:
             ingestor.close_driver()
 
 
+def _backend_engine_name() -> str:
+    """The engine's display name, for health output."""
+    return cs.HEALTH_ENGINE_NAMES.get(settings.GRAPH_BACKEND, settings.GRAPH_BACKEND)
+
+
 def _backend_endpoint() -> str:
     """The address health output should name, for the configured engine."""
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
@@ -112,7 +117,9 @@ class HealthChecker:
                 list(cursor.fetchall())
 
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_SUCCESSFUL,
+                name=cs.HEALTH_CHECK_GRAPH_SUCCESSFUL.format(
+                    engine=_backend_engine_name()
+                ),
                 passed=True,
                 message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG.format(
                     endpoint=_backend_endpoint(),
@@ -121,14 +128,16 @@ class HealthChecker:
 
         except mgclient.Error as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
                 message=cs.HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG,
-                error=cs.HEALTH_CHECK_MEMGRAPH_ERROR.format(error=str(e)),
+                error=cs.HEALTH_CHECK_GRAPH_ERROR.format(
+                    engine=_backend_engine_name(), error=str(e)
+                ),
             )
         except Exception as e:
             return HealthCheckResult(
-                name=cs.HEALTH_CHECK_MEMGRAPH_FAILED,
+                name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
                 message=cs.HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG,
                 error=str(e),

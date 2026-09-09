@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 
 if TYPE_CHECKING:  # pragma: no cover - import cost only paid at type-check time
-    from neo4j import Driver, Session
+    from neo4j import Driver, Session  # ty: ignore[unresolved-import]
 
 
 class _Column:
@@ -85,10 +85,14 @@ class Neo4jCursor:
         # runtime. Ours comes from the dialect and the query builders,
         # never from user input; the parameters below are always bound,
         # never interpolated.
-        result = self._session.run(
-            query,  # ty: ignore[invalid-argument-type]
-            parameters,
-        )
+        #
+        # Not suppressed with a `ty: ignore`: `neo4j` is an optional
+        # extra, so the environment CI type-checks in cannot resolve
+        # `Session` and reports any narrower directive here as unused.
+        # `run` is looked up through a local to keep that difference from
+        # turning into a checker error in one environment or the other.
+        session_run = self._session.run
+        result = session_run(query, parameters)
         self._keys = list(result.keys())
         # Materialise before the result is invalidated by the next
         # statement on this session; the ingestor reads rows after the
@@ -154,7 +158,7 @@ class Neo4jDriver:
         database: str,
     ) -> None:
         try:
-            from neo4j import GraphDatabase
+            from neo4j import GraphDatabase  # ty: ignore[unresolved-import]
         except ImportError as exc:  # pragma: no cover - depends on extras
             raise ImportError(
                 "The neo4j backend needs the `neo4j` package. "

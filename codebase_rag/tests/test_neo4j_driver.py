@@ -100,8 +100,9 @@ class TestCursorContract:
     def test_a_bare_sequence_is_rejected(self) -> None:
         # A positional sequence has no name to bind to, so guessing would
         # silently send the wrong parameters.
+        cursor = Neo4jCursor(FakeSession())
         with pytest.raises(TypeError, match="must be a mapping"):
-            Neo4jCursor(FakeSession()).execute("UNWIND $batch AS row", [{"id": 1}])
+            cursor.execute("UNWIND $batch AS row", [{"id": 1}])
 
     def test_close_releases_buffered_rows(self) -> None:
         cur = Neo4jCursor(FakeSession(keys=["n"], rows=[(1,)]))
