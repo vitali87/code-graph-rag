@@ -311,21 +311,40 @@ class TestShippedEntrypointEnforcesTheSchema:
                 VALID + "\nnonsense_root_key: 1\n", schema=ROOT_KEY_SCHEMA
             )
 
-    def test_every_known_root_key_is_accepted(self) -> None:
+    # Written out rather than derived from VENDOR_ROOT_KEYS on purpose. A test
+    # that iterates the same tuple it is checking cannot see a key being
+    # dropped from it: the deletion removes the case as well as the schema
+    # entry, and the loop stays green over a shorter list. Measured -- deleting
+    # `knowledge_base` from the shipped set left the derived version passing.
+    EXPECTED_ROOT_KEYS = (
+        "chat",
+        "code_generation",
+        "early_access",
+        "enable_free_tier",
+        "inheritance",
+        "issue_enrichment",
+        "knowledge_base",
+        "language",
+        "reviews",
+        "tone_instructions",
+    )
+
+    def test_the_shipped_root_key_set_is_complete(self) -> None:
+        """An independent copy, so dropping a key from the real set reddens."""
+        assert set(VENDOR_ROOT_KEYS) == set(self.EXPECTED_ROOT_KEYS)
+
+    @pytest.mark.parametrize("key", [k for k in EXPECTED_ROOT_KEYS if k != "reviews"])
+    def test_every_known_root_key_is_accepted(self, key: str) -> None:
         """The check must not reject a setting the vendor allows."""
-        for key in sorted(VENDOR_ROOT_KEYS):
-            if key == "reviews":
-                continue
-            assert (
-                validate_coderabbit_config(f"{VALID}\n{key}: {{}}\n", ROOT_KEY_SCHEMA)
-                == 2
-            ), f"root key {key!r} should be accepted"
+        assert (
+            validate_coderabbit_config(f"{VALID}\n{key}: {{}}\n", ROOT_KEY_SCHEMA) == 2
+        ), f"root key {key!r} should be accepted"
 
     def test_main_passes_a_schema(self) -> None:
         """Pin the wiring: the entrypoint must supply the schema."""
-        source = (
-            REPO_ROOT / "scripts" / "validate_coderabbit_config.py"
-        ).read_text(encoding="utf-8")
+        source = (REPO_ROOT / "scripts" / "validate_coderabbit_config.py").read_text(
+            encoding="utf-8"
+        )
         assert "schema=ROOT_KEY_SCHEMA" in source
 
     def test_the_shipped_config_passes_the_shipped_schema(self) -> None:
