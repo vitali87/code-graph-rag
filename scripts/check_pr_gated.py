@@ -98,11 +98,23 @@ TRUSTED_REVIEWERS = frozenset(
 #   "the test suite remains blocked in this environment"
 #   "failed during import with ModuleNotFoundError: No module named ..."
 #
-# Every marker must name the REVIEWER'S OWN environment. Bare phrases like
-# "could not start" or "modulenotfounderror" also match a finding
-# DESCRIBING a bug ("the server could not start; it raises KeyError"),
-# which flags an executed review as unexecuted -- the opposite of the
-# intent, and worse than saying nothing.
+# A marker must be SELF-ANCHORING: it can only describe the reviewer's own
+# situation, never the reviewed code's. That rules out any phrase naming a
+# failure mode an application can also have. Three rounds of narrowing, each
+# after a false positive was demonstrated:
+#
+#   "could not start" / "modulenotfounderror"  -- "the server could not
+#       start; it raises KeyError" is a finding about a BUG.
+#   "failed during import with modulenotfounderror" -- still a bug when the
+#       reviewed code is what failed to import.
+#   "dependency installation is blocked"       -- an installer defect.
+#   "validation blocked"                       -- a validation FEATURE
+#       rejecting input is normal application behaviour.
+#
+# What survives names the environment a review runs IN, which reviewed code
+# has no occasion to discuss. Flagging an executed review as unexecuted
+# discredits work that was actually done, so a false positive costs more
+# than a miss.
 #
 # Unlike REVIEW_VERDICT_MARKERS this IS a blocklist, and it fails in the
 # permissive direction on purpose. A missed variant reports the review as
@@ -112,9 +124,6 @@ TRUSTED_REVIEWERS = frozenset(
 # never be a merge blocker. It is surfaced as a caveat, not a reason.
 BLOCKED_VALIDATION_MARKERS = (
     "blocked in this environment",
-    "failed during import with modulenotfounderror",
-    "dependency installation is blocked",
-    "validation blocked",
     "could not be behaviorally disproved",
     "without a runnable import/test environment",
 )

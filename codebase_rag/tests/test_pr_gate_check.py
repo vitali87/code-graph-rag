@@ -462,8 +462,21 @@ class TestValidationWasBlocked:
     def test_the_real_blocked_review_is_detected(self) -> None:
         assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
 
-    def test_the_import_error_wording_is_detected(self) -> None:
-        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is True
+    def test_the_import_error_wording_is_deliberately_NOT_detected(self) -> None:
+        """A KNOWN MISS, accepted on purpose.
+
+        This artifact's phrasings ("failed during import with
+        ModuleNotFoundError", "dependency installation is blocked") are
+        exactly as plausible in a finding about the reviewed code: a
+        plugin that fails to import, an installer that blocks. Detecting
+        it would flag executed reviews as unexecuted, which discredits
+        work that was done -- a worse error than staying silent.
+
+        The blocklist fails permissive by design, so a miss degrades to
+        today's behaviour. If this artifact needs catching, the fix is a
+        reviewer-validation SECTION to parse, not a broader substring.
+        """
+        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is False
 
     def test_a_review_that_ran_is_not_flagged(self) -> None:
         """The negative case. Without this the detector could return True
@@ -520,7 +533,11 @@ class TestReviewExecutionCaveats:
         caveats = review_execution_caveats(
             [
                 (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
-                (REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR, "coderabbitai"),
+                (
+                    "Confidence score: 3/5. The findings could not be "
+                    "behaviorally disproved in this environment.",
+                    "coderabbitai",
+                ),
             ]
         )
 
@@ -621,10 +638,10 @@ class TestMarkersDoNotMatchBugDescriptions:
     def test_a_review_describing_a_crash_is_not_flagged(self) -> None:
         assert validation_was_blocked(REAL_REVIEW_DESCRIBING_A_CRASH) is False
 
-    def test_the_two_real_blocked_reviews_are_still_caught(self) -> None:
-        """The narrowing must not cost detection on the motivating cases."""
+    def test_the_motivating_artifact_is_still_caught(self) -> None:
+        """Narrowing must not cost detection on the artifact #1824 was
+        filed against, whose note names the environment explicitly."""
         assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
-        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is True
 
     def test_no_marker_subsumes_another(self) -> None:
         """A marker that is a superstring of another can never be the one
@@ -662,13 +679,6 @@ class TestMarkersDoNotMatchBugDescriptions:
             "blocked in this environment": (
                 "The test suite remains blocked in this environment."
             ),
-            "failed during import with modulenotfounderror": (
-                "Both commands failed during import with ModuleNotFoundError."
-            ),
-            "dependency installation is blocked": (
-                "Dependency installation is blocked; building it needs CMake."
-            ),
-            "validation blocked": "T-Rex validation blocked.",
             "could not be behaviorally disproved": (
                 "Historic paths could not be behaviorally disproved."
             ),
@@ -682,3 +692,23 @@ class TestMarkersDoNotMatchBugDescriptions:
             assert validation_was_blocked(phrasing) is True, marker
             others = tuple(m for m in BLOCKED_VALIDATION_MARKERS if m != marker)
             assert not any(m in phrasing.lower() for m in others), marker
+
+    def test_an_executed_review_describing_these_defects_is_not_flagged(
+        self,
+    ) -> None:
+        """The false positives that forced the third narrowing.
+
+        Each of these is an EXECUTED review reporting a defect in the
+        reviewed application, using wording an earlier marker matched.
+        """
+        executed_findings = (
+            "I ran the full suite. The plugin failed during import with "
+            "ModuleNotFoundError when the entry point is misspelled.",
+            "Ran the installer end to end. When the lockfile is stale, "
+            "dependency installation is blocked and the CLI exits 0 anyway.",
+            "Executed the test suite. When the schema key is absent, "
+            "validation blocked the request but the error message is empty.",
+        )
+
+        for finding in executed_findings:
+            assert validation_was_blocked(finding) is False, finding
