@@ -12,7 +12,13 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 from prompt_toolkit.styles import Style
 
@@ -175,6 +181,7 @@ class LoadableProtocol(Protocol):
     def _ensure_loaded(self) -> None: ...
 
 
+@runtime_checkable
 class CursorProtocol(Protocol):
     def execute(
         self,
@@ -188,6 +195,19 @@ class CursorProtocol(Protocol):
     @property
     def description(self) -> Sequence[ColumnDescriptor] | None: ...
     def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+
+
+@runtime_checkable
+class ConnectionProtocol(Protocol):
+    """The connection surface the graph ingestor relies on.
+
+    Deliberately DB-API-shaped: `MemgraphIngestor` was written against
+    `mgclient` connections, and `services.neo4j_driver` adapts the Neo4j
+    driver to the same shape so one ingestor serves both engines.
+    """
+
+    def cursor(self) -> CursorProtocol: ...
+    def close(self) -> None: ...
 
 
 class PathValidatorProtocol(Protocol):

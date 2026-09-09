@@ -10,7 +10,21 @@ from .. import constants as cs
 from .. import graph_audit
 from ..config import settings
 from ..schemas import HealthCheckResult
-from ..types_defs import ResultRow
+from ..services.graph_service import MemgraphIngestor
+from ..types_defs import ConnectionProtocol, ResultRow
+
+
+def _backend_connection() -> ConnectionProtocol:
+    """Open a connection to whichever graph engine is configured.
+
+    Health output must describe the backend actually in use, so this
+    reuses the ingestor's own connection factory rather than reaching for
+    `mgclient` directly -- otherwise `cgr health` would report on a
+    Memgraph server that a Neo4j install never talks to.
+    """
+    return MemgraphIngestor(
+        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+    )._create_connection()
 
 
 class HealthChecker:
@@ -69,10 +83,7 @@ class HealthChecker:
         conn = None
         cursor = None
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+            conn = _backend_connection()
 
             cursor = conn.cursor()
             cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)
@@ -194,10 +205,7 @@ class HealthChecker:
         already reported by check_memgraph_connection.
         """
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+            conn = _backend_connection()
         except Exception:
             return []
         cursor = conn.cursor()
