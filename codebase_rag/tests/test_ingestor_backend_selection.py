@@ -168,3 +168,78 @@ class TestNeo4jDriverIsNotRequiredForMemgraph:
         )
         ingestor, _ = _ingestor(DIALECT_MEMGRAPH)
         ingestor.ensure_constraints()
+
+
+class TestNeo4jDriverLifecycle:
+    """The pooled driver is shared state; these are its two failure modes."""
+
+    def test_one_driver_is_shared_across_concurrent_creators(self, monkeypatch) -> None:
+        # The parallel flush calls _create_connection from several worker
+        # threads at once. An unguarded `if self._driver is None` builds a
+        # second pool, which then leaks.
+        import threading
+
+        built: list[object] = []
+        barrier = threading.Barrier(8)
+
+        class FakeDriver:
+            def __init__(self, **kwargs: object) -> None:
+                built.append(self)
+
+            def connect(self) -> RecordingConn:
+                return RecordingConn()
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(
+            "codebase_rag.services.neo4j_driver.Neo4jDriver", FakeDriver
+        )
+        ingestor = MemgraphIngestor(
+            host="h", port=1, dialect=get_dialect(DIALECT_NEO4J)
+        )
+
+        def race() -> None:
+            barrier.wait()
+            ingestor._neo4j_driver()
+
+        threads = [threading.Thread(target=race) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert len(built) == 1
+
+    def test_the_driver_is_closed_on_exit(self, monkeypatch) -> None:
+        # __exit__ closes `self.conn`, which is a single session; without
+        # this the pool behind it survives for the life of the process.
+        closed: list[bool] = []
+
+        class FakeDriver:
+            def __init__(self, **kwargs: object) -> None:
+                pass
+
+            def connect(self) -> RecordingConn:
+                return RecordingConn()
+
+            def close(self) -> None:
+                closed.append(True)
+
+        monkeypatch.setattr(
+            "codebase_rag.services.neo4j_driver.Neo4jDriver", FakeDriver
+        )
+        ingestor = MemgraphIngestor(
+            host="h", port=1, dialect=get_dialect(DIALECT_NEO4J)
+        )
+        ingestor.__enter__()
+        ingestor._neo4j_driver()
+        ingestor.__exit__(None, None, None)
+
+        assert closed == [True]
+
+    def test_exiting_without_a_driver_does_not_raise(self) -> None:
+        # A Memgraph run never builds one; the teardown must tolerate that.
+        ingestor = MemgraphIngestor(host="h", port=1)
+        ingestor.conn = RecordingConn()
+        ingestor.__exit__(None, None, None)

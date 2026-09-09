@@ -94,6 +94,7 @@ class MemgraphIngestor:
         "_use_merge",
         "_dialect",
         "_driver",
+        "_driver_lock",
         "_rel_count",
         "_rel_groups",
         "batch_size",
@@ -116,6 +117,7 @@ class MemgraphIngestor:
         # mid-run if configuration changes underneath it.
         self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
         self._driver: object | None = None
+        self._driver_lock = threading.Lock()
         self._host = host
         self._port = port
         self._username = username.strip() if username and username.strip() else None
@@ -167,6 +169,14 @@ class MemgraphIngestor:
             if self.conn:
                 self.conn.close()
                 logger.info(ls.MG_DISCONNECTED)
+            # Sessions handed to flush workers are closed by those
+            # workers; the pooled driver behind them is owned here and
+            # would otherwise leak its connection pool for the life of
+            # the process.
+            driver = self._driver
+            if driver is not None:
+                cast("Neo4jDriver", driver).close()
+                self._driver = None
 
     async def __aenter__(self) -> MemgraphIngestor:
         return self.__enter__()
@@ -251,14 +261,18 @@ class MemgraphIngestor:
         """
         from .neo4j_driver import Neo4jDriver as _Neo4jDriver
 
-        if self._driver is None:
-            self._driver = _Neo4jDriver(
-                uri=settings.NEO4J_URI,
-                username=settings.NEO4J_USERNAME,
-                password=settings.NEO4J_PASSWORD,
-                database=settings.NEO4J_DATABASE,
-            )
-        return cast("Neo4jDriver", self._driver)
+        # The parallel flush calls this from several worker threads at
+        # once, so an unguarded `if self._driver is None` would build and
+        # leak more than one connection pool.
+        with self._driver_lock:
+            if self._driver is None:
+                self._driver = _Neo4jDriver(
+                    uri=settings.NEO4J_URI,
+                    username=settings.NEO4J_USERNAME,
+                    password=settings.NEO4J_PASSWORD,
+                    database=settings.NEO4J_DATABASE,
+                )
+            return cast("Neo4jDriver", self._driver)
 
     def _execute_batch_on(
         self,
