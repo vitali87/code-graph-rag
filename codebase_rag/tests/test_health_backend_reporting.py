@@ -237,6 +237,25 @@ class TestConnectionFailureClassification:
         )
         assert issubclass(exceptions.ServiceUnavailable, _connection_error_types())
 
+    def test_a_query_error_is_not_a_connection_failure(self, monkeypatch) -> None:
+        """The classification answers "can we reach the server", nothing more.
+
+        `Neo4jError` would also cover a Cypher syntax error, which is a
+        query problem: reporting it as a connectivity failure sends the
+        operator to check a server that is answering perfectly well.
+        """
+        exceptions = pytest.importorskip("neo4j.exceptions")
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+        )
+        types = _connection_error_types()
+        assert issubclass(exceptions.ServiceUnavailable, types)
+        assert issubclass(exceptions.SessionExpired, types)
+        # Authentication still means "cannot connect".
+        assert issubclass(exceptions.AuthError, types)
+        # A query failure does not.
+        assert not issubclass(exceptions.CypherSyntaxError, types)
+
     def test_memgraph_does_not_pull_in_neo4j_types(self, monkeypatch) -> None:
         monkeypatch.setattr(
             "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND",

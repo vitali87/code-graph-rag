@@ -52,6 +52,10 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     an unreachable server is reported as a mystery rather than as a
     connection problem. Imported lazily because `neo4j` is an optional
     extra.
+
+    Scoped deliberately: this answers "can we reach the server", so it
+    covers transport failures and authentication, not every Neo4j error.
+    A Cypher failure is a query problem and keeps its own diagnostic.
     """
     # Accumulated rather than returned as differently-shaped tuples: this
     # is a variadic `except` argument, not a fixed-arity value, and the
@@ -60,13 +64,20 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
         try:
             from neo4j.exceptions import (  # ty: ignore[unresolved-import]
+                AuthError,
                 DriverError,
-                Neo4jError,
             )
         except ImportError:  # pragma: no cover - depends on extras
             pass
         else:
-            types += [DriverError, Neo4jError]
+            # `DriverError` is the client-side/transport branch --
+            # ServiceUnavailable and SessionExpired live here. `AuthError`
+            # is a server error but still means "cannot connect". The rest
+            # of `Neo4jError` (a Cypher syntax error, say) is a genuine
+            # query failure and must NOT be reported as a connectivity
+            # problem, so it deliberately falls through to the generic
+            # branch.
+            types += [DriverError, AuthError]
     return tuple(types)
 
 
