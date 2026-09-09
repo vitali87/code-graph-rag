@@ -1354,3 +1354,65 @@ def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
     ]
 
     assert run._old_name_is_back(report) is True
+
+
+def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) -> None:
+    """`__all__` entries are rewritten too, and were invisible to the check.
+
+    `_stage_sites` calls `rename_in_all` on the defining module and every
+    re-exporting one, but those entries are not recorded as sites, so the
+    restoration check could not see them. A tree with every definition,
+    reference and import restored but `__all__` still listing the NEW name
+    reported as fully reversed (Greptile, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        '__all__ = ["assist"]\n\n\ndef helper(a):\n    return a\n', encoding="utf-8"
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
+
+    assert run._old_name_is_back(report) is False
+
+
+def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
+    """The control: `__all__` back on the old name IS a completed undo.
+
+    Without this, "any file with __all__ fails" passes the test above and
+    no module exporting the renamed symbol could report as reversed.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        '__all__ = ["helper"]\n\n\ndef helper(a):\n    return a\n', encoding="utf-8"
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
+
+    assert run._old_name_is_back(report) is True
+
+
+def test_a_file_without_an_all_list_is_unaffected(tmp_path: Path) -> None:
+    """The second control: no `__all__` means nothing to check there."""
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [RenameSite("definition", "util.py", 1, 4, "util.helper", None)]
+
+    assert run._old_name_is_back(report) is True
