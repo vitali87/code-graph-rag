@@ -47,6 +47,11 @@ class Expectation(NamedTuple):
     caller_count_unchanged: bool = True
     no_dangling: bool = True
     no_new_cycle: bool = True
+    # Whether an importer still targeting a module the moved symbol left
+    # fails the contract. Off by default: only a MOVE vacates a module, and
+    # a non-move's delta reports none, so switching it on for every operation
+    # would add a check that can never fire and read as coverage (#1825).
+    no_stale_importer: bool = False
     no_new_duplicate: bool = True
     # `path:line` of the call sites the operation deliberately left alone;
     # every other site of a changed signature must read as mapped.
@@ -94,6 +99,11 @@ def move_expectation(old_qn: str, new_qn: str) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_MOVE,
         renames=((old_qn, new_qn),),
+        # The promise the module docstring has always made for a move, and
+        # that nothing checked: the contract asked whether the definition
+        # reached its new home and never whether anyone still points at the
+        # old one (#1825).
+        no_stale_importer=True,
     )
 
 
@@ -248,6 +258,15 @@ def _check_structure(expectation: Expectation, delta: StructuralDelta) -> list[s
         failures.append(
             cs.CONTRACT_NEW_CYCLE.format(
                 cycles="; ".join(" -> ".join(c) for c in delta["new_import_cycles"])
+            )
+        )
+    if expectation.no_stale_importer and delta["stale_importers"]:
+        failures.append(
+            cs.CONTRACT_STALE_IMPORTER.format(
+                sites=", ".join(
+                    f"{entry['path']}:{entry['line']}"
+                    for entry in delta["stale_importers"]
+                )
             )
         )
     # The renamed symbol is "fresh" to the delta, so a twin that already

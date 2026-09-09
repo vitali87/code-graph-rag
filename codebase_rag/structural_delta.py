@@ -150,6 +150,14 @@ class SymbolDelta(TypedDict):
     changed: list[str]
 
 
+class StaleImporter(TypedDict):
+    """A module still importing from where a moved symbol used to live."""
+
+    importer: str
+    path: str
+    line: int
+
+
 class StructuralDelta(TypedDict):
     paths: list[str]
     reparsed: list[str]
@@ -161,6 +169,9 @@ class StructuralDelta(TypedDict):
     arity_findings: list[ArityAtSite]
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
+    # Importers that still name a module a moved symbol has left. Empty for
+    # every operation that moves nothing, so a non-move never carries one.
+    stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
     call_sites: SiteCounts
     reingest_ms: float
@@ -1024,6 +1035,7 @@ def structural_delta(
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh),
         new_import_cycles=_new_import_cycles(before, after),
+        stale_importers=_stale_importers(after, symbols),
         tests_reaching=_tests_reaching(fetch_all, project_name, touched)
         if touched
         else [],
@@ -1033,6 +1045,55 @@ def structural_delta(
         reingest_ms=round(report.elapsed_ms, 1) if report else 0.0,
         delta_ms=round((time.perf_counter() - started) * 1000, 1),
     )
+
+
+def _module_of(qualified_name: str) -> str:
+    """The module a symbol's qualified name sits in, or "" if it has none."""
+    head, sep, _tail = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    return head if sep else ""
+
+
+def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporter]:
+    """Importers still naming a module every moved symbol has left.
+
+    A MOVE is a rename whose module segment changed; a plain rename keeps the
+    module and is not one, so it contributes no vacated module and this
+    returns empty for it. That is what keeps the check specific to moves
+    without the contract having to say so (#1825).
+
+    "Vacated" is the load-bearing word. A module that still defines anything
+    is a legitimate import target, so only a module the moved symbols left
+    EMPTY counts -- otherwise moving one helper out of a busy module would
+    report every importer of its remaining siblings.
+    """
+    vacated: set[str] = set()
+    for renamed in symbols["renamed"]:
+        old_module = _module_of(str(renamed["old"]))
+        new_module = _module_of(str(renamed["new"]))
+        if old_module and old_module != new_module:
+            vacated.add(old_module)
+    if not vacated:
+        return []
+    # Anything the graph still defines under a vacated module means the module
+    # is alive and importing it is correct.
+    still_defined = {
+        _module_of(qn) for qn in after.definitions if _module_of(qn) in vacated
+    }
+    vacated -= still_defined
+    if not vacated:
+        return []
+    stale: list[StaleImporter] = []
+    for importer, targets in after.imports.items():
+        for target in sorted(targets & vacated):
+            stale.append(
+                StaleImporter(
+                    importer=importer,
+                    path=after.module_paths.get(importer, ""),
+                    line=0,
+                )
+            )
+            break
+    return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
 
 
 def observe(

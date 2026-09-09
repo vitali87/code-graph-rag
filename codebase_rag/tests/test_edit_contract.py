@@ -40,6 +40,7 @@ def _delta(**overrides: object) -> StructuralDelta:
         "arity_findings": [],
         "new_duplicates": [],
         "new_import_cycles": [],
+        "stale_importers": [],
         "tests_reaching": [
             {
                 "qualified_name": "p.tests.test_util.test_helper",
@@ -1088,3 +1089,191 @@ def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
     # `Independent.helper` is still there, but it is not this rename's site.
     assert "def helper(self):" in (root / "pkg" / "util.py").read_text()
     assert report.applied, "an unrelated same-named symbol was read as a rollback"
+
+
+# A move must leave importers updated, which the module docstring has always
+# promised and nothing checked: the contract asked "is the definition at its
+# new home?" and never "does an importer still target the old one?" (#1825).
+def test_a_move_fails_while_an_importer_targets_the_old_module() -> None:
+    """The whole point of the operation is that nobody points at the old path.
+
+    Passing here tells the caller the move is complete. The symptom then
+    surfaces later as a resolution failure far from the move that caused it,
+    which is the shape this repo keeps hitting.
+    """
+    expectation = move_expectation("p.pkg.util.helper", "p.pkg.core.helper")
+    moved = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.core.helper", "path": "pkg/util.py"}
+    ]
+    stale = _delta(
+        symbols={"added": [], "removed": [], "renamed": moved, "changed": []},
+        stale_importers=[{"importer": "p.pkg.app", "path": "pkg/app.py", "line": 1}],
+    )
+
+    verdict = verify(expectation, stale)
+
+    assert not verdict.ok
+    assert cs.CONTRACT_STALE_IMPORTER.format(sites="pkg/app.py:1") in verdict.failures
+
+
+def test_a_move_passes_when_every_importer_followed() -> None:
+    """The control: no stale importer must still pass.
+
+    Without this, "always fail a move" satisfies the test above and makes
+    the operation unusable.
+    """
+    expectation = move_expectation("p.pkg.util.helper", "p.pkg.core.helper")
+    moved = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.core.helper", "path": "pkg/util.py"}
+    ]
+
+    assert verify(
+        expectation,
+        _delta(symbols={"added": [], "removed": [], "renamed": moved, "changed": []}),
+    ).ok
+
+
+def test_a_rename_is_not_failed_by_a_stale_importer() -> None:
+    """The second control: this is a MOVE postcondition, not a global one.
+
+    A rename does not change a module path, so an importer edge reported
+    against it is not that rename's fault, and failing it here would break
+    every rename whose delta happens to carry one.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], heuristic_allowed=False
+    )
+    renamed = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.util.assist", "path": "pkg/util.py"}
+    ]
+
+    assert verify(
+        expectation,
+        _delta(
+            symbols={"added": [], "removed": [], "renamed": renamed, "changed": []},
+            stale_importers=[
+                {"importer": "p.pkg.app", "path": "pkg/app.py", "line": 1}
+            ],
+        ),
+    ).ok
+
+
+# The producer behind `stale_importers`. The contract tests above feed it a
+# synthetic delta, so without these the detection logic itself is untested
+# and the contract check would pass over a field nothing ever populates.
+def _snapshot(definitions: dict[str, str], imports: dict[str, set[str]]):
+    """A Snapshot carrying only what `_stale_importers` reads.
+
+    `definitions` maps qualified name -> path; `imports` maps importing
+    module -> the modules it imports.
+    """
+    from codebase_rag.structural_delta import Definition, Snapshot
+
+    return Snapshot(
+        paths=frozenset(definitions.values()),
+        definitions={
+            qn: Definition(
+                label="Function",
+                qualified_name=qn,
+                name=qn.rpartition(".")[2],
+                path=path,
+                start_line=1,
+                end_line=2,
+                positional_params=None,
+                fingerprint="",
+                fingerprint_nodes=0,
+                branches=frozenset(),
+            )
+            for qn, path in definitions.items()
+        },
+        callees={},
+        sites=(),
+        imports={qn: frozenset(t) for qn, t in imports.items()},
+        module_paths={qn: f"{qn.replace('.', '/')}.py" for qn in imports},
+    )
+
+
+def _renamed(old: str, new: str) -> dict:
+    return {
+        "added": [],
+        "removed": [],
+        "changed": [],
+        "renamed": [{"old": old, "new": new}],
+    }
+
+
+def test_an_importer_of_a_vacated_module_is_reported() -> None:
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    stale = _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+
+    assert [entry["importer"] for entry in stale] == ["p.pkg.app"]
+
+
+def test_a_module_that_still_defines_something_is_not_vacated() -> None:
+    """Moving one helper out of a busy module must not indict its siblings.
+
+    Without this the check reports every importer of everything left behind,
+    which would make the contract unusable on any real move.
+    """
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={
+            "p.pkg.core.helper": "pkg/core.py",
+            # The old module still has a resident.
+            "p.pkg.util.other": "pkg/util.py",
+        },
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+        == []
+    )
+
+
+def test_a_plain_rename_vacates_no_module() -> None:
+    """A rename keeps the module, so it can produce no stale importer.
+
+    This is what keeps the check specific to moves without the contract
+    having to distinguish them.
+
+    The fixture leaves `p.pkg.util` with NO surviving definition, so the
+    vacancy check cannot be what saves it -- only the module-changed test
+    can. An earlier version defined the renamed symbol in that same module,
+    which meant both guards suppressed the finding and removing either one
+    left the test green: it could not tell which guard was working
+    (measured, #1825).
+    """
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.other.thing": "other.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.util.assist"))
+        == []
+    )
+
+
+def test_an_importer_of_an_untouched_module_is_not_reported() -> None:
+    """The control: only the VACATED module's importers count."""
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.unrelated"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+        == []
+    )

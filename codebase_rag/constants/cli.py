@@ -617,6 +617,7 @@ CONTRACT_DANGLING = "dangling callers: {sites}"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
 CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
+CONTRACT_STALE_IMPORTER = "importers still target the old module: {sites}"
 CONTRACT_NEW_DUPLICATE = "new duplicate: {pairs}"
 CONTRACT_PARSE_FAILED = "files no longer parse: {files}"
 MSG_SURGICAL_FAILED = (
