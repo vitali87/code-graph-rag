@@ -890,3 +890,55 @@ def test_change_signature_does_not_accept_an_unknown_verdict() -> None:
     verdict = verify(change_signature_expectation([]), delta)
     assert not verdict.ok
     assert any("pkg/app.py:5" in f for f in verdict.failures)
+
+
+def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
+    # `TransactionConflict` covers two opposite situations. The test above
+    # pins the one where a LATER edit is stacked on top: the rename is still
+    # applied and must say so. Here another actor reverses the rename's own
+    # transaction while the postcondition is being measured, so the files are
+    # restored -- and reporting `applied=True` would be a lie about the tree
+    # (Greptile, PR #1547).
+    from codebase_rag.editing.transaction import undo_transaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    # The new name already exists, so the contract fails and a rollback runs.
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+    undone: list[str] = []
+
+    def reingest_then_undo(paths: list[str]) -> None:
+        updater.reingest(paths)
+        # The other actor: reverses this very transaction before the
+        # rollback below can, leaving the history empty.
+        from codebase_rag.editing.transaction import load_history
+
+        entries = load_history(root)
+        if entries:
+            tx_id = str(entries[-1][cs.EDIT_KEY_ID])
+            undo_transaction(root, tx_id)
+            undone.append(tx_id)
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_undo,
+    )
+
+    assert undone, "the concurrent undo never ran; the race was not exercised"
+    # The tree was restored by the other actor, so this is NOT applied.
+    assert not report.applied
+    assert report.verdict is not None
+    assert not report.verdict.ok
+    assert "already been reversed" in report.message
+    assert "def helper(a):" in (root / "pkg" / "util.py").read_text()

@@ -587,6 +587,11 @@ RENAME_ROLLBACK_REFUSED = (
     "recorded on top of it, so it was not rolled back; undo the later edit "
     "and rerun"
 )
+RENAME_ROLLBACK_ALREADY_UNDONE = (
+    "Rename rolled back: its postcondition failed ({reasons}) and its "
+    "transaction had already been reversed by another actor, so the files "
+    "were restored without this rollback doing it"
+)
 RENAME_ROLLBACK_UNMEASURED = (
     "Rename rolled back after its postcondition failed ({reasons}), but the "
     "graph could not be re-ingested afterwards ({error}); rebuild the graph "

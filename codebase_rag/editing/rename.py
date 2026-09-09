@@ -48,6 +48,7 @@ from .transaction import (
     StagedTree,
     TransactionConflict,
     VerificationResult,
+    load_history,
     undo_transaction,
 )
 
@@ -767,6 +768,23 @@ class Renamer:
             self.after_apply(list(report.files))
         return report
 
+    def _transaction_is_recorded(self, transaction_id: str) -> bool:
+        """Whether this rename's transaction is still in the edit history.
+
+        Present means a LATER edit was stacked on top (the rollback refused,
+        and the rename is still applied). Absent means someone else already
+        reversed it (the files are restored). A history that cannot be read
+        is treated as present, because keeping `applied` as it was is the
+        conservative answer when the tree's state is unknown.
+        """
+        try:
+            entries = load_history(self.repo_root)
+        except Exception:  # noqa: BLE001 -- unknown state, change nothing
+            return True
+        return any(
+            str(entry.get(cs.EDIT_KEY_ID, "")) == transaction_id for entry in entries
+        )
+
     def _enforce_contract(
         self, report: RenameReport, new_name: str, allow_heuristic: bool
     ) -> RenameReport:
@@ -812,9 +830,21 @@ class Renamer:
             undo_transaction(self.repo_root, report.transaction_id)
         except TransactionConflict as conflict:
             logger.warning(str(conflict))
+            # The conflict covers two opposite situations and they need
+            # opposite answers. A NEWER edit stacked on top means this rename
+            # is still applied and must not be reported as undone. The
+            # transaction being ABSENT means someone else already reversed
+            # it, so the files are restored and `applied=True` would be a
+            # lie about the tree (Greptile, PR #1547).
+            if self._transaction_is_recorded(report.transaction_id):
+                return report._replace(
+                    verdict=verdict,
+                    message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
+                )
             return report._replace(
+                applied=False,
                 verdict=verdict,
-                message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
+                message=cs.RENAME_ROLLBACK_ALREADY_UNDONE.format(reasons=reasons),
             )
         try:
             self.reingest(list(report.files))

@@ -373,11 +373,20 @@ def _pair_lone_containers(
     before: Snapshot,
     after: Snapshot,
 ) -> list[RenameFinding]:
-    """Pass 4: an EMPTY container, paired only when the match is unambiguous.
+    """Pass 4: an EMPTY container, paired only on positive identity evidence.
 
-    With no descendants to carry it, the pairing is safe only when exactly
-    one fingerprint-less container of a label left a file and exactly one
-    appeared in it.
+    With no descendants and no fingerprint to carry it, "one of this label
+    left the file and one appeared" is NOT evidence: replacing an empty class
+    with an unrelated empty class satisfies it exactly, and the delta would
+    report a rename that never happened. The postcondition contract treats an
+    unexpected rename as a failure, so an invented one rolls back a correct
+    edit (Greptile, PR #1547).
+
+    The evidence required is that the container still STARTS where it did. A
+    rename edits the name in place and leaves the declaration on its line; an
+    independent replacement is a different declaration that happens to be
+    empty too. Where the line moved, the pair is reported as a removal plus
+    an addition, which is what the caller can verify for itself.
     """
     lone_removed = [
         qn
@@ -406,6 +415,10 @@ def _pair_lone_containers(
             and before.definitions[other].label == definition.label
         ]
         if len(matches) == 1 and len(peers) == 1:
+            # The identity evidence: same declaration line. Without it two
+            # unrelated empty containers in one file read as a rename.
+            if after.definitions[matches[0]].start_line != definition.start_line:
+                continue
             found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
             paired_new.add(matches[0])
             lone_added.remove(matches[0])

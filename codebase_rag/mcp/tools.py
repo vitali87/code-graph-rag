@@ -144,6 +144,14 @@ _READS_THE_GRAPH = frozenset(
 
 
 class MCPToolsRegistry:
+    # Class-level default so the read guard cannot raise AttributeError on a
+    # registry built through `__new__`. Tests construct it that way in a
+    # dozen places, and a guard that explodes on a half-built fixture reports
+    # a graph problem that is really a fixture problem -- which is exactly
+    # what happened when this field was added (PR #1547). `__init__` sets the
+    # real value; this only makes omission harmless.
+    _incomplete_project: str | None = None
+
     def __init__(
         self,
         project_root: str,
@@ -171,6 +179,14 @@ class MCPToolsRegistry:
         # an unrelated marker-less failure earned, whenever some recoverable
         # marker happens to be pending at guard time (#1705 review).
         self._flag_from_failed_clear: str | None = None
+        # The project `_graph_incomplete` is ABOUT, or None when the damage is
+        # not attributable to one (a wipe spans every project, and a failure
+        # before the name is known could have touched anything). A READ
+        # refuses only for the named project, or for everything when it is
+        # None: one project's failed recovery must not make every other
+        # project unreadable, and a healthy project's success must not clear
+        # the warning the damaged one earned (Greptile, PR #1547).
+        self._incomplete_project: str | None = None
 
         self.parsers, self.queries = load_parsers()
 
@@ -863,6 +879,7 @@ class MCPToolsRegistry:
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
         self._graph_incomplete = True
+        self._incomplete_project = project_name
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
         # Invariant (a). Nothing has been touched yet, so refusing costs
@@ -909,6 +926,7 @@ class MCPToolsRegistry:
                 await asyncio.to_thread(self.ingestor.clean_database)
                 await asyncio.to_thread(clear_all_embeddings)
                 self._graph_incomplete = False
+                self._incomplete_project = None
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
@@ -942,6 +960,7 @@ class MCPToolsRegistry:
         # whatever partial graph a failure left behind.
         self._live_updater = None
         self._graph_incomplete = True
+        self._incomplete_project = project_name
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
         # Persisted BEFORE the delete, and on a node the delete cannot reach:
@@ -1038,6 +1057,7 @@ class MCPToolsRegistry:
         # the partial graph would be no better.
         self._live_updater = None
         self._graph_incomplete = True
+        self._incomplete_project = project_name
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
         # The marker goes down BEFORE ensure_constraints, not after.
@@ -1216,6 +1236,7 @@ class MCPToolsRegistry:
         """
         flag_before = self._graph_incomplete
         attributed_before = self._flag_from_failed_clear
+        incomplete_project_before = self._incomplete_project
         cleared = self._persist_incomplete(project_name, False)
         # A failed clear strands a marker, so the flag must go up: this
         # process has to know later reingests will refuse. But the
@@ -1230,10 +1251,12 @@ class MCPToolsRegistry:
         # the stranded marker stays unhealable until a full update clears it.
         if not cleared:
             self._graph_incomplete = True
+            self._incomplete_project = project_name
             if not flag_before:
                 self._flag_from_failed_clear = project_name
         else:
             self._graph_incomplete = flag_before
+            self._incomplete_project = incomplete_project_before
             self._flag_from_failed_clear = attributed_before
         if not cleared:
             logger.warning(
@@ -1274,6 +1297,7 @@ class MCPToolsRegistry:
         """
         cleared = self._persist_incomplete(project_name, False)
         self._graph_incomplete = not cleared
+        self._incomplete_project = None if cleared else project_name
         # Attribute the flag to this project's stranded marker (or drop a
         # stale attribution when the clear succeeded), so the recovery in
         # `_hydrate_reingest_updater` heals only the flag it explains.
@@ -1293,7 +1317,11 @@ class MCPToolsRegistry:
         the shared part is the DECISION and the message, and each call site
         wraps it in whatever it returns (Greptile, PR #1547).
         """
-        if self._graph_incomplete or self._marker_says_incomplete(project_name):
+        in_process = self._graph_incomplete and self._incomplete_project in (
+            None,
+            project_name,
+        )
+        if in_process or self._marker_says_incomplete(project_name):
             return cs.MCP_QUERY_AFTER_FAILED_RUN.format(project=project_name, tool=tool)
         return None
 
@@ -1442,6 +1470,7 @@ class MCPToolsRegistry:
         persisted_incomplete = self._persisted_incomplete(project_name)
         if not persisted_incomplete and recoverable_here:
             self._graph_incomplete = False
+            self._incomplete_project = None
             self._flag_from_failed_clear = None
         if self._graph_incomplete or persisted_incomplete:
             raise ValueError(
@@ -1583,6 +1612,7 @@ class MCPToolsRegistry:
             if mutated:
                 self._live_updater = None
                 self._graph_incomplete = True
+                self._incomplete_project = project_name
                 # Not a stranded marker: this flag must not be healed by one.
                 #
                 # Load-bearing across PROCESSES, which is easy to miss: this
@@ -1803,6 +1833,9 @@ class MCPToolsRegistry:
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
             self._live_updater = None
             self._graph_incomplete = True
+            # This handler writes into THIS server's repository, so the damage
+            # is confined to the project that root derives to.
+            self._incomplete_project = derive_project_name(root)
             # Not a stranded marker: this flag must not be healed by one.
             # This path invalidates precisely BECAUSE a subtree may have been
             # deleted and not rebuilt, so the flag records real damage that no
@@ -2138,6 +2171,7 @@ class MCPToolsRegistry:
             # scoped re-ingest applies, so no later call reuses a partial graph.
             self._live_updater = None
             self._graph_incomplete = True
+            self._incomplete_project = project_name
             # ...and DURABLY, because that flag dies with this process while
             # the half-restored graph does not. A fresh registry would see a
             # project that looks whole, serve reads from it and hydrate a

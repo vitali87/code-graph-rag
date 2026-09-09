@@ -2873,3 +2873,38 @@ def test_the_reingest_default_still_refuses_on_a_dead_store() -> None:
     handler = _registry_with_a_dead_store()
 
     assert handler._persisted_incomplete(ALPHA) is True
+
+
+# One project's damage must not make every other project unreadable, and a
+# healthy project's recovery must not clear the damaged one's warning
+# (Greptile, PR #1547).
+def _registry_incomplete_for(project: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._incomplete_project = project
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_one_projects_damage_does_not_block_another() -> None:
+    handler = _registry_incomplete_for(ALPHA)
+
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_unattributed_damage_still_blocks_everything() -> None:
+    # A wipe spans every project, and a failure before the name is known
+    # could have touched anything: None must refuse for all.
+    handler = _registry_incomplete_for(None)
+
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is not None
