@@ -35,6 +35,7 @@ from scripts.check_pr_gated import (
     required_contexts_present,
     unit_test_contexts,
     unresolved_in_page,
+    validation_was_blocked,
 )
 
 # Captured from PR #1611's statusCheckRollup. The CodeRabbit entry is a
@@ -418,3 +419,65 @@ class TestIsRealReview:
         )
 
         assert is_real_review(invented_future_notice, "coderabbitai") is False
+
+
+# Verbatim from the Greptile review on PR #1547, the artifact that #1824
+# was filed against. Both the verdict markers and the blocked-validation
+# note are present -- which is the whole point: it reads as an ordinary
+# completed review until you open the collapsed log.
+REAL_REVIEW_WITH_BLOCKED_VALIDATION = (
+    "## Confidence score: 3/5\n\n"
+    "Last reviewed commit: 7d3c49e5\n\n"
+    "- A standalone rollback harness was attempted, but production imports "
+    "could not start because prompt_toolkit was absent in the incomplete "
+    "environment.\n"
+    "- The test suite remains blocked in this environment and historic paths "
+    "could not be behaviorally disproved; no precise present bug can be "
+    "claimed without a runnable import/test environment.\n"
+)
+
+# Same shape, from the #1824 report: a different wording of the same thing.
+REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR = (
+    "## Confidence score: 4/5\n\n"
+    "Both commands failed during import with ModuleNotFoundError: No module "
+    "named 'loguru' before _updater_for_reingest() could run; dependency "
+    "installation is blocked because building pymgclient requires CMake.\n"
+)
+
+
+class TestValidationWasBlocked:
+    """A review that could not RUN reads identically to one that verified.
+
+    #1824: the blocked-validation note lands in a collapsed log section
+    that a merge gate never opens and a human skims past. Detecting it is
+    the difference between "the bot checked this" and "the bot reasoned
+    about this and said so".
+    """
+
+    def test_the_real_blocked_review_is_detected(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+
+    def test_the_import_error_wording_is_detected(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is True
+
+    def test_a_review_that_ran_is_not_flagged(self) -> None:
+        """The negative case. Without this the detector could return True
+        for everything and every test above would still pass."""
+        assert validation_was_blocked(REAL_EMPTY_BUT_COMPLETED_REVIEW) is False
+
+    def test_an_empty_body_is_not_flagged(self) -> None:
+        assert validation_was_blocked("") is False
+        assert validation_was_blocked("   \n ") is False
+
+    def test_a_blocked_review_is_still_a_real_review(self) -> None:
+        """Blocked validation must NOT disqualify the artifact.
+
+        The finding in #1547's blocked review turned out to be correct and
+        was fixed. Unverified is not wrong, so this is a caveat on the
+        evidence, never a reason to refuse the PR -- and non-execution is
+        legitimate anyway when a PR has no Python surface to exercise.
+        """
+        assert (
+            is_real_review(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps")
+            is True
+        )

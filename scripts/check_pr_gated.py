@@ -88,6 +88,49 @@ TRUSTED_REVIEWERS = frozenset(
 )
 
 
+# A reviewer that could not RUN anything still produces a full-looking
+# review: the same verdict line, the same confidence score, findings that
+# read identically to executed ones. The blocked-validation note lands in a
+# collapsed log section that a reader skims past and a gate never opens
+# (#1824). These substrings are how that note has actually been worded on
+# this repo, in the reviewers' own text:
+#
+#   "imports could not start because prompt_toolkit was absent"
+#   "the test suite remains blocked in this environment"
+#   "failed during import with ModuleNotFoundError"
+#
+# Unlike REVIEW_VERDICT_MARKERS this IS a blocklist, and it fails in the
+# permissive direction on purpose. A missed variant reports the review as
+# ordinary -- exactly today's behaviour -- while a false positive would
+# nag about a review that ran fine. Non-execution is also legitimate and
+# common: a YAML-only PR has no Python surface to exercise, so this can
+# never be a merge blocker. It is surfaced as a caveat, not a reason.
+BLOCKED_VALIDATION_MARKERS = (
+    "could not start",
+    "could not run",
+    "remains blocked in this environment",
+    "blocked in this environment",
+    "failed during import",
+    "modulenotfounderror",
+    "dependency installation is blocked",
+    "validation blocked",
+    "could not be behaviorally disproved",
+    "without a runnable import/test environment",
+)
+
+
+def validation_was_blocked(body: str) -> bool:
+    """Whether a review says its own checks could not execute.
+
+    Positive detection on the reviewer's own wording. Absence means "no
+    such note was recognised", NOT "the review executed" -- the wording is
+    not a closed set, so this understates rather than overstates. See
+    BLOCKED_VALIDATION_MARKERS for why that direction is the safe one.
+    """
+    lowered = body.strip().lower()
+    return any(marker in lowered for marker in BLOCKED_VALIDATION_MARKERS)
+
+
 def _gh_stdout_or_empty(*args: str) -> str:
     """`gh` stdout, or "" when the call fails.
 
@@ -303,9 +346,17 @@ def _unresolved_thread_count(pr: str) -> tuple[int, str]:
     )
 
 
-def check(pr: str) -> list[str]:
-    """Every reason `pr` is not verifiably gated, in order. Empty means gated."""
+def check(pr: str) -> tuple[list[str], list[str]]:
+    """Reasons `pr` is not verifiably gated, and caveats on the evidence.
+
+    Reasons block: empty means gated. Caveats do not block -- they name
+    evidence that is weaker than it looks, so a reader can weigh it. A
+    review whose own checks could not execute is the caveat this exists
+    for: its findings may be perfectly correct, but they rest on reasoning
+    the reviewer could not confirm (#1824).
+    """
     reasons: list[str] = []
+    caveats: list[str] = []
 
     view = _json_dict(
         _gh_stdout_or_empty(
@@ -407,13 +458,34 @@ def check(pr: str) -> list[str]:
         for a in view.get(key, [])
         if isinstance(a, dict)
     ]
-    if not any(is_real_review(body, author) for body, author in artifacts):
+    real_reviews = [
+        (body, author) for body, author in artifacts if is_real_review(body, author)
+    ]
+    if not real_reviews:
         reasons.append(
             f"no review artifact carries a verdict from a reviewing account "
             f"({len(artifacts)} comment(s)/review(s) present, none of which is a "
             "review by one of "
             f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
         )
+    else:
+        blocked_by = sorted(
+            {author for body, author in real_reviews if validation_was_blocked(body)}
+        )
+        if blocked_by and len(blocked_by) == len(
+            {author for _, author in real_reviews}
+        ):
+            caveats.append(
+                f"every review artifact present says its own checks could not "
+                f"execute ({', '.join(blocked_by)}); its findings may be right, "
+                "but they rest on reasoning the reviewer could not confirm -- "
+                "verify them yourself rather than reading the score as checked"
+            )
+        elif blocked_by:
+            caveats.append(
+                f"a review by {', '.join(blocked_by)} says its own checks could "
+                "not execute; treat its findings as reasoning-only"
+            )
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
@@ -421,7 +493,7 @@ def check(pr: str) -> list[str]:
     elif unresolved:
         reasons.append(f"{unresolved} unresolved review thread(s)")
 
-    return reasons
+    return reasons, caveats
 
 
 def main(argv: list[str]) -> int:
@@ -429,9 +501,19 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"usage: {argv[0]} <pr-number>\n")
         return 2
     pr = argv[1]
-    reasons = check(pr)
+    reasons, caveats = check(pr)
+
+    # Caveats print in BOTH outcomes, and above the verdict line when the PR
+    # is otherwise gated. A caveat under a "gated" line is the one a reader
+    # skips, which is the whole failure this reports on (#1824).
+    for caveat in caveats:
+        sys.stdout.write(f"  ! {caveat}\n")
+
     if not reasons:
-        sys.stdout.write(f"PR #{pr}: gated (every check present and satisfied)\n")
+        sys.stdout.write(
+            f"PR #{pr}: gated (every check present and satisfied"
+            f"{'; see caveat(s) above' if caveats else ''})\n"
+        )
         return 0
     sys.stdout.write(f"PR #{pr}: NOT verifiably gated -- {len(reasons)} reason(s)\n")
     for reason in reasons:
