@@ -119,23 +119,84 @@ def test_valid_non_ascii_identifiers_are_not_reported(
     assert f"proj.a.{identifier}" in names
 
 
-def test_a_bad_byte_outside_a_name_is_not_reported(
+@pytest.mark.parametrize(
+    ("position", "source"),
+    [
+        (
+            "module_header",
+            b"# Copyright \xa9 2003 Sun Microsystems\ndef alpha():\n    return 1\n",
+        ),
+        ("body_comment", b"def alpha():\n    # \xa9 Sun\n    return 1\n"),
+    ],
+)
+def test_a_bad_byte_that_damages_no_name_is_not_reported(
+    parsers_and_queries: tuple[dict, dict], position: str, source: bytes
+) -> None:
+    """Positions a bad byte can occupy without truncating a name.
+
+    Only `module_header` was covered originally, and it is the ONE position no
+    definition node spans -- so the test passed while the check fired on a bad
+    byte in a body, which is exactly the real-world shape. Across 105,352 real
+    source files, all 165 invalid ones are latin-1 punctuation in a copyright
+    header or an author's name, i.e. these positions and not the defect.
+
+    A bad byte inside a STRING LITERAL or DOCSTRING is deliberately absent:
+    it makes the call-processing pass raise `UnicodeDecodeError` and abandon
+    the file, which is the separate open defect #1797 (fix in flight as PR
+    #1812) and is caught by conftest's per-file-pass guard. Add those two
+    positions here once #1812 lands; this check already handles them (verified
+    by driving `warn_if_name_truncated` directly), but the file never survives
+    ingest long enough to prove it end to end.
+    """
+    names, warnings = _index(parsers_and_queries, "a.py", source)
+
+    assert not warnings, f"false alarm on a bad byte in a {position}"
+    assert "proj.a.alpha" in names, "the symbol indexed under its real name"
+
+
+def test_one_bad_byte_does_not_warn_once_per_enclosing_definition(
     parsers_and_queries: tuple[dict, dict],
 ) -> None:
-    """The measured real-world case, and why this is not a per-file check.
+    """Nesting must not multiply the message.
 
-    Across 105,352 real source files (Rust crates, Go modules, the macOS SDK,
-    Homebrew, site-packages), 165 are not valid UTF-8 and NONE corrupts a
-    symbol: every one is latin-1 punctuation in a copyright header or an
-    author's name. A file-level signal would have fired on all 165 and been
-    wrong every time; this one fires on none of them.
+    Keyed on the enclosing definition's span, one bad byte in a deeply nested
+    body produced a warning per level (4 here) while every symbol was indexed
+    correctly.
     """
-    source = b"# Copyright \xa9 2003 Sun Microsystems\ndef alpha():\n    return 1\n"
+    source = (
+        b"class Outer:\n"
+        b"    class Mid:\n"
+        b"        class Inner:\n"
+        b'            def deep(self):\n                return "\xa9"\n'
+    )
 
     names, warnings = _index(parsers_and_queries, "a.py", source)
 
-    assert not warnings, "warned on a bad byte that damages no name"
-    assert "proj.a.alpha" in names, "the symbol indexed under its real name"
+    assert not warnings, f"{len(warnings)} warning(s) for one harmless bad byte"
+    assert "proj.a.Outer.Mid.Inner" in names
+
+
+def test_the_name_nodes_own_bytes_cannot_detect_this() -> None:
+    """Why the check probes ADJACENT bytes rather than the name's own.
+
+    tree-sitter excludes the bad byte from the name node, so its bytes decode
+    cleanly in the corrupt and the clean case alike. A check on them detects
+    nothing -- the opposite failure to the definition-span version, and just
+    as invisible.
+    """
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+    parser = parsers[cs.SupportedLanguage.PYTHON]
+
+    corrupt = parser.parse(b"def al\xffpha():\n    return 1\n")
+    definition = next(
+        n for n in corrupt.root_node.children if n.type == "function_definition"
+    )
+    name_node = definition.child_by_field_name("name")
+
+    assert name_node.text == b"pha", "the name node excludes the bad byte"
+    name_node.text.decode(cs.ENCODING_UTF8)  # decodes cleanly: detects nothing
 
 
 def test_the_containment_oracle_cannot_detect_this() -> None:

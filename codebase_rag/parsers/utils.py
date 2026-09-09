@@ -1613,43 +1613,92 @@ def module_qn_for_entity(
 def warn_if_name_truncated(
     node: Node, name: str | None, file_path: Path | None = None
 ) -> None:
-    """Log when a symbol name was extracted from undecodable bytes.
+    """Log when a symbol name was truncated by an invalid byte.
 
-    An invalid byte inside an identifier is treated by tree-sitter as a token
-    boundary, so the `name` node covers only the bytes on one side of it. The
-    extractor then decodes that shortened node without error: `calculate_total`
-    is indexed as `calculate_t`, with nothing raised and nothing logged. A
-    wrong name is worse than a missing one -- callers in untouched files stop
+    An invalid byte inside an identifier is a token boundary to tree-sitter,
+    so the `name` node covers only the bytes on one side of it. The extractor
+    then decodes that shortened node without error: `calculate_total` is
+    indexed as `calculate_t`, with nothing raised and nothing logged. A wrong
+    name is worse than a missing one -- callers in untouched files stop
     resolving to it, so it reads as dead code while a symbol nobody calls
-    appears beside it. Measured across all 15 supported languages: 13 truncate
-    silently, 2 drop the symbol, none survive intact.
+    appears beside it.
 
-    Keyed on the NAME's own bytes, not the file's. A file-level check would be
-    a different signal entirely: across 105,352 real source files (Rust crates,
-    Go modules, the macOS SDK, Homebrew, site-packages) 165 are not valid
-    UTF-8, and NONE of them corrupts a symbol -- every one is latin-1
-    punctuation in a copyright header or an author's name, and one is a `£`
-    inside a regex literal. So a per-file warning would have fired 165 times
-    and been wrong every time, at 1.2% of the macOS SDK. This check fires zero
-    times on all of them and only when a name is genuinely damaged.
+    The discriminator is the byte IMMEDIATELY ADJACENT to the name's span:
+    the one the grammar split on. Two narrower-sounding shapes are both wrong:
 
-    Deliberately NOT `name.encode() in node.text`: containment is satisfied BY
-    this corruption, because the truncated name is a substring of the corrupt
-    bytes (`pha` really is inside `al\xffpha`), so that oracle returns True on
-    the exact defect it would be written for and can never fire. What
-    discriminates is whether the SOURCE round-trips.
+    * The name node's own bytes never contain the bad byte -- tree-sitter
+      excludes it -- so they decode cleanly in the corrupt and the clean case
+      alike. A check on them detects nothing at all.
+    * The enclosing DEFINITION's span does contain it, but also spans the
+      whole body, so it fires on a bad byte in any body comment, docstring or
+      string literal while the symbol is indexed under its correct name, and
+      once per enclosing definition -- one bad byte in a nested class yields a
+      warning per level.
+
+    Measured across 105,352 real source files (Rust crates, Go modules, the
+    macOS SDK, Homebrew, site-packages): 165 are not valid UTF-8 and NONE
+    corrupts a symbol -- every one is latin-1 punctuation in a copyright
+    header or an author's name. All 165 are exactly the shape the second
+    bullet misfires on, which is why the adjacency test earns its place.
     """
     if not name:
         return
-    raw = getattr(node, "text", None)
-    if not isinstance(raw, bytes):
+    source = _node_source_bytes(node)
+    if source is None:
         return
-    try:
-        raw.decode(cs.ENCODING_UTF8)
-    except UnicodeDecodeError:
-        logger.warning(
-            logs.TRUNCATED_SYMBOL_NAME.format(
-                path=file_path if file_path is not None else "<unknown>",
-                name=name,
+    # Callers pass the DEFINITION node, which is what they have. Narrow to the
+    # span the extracted name actually came from: `child_by_field_name` alone
+    # is not enough, because grammars nest the identifier differently (C puts
+    # it under `function_declarator`, so the definition has no `name` field at
+    # all and the search below is what finds it).
+    span = _name_span(node, name)
+    if span is None:
+        return
+    start, end = span
+    for probe in (source[max(0, start - 1) : start], source[end : end + 1]):
+        if not probe:
+            continue
+        try:
+            probe.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
+            logger.warning(
+                logs.TRUNCATED_SYMBOL_NAME.format(
+                    path=file_path if file_path is not None else "<unknown>",
+                    name=name,
+                )
             )
-        )
+            return
+
+
+def _name_span(node: Node, name: str) -> tuple[int, int] | None:
+    """Byte span of the identifier `name` was decoded from, or None.
+
+    Prefers the `name` field, then the shallowest descendant whose own text
+    equals the extracted name. The search is bounded to identifier-ish leaves
+    and stops at the first match, so it stays cheap on large definitions.
+    """
+    encoded = name.encode(cs.ENCODING_UTF8)
+    direct = node.child_by_field_name(cs.FIELD_NAME)
+    if direct is not None and direct.text == encoded:
+        return direct.start_byte, direct.end_byte
+
+    stack = [node]
+    while stack:
+        current = stack.pop(0)
+        if current is not node and current.text == encoded and not current.children:
+            return current.start_byte, current.end_byte
+        stack.extend(current.children)
+    return None
+
+
+def _node_source_bytes(node: Node) -> bytes | None:
+    """The whole source buffer the node's byte offsets index into.
+
+    `start_byte`/`end_byte` are offsets into the FILE, so the adjacency probe
+    needs the file's bytes rather than the node's own slice.
+    """
+    root = node
+    while (parent := getattr(root, "parent", None)) is not None:
+        root = parent
+    raw = getattr(root, "text", None)
+    return raw if isinstance(raw, bytes) else None
