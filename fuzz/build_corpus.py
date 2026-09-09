@@ -250,6 +250,12 @@ def build_incremental_corpus() -> int:
         "delete_recreate": encode_edit_plan(1, [(app, 5)]),
         "append_call": encode_edit_plan(0, [(util, 6)]),
         "multi_edit": encode_edit_plan(1, [(util, 0), (app, 4), (main_py, 6)]),
+        # Issue #1799, the atomic-save race: delete a file and write it back
+        # in the same plan, so the path reaches `reingest` named as deleted
+        # while present on disk. `pkg/util.py` because it has an importer,
+        # so a regression also downgrades pkg/app.py's IMPORTS edge to a
+        # phantom ExternalModule rather than only dropping definitions.
+        "repro_1799_deleted_but_present": encode_edit_plan(0, [(util, 4), (util, 5)]),
     }
     for name, blob in seeds.items():
         (out / f"{name}.bin").write_bytes(blob)
