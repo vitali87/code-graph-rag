@@ -58,12 +58,21 @@ def _walk(node: object) -> int:
     return count
 
 
-def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
+def _extract_names(language: cs.SupportedLanguage, root: object, source: bytes) -> None:
     """Run the language's own name extractor over every captured node.
 
     This is the qualification code the issue names: it indexes children,
     follows named fields and decodes `node.text`, all on shapes the grammar
     guarantees only for well-formed input.
+
+    Two failure modes, and only one of them raises. The loud one (#1797) is a
+    strict decode blowing up on an undecodable byte. The quiet one (#1810) is
+    tree-sitter treating that byte as a token boundary: the `name` node covers
+    only the bytes AFTER it, the extractor decodes that shortened node
+    perfectly successfully, and `alpha` is indexed as `pha` with no exception,
+    no log line and nothing to catch. A wrong name is worse than a missing
+    one -- `pha` reads as a real definition nobody calls, so dead-code and
+    impact queries get a confidently wrong answer.
     """
     fqn_spec = LANGUAGE_FQN_SPECS.get(language)
     spec = LANGUAGE_SPECS.get(language)
@@ -75,6 +84,16 @@ def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
     if not wanted:
         return
 
+    # The whole file, once: a name is suspect when the bytes it was extracted
+    # from are not valid UTF-8, and the cheap file-level question decides
+    # whether any per-node work is worth doing at all.
+    try:
+        source.decode(cs.ENCODING_UTF8)
+    except UnicodeDecodeError:
+        file_is_valid_utf8 = False
+    else:
+        file_is_valid_utf8 = True
+
     stack = [root]
     while stack:
         current = stack.pop()
@@ -84,8 +103,48 @@ def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
             # the extractors decode with errors="replace", so an undecodable
             # byte can no longer raise here and a regression would surface as
             # a crash rather than being silently tolerated.
-            fqn_spec.get_name(current)  # type: ignore[arg-type]
+            name = fqn_spec.get_name(current)  # type: ignore[arg-type]
+            if name is not None:
+                _check_truncated_name(language, current, name)
         stack.extend(current.children)  # type: ignore[attr-defined]
+
+
+def _check_truncated_name(
+    language: cs.SupportedLanguage, node: object, name: str
+) -> None:
+    """Fail when a name was extracted from bytes that are not valid UTF-8.
+
+    Deliberately NOT `name.encode() in raw`: that containment check is
+    satisfied by the very corruption it looks for, because the truncated name
+    is a SUBSTRING of the corrupt bytes -- `pha` really is inside
+    `al\xffpha`, so the oracle returns True on the exact defect it was
+    written for and could never fire. What discriminates is whether the
+    SOURCE round-trips, not whether the result is contained in it.
+
+    Scoped honestly: this detects a superset (any name extracted from a span
+    that is not valid UTF-8), it needs the enclosing node's bytes to carry the
+    bad byte, and a payload placing that byte outside every captured node
+    stays invisible. It is silent on legitimate non-ASCII identifiers such as
+    `café`, which a naive "is it ASCII" check would flag on every non-English
+    codebase.
+    """
+    raw = _node_bytes(node)
+    if raw is None:
+        return
+    try:
+        raw.decode(cs.ENCODING_UTF8)
+    except UnicodeDecodeError:
+        raise AssertionError(
+            f"{language}: extracted the name {name!r} from bytes that are not "
+            f"valid UTF-8 ({raw!r}); tree-sitter split the token at the bad "
+            f"byte and the symbol is indexed under a truncated name (#1810)"
+        ) from None
+
+
+def _node_bytes(node: object) -> bytes | None:
+    """The raw source bytes a node covers, or None when unavailable."""
+    text = getattr(node, "text", None)
+    return text if isinstance(text, bytes) else None
 
 
 def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
@@ -121,7 +180,7 @@ def fuzz_parse_source(data: bytes) -> None:
 
     _walk(tree.root_node)
     _run_queries(language, tree)
-    _extract_names(language, tree.root_node)
+    _extract_names(language, tree.root_node, source)
 
 
 def main() -> None:

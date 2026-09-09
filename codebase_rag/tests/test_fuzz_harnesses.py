@@ -189,12 +189,47 @@ def shell_harness() -> ModuleType:
     return import_harness_module("fuzz_shell_command")
 
 
+# Seeds that are reproducers for an OPEN defect: the harness is expected to
+# detect them, so "runs without raising" is the wrong assertion for these.
+# Delete an entry when its issue is fixed -- the seed then has to pass like
+# any other, and the harness re-detects a regression.
+_KNOWN_DEFECT_SEEDS = {
+    # #1810: a bad byte inside an identifier truncates it silently.
+    "edge_truncated_identifier.bin",
+    "edge_truncated_identifier_tail.bin",
+}
+
+
 def test_parse_harness_runs_every_seed(parse_harness: ModuleType) -> None:
-    """Every seed in the corpus drives the harness without raising."""
+    """Every seed in the corpus drives the harness without raising.
+
+    Except the reproducers for open defects, which the harness is supposed to
+    catch. Those are asserted the other way round in
+    `test_known_defect_seeds_are_still_detected`, so an entry here cannot
+    quietly become a seed that passes for the wrong reason.
+    """
     seeds = sorted((FUZZ_DIR / "corpus" / "fuzz_parse_source").iterdir())
     assert seeds, "the parse corpus is empty; run fuzz/build_corpus.py"
     for seed in seeds:
+        if seed.name in _KNOWN_DEFECT_SEEDS:
+            continue
         parse_harness.fuzz_parse_source(seed.read_bytes())
+
+
+def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> None:
+    """The other half of the exemption above.
+
+    An exemption list that is only ever skipped is indistinguishable from a
+    list of seeds that stopped reproducing: both leave the suite green. Each
+    exempt seed must still trip the detector, so the day one is fixed this
+    test fails and says to remove it from the set rather than letting the
+    exemption outlive the defect.
+    """
+    for name in sorted(_KNOWN_DEFECT_SEEDS):
+        seed = FUZZ_DIR / "corpus" / "fuzz_parse_source" / name
+        assert seed.exists(), f"missing seed {name}; run fuzz/build_corpus.py"
+        with pytest.raises(AssertionError, match="not valid UTF-8"):
+            parse_harness.fuzz_parse_source(seed.read_bytes())
 
 
 def test_parse_harness_reaches_the_extractor(parse_harness: ModuleType) -> None:
@@ -222,11 +257,90 @@ def test_parse_harness_reaches_the_extractor(parse_harness: ModuleType) -> None:
         # `_extract_names` directly rather than guessing an input that
         # selects Python.
         parser = parse_harness._PARSERS[cs.SupportedLanguage.PYTHON]
-        tree = parser.parse(b"def f():\n    return 1\n")
+        source = b"def f():\n    return 1\n"
+        tree = parser.parse(source)
         with pytest.raises(IndexError, match=sentinel):
-            parse_harness._extract_names(cs.SupportedLanguage.PYTHON, tree.root_node)
+            parse_harness._extract_names(
+                cs.SupportedLanguage.PYTHON, tree.root_node, source
+            )
     finally:
         LANGUAGE_FQN_SPECS[cs.SupportedLanguage.PYTHON] = original
+
+
+@pytest.mark.parametrize(
+    ("language_name", "source"),
+    [
+        ("PYTHON", b"def al\xffpha():\n    return 1\n"),
+        ("LUA", b"function al\xffpha() return 1 end\n"),
+        ("JS", b"function al\xffpha() { return 1; }\n"),
+    ],
+    ids=["python", "lua", "javascript"],
+)
+def test_parse_harness_detects_a_truncated_name(
+    parse_harness: ModuleType, language_name: str, source: bytes
+) -> None:
+    """Issue #1810: a bad byte inside an identifier truncates it silently.
+
+    tree-sitter treats the byte as a token boundary, so the `name` node covers
+    only what follows it and the extractor decodes that shortened node without
+    error. `alpha` is indexed as `pha` with nothing raised and nothing logged,
+    which is why catching exceptions cannot find this class.
+    """
+    from codebase_rag import constants as cs
+
+    language = getattr(cs.SupportedLanguage, language_name)
+    if language not in parse_harness._PARSERS:
+        pytest.skip(f"no {language_name} grammar available")
+    tree = parse_harness._PARSERS[language].parse(source)
+
+    with pytest.raises(AssertionError, match="not valid UTF-8"):
+        parse_harness._extract_names(language, tree.root_node, source)
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["alpha", "caf\u00e9", "\u00e9lan", "\u51fd\u6570"],
+    ids=["ascii", "latin_accent", "leading_accent", "cjk"],
+)
+def test_parse_harness_is_quiet_on_valid_identifiers(
+    parse_harness: ModuleType, identifier: str
+) -> None:
+    """The control that decides whether the detector is usable.
+
+    A naive "is this name pure ASCII" check passes every test anyone would
+    think to write and then fires on every non-English codebase. These inputs
+    separate "extracted from undecodable bytes" from "merely not ASCII", which
+    is why the detector asks the SOURCE to round-trip rather than inspecting
+    the extracted name.
+    """
+    from codebase_rag import constants as cs
+
+    language = cs.SupportedLanguage.PYTHON
+    if language not in parse_harness._PARSERS:
+        pytest.skip("no python grammar available")
+    source = f"def {identifier}():\n    return 1\n".encode()
+    tree = parse_harness._PARSERS[language].parse(source)
+
+    parse_harness._extract_names(language, tree.root_node, source)
+
+
+def test_the_containment_oracle_would_miss_this_defect() -> None:
+    """Why the detector is not `name.encode() in raw`, pinned as a test.
+
+    The obvious check is that the extracted name appears in the bytes it came
+    from. It is satisfied BY the corruption whenever the corruption truncates:
+    `pha` really is a substring of `al\\xffpha`, so the oracle returns True on
+    the exact defect it was written for and can never fire. Written down here
+    because it is the first thing a future reader will try to "simplify" the
+    detector into.
+    """
+    raw = b"al\xffpha"
+    truncated = b"pha"
+
+    assert truncated in raw, "the containment oracle passes on the defect"
+
+    with pytest.raises(UnicodeDecodeError):
+        raw.decode("utf-8")
 
 
 def test_shell_harness_agrees_with_the_classifier(shell_harness: ModuleType) -> None:

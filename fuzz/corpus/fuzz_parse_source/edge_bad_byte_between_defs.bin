@@ -1,0 +1,6 @@
+def a():
+    return 1
+ÿ
+def b():
+    return 2
+	
