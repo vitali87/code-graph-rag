@@ -16,7 +16,9 @@ project scan each for the duplicate and test-reach indexes.
 
 from __future__ import annotations
 
+import ast
 import re
+import textwrap
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -394,6 +396,37 @@ def _dangling(
 _VARIADIC = re.compile(r"(?<!\*)\*(?!\*)")
 
 
+def _header_is_variadic(header: str) -> bool:
+    """Whether a `def` header declares `*args` or keyword-only params.
+
+    Parsed, not scanned. Scanning got both directions wrong, and this is
+    the sole suppressor of a too-many-arguments verdict, so each costs
+    something different: a false positive hides a real arity error, and a
+    false negative makes a CORRECT edit fail its postcondition and roll
+    back.
+
+    A `*` inside a default (`b=2*3`) or a string (`doc='a*b'`) is not
+    `*args`, and a real `*rest` can follow a default that itself contains
+    a `)` -- which the old first-`)` cut discarded. `ast` is the right
+    oracle because it is the same parser that decides whether the call
+    raises at runtime.
+
+    An unparseable header answers False, keeping the arity check ACTIVE:
+    for a suppressor, refusing to suppress is the safe direction.
+    """
+    body = textwrap.dedent(header).strip()
+    if not body:
+        return False
+    try:
+        tree = ast.parse(body + "\n    pass\n")
+    except SyntaxError:
+        return False
+    node = tree.body[0] if tree.body else None
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return False
+    return node.args.vararg is not None or bool(node.args.kwonlyargs)
+
+
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
     """Whether the Python definition's header declares `*args` or a bare `*`.
 
@@ -417,12 +450,7 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
         header.append(line)
         if ")" in line:
             break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
-        return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    return _header_is_variadic("\n".join(header))
 
 
 def _arity_verdict(
