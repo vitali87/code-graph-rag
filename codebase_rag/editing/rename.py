@@ -823,6 +823,12 @@ class Renamer:
         by_path: dict[str, list[RenameSite]] = {}
         for site in report.sites:
             by_path.setdefault(site.path, []).append(site)
+        if not by_path:
+            # Nothing was rewritten, so there is nothing to find restored.
+            # Claiming a full undo here would report every rename with no
+            # recorded sites as reversed.
+            return False
+        old_bytes = report.old_name.encode("utf-8")
         for relative, sites in by_path.items():
             try:
                 lines = (
@@ -830,10 +836,12 @@ class Renamer:
                 )
             except OSError:
                 return False
-            old_bytes = report.old_name.encode("utf-8")
             for site in sites:
                 if not 0 < site.line <= len(lines):
-                    continue
+                    # A site whose line is gone cannot be shown restored, and
+                    # `applied=False` claims EVERY site is back, so this is a
+                    # no rather than a skip.
+                    return False
                 # Compared as BYTES: `site.col` is a tree-sitter byte column,
                 # while a decoded line is indexed by code points, so any
                 # multibyte character earlier on the line shifts the two apart
@@ -841,9 +849,14 @@ class Renamer:
                 text = lines[site.line - 1].encode("utf-8")
                 # The token must sit at the recorded column: another
                 # occurrence on the same line is a different symbol.
-                if text[site.col : site.col + len(old_bytes)] == old_bytes:
-                    return True
-        return False
+                if text[site.col : site.col + len(old_bytes)] != old_bytes:
+                    # EVERY site must carry the old name again. One restored
+                    # site is a PARTIAL undo, and reporting `applied=False`
+                    # for it tells the caller every file is back when other
+                    # definitions, references and imports are still renamed
+                    # (Greptile, PR #1547).
+                    return False
+        return True
 
     def _enforce_contract(
         self, report: RenameReport, new_name: str, allow_heuristic: bool

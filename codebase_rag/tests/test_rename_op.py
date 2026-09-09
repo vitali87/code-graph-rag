@@ -1084,3 +1084,52 @@ def test_a_first_rollback_still_attributes_to_its_project() -> None:
 
     assert handler._graph_incomplete is True
     assert handler._incomplete_project == "alpha"
+
+
+def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:
+    """A partial restore must not be reported as the whole rename undone.
+
+    `applied=False` tells the caller every file is back as it was. With one
+    site restored and another still renamed, that is a lie in the dangerous
+    direction: the caller stops looking (Greptile, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
+    # Restored.
+    (tmp_path / "b.py").write_text("assist()\n", encoding="utf-8")
+    # Still renamed: the rename is NOT fully undone.
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "a.py", 1, 4, "a.helper", None),
+        RenameSite("call", "b.py", 1, 0, "b.caller", None),
+    ]
+
+    assert run._old_name_is_back(report) is False
+
+
+def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
+    """The control: all sites back means the rename really was reversed.
+
+    Without this, "always return False" passes the test above and the
+    already-undone branch becomes unreachable.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("helper()\n", encoding="utf-8")
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "a.py", 1, 4, "a.helper", None),
+        RenameSite("call", "b.py", 1, 0, "b.caller", None),
+    ]
+
+    assert run._old_name_is_back(report) is True
