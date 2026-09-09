@@ -2602,6 +2602,10 @@ async def test_query_code_graph_refuses_on_an_incomplete_graph() -> None:
     handler._persisted_incomplete = MagicMock(return_value=True)
     handler._query_tool = MagicMock()
     handler._query_tool.function = AsyncMock()
+    # The guard now runs INSIDE the read's lock, i.e. after the per-request
+    # tool is built, so the fixture needs what that construction touches.
+    handler.cypher_gen = MagicMock()
+    handler._stderr_console = MagicMock()
 
     result = await handler.query_code_graph("anything", project=ALPHA)
 
@@ -2795,14 +2799,11 @@ def test_every_graph_reader_is_guarded() -> None:
             continue
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else None
-        # `_refusal_under_lock` is the same decision taken while holding the
-        # ingestor lock; a tool guarded through it is guarded.
-        if name not in {"_incomplete_refusal", "_refusal_under_lock"}:
+        if name != "_incomplete_refusal":
             # `asyncio.to_thread(self._incomplete_refusal, project, TOOL)`
             # passes it as an argument rather than calling it directly.
             passed = any(
-                isinstance(a, ast.Attribute)
-                and a.attr in {"_incomplete_refusal", "_refusal_under_lock"}
+                isinstance(a, ast.Attribute) and a.attr == "_incomplete_refusal"
                 for a in node.args
             )
             if not passed:
@@ -2969,7 +2970,7 @@ def test_every_guard_sits_inside_its_lock() -> None:
                 names = [
                     a.attr for a in [n.func, *n.args] if isinstance(a, ast.Attribute)
                 ]
-                if {"_incomplete_refusal", "_refusal_under_lock"} & set(names):
+                if "_incomplete_refusal" in names:
                     found.append(n.lineno)
         return found
 
@@ -2978,13 +2979,6 @@ def test_every_guard_sits_inside_its_lock() -> None:
             continue
         guards = guard_lines(fn)
         if not guards:
-            continue
-        # `_refusal_under_lock` takes the lock itself, so a caller using it
-        # needs no `async with` of its own.
-        if any(
-            isinstance(n, ast.Attribute) and n.attr == "_refusal_under_lock"
-            for n in ast.walk(fn)
-        ):
             continue
         locks = [
             n.lineno

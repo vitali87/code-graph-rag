@@ -1309,19 +1309,6 @@ class MCPToolsRegistry:
             return None
         return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
-    async def _refusal_under_lock(
-        self, project_name: str, tool: cs.MCPToolName
-    ) -> str | None:
-        """`_incomplete_refusal`, evaluated while holding the ingestor lock.
-
-        For a caller that cannot simply move the guard inside its own lock
-        scope. Checking outside the lock lets an update land between the
-        decision and the read, so an approved read runs against the partial
-        graph (Greptile, PR #1547).
-        """
-        async with self._ingestor_lock:
-            return await asyncio.to_thread(self._incomplete_refusal, project_name, tool)
-
     def _incomplete_refusal(
         self, project_name: str, tool: cs.MCPToolName
     ) -> str | None:
@@ -2239,15 +2226,6 @@ class MCPToolsRegistry:
             # does not share that path -- it binds a per-request query tool
             # below -- so the check is repeated here rather than inherited.
             project_name = project or derive_project_name(Path(self.project_root))
-            if refusal := await self._refusal_under_lock(
-                project_name, cs.MCPToolName.QUERY_CODE_GRAPH
-            ):
-                return QueryResultDict(
-                    error=refusal,
-                    query_used=cs.QUERY_NOT_AVAILABLE,
-                    results=[],
-                    summary=refusal,
-                )
             # Per REQUEST, not per process: one HTTP server hosts several
             # projects, and a scope fixed at startup would force a process
             # each (issue #1494). The pre-built `_query_tool` has its project
@@ -2268,7 +2246,23 @@ class MCPToolsRegistry:
             )
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
+            # The guard is evaluated in the SAME lock scope as the read: an
+            # earlier version checked under `_refusal_under_lock`, released
+            # the lock and reacquired it here, so an update could mark the
+            # graph incomplete in the gap and the approved query still ran
+            # (Greptile, PR #1547).
             async with self._ingestor_lock:
+                if refusal := await asyncio.to_thread(
+                    self._incomplete_refusal,
+                    project_name,
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                ):
+                    return QueryResultDict(
+                        error=refusal,
+                        query_used=cs.QUERY_NOT_AVAILABLE,
+                        results=[],
+                        summary=refusal,
+                    )
                 graph_data = await query_tool.function(natural_language_query)
             result_dict: QueryResultDict = graph_data.model_dump()
             # The error key marks a scoping refusal; absent it means success,

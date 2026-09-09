@@ -1041,3 +1041,50 @@ def test_an_evicted_rename_survives_the_history_shrinking_again(
     on_disk = (root / "pkg" / "util.py").read_text()
     assert "def assist(a):\n    return a\n\n\ndef assist(a):" in on_disk
     assert report.applied, "a rename still on disk was reported as rolled back"
+
+
+def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
+    temp_repo: Path,
+) -> None:
+    # A whole-file search for the old name matched any symbol that happened
+    # to share it, so an independent `helper` in a touched file read as proof
+    # this rename had been reversed (Greptile, PR #1547). The recorded sites
+    # are the only places its reversal can show.
+    from codebase_rag.editing.transaction import EditTransaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            # `Independent.helper` shares the old name but is a different
+            # symbol, untouched by the rename.
+            "pkg/util.py": (
+                "def assist(a):\n    return a\n\n\n"
+                "class Independent:\n    def helper(self):\n        return 1\n\n\n"
+                "def helper(a):\n    return a\n"
+            ),
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_then_evict(paths: list[str]) -> None:
+        updater.reingest(paths)
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            tx.commit()
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_evict,
+    )
+
+    # `Independent.helper` is still there, but it is not this rename's site.
+    assert "def helper(self):" in (root / "pkg" / "util.py").read_text()
+    assert report.applied, "an unrelated same-named symbol was read as a rollback"

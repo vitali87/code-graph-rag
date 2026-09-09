@@ -800,28 +800,44 @@ class Renamer:
         return cs.RENAME_UNDO_UNKNOWN
 
     def _old_name_is_back(self, report: RenameReport) -> bool:
-        """Whether the OLD name has reappeared in the files this rename wrote.
+        """Whether the old name has returned AT THE SITES this rename edited.
 
         `applied` is a claim about the working tree, so the tree settles it,
         not the history: an entry can be evicted by later edits while its
-        rename stands, and once those later entries are themselves undone
-        the history is short again and the eviction leaves no trace.
+        rename stands, and once those later entries are themselves undone the
+        history is short again and the eviction leaves no trace.
 
-        The test is the OLD name, not the new one. The new name is often
-        present either way -- a rename onto an existing symbol is precisely
-        what makes the contract fail -- so its presence proves nothing. The
-        old name coming back is what a reversal actually does.
+        Checked at the recorded SITES, not by searching the file. A
+        whole-file token search for the old name matches any unrelated
+        symbol that happens to share it -- an independent `helper` elsewhere
+        in a touched file read as proof that this rename had been reversed
+        (Greptile, PR #1547). The sites are the exact positions this rename
+        rewrote, so they are the only places its reversal can show.
 
-        A file that cannot be read counts as NOT reverted, keeping `applied`
-        unchanged rather than claiming a rollback that may not have happened.
+        The test is the OLD name, not the new one: the new name is routinely
+        present either way, since renaming onto an existing symbol is exactly
+        what makes the contract fail. A site that cannot be read counts as
+        NOT reverted, keeping `applied` unchanged rather than claiming a
+        rollback that may not have happened.
         """
-        for relative in report.files:
+        by_path: dict[str, list[RenameSite]] = {}
+        for site in report.sites:
+            by_path.setdefault(site.path, []).append(site)
+        for relative, sites in by_path.items():
             try:
-                text = (self.repo_root / relative).read_text(encoding="utf-8")
+                lines = (
+                    (self.repo_root / relative).read_text(encoding="utf-8").splitlines()
+                )
             except OSError:
                 return False
-            if re.search(rf"\b{re.escape(report.old_name)}\b", text):
-                return True
+            for site in sites:
+                if not 0 < site.line <= len(lines):
+                    continue
+                text = lines[site.line - 1]
+                # The token must sit at the recorded column: another
+                # occurrence on the same line is a different symbol.
+                if text[site.col : site.col + len(report.old_name)] == report.old_name:
+                    return True
         return False
 
     def _enforce_contract(
