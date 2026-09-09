@@ -117,6 +117,16 @@ def _check_truncated_name(
     (`pha` really is inside `al\xffpha`), so that oracle returns True on the
     exact defect it would be written for and can never fire.
     """
+    # A name carrying the replacement character is damaged whatever its span:
+    # #1797's fix decodes with errors="replace", so a bad byte the grammar
+    # keeps INSIDE the name expression (Lua's `Greeter.gr\ufffdeet`) survives as
+    # U+FFFD instead of truncating the token. Nothing is adjacent to a
+    # shortened span there, so the adjacency test below cannot see it. No
+    # legitimate identifier contains U+FFFD, so this needs no further check.
+    if _UNICODE_REPLACEMENT_CHAR in name:
+        if len(_TRUNCATED_NAMES) < _TRUNCATED_NAME_LIMIT:
+            _TRUNCATED_NAMES.add((language, name))
+        return
     span = _name_span(node, name)
     if span is None:
         return
@@ -160,6 +170,8 @@ _TRUNCATED_NAMES: set[tuple[cs.SupportedLanguage, str]] = set()
 _NAME_SPAN_ANCESTOR_LIMIT = 3
 # Sigils an ingestor prepends to a synthesized name (a C# destructor).
 _SYNTHETIC_NAME_PREFIXES = "~"
+# What `errors="replace"` substitutes for an undecodable byte.
+_UNICODE_REPLACEMENT_CHAR = "\ufffd"
 
 
 def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:

@@ -237,6 +237,40 @@ def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> Non
         )
 
 
+def test_the_oracle_records_a_replacement_character_name(
+    parse_harness: ModuleType,
+) -> None:
+    """The fuzz oracle must see the second damage shape too.
+
+    Production reports a name carrying U+FFFD (Lua keeps the bad byte in an
+    ERROR node between the two identifiers of a dotted name, so the whole
+    expression decodes to `Greeter.gr\ufffdeet` rather than truncating). The
+    oracle needs the same rule or that production branch has no regression
+    check -- the adjacency test cannot see it, because nothing is adjacent to
+    a shortened span.
+    """
+    from codebase_rag import constants as cs
+
+    language = cs.SupportedLanguage.LUA
+    if language not in parse_harness._PARSERS:
+        pytest.skip("no lua grammar available")
+
+    clean = b"function Greeter.greet(n) return n end\n"
+    dirty = b"function Greeter.gr\xffeet(n) return n end\n"
+
+    parse_harness._TRUNCATED_NAMES.clear()
+    tree = parse_harness._PARSERS[language].parse(clean)
+    parse_harness._extract_names(language, tree.root_node, clean)
+    assert not parse_harness._TRUNCATED_NAMES, "false alarm on clean Lua"
+
+    parse_harness._TRUNCATED_NAMES.clear()
+    tree = parse_harness._PARSERS[language].parse(dirty)
+    parse_harness._extract_names(language, tree.root_node, dirty)
+    assert parse_harness._TRUNCATED_NAMES, (
+        "the oracle did not record a name carrying the replacement character"
+    )
+
+
 def test_the_truncation_record_is_bounded(parse_harness: ModuleType) -> None:
     """The oracle records instead of raising, so it must not grow without end.
 
