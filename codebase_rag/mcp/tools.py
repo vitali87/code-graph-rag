@@ -1294,27 +1294,6 @@ class MCPToolsRegistry:
             raise RuntimeError(refusal)
         delete_project_embeddings(project_name, node_ids)
 
-    def _widen_or_attribute(self, project_name: str) -> None:
-        """The attribution half of `_invalidate_graph_for`, without the licence.
-
-        A caller that strands no marker must not clear a licence some other
-        path earned, so this leaves `_flag_from_failed_clear` in place --
-        EXCEPT when the owner widens to unattributed. `recoverable_here`
-        keys off the licence alone, so a licence naming a project the flag
-        is no longer about would let that project's reingest clear a flag
-        now covering every project (greptile-local, PR #1547).
-        """
-        already_flagged = self._graph_incomplete
-        owner = self._incomplete_project
-        self._graph_incomplete = True
-        if not already_flagged:
-            self._incomplete_project = project_name
-        elif owner is not None and owner != project_name:
-            self._incomplete_project = None
-            # The flag is no longer about any one project, so a licence
-            # naming one cannot authorise clearing it.
-            self._flag_from_failed_clear = None
-
     def _invalidate_graph_for(self, project_name: str) -> None:
         """Raise the incomplete flag and attribute it to `project_name`.
 
@@ -1330,7 +1309,12 @@ class MCPToolsRegistry:
 
         `_flag_from_failed_clear` is cleared unconditionally: none of these
         callers stranded a marker, so no marker recovery may heal what they
-        set, whichever attribution ends up in place.
+        set, whichever attribution ends up in place. The rollback site was
+        briefly split out to preserve an existing licence; it turned out a
+        same-project rollback then authorised the clear of its own damage,
+        so it revokes like every other caller and the split is gone
+        (Greptile, PR #1547). Two functions that must stay in step is the
+        divergence that produced that bug.
         """
         already_flagged = self._graph_incomplete
         owner = self._incomplete_project
@@ -2276,11 +2260,9 @@ class MCPToolsRegistry:
             # scoped re-ingest applies, so no later call reuses a partial graph.
             self._live_updater = None
             # Narrows to this project only when nothing broader holds the
-            # flag. Unlike `_invalidate_graph_for` this path does not clear
-            # the healing licence outright, as it never has: a rollback's
-            # failed re-ingest strands no marker, so an existing licence
-            # belongs to whatever set it and is still valid for that project.
-            self._widen_or_attribute(project_name)
+            # flag, and revokes any healing licence: the rollback's damage
+            # is new, so no earlier failed clear explains it.
+            self._invalidate_graph_for(project_name)
             # ...and DURABLY, because that flag dies with this process while
             # the half-restored graph does not. A fresh registry would see a
             # project that looks whole, serve reads from it and hydrate a

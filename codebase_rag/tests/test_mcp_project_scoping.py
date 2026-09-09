@@ -3379,7 +3379,7 @@ def test_widening_the_owner_drops_a_stale_healing_licence() -> None:
     handler._persisted_incomplete = MagicMock(return_value=False)
 
     # The rollback site's inline narrowing, for a DIFFERENT project.
-    handler._widen_or_attribute(ALPHA)
+    handler._invalidate_graph_for(ALPHA)
 
     assert handler._incomplete_project is None
     assert handler._flag_from_failed_clear is None, (

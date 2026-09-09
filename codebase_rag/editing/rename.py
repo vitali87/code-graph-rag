@@ -830,13 +830,18 @@ class Renamer:
                 )
             except OSError:
                 return False
+            old_bytes = report.old_name.encode("utf-8")
             for site in sites:
                 if not 0 < site.line <= len(lines):
                     continue
-                text = lines[site.line - 1]
+                # Compared as BYTES: `site.col` is a tree-sitter byte column,
+                # while a decoded line is indexed by code points, so any
+                # multibyte character earlier on the line shifts the two apart
+                # and the slice lands mid-token (Greptile, PR #1547).
+                text = lines[site.line - 1].encode("utf-8")
                 # The token must sit at the recorded column: another
                 # occurrence on the same line is a different symbol.
-                if text[site.col : site.col + len(report.old_name)] == report.old_name:
+                if text[site.col : site.col + len(old_bytes)] == old_bytes:
                     return True
         return False
 

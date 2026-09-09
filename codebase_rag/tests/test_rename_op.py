@@ -985,3 +985,96 @@ def test_consumers_of_a_barrel_re_export_follow_the_rename(
         check=False,
     )
     assert probe.returncode == 0, probe.stderr
+
+
+def test_a_restored_rename_is_seen_past_multibyte_text(tmp_path: Path) -> None:
+    """`RenameSite.col` is a BYTE column; a decoded line is indexed by code points.
+
+    Any multibyte character before the identifier shifts the two apart, so
+    the slice lands mid-token and the restored old name is missed. The
+    caller then keeps `applied=True` and reports the rollback state as
+    unknown, i.e. it says the edit may still be on disk when it is not
+    (Greptile, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    # 'café' is 5 characters and 6 bytes, so byte and char columns diverge
+    # by one from here on. Without the accent this test passes either way.
+    line = "x = 'café' ; helper()"
+    (tmp_path / "m.py").write_text(line + "\n", encoding="utf-8")
+    byte_col = line.encode("utf-8").index(b"helper")
+    assert byte_col != line.index("helper"), (
+        "fixture guard: the columns must differ or this proves nothing"
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [RenameSite("call", "m.py", 1, byte_col, "m.caller", None)]
+
+    assert run._old_name_is_back(report) is True
+
+
+def test_a_rollback_revokes_its_own_projects_healing_licence() -> None:
+    """Rollback damage is never explained by an earlier failed marker clear.
+
+    The rollback site once revoked the licence only when the owner widened,
+    so a rollback for the SAME project the licence names left it intact.
+    A later scoped reingest then treats that licence as authorisation,
+    clears the latch and works from the graph the rollback damaged
+    (Greptile, PR #1547).
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler._graph_incomplete = True
+    handler._incomplete_project = "alpha"
+    handler._flag_from_failed_clear = "alpha"
+
+    handler._invalidate_graph_for("alpha")
+
+    assert handler._graph_incomplete is True
+    assert handler._flag_from_failed_clear is None, (
+        "the rollback left a licence that authorises clearing its own damage"
+    )
+
+
+def test_widening_still_revokes_a_licence_for_another_project() -> None:
+    """The control: the widening branch must keep revoking, as before."""
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler._graph_incomplete = True
+    handler._incomplete_project = "beta"
+    handler._flag_from_failed_clear = "beta"
+
+    handler._invalidate_graph_for("alpha")
+
+    assert handler._incomplete_project is None
+    assert handler._flag_from_failed_clear is None
+
+
+def test_a_first_rollback_still_attributes_to_its_project() -> None:
+    """The second control: from clean, the rollback's damage IS this project's."""
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+
+    handler._invalidate_graph_for("alpha")
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == "alpha"
