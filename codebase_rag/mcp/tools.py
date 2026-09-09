@@ -2048,6 +2048,22 @@ class MCPToolsRegistry:
                             project=project, known=cs.SEPARATOR_COMMA_SPACE.join(known)
                         ),
                     )
+            # The same refusal the eight `_graph_query` tools apply. This one
+            # does not share that path -- it binds a per-request query tool
+            # below -- so the check is repeated here rather than inherited.
+            project_name = project or derive_project_name(Path(self.project_root))
+            if self._graph_incomplete or await asyncio.to_thread(
+                self._persisted_incomplete, project_name
+            ):
+                refusal = cs.MCP_QUERY_AFTER_FAILED_RUN.format(
+                    project=project_name, tool=cs.MCPToolName.QUERY_CODE_GRAPH
+                )
+                return QueryResultDict(
+                    error=refusal,
+                    query_used=cs.QUERY_NOT_AVAILABLE,
+                    results=[],
+                    summary=refusal,
+                )
             # Per REQUEST, not per process: one HTTP server hosts several
             # projects, and a scope fixed at startup would force a process
             # each (issue #1494). The pre-built `_query_tool` has its project

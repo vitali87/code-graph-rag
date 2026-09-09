@@ -1298,6 +1298,12 @@ class TestSemanticSearchScope:
 
         handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
         handler._ingestor_lock = _NullLock()
+        # A complete graph: `query_code_graph` and the `_graph_query`
+        # tools refuse when these say otherwise, so a fixture that
+        # omits them raises AttributeError instead of testing anything.
+        handler._graph_incomplete = False
+        handler._persisted_incomplete = lambda _project: False
+        handler.project_root = "/repo"
         handler._semantic_search_tool = MagicMock()
         handler._semantic_search_tool.function = AsyncMock(return_value="ok")
         handler.ingestor = MagicMock()
@@ -1322,6 +1328,12 @@ class TestSemanticSearchScope:
 
         handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
         handler._ingestor_lock = _NullLock()
+        # A complete graph: `query_code_graph` and the `_graph_query`
+        # tools refuse when these say otherwise, so a fixture that
+        # omits them raises AttributeError instead of testing anything.
+        handler._graph_incomplete = False
+        handler._persisted_incomplete = lambda _project: False
+        handler.project_root = "/repo"
         handler._semantic_search_tool = MagicMock()
         handler._semantic_search_tool.function = AsyncMock(return_value="ok")
         handler.ingestor = MagicMock()
@@ -1361,6 +1373,12 @@ def _handler_returning(
 
     handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
     handler._ingestor_lock = _NullLock()
+    # A complete graph: `query_code_graph` and the `_graph_query`
+    # tools refuse when these say otherwise, so a fixture that
+    # omits them raises AttributeError instead of testing anything.
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = lambda _project: False
+    handler.project_root = "/repo"
     handler._query_tool = MagicMock()
     handler._query_tool.function = AsyncMock(
         return_value=QueryGraphData(
@@ -1404,6 +1422,12 @@ def _registry_over_graph(rows: list[dict], cypher: str):
 
     handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
     handler._ingestor_lock = _NullLock()
+    # A complete graph: `query_code_graph` and the `_graph_query`
+    # tools refuse when these say otherwise, so a fixture that
+    # omits them raises AttributeError instead of testing anything.
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = lambda _project: False
+    handler.project_root = "/repo"
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=list(rows))
     handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
@@ -2557,3 +2581,75 @@ async def test_the_incomplete_guard_does_not_intercept_a_WRITE() -> None:
 
     assert ran == [ALPHA], "the write was refused by the read guard"
     assert result == {"applied": True}
+
+
+@pytest.mark.asyncio
+async def test_query_code_graph_refuses_on_an_incomplete_graph() -> None:
+    # It does NOT route through `_graph_query` -- it binds a per-request
+    # query tool -- so it needs the check of its own. Without it the guard
+    # covered eight tools while the commit claimed nine (greptile-local,
+    # PR #1547): the freeform query still returned rows from a partial graph.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._persisted_incomplete = MagicMock(return_value=True)
+    handler._query_tool = MagicMock()
+    handler._query_tool.function = AsyncMock()
+
+    result = await handler.query_code_graph("anything", project=ALPHA)
+
+    # The tool is never reached: `query_code_graph` swallows exceptions into
+    # an error payload, so a raising double would look like a pass. Assert
+    # the call did not happen instead.
+    handler._query_tool.function.assert_not_awaited()
+    assert result[cs.DICT_KEY_RESULTS] == []
+    assert ALPHA in result[cs.MCP_KEY_ERROR]
+
+
+@pytest.mark.asyncio
+async def test_query_code_graph_runs_when_the_graph_is_whole() -> None:
+    # The control: without it a guard that refused unconditionally would
+    # pass the test above.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._query_tool = MagicMock()
+    handler._query_tool.function = AsyncMock(
+        return_value=_GraphData(error=None, results=[{"qualified_name": "m.f"}])
+    )
+
+    result = await handler.query_code_graph("anything")
+
+    handler._query_tool.function.assert_awaited_once_with("anything")
+    assert result[cs.DICT_KEY_RESULTS] == [{"qualified_name": "m.f"}]
+
+
+class _GraphData:
+    """The minimal shape `query_code_graph` consumes: `.model_dump()` + `.error`."""
+
+    def __init__(self, error: str | None, results: list[dict]) -> None:
+        self.error = error
+        self._results = results
+
+    def model_dump(self) -> dict:
+        return {
+            "error": self.error,
+            "query_used": "MATCH (n) RETURN n",
+            "results": self._results,
+            "summary": "",
+        }
