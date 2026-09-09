@@ -99,6 +99,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.rich_markdown import LeftAlignedMarkdown
+from .utils.token_utils import estimate_message_tokens
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -713,12 +714,16 @@ async def _run_agent_response_loop(
         # line). Inheriting it means the shipped default is a decision the
         # repository made rather than one chosen to satisfy a review.
         #
-        # DELIBERATELY TIMID, and issue #1500 owns the policy. Two ways this
-        # declines to act: `_token_usage` reports 0 for every provider whose
-        # counter never runs (`_refresh_context_tokens` returns early unless
-        # Anthropic with a key), and `prune_old_tool_results` refuses below its
-        # own recovery floor. A mechanism that discards data should be inert
-        # where it cannot measure, so both silences are the wanted direction.
+        # DELIBERATELY TIMID, and issue #1500 owns the policy.
+        # `prune_old_tool_results` still refuses below its own recovery floor,
+        # so a mechanism that discards data stays inert until it would buy
+        # something real.
+        #
+        # It is no longer inert for want of a measurement, though. This used
+        # to read 0 for every provider whose counter never ran, which meant
+        # compaction was Anthropic-only without saying so; the counter now
+        # falls back to a local estimate, so the threshold is reachable
+        # whatever the session is talking to.
         _, _, context_pct = _token_usage()
         if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
             # Assign THROUGH the slice: callers hold this same list and the
@@ -896,10 +901,33 @@ def _spawn_background(coro: Coroutine[None, None, None]) -> None:
 
 
 async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
+    """Update the session's context-token count, for ANY provider.
+
+    The local estimate is written FIRST and unconditionally, then upgraded to
+    the provider's exact count where one is obtainable. That order is the fix
+    for #1500: this function is the only writer of `context_tokens`, and the
+    pruning trigger reads a percentage derived from it, so every path that
+    returned without writing left compaction switched off.
+
+    Leaving the value at 0 is not a neutral failure. Zero renders as "0% of
+    the context used", which is indistinguishable from a genuinely empty
+    session and looks like abundant headroom. An approximate number is worth
+    far more here than an exact absence.
+    """
     try:
         config = settings.active_orchestrator_config
     except Exception:
+        # No config at all still deserves a number: the estimate needs only
+        # the messages, and the count drives compaction rather than billing.
+        app_context.session.context_tokens = estimate_message_tokens(messages)
         return
+
+    app_context.session.context_tokens = estimate_message_tokens(messages)
+
+    # An exact count beats the estimate where it exists -- it accounts for
+    # tool definitions and system-prompt overhead that tiktoken over a message
+    # list cannot see. Anthropic is the only provider exposing one today, so
+    # this is an upgrade to the line above, never a precondition for it.
     if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
         return
     try:
