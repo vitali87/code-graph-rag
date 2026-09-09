@@ -1643,6 +1643,20 @@ def warn_if_name_truncated(
     """
     if not name:
         return
+    # The replacement character can only be in a NAME because a decode put it
+    # there: #1797's fix decodes with errors="replace", so a bad byte the
+    # grammar keeps INSIDE the name expression (Lua's `Greeter.gr\ufffdeet`,
+    # where the byte lands in an ERROR node between two identifiers) survives
+    # as U+FFFD rather than truncating the token. No legitimate identifier
+    # contains it, in any language, so this needs no adjacency test.
+    if cs.UNICODE_REPLACEMENT_CHAR in name:
+        logger.warning(
+            logs.TRUNCATED_SYMBOL_NAME.format(
+                path=file_path if file_path is not None else "<unknown>",
+                name=name,
+            )
+        )
+        return
     source = _node_source_bytes(node)
     if source is None:
         return

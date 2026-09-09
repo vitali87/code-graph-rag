@@ -204,6 +204,32 @@ def test_one_bad_byte_does_not_warn_once_per_enclosing_definition(
     assert "proj.a.Outer.Mid.Inner" in names
 
 
+def test_a_replacement_character_inside_a_name_is_reported(
+    parsers_and_queries: tuple[dict, dict],
+) -> None:
+    """The second damage shape, which adjacency alone cannot see.
+
+    Lua keeps the bad byte in an ERROR node BETWEEN two identifiers of a
+    dotted name, and #1797's fix decodes the whole expression with
+    errors="replace", so the name survives as `Greeter.gr\ufffdeet` rather
+    than being truncated. Nothing is adjacent to a shortened span, so the
+    adjacency test finds nothing; the replacement character in the name is
+    itself the signal.
+
+    Safe because no legitimate identifier contains U+FFFD in any language --
+    it is only ever there because a decode put it there.
+    """
+    clean = b"function Greeter.greet(n) return n end\n"
+    dirty = b"function Greeter.gr\xffeet(n) return n end\n"
+
+    clean_names, clean_warnings = _index(parsers_and_queries, "a.lua", clean)
+    _dirty_names, dirty_warnings = _index(parsers_and_queries, "a.lua", dirty)
+
+    assert "proj.a.Greeter.greet" in clean_names, "control: the clean name indexes"
+    assert not clean_warnings, "false alarm on clean Lua"
+    assert dirty_warnings, "a name carrying U+FFFD reached the graph unreported"
+
+
 def test_a_valid_multibyte_character_beside_a_name_is_not_reported(
     parsers_and_queries: tuple[dict, dict],
 ) -> None:

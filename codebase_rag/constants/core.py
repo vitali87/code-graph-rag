@@ -11,6 +11,9 @@ UTF8_MAX_SEQUENCE_BYTES = 4
 # Sigils an ingestor prepends to a synthesized symbol name (a C# destructor
 # is stored as `~Greeter` while the source leaf is `Greeter`).
 SYNTHETIC_NAME_PREFIXES = "~"
+# What `errors="replace"` substitutes for an undecodable byte. Its presence
+# in an extracted symbol name means the name is damaged.
+UNICODE_REPLACEMENT_CHAR = "\ufffd"
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
