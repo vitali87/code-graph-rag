@@ -617,7 +617,7 @@ class TestModuleDocstringPerLanguageIsExercised:
 
     def test_per_language_class_is_not_gated_on_the_python_grammar(self) -> None:
         marks = getattr(TestModuleDocstringPerLanguage, "pytestmark", [])
-        assert not [m for m in marks if m.name == "skipif"], (
+        assert not [m for m in marks if m.name in {"skip", "skipif"}], (
             "the per-language module-doc tests must not be skipped as a block; "
             "each language loads its own grammar"
         )
