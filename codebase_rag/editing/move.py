@@ -17,6 +17,7 @@ importer's statement (issue #1522), so the whole move is one transaction:
 
 from __future__ import annotations
 
+import ast
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -96,6 +97,40 @@ def _text(node: Node | None) -> str:
     if node is None or node.text is None:
         return ""
     return node.text.decode(cs.ENCODING_UTF8, errors="replace")
+
+
+def _module_bound(text: str, module: str) -> bool:
+    """Whether `text` binds `module`'s root name via a plain `import`.
+
+    The move rewrites call sites to `pkg.new.helper(...)`, which needs
+    `pkg` bound. Only a plain `import pkg.new` does that -- or a deeper
+    `import pkg.new.sub`, which binds `pkg` just the same (verified
+    against a real interpreter; it must keep answering True).
+
+    Deciding this by searching the raw text was wrong in the direction
+    that breaks code. `import pkg.new as n` binds only `n`; a comment or
+    a string containing the words binds nothing. Each made the caller
+    skip adding the real import AFTER the call sites had been rewritten,
+    and both versions parse, so the postcondition could not catch it
+    either -- the program died at runtime with
+    `NameError: name 'pkg' is not defined` on the line the move wrote.
+
+    Unparseable input answers False: the caller then adds an import it
+    may not need, which is recoverable, rather than omitting one it does.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    wanted = module.split(".")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            # `import x as y` binds only `y`, never x's root.
+            if alias.asname is None and alias.name.split(".")[: len(wanted)] == wanted:
+                return True
+    return False
 
 
 def _uses(text: str, name: str) -> bool:
@@ -535,7 +570,7 @@ class Mover:
                 touched.add(path)
                 _language, root = self._parse(path, source)
                 text = source.decode(cs.ENCODING_UTF8, errors="replace")
-                if not _uses(text, f"import {new_spelled}"):
+                if not _module_bound(text, new_spelled):
                     at_import = _import_block_end(source, root)
                     patcher.replace_span(
                         path, (at_import, at_import), f"import {new_spelled}\n"
