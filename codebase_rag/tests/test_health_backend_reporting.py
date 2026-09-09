@@ -229,12 +229,13 @@ class TestConnectionFailureClassification:
         # ServiceUnavailable is neither an mgclient.Error nor an OSError,
         # so without this it lands in the generic "unexpected failure"
         # branch and an unreachable server reads as a mystery.
+        # `neo4j` is an optional extra, so a base install must skip rather
+        # than fail: this test is about the driver's exception hierarchy.
+        exceptions = pytest.importorskip("neo4j.exceptions")
         monkeypatch.setattr(
             "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
         )
-        from neo4j.exceptions import ServiceUnavailable
-
-        assert issubclass(ServiceUnavailable, _connection_error_types())
+        assert issubclass(exceptions.ServiceUnavailable, _connection_error_types())
 
     def test_memgraph_does_not_pull_in_neo4j_types(self, monkeypatch) -> None:
         monkeypatch.setattr(
@@ -246,11 +247,12 @@ class TestConnectionFailureClassification:
     def test_an_unreachable_neo4j_reads_as_a_connection_failure(
         self, monkeypatch
     ) -> None:
-        from neo4j.exceptions import ServiceUnavailable
+        exceptions = pytest.importorskip("neo4j.exceptions")
+        service_unavailable = exceptions.ServiceUnavailable
 
         class ExplodingConn:
             def cursor(self):  # type: ignore[no-untyped-def]
-                raise ServiceUnavailable("cannot reach server")
+                raise service_unavailable("cannot reach server")
 
             def close(self) -> None:
                 pass
