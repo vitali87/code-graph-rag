@@ -1133,3 +1133,56 @@ def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
     ]
 
     assert run._old_name_is_back(report) is True
+
+
+def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
+    """An import site's column is the start of the STATEMENT, not the token.
+
+    `_stage_sites` skips `import` and `unlocatable` sites for that reason, so
+    they were never rewritten and cannot show a reversal. Requiring them to
+    carry the old name made a genuine full undo look partial: the slice at
+    column 0 of `from pkg.util import helper` is `from p`, which never
+    matches whatever the tree says (CI, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        "def helper(a):\n    return a\n", encoding="utf-8"
+    )
+    (tmp_path / "app.py").write_text(
+        "from util import helper\n\n\ndef run():\n    return helper(1)\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [
+        RenameSite("definition", "util.py", 1, 4, "util.helper", None),
+        RenameSite("call", "app.py", 5, 11, "app.run", None),
+        # Column 0: the start of the import statement, not of `helper`.
+        RenameSite("import", "app.py", 1, 0, "app", None),
+    ]
+
+    assert run._old_name_is_back(report) is True
+
+
+def test_a_rename_of_only_import_sites_is_not_a_full_undo(tmp_path: Path) -> None:
+    """The control: skipping those sites must not make an EMPTY check pass.
+
+    With every site excluded there is nothing left that could show a
+    reversal, so the honest answer is False. Without this, "skip imports"
+    could be written as "ignore everything" and still pass the test above.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "app.py").write_text("from util import assist\n", encoding="utf-8")
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.sites = [RenameSite("import", "app.py", 1, 0, "app", None)]
+
+    assert run._old_name_is_back(report) is False

@@ -822,6 +822,15 @@ class Renamer:
         """
         by_path: dict[str, list[RenameSite]] = {}
         for site in report.sites:
+            # The same exclusion `_stage_sites` applies, and for the same
+            # reason: an `import` site's column is the start of the import
+            # STATEMENT and an `unlocatable` one has no usable position, so
+            # neither was ever rewritten and neither can show a reversal.
+            # Requiring them to carry the old name made a genuine full undo
+            # look partial, because their slice never matches whatever the
+            # tree says (measured: an import site sliced `from p`).
+            if site.kind in ("unlocatable", "import"):
+                continue
             by_path.setdefault(site.path, []).append(site)
         if not by_path:
             # Nothing was rewritten, so there is nothing to find restored.
@@ -829,33 +838,40 @@ class Renamer:
             # recorded sites as reversed.
             return False
         old_bytes = report.old_name.encode("utf-8")
-        for relative, sites in by_path.items():
-            try:
-                lines = (
-                    (self.repo_root / relative).read_text(encoding="utf-8").splitlines()
-                )
-            except OSError:
+        # EVERY rewritten site must carry the old name again: one restored
+        # site is a PARTIAL undo, and reporting `applied=False` for it tells
+        # the caller every file is back when other definitions and references
+        # are still renamed (Greptile, PR #1547).
+        return all(
+            self._file_has_old_name_at(relative, sites, old_bytes)
+            for relative, sites in by_path.items()
+        )
+
+    def _file_has_old_name_at(
+        self, relative: str, sites: list[RenameSite], old_bytes: bytes
+    ) -> bool:
+        """Whether every site in one file carries the old name at its column.
+
+        An unreadable file and a site whose line is gone both answer False:
+        `applied=False` claims EVERY site is back, so anything that cannot be
+        SHOWN restored is a no rather than a skip.
+        """
+        try:
+            lines = (self.repo_root / relative).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        for site in sites:
+            if not 0 < site.line <= len(lines):
                 return False
-            for site in sites:
-                if not 0 < site.line <= len(lines):
-                    # A site whose line is gone cannot be shown restored, and
-                    # `applied=False` claims EVERY site is back, so this is a
-                    # no rather than a skip.
-                    return False
-                # Compared as BYTES: `site.col` is a tree-sitter byte column,
-                # while a decoded line is indexed by code points, so any
-                # multibyte character earlier on the line shifts the two apart
-                # and the slice lands mid-token (Greptile, PR #1547).
-                text = lines[site.line - 1].encode("utf-8")
-                # The token must sit at the recorded column: another
-                # occurrence on the same line is a different symbol.
-                if text[site.col : site.col + len(old_bytes)] != old_bytes:
-                    # EVERY site must carry the old name again. One restored
-                    # site is a PARTIAL undo, and reporting `applied=False`
-                    # for it tells the caller every file is back when other
-                    # definitions, references and imports are still renamed
-                    # (Greptile, PR #1547).
-                    return False
+            # Compared as BYTES: `site.col` is a tree-sitter byte column,
+            # while a decoded line is indexed by code points, so any multibyte
+            # character earlier on the line shifts the two apart and the slice
+            # lands mid-token (Greptile, PR #1547).
+            text = lines[site.line - 1].encode("utf-8")
+            # The token must sit at the recorded column: another occurrence
+            # on the same line is a different symbol.
+            if text[site.col : site.col + len(old_bytes)] != old_bytes:
+                return False
         return True
 
     def _enforce_contract(
