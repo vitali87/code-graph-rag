@@ -334,16 +334,46 @@ class TestReachabilityNeedsAQuery:
     as healthy -- silently, and in the reassuring direction.
     """
 
-    def test_the_health_check_issues_a_query(self) -> None:
-        # Pinned structurally: a future edit that drops the query in
-        # favour of "the connection opened, so we are fine" would pass
-        # every behavioural test using a fake connection, because a fake
-        # cannot reproduce the driver's laziness.
-        import inspect
+    def test_the_health_check_sends_the_probe_query(self, monkeypatch) -> None:
+        """Assert the statement that reaches the server, not that a call exists.
 
-        source = inspect.getsource(HealthChecker.check_memgraph_connection)
-        assert "cursor.execute(" in source
-        assert "HEALTH_CHECK_MEMGRAPH_QUERY" in source
+        A source-text check would pass against a probe that executed the
+        wrong statement, or an empty one.
+        """
+        sent: list[str] = []
+
+        class RecordingCursor:
+            def execute(self, query: str, params: object = None) -> None:
+                sent.append(query)
+
+            @property
+            def description(self) -> None:
+                return None
+
+            def fetchall(self) -> list[tuple]:
+                return []
+
+            def close(self) -> None:
+                pass
+
+        class RecordingConn(FakeConn):
+            def cursor(self) -> RecordingCursor:
+                return RecordingCursor()
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            lambda self: RecordingConn(),
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            lambda self: None,
+        )
+        result = HealthChecker().check_memgraph_connection()
+
+        assert result.passed
+        # The probe must actually round-trip a statement: opening the
+        # connection is not evidence a Neo4j server is reachable.
+        assert sent == [cs.HEALTH_CHECK_MEMGRAPH_QUERY]
 
     def test_the_probe_query_is_trivial(self) -> None:
         # It must exercise the round trip without depending on any data.
