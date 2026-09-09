@@ -712,3 +712,45 @@ class TestMarkersDoNotMatchBugDescriptions:
 
         for finding in executed_findings:
             assert validation_was_blocked(finding) is False, finding
+
+
+class TestEveryCheckReturnPathIsATuple:
+    """`check` returns `tuple[list[str], list[str]]`, and one path did not.
+
+    Found by CodeRabbit on the PR that widened the signature: the
+    unreadable-PR early return still handed back a bare list, so `main`
+    raised `ValueError: not enough values to unpack` at exactly the
+    moment the tool exists to report -- `gh` being unusable. The
+    annotation does not catch it because nothing type-checks this script
+    in CI, and no test reached that branch.
+    """
+
+    @staticmethod
+    def _gh_is_broken(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every `gh` call returns empty, as it does when auth fails."""
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *args: "")
+
+    def test_an_unreadable_pr_returns_the_two_lists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._gh_is_broken(monkeypatch)
+
+        result = check_pr_gated.check("9999")
+
+        assert isinstance(result, tuple)
+        reasons, caveats = result
+        assert any("could not read PR #9999" in r for r in reasons)
+        assert caveats == []
+
+    def test_main_reports_the_failure_instead_of_crashing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The user-visible symptom: a traceback rather than a verdict.
+
+        Asserting on `main` and not just on `check` is the point -- the
+        bare list only becomes a crash at the unpacking call site, so a
+        test that stops at `check`'s return value cannot see it.
+        """
+        self._gh_is_broken(monkeypatch)
+
+        assert check_pr_gated.main(["check_pr_gated.py", "9999"]) == 1

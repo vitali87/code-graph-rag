@@ -408,7 +408,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         )
     )
     if not view:
-        return [f"could not read PR #{pr} (is `gh` authenticated?)"]
+        return ([f"could not read PR #{pr} (is `gh` authenticated?)"], [])
 
     head = str(view.get("headRefOid", ""))
     base = str(view.get("baseRefName", ""))
