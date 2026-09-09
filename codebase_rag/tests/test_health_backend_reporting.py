@@ -7,6 +7,7 @@ leaked driver shows up only as connection exhaustion much later.
 
 from __future__ import annotations
 
+import mgclient
 import pytest
 
 from codebase_rag.graph_dialects import (
@@ -19,6 +20,7 @@ from codebase_rag.tools.health_checker import (
     HealthChecker,
     _backend_connection,
     _backend_endpoint,
+    _connection_error_types,
 )
 
 
@@ -215,3 +217,86 @@ class TestDriverIsReleased:
 
         source = inspect.getsource(health_checker.HealthChecker.check_graph_integrity)
         assert "connection.__exit__(None, None, None)" in source
+
+
+class TestConnectionFailureClassification:
+    """An unreachable server must read as a connection failure, per engine."""
+
+    def test_memgraph_errors_are_connection_failures(self) -> None:
+        assert mgclient.Error in _connection_error_types()
+
+    def test_neo4j_errors_are_connection_failures(self, monkeypatch) -> None:
+        # ServiceUnavailable is neither an mgclient.Error nor an OSError,
+        # so without this it lands in the generic "unexpected failure"
+        # branch and an unreachable server reads as a mystery.
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+        )
+        from neo4j.exceptions import ServiceUnavailable
+
+        assert issubclass(ServiceUnavailable, _connection_error_types())
+
+    def test_memgraph_does_not_pull_in_neo4j_types(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND",
+            DIALECT_MEMGRAPH,
+        )
+        assert _connection_error_types() == (mgclient.Error,)
+
+    def test_an_unreachable_neo4j_reads_as_a_connection_failure(
+        self, monkeypatch
+    ) -> None:
+        from neo4j.exceptions import ServiceUnavailable
+
+        class ExplodingConn:
+            def cursor(self):  # type: ignore[no-untyped-def]
+                raise ServiceUnavailable("cannot reach server")
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.settings.GRAPH_BACKEND", DIALECT_NEO4J
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            lambda self: ExplodingConn(),
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            lambda self: None,
+        )
+        result = HealthChecker().check_memgraph_connection()
+        assert not result.passed
+        assert result.message == "Connection or query failed"
+
+
+class TestCleanupDoesNotMaskTheAuditResult:
+    def test_a_close_failure_keeps_a_successful_audit(self, monkeypatch) -> None:
+        """A completed audit must not be reported as failed by cleanup."""
+
+        class BadCloseConn(FakeConn):
+            def close(self) -> None:
+                raise RuntimeError("close blew up")
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            lambda self: BadCloseConn(),
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            lambda self: None,
+        )
+        results = HealthChecker().check_graph_integrity()
+        assert len(results) == 1
+        assert results[0].passed, results[0].error
+
+    def test_an_unreachable_server_still_yields_no_results(self, monkeypatch) -> None:
+        def explode(self):  # type: ignore[no-untyped-def]
+            raise ConnectionError("down")
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            explode,
+        )
+        assert HealthChecker().check_graph_integrity() == []

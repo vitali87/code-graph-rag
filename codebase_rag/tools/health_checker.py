@@ -14,7 +14,7 @@ from ..config import settings
 from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
-from ..types_defs import ConnectionProtocol, ResultRow
+from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
 
 
 @contextmanager
@@ -41,6 +41,28 @@ def _backend_connection() -> Iterator[ConnectionProtocol]:
             conn.close()
         finally:
             ingestor.close_driver()
+
+
+def _connection_error_types() -> tuple[type[BaseException], ...]:
+    """Exceptions that mean "the server is not reachable", per engine.
+
+    A Neo4j failure surfaces as `neo4j.exceptions.ServiceUnavailable`,
+    which is neither an `mgclient.Error` nor an `OSError`, so without
+    this it falls through to the generic "unexpected failure" branch and
+    an unreachable server is reported as a mystery rather than as a
+    connection problem. Imported lazily because `neo4j` is an optional
+    extra.
+    """
+    if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        try:
+            from neo4j.exceptions import (  # ty: ignore[unresolved-import]
+                DriverError,
+                Neo4jError,
+            )
+        except ImportError:  # pragma: no cover - depends on extras
+            return (mgclient.Error,)
+        return (mgclient.Error, DriverError, Neo4jError)
+    return (mgclient.Error,)
 
 
 def _backend_engine_name() -> str:
@@ -126,7 +148,7 @@ class HealthChecker:
                 ),
             )
 
-        except mgclient.Error as e:
+        except _connection_error_types() as e:
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_GRAPH_FAILED.format(engine=_backend_engine_name()),
                 passed=False,
@@ -244,27 +266,21 @@ class HealthChecker:
         except Exception:
             return []
 
-        # `with`, not a manually closed ExitStack: the connection AND the
-        # driver behind it are released by leaving the block, so a later
-        # edit cannot drop the release by changing one call.
+        # Bound before the try: `conn.cursor()` can raise, and the
+        # cleanup below would then mask the real error with an
+        # UnboundLocalError.
+        cursor: CursorProtocol | None = None
         try:
-            try:
-                cursor = conn.cursor()
+            cursor = conn.cursor()
 
-                def fetch_all(query: str) -> list[ResultRow]:
-                    cursor.execute(query)
-                    # mgclient.Column is not subscriptable; the name is
-                    # an attribute.
-                    columns = [column.name for column in cursor.description or []]
-                    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            def fetch_all(query: str) -> list[ResultRow]:
+                cursor.execute(query)
+                # mgclient.Column is not subscriptable; the name is an
+                # attribute.
+                columns = [column.name for column in cursor.description or []]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-                try:
-                    violations = graph_audit.collect_live_violations(fetch_all)
-                finally:
-                    cursor.close()
-            finally:
-                # Releases the connection AND the driver behind it.
-                connection.__exit__(None, None, None)
+            violations = graph_audit.collect_live_violations(fetch_all)
         except Exception as e:
             return [
                 HealthCheckResult(
@@ -274,6 +290,20 @@ class HealthChecker:
                     error=str(e),
                 )
             ]
+        finally:
+            # Cleanup is deliberately OUTSIDE the audit's `except`: closing
+            # the cursor, the connection and (on Neo4j) the driver can
+            # raise, and a cleanup failure must not report a completed
+            # audit as failed. Logged rather than swallowed silently.
+            closers = [lambda: connection.__exit__(None, None, None)]
+            if cursor is not None:
+                closers.insert(0, cursor.close)
+            for close in closers:
+                try:
+                    close()
+                except Exception as cleanup_error:
+                    logger.warning(f"Graph audit cleanup failed: {cleanup_error}")
+
         if not violations:
             return [
                 HealthCheckResult(

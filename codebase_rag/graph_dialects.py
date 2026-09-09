@@ -213,7 +213,7 @@ def get_dialect(name: str) -> GraphDialect:
     """Resolve an engine name to its dialect.
 
     Unknown names raise rather than falling back to a default: a typo in
-    `CGR_GRAPH_BACKEND` that silently selected Memgraph would emit
+    `GRAPH_BACKEND` that silently selected Memgraph would emit
     Memgraph DDL at a Neo4j server, and the swallowed-DDL path described
     in `graph_service.ensure_constraints` would hide that until the graph
     was already corrupt.
