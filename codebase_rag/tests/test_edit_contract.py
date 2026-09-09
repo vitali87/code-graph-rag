@@ -1161,11 +1161,20 @@ def test_a_rename_is_not_failed_by_a_stale_importer() -> None:
 # The producer behind `stale_importers`. The contract tests above feed it a
 # synthetic delta, so without these the detection logic itself is untested
 # and the contract check would pass over a field nothing ever populates.
-def _snapshot(definitions: dict[str, str], imports: dict[str, set[str]]):
+def _snapshot(
+    definitions: dict[str, str],
+    imports: dict[str, set[str]],
+    fingerprint: str = "",
+):
     """A Snapshot carrying only what `_stale_importers` reads.
 
     `definitions` maps qualified name -> path; `imports` maps importing
     module -> the modules it imports.
+
+    `fingerprint` matters only to the end-to-end wiring test: the delta pairs
+    a removal with an addition by SHAPE, and `_pair_by_shape` skips a
+    definition whose fingerprint is empty. A fixture without one produces
+    add + remove rather than a rename, so a move never reads as one.
     """
     from codebase_rag.structural_delta import Definition, Snapshot
 
@@ -1180,8 +1189,8 @@ def _snapshot(definitions: dict[str, str], imports: dict[str, set[str]]):
                 start_line=1,
                 end_line=2,
                 positional_params=None,
-                fingerprint="",
-                fingerprint_nodes=0,
+                fingerprint=fingerprint,
+                fingerprint_nodes=1 if fingerprint else 0,
                 branches=frozenset(),
             )
             for qn, path in definitions.items()
@@ -1277,3 +1286,53 @@ def test_an_importer_of_an_untouched_module_is_not_reported() -> None:
         _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
         == []
     )
+
+
+def test_the_assembled_delta_actually_carries_stale_importers() -> None:
+    """The WIRING, not the unit: does anything consult the producer?
+
+    The tests above drive `_stale_importers` directly and hand-build the
+    delta the contract reads, so between them nothing asserts the two are
+    connected. Replacing the call with a literal `[]` left all of them
+    green (measured) -- a correct producer nothing invokes, which is the
+    same shape as a correct check nothing wires in.
+
+    Drives the real assembler and asserts the field arrives populated.
+    """
+    from codebase_rag.structural_delta import structural_delta
+
+    # Same name, same body, different file: `_pair_by_move` reads that as a
+    # move, which is what makes `renamed` carry the pair the producer needs.
+    before = _snapshot(
+        definitions={"p.pkg.util.helper": "pkg/util.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+        fingerprint="shape-1",
+    )
+    # The symbol moved to `core`, leaving `util` with no residents, while
+    # `app` still imports `util`.
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+        fingerprint="shape-1",
+    )
+
+    delta = structural_delta(lambda *_args, **_kwargs: [], "p", before, after)
+
+    assert [entry["importer"] for entry in delta["stale_importers"]] == ["p.pkg.app"]
+
+
+def test_the_assembled_delta_reports_none_when_nothing_moved() -> None:
+    """The control: the wiring must not manufacture a finding.
+
+    Without this, "always report every importer" satisfies the test above.
+    """
+    from codebase_rag.structural_delta import structural_delta
+
+    snapshot = _snapshot(
+        definitions={"p.pkg.util.helper": "pkg/util.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    delta = structural_delta(lambda *_args, **_kwargs: [], "p", snapshot, snapshot)
+
+    assert delta["stale_importers"] == []
