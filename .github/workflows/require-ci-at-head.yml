@@ -33,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -56,12 +57,20 @@ jobs:
           # Query by head_sha rather than by branch. After a stack rebase
           # several branches share a head, so `gh run list --branch` returns
           # runs belonging to OTHER PRs (issue #1582 records this trap).
-          runs=$(gh api \
+          # --paginate: without it only the first 100 runs come back, and a
+          # matching run on a later page reads as "no run at this head".
+          # NOT --slurp: gh rejects it alongside --jq. With --jq, gh applies
+          # the filter per page and concatenates, so `.workflow_runs[]`
+          # yields every run across all pages.
+          runs=$(gh api --paginate \
             "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | {name, path, conclusion, status, event}]')
+            --jq '.workflow_runs[]
+                  | {name, path, conclusion, status, event,
+                     prs: [.pull_requests[].number]}' \
+            | jq -s '.')
 
           echo "Runs at this head:"
-          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)]: \(.status)/\(.conclusion // "pending") (\(.event))"' || true
+          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)] PRs=\(.prs|tostring): \(.status)/\(.conclusion // "pending") (\(.event))"' || true
 
           # Match the workflow's PATH, not its display `name`. A display
           # name is just a string any workflow may declare, so a second
@@ -71,8 +80,14 @@ jobs:
           # `| length == 0` is also indistinguishable from "nothing
           # matched the filter", so every run found is printed above
           # whether the assertion passes or fails.
-          ci_count=$(echo "$runs" \
-            | jq '[.[] | select(.path == ".github/workflows/ci.yml")] | length')
+          # A head SHA identifies a COMMIT, not a pull request. After a
+          # stack rebase several branches share a head (issue #1582 records
+          # this), so a run at this SHA may belong to a different PR
+          # entirely. Require the run to name THIS pull request, which is
+          # what scripts/check_pr_gated.py already enforces.
+          ci_count=$(echo "$runs" | jq --argjson pr "$PR_NUMBER" \
+            '[.[] | select(.path == ".github/workflows/ci.yml")
+                  | select(.prs | index($pr))] | length')
 
           if [ "$ci_count" -eq 0 ]; then
             echo
