@@ -237,6 +237,39 @@ def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> Non
         )
 
 
+def test_the_truncation_record_is_bounded(parse_harness: ModuleType) -> None:
+    """The oracle records instead of raising, so it must not grow without end.
+
+    libFuzzer runs millions of iterations and each can contribute a DISTINCT
+    mangled name, so an unbounded collection would exhaust memory and kill the
+    run -- the same "the harness crashed itself" failure that recording rather
+    than raising exists to avoid.
+
+    Each input carries a different identifier: feeding the same one repeatedly
+    would dedup to a single entry and pass whether or not the cap exists,
+    which is what the first version of this test did.
+    """
+    from codebase_rag import constants as cs
+
+    parse_harness._TRUNCATED_NAMES.clear()
+    limit = parse_harness._TRUNCATED_NAME_LIMIT
+    parser = parse_harness._PARSERS[cs.SupportedLanguage.PYTHON]
+
+    for index in range(limit + 50):
+        source = f"def na{index}me():\n    return 1\n".encode()
+        source = source.replace(b"na", b"n\xffa", 1)
+        tree = parser.parse(source)
+        parse_harness._extract_names(
+            cs.SupportedLanguage.PYTHON, tree.root_node, source
+        )
+
+    assert parse_harness._TRUNCATED_NAMES, "the oracle stopped recording"
+    assert len(parse_harness._TRUNCATED_NAMES) <= limit, (
+        f"the record grew to {len(parse_harness._TRUNCATED_NAMES)}, past its "
+        f"cap of {limit}; a long fuzz run would exhaust memory"
+    )
+
+
 def test_parse_harness_reaches_the_extractor(parse_harness: ModuleType) -> None:
     """A planted fault in `get_name` must surface.
 

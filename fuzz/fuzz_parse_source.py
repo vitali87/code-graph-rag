@@ -136,16 +136,25 @@ def _check_truncated_name(
             # requires the two corpus reproducers to trip it, so a regression
             # that stops detecting truncation reddens there. Raise here again
             # once the extractors stop truncating rather than warning.
-            _TRUNCATED_NAMES.append((language, name))
+            if len(_TRUNCATED_NAMES) < _TRUNCATED_NAME_LIMIT:
+                _TRUNCATED_NAMES.add((language, name))
             return
 
 
 # Longest UTF-8 sequence: a window this size either side of a name spans any
 # single character that could legitimately sit next to it.
 _UTF8_MAX_SEQUENCE_BYTES = 4
-# Truncated names seen this run. A list rather than a raise: the defect is
-# known and production reports it, so the fuzzer records and continues.
-_TRUNCATED_NAMES: list[tuple[cs.SupportedLanguage, str]] = []
+# Truncated names seen this run, recorded rather than raised: the defect is
+# known and production reports it, so the fuzzer continues instead of halting
+# on the first mangled identifier libFuzzer invents.
+#
+# A BOUNDED set, not a list. libFuzzer runs millions of iterations and every
+# one can contribute a fresh name, so an unbounded collection would exhaust
+# memory and kill the run -- the same "the harness crashed itself" failure
+# this recording exists to avoid. The set is for the tests' benefit (they
+# assert the oracle still fires); the cap is what keeps it free.
+_TRUNCATED_NAME_LIMIT = 128
+_TRUNCATED_NAMES: set[tuple[cs.SupportedLanguage, str]] = set()
 # A definition's own name is at most a step or two above it (the JS/TS
 # field-definition wrapper is one).
 _NAME_SPAN_ANCESTOR_LIMIT = 3
