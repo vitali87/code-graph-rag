@@ -203,6 +203,29 @@ def _definition_node(root: Node, line: int, col: int) -> Node | None:
     return None
 
 
+def _positional_only_count(definition: Node) -> int | None:
+    """How many leading parameters `/` makes positional-only, if it is there.
+
+    `/` neither takes a value nor shifts the positional indices callers map
+    through, so `_parameters` is right to leave it out of the mapping model.
+    It is still load-bearing when the signature is REBUILT: dropped, the
+    parameters before it become keyword-callable, and a call the original
+    rejected starts being accepted. The count is what `_rewrite_definition`
+    needs to put it back.
+    """
+    params = definition.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return None
+    seen = 0
+    for child in params.named_children:
+        if child.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            return seen
+        if child.type in _COMMENT_TYPES or child.type in _SEPARATOR_TYPES:
+            continue
+        seen += 1
+    return None
+
+
 def _parameters(
     definition: Node, language: cs.SupportedLanguage | None
 ) -> list[_Param]:
@@ -217,7 +240,9 @@ def _parameters(
             continue
         if child.type in _COMMENT_TYPES or child.type in _SEPARATOR_TYPES:
             # `/` is a marker, not a parameter: it neither takes a value nor
-            # shifts the positional indices callers map through.
+            # shifts the positional indices callers map through. It is put
+            # back on rebuild from `_positional_only_count`, which is where
+            # it matters.
             continue
         name = _identifier_in(child)
         receiver = (
@@ -225,6 +250,63 @@ def _parameters(
         ) or child.type == cs.TS_RS_SELF_PARAMETER
         out.append(_Param(name, child, receiver, keyword_only))
     return out
+
+
+def _refuse_duplicate_sources(resolved: list[ParamSpec]) -> None:
+    """Refuse two new parameters fed by one old one.
+
+    A call site holds a single value at each old position, and `_map_arguments`
+    consumes it: the first mapping takes the value and every later one reads as
+    omitted, so the rewritten definition gains a parameter that no caller
+    passes. The edit reports success and the callers raise `TypeError`.
+
+    Refusing rather than emitting the value twice follows the rest of this
+    layer: an ambiguous request is answered with a message, not with a
+    plausible guess the caller has to discover at runtime.
+    """
+    by_source: dict[int, list[str]] = {}
+    for spec in resolved:
+        if spec.from_index is not None:
+            by_source.setdefault(spec.from_index, []).append(spec.name)
+    for source, names in by_source.items():
+        if len(names) > 1:
+            raise SignatureRefused(
+                cs.SIGNATURE_DUPLICATE_SOURCE.format(
+                    names=", ".join(names), source=f"position {source}"
+                )
+            )
+
+
+def _restore_positional_only(
+    rendered: list[str],
+    node: Node,
+    old: list[_Param],
+    specs: list[ParamSpec],
+) -> None:
+    """Put `/` back, or refuse if the rewrite moved a parameter across it.
+
+    The separator says the parameters before it cannot be passed by name.
+    Dropping it widens the callable contract silently: `def f(a, b, /, c)`
+    rebuilt as `def f(a, b, c)` accepts `f(a=1, b=2, c=3)`, which the original
+    rejects. So it has to come back.
+
+    It can only come back where it still means the same thing. The marker
+    counts LEADING parameters, so it survives a rewrite that leaves the same
+    sources, in the same order, in front of it. A rewrite that reorders across
+    the boundary, or maps a new parameter into that region, changes which
+    arguments callers may name -- a question this operation is not asked to
+    answer, so it refuses rather than guessing.
+    """
+    boundary = _positional_only_count(node)
+    if boundary is None:
+        return
+    receivers = sum(1 for p in old if p.receiver)
+    kept = specs[:boundary]
+    if len(specs) < boundary or any(
+        spec.from_index != index for index, spec in enumerate(kept)
+    ):
+        raise SignatureRefused(cs.SIGNATURE_POSITIONAL_ONLY_MOVED)
+    rendered.insert(receivers + boundary, "/")
 
 
 def _render_param(spec: ParamSpec, language: cs.SupportedLanguage | None) -> str:
@@ -358,6 +440,7 @@ class SignatureChanger:
                     )
                 )
             resolved.append(spec._replace(from_index=index, from_name=None))
+        _refuse_duplicate_sources(resolved)
         return resolved
 
     def _check_literals(
@@ -420,29 +503,47 @@ class SignatureChanger:
         self._keyword_only = frozenset(p.name for p in old if p.keyword_only)
         resolved = self._resolve_specs(specs, old)
         self._check_literals(qn, resolved, old_names)
-        # Definitions across the hierarchy.
+        # Definitions across the hierarchy. Each member's own pre-edit
+        # parameter names are kept: an override may spell them differently
+        # from the member the request names, and its callers bind by ITS
+        # names, not the selected definition's.
+        member_names: dict[str, list[str]] = {}
+        member_keyword_only: dict[str, frozenset[str]] = {}
         for member in hierarchy:
             m_path, m_node, m_language, _ = (
                 (path, node, language, _source)
                 if member == qn
                 else self._definition(member, patcher)
             )
+            m_old = _parameters(m_node, m_language)
+            member_names[member] = [
+                p.name for p in m_old if not p.receiver and not p.keyword_only
+            ]
+            member_keyword_only[member] = frozenset(
+                p.name for p in m_old if p.keyword_only
+            )
             self._rewrite_definition(patcher, m_path, m_node, m_language, resolved)
         # Every call site of every member.
         sites: list[RewrittenSite] = []
         unmapped: list[UnmappedSite] = []
         for member in hierarchy:
+            # `Square().area(factor=2)` is spelled with Square's parameter
+            # name; matching it against Base's would read as an unknown
+            # keyword and leave the call unrewritten against a rewritten
+            # definition.
+            self._keyword_only = member_keyword_only.get(member, frozenset())
             for row in graph_query.callers(self.fetch_all, self.project, member):
                 self._rewrite_site(
                     patcher,
                     row,
                     member,
-                    old_names,
+                    member_names.get(member, old_names),
                     resolved,
                     allow_heuristic,
                     sites,
                     unmapped,
                 )
+        self._keyword_only = frozenset(p.name for p in old if p.keyword_only)
         report = SignatureReport(
             qualified_name=qn,
             hierarchy=tuple(hierarchy),
@@ -491,6 +592,7 @@ class SignatureChanger:
                 rendered.append(_render_param(spec, language))
         if language == cs.SupportedLanguage.PYTHON:
             _check_default_order(positional, specs)
+            _restore_positional_only(rendered, node, old, specs)
         keyword_only = [p for p in old if p.keyword_only]
         if keyword_only:
             # The keyword-only section is not positional: it follows the
