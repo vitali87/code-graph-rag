@@ -771,28 +771,58 @@ class Renamer:
     def _undo_state(self, transaction_id: str) -> str:
         """What a `TransactionConflict` on this transaction actually means.
 
-        `"stacked"`  - the entry is still there, so a LATER edit sits on top
-                       and the rename remains applied.
-        `"undone"`   - the entry is gone from a history that never filled, so
-                       another actor reversed it and the files are restored.
-        `"unknown"`  - the entry is gone but the history is at its retention
-                       limit, so absence proves nothing: enough later edits
-                       evict an entry whose rename is still on disk
-                       (Greptile, PR #1547). Reporting `applied=False` there
-                       would claim a rollback that never happened.
+        `"stacked"` - the entry is still in the history, so a LATER edit sits
+        on top of this rename and it remains applied.
+
+        `"unknown"` - the entry is absent. That is NOT evidence of an undo:
+        the history keeps `EDIT_HISTORY_LIMIT` entries, so enough later edits
+        evict an entry whose rename is still on disk. An earlier version of
+        this method inferred "undone" whenever the history was below its
+        limit, which fails once those later entries are themselves undone --
+        the history shrinks and the eviction becomes invisible (Greptile,
+        PR #1547). Absence can never prove a reversal, so it is never
+        reported as one; the caller keeps `applied` and is told the state
+        could not be determined.
+
+        Whether the files were actually restored is settled by
+        `_rename_is_on_disk`, which reads the tree rather than the history.
         """
         try:
             entries = load_history(self.repo_root)
-        except Exception:  # noqa: BLE001 - unknown state, change nothing
+        # An unreadable history is an unknown state: keep `applied` as it
+        # was rather than guessing in either direction.
+        except Exception:  # noqa: BLE001
             return cs.RENAME_UNDO_STACKED
         if any(
             str(entry.get(cs.EDIT_KEY_ID, "")) == transaction_id for entry in entries
         ):
             return cs.RENAME_UNDO_STACKED
-        # Absence is only evidence while nothing can have been evicted.
-        if len(entries) >= cs.EDIT_HISTORY_LIMIT:
-            return cs.RENAME_UNDO_UNKNOWN
-        return cs.RENAME_UNDO_UNDONE
+        return cs.RENAME_UNDO_UNKNOWN
+
+    def _old_name_is_back(self, report: RenameReport) -> bool:
+        """Whether the OLD name has reappeared in the files this rename wrote.
+
+        `applied` is a claim about the working tree, so the tree settles it,
+        not the history: an entry can be evicted by later edits while its
+        rename stands, and once those later entries are themselves undone
+        the history is short again and the eviction leaves no trace.
+
+        The test is the OLD name, not the new one. The new name is often
+        present either way -- a rename onto an existing symbol is precisely
+        what makes the contract fail -- so its presence proves nothing. The
+        old name coming back is what a reversal actually does.
+
+        A file that cannot be read counts as NOT reverted, keeping `applied`
+        unchanged rather than claiming a rollback that may not have happened.
+        """
+        for relative in report.files:
+            try:
+                text = (self.repo_root / relative).read_text(encoding="utf-8")
+            except OSError:
+                return False
+            if re.search(rf"\b{re.escape(report.old_name)}\b", text):
+                return True
+        return False
 
     def _enforce_contract(
         self, report: RenameReport, new_name: str, allow_heuristic: bool
@@ -817,7 +847,9 @@ class Renamer:
                 self.reingest,
                 declared_renames=pairs,
             )
-        except Exception as error:  # noqa: BLE001 - the transaction has landed
+        # The transaction has landed; a graph that cannot be measured is
+        # reported, never raised past the committed edit.
+        except Exception as error:  # noqa: BLE001
             # The files are renamed and recorded; a graph that cannot be
             # measured is reported, never raised past the committed edit.
             logger.warning(cs.RENAME_CONTRACT_UNMEASURED.format(error=error))
@@ -843,32 +875,33 @@ class Renamer:
             undo_transaction(self.repo_root, report.transaction_id)
         except TransactionConflict as conflict:
             logger.warning(str(conflict))
-            # The conflict covers two opposite situations and they need
-            # opposite answers. A NEWER edit stacked on top means this rename
-            # is still applied and must not be reported as undone. The
-            # transaction being ABSENT means someone else already reversed
-            # it, so the files are restored and `applied=True` would be a
-            # lie about the tree (Greptile, PR #1547).
-            state = self._undo_state(report.transaction_id)
-            if state == cs.RENAME_UNDO_STACKED:
+            # The conflict covers two opposite situations needing opposite
+            # answers: a NEWER edit stacked on top (still applied) versus
+            # another actor having already reversed this one (restored).
+            if self._undo_state(report.transaction_id) == cs.RENAME_UNDO_STACKED:
                 return report._replace(
                     verdict=verdict,
                     message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
                 )
-            if state == cs.RENAME_UNDO_UNKNOWN:
-                # `applied` stays true: the rename may well still be on disk.
+            # The entry is absent, which proves nothing on its own -- a
+            # bounded history evicts entries whose rename is still on disk.
+            # So ask the TREE, which is the thing `applied` describes, rather
+            # than reasoning about history bookkeeping (Greptile, PR #1547).
+            if self._old_name_is_back(report):
                 return report._replace(
+                    applied=False,
                     verdict=verdict,
-                    message=cs.RENAME_ROLLBACK_UNKNOWN.format(reasons=reasons),
+                    message=cs.RENAME_ROLLBACK_ALREADY_UNDONE.format(reasons=reasons),
                 )
             return report._replace(
-                applied=False,
                 verdict=verdict,
-                message=cs.RENAME_ROLLBACK_ALREADY_UNDONE.format(reasons=reasons),
+                message=cs.RENAME_ROLLBACK_UNKNOWN.format(reasons=reasons),
             )
         try:
             self.reingest(list(report.files))
-        except Exception as error:  # noqa: BLE001 - the files are restored
+        # The files are restored; the graph may have lost the subtree the
+        # re-ingest deleted before failing. Say so, never raise.
+        except Exception as error:  # noqa: BLE001
             # The tree is back; the graph may have lost the subtree the
             # re-ingest deleted before failing. Say so, never raise.
             logger.warning(

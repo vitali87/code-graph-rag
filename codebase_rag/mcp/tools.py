@@ -1354,7 +1354,9 @@ class MCPToolsRegistry:
                 cq.CYPHER_PROJECT_IS_INCOMPLETE,
                 {cs.KEY_PROJECT_NAME: project_name},
             )
-        except Exception:  # noqa: BLE001 - let the read itself report this
+        # Any failure to reach the marker means no verdict: let the read
+        # itself report why the store could not be reached.
+        except Exception:  # noqa: BLE001
             return False
         return self._persisted_incomplete(project_name)
 

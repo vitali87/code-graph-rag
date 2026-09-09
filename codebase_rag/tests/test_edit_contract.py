@@ -989,3 +989,55 @@ def test_an_evicted_transaction_is_not_reported_as_rolled_back(
     )
     assert report.applied, "an evicted entry was misread as a completed undo"
     assert "cannot be told" in report.message
+
+
+def test_an_evicted_rename_survives_the_history_shrinking_again(
+    temp_repo: Path,
+) -> None:
+    # The sharper form of the eviction bug. My first fix asked whether the
+    # history was at its limit -- but undoing the retained entries shrinks it
+    # again, so the eviction becomes invisible and absence read as "undone"
+    # for a rename still on disk (Greptile, PR #1547). `applied` is a claim
+    # about the tree, so the tree decides it.
+    from codebase_rag.editing.transaction import EditTransaction, undo_transaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_evict_then_shrink(paths: list[str]) -> None:
+        updater.reingest(paths)
+        ids: list[str] = []
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            ids.append(tx.commit())
+        # Undo the retained entries: the history is now SHORT again, so its
+        # length no longer records that anything was evicted.
+        for _ in range(len(ids) - 1):
+            from codebase_rag.editing.transaction import load_history
+
+            entries = load_history(root)
+            if not entries:
+                break
+            undo_transaction(root, str(entries[-1][cs.EDIT_KEY_ID]))
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_evict_then_shrink,
+    )
+
+    on_disk = (root / "pkg" / "util.py").read_text()
+    assert "def assist(a):\n    return a\n\n\ndef assist(a):" in on_disk
+    assert report.applied, "a rename still on disk was reported as rolled back"
