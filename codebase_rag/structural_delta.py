@@ -372,21 +372,22 @@ def _pair_lone_containers(
     added: list[str],
     before: Snapshot,
     after: Snapshot,
+    declared: frozenset[tuple[str, str]],
 ) -> list[RenameFinding]:
-    """Pass 4: an EMPTY container, paired only on positive identity evidence.
+    """Pass 4: an EMPTY container, paired only when the caller DECLARED it.
 
-    With no descendants and no fingerprint to carry it, "one of this label
-    left the file and one appeared" is NOT evidence: replacing an empty class
-    with an unrelated empty class satisfies it exactly, and the delta would
-    report a rename that never happened. The postcondition contract treats an
-    unexpected rename as a failure, so an invented one rolls back a correct
-    edit (Greptile, PR #1547).
+    An empty container has no fingerprint and no descendants, and the only
+    thing that changed is its name -- so nothing in the two snapshots can
+    tell a rename from a replacement. They are the same edit. Neither
+    content similarity (git's heuristic) nor tree-sitter's changed ranges
+    separates them, because the difference is intent, not syntax.
 
-    The evidence required is that the container still STARTS where it did. A
-    rename edits the name in place and leaves the declaration on its line; an
-    independent replacement is a different declaration that happens to be
-    empty too. Where the line moved, the pair is reported as a removal plus
-    an addition, which is what the caller can verify for itself.
+    So this pass does not infer. An operation that RENAMED something knows
+    which pairs it applied and passes them in `declared`; anything else is
+    reported as a removal plus an addition, which is the truth about what
+    the snapshots show. Guessing here produced renames that never happened,
+    and the contract treats an unexpected rename as a failure, so an
+    invented one rolls back a correct edit (Greptile, PR #1547).
     """
     lone_removed = [
         qn
@@ -415,9 +416,8 @@ def _pair_lone_containers(
             and before.definitions[other].label == definition.label
         ]
         if len(matches) == 1 and len(peers) == 1:
-            # The identity evidence: same declaration line. Without it two
-            # unrelated empty containers in one file read as a rename.
-            if after.definitions[matches[0]].start_line != definition.start_line:
+            # The only admissible evidence: the operation says it did this.
+            if (qn, matches[0]) not in declared:
                 continue
             found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
             paired_new.add(matches[0])
@@ -426,7 +426,11 @@ def _pair_lone_containers(
 
 
 def _renames(
-    removed: list[str], added: list[str], before: Snapshot, after: Snapshot
+    removed: list[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
 ) -> list[RenameFinding]:
     # A rename keeps the body: the same whole-skeleton fingerprint under a
     # new name in the same file. Paired one-to-one in sorted order so a
@@ -457,7 +461,9 @@ def _renames(
             paired_new.add(target)
 
     renames.extend(
-        _pair_lone_containers(still_unpaired, renames, paired_new, added, before, after)
+        _pair_lone_containers(
+            still_unpaired, renames, paired_new, added, before, after, declared
+        )
     )
     return renames
 
@@ -474,10 +480,14 @@ def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     return changed
 
 
-def _symbols(before: Snapshot, after: Snapshot) -> SymbolDelta:
+def _symbols(
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
+) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after)
+    renamed = _renames(removed, added, before, after, declared)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -985,10 +995,16 @@ def structural_delta(
     after: Snapshot,
     report: ReingestReport | None = None,
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
-    """Diff two snapshots of the same paths, then look up what they touch."""
+    """Diff two snapshots of the same paths, then look up what they touch.
+
+    `declared_renames` are pairs the CALLER applied and therefore knows. They
+    are needed only where the snapshots cannot show identity -- an empty
+    container -- and are empty for a plain write, which really is inferring.
+    """
     started = time.perf_counter()
-    symbols = _symbols(before, after)
+    symbols = _symbols(before, after, declared_renames)
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -1025,6 +1041,7 @@ def observe(
     paths: Iterable[str],
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -1038,7 +1055,15 @@ def observe(
     report = apply()
     reingest_ms = (time.perf_counter() - apply_started) * 1000
     after = snapshot(fetch_all, project_name, path_list)
-    delta = structural_delta(fetch_all, project_name, before, after, report, repo_root)
+    delta = structural_delta(
+        fetch_all,
+        project_name,
+        before,
+        after,
+        report,
+        repo_root,
+        declared_renames=declared_renames,
+    )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.

@@ -313,9 +313,21 @@ def measure(
     repo_root: Path,
     files: Iterable[str],
     reingest: Reingest,
+    declared_renames: Iterable[tuple[str, str]] = (),
 ) -> StructuralDelta:
-    """The delta of files an operation just wrote, through the re-ingest."""
+    """The delta of files an operation just wrote, through the re-ingest.
+
+    `declared_renames` are the pairs the operation APPLIED. The delta infers
+    renames from the snapshots, which cannot be done for an empty container
+    (no fingerprint, no members, and the name is what changed), so an
+    operation that knows says so rather than leaving it to a guess.
+    """
     paths = sorted(set(files))
     return observe(
-        fetch_all, project_name, paths, lambda: reingest(paths), repo_root=repo_root
+        fetch_all,
+        project_name,
+        paths,
+        lambda: reingest(paths),
+        repo_root=repo_root,
+        declared_renames=frozenset(declared_renames),
     )

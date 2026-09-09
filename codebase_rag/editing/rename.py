@@ -789,6 +789,16 @@ class Renamer:
         self, report: RenameReport, new_name: str, allow_heuristic: bool
     ) -> RenameReport:
         assert self.reingest is not None
+        # The pairs this rename applied, computed here rather than after the
+        # measurement: the delta needs them to recognise an empty container,
+        # whose identity nothing in the two snapshots can show.
+        pairs = [
+            (
+                member,
+                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
+            )
+            for member in report.hierarchy
+        ]
         try:
             delta = measure(
                 self.fetch_all,
@@ -796,6 +806,7 @@ class Renamer:
                 self.repo_root,
                 report.files,
                 self.reingest,
+                declared_renames=pairs,
             )
         except Exception as error:  # noqa: BLE001 - the transaction has landed
             # The files are renamed and recorded; a graph that cannot be
@@ -805,13 +816,6 @@ class Renamer:
                 verdict=None,
                 message=cs.RENAME_CONTRACT_UNMEASURED.format(error=error),
             )
-        pairs = [
-            (
-                member,
-                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
-            )
-            for member in report.hierarchy
-        ]
         verdict = verify(
             rename_expectation(pairs, allow_heuristic),
             delta,
