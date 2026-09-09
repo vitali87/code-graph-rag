@@ -1084,15 +1084,18 @@ def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporte
         return []
     stale: list[StaleImporter] = []
     for importer, targets in after.imports.items():
-        for target in sorted(targets & vacated):
-            stale.append(
-                StaleImporter(
-                    importer=importer,
-                    path=after.module_paths.get(importer, ""),
-                    line=0,
-                )
+        # One entry per IMPORTER, not per stale target: the finding is that
+        # this module still points at somewhere the move emptied, and naming
+        # the same importer once per vacated target would repeat it.
+        if not targets & vacated:
+            continue
+        stale.append(
+            StaleImporter(
+                importer=importer,
+                path=after.module_paths.get(importer, ""),
+                line=0,
             )
-            break
+        )
     return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
 
 
