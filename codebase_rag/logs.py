@@ -291,6 +291,12 @@ EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
 REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
+TRUNCATED_SYMBOL_NAME = (
+    "{path}: the name {name!r} was extracted from bytes that are not valid "
+    "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
+    "indexed under a truncated name and its callers will not resolve to it "
+    "(issue #1810)"
+)
 REINGEST_UNREADABLE = (
     "Re-ingest could not read {path} after classifying it from disk "
     "({error}); it is not reported as re-parsed"

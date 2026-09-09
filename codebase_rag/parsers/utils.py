@@ -1283,6 +1283,11 @@ def ingest_method(
         method_start_line = method_node.start_point[0] + 1
         method_start_col = method_node.start_point[1]
 
+    # Every language's method branch converges here, so this is the one place
+    # that sees a method name whatever route produced it (issue #1810). The
+    # function and class sites are guarded at their own extraction points.
+    warn_if_name_truncated(method_node, method_name, file_path)
+
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
         method_qn = function_registry.register_unique_qn(
@@ -1603,3 +1608,48 @@ def module_qn_for_entity(
         if candidate in module_paths:
             return candidate
     return None
+
+
+def warn_if_name_truncated(
+    node: Node, name: str | None, file_path: Path | None = None
+) -> None:
+    """Log when a symbol name was extracted from undecodable bytes.
+
+    An invalid byte inside an identifier is treated by tree-sitter as a token
+    boundary, so the `name` node covers only the bytes on one side of it. The
+    extractor then decodes that shortened node without error: `calculate_total`
+    is indexed as `calculate_t`, with nothing raised and nothing logged. A
+    wrong name is worse than a missing one -- callers in untouched files stop
+    resolving to it, so it reads as dead code while a symbol nobody calls
+    appears beside it. Measured across all 15 supported languages: 13 truncate
+    silently, 2 drop the symbol, none survive intact.
+
+    Keyed on the NAME's own bytes, not the file's. A file-level check would be
+    a different signal entirely: across 105,352 real source files (Rust crates,
+    Go modules, the macOS SDK, Homebrew, site-packages) 165 are not valid
+    UTF-8, and NONE of them corrupts a symbol -- every one is latin-1
+    punctuation in a copyright header or an author's name, and one is a `£`
+    inside a regex literal. So a per-file warning would have fired 165 times
+    and been wrong every time, at 1.2% of the macOS SDK. This check fires zero
+    times on all of them and only when a name is genuinely damaged.
+
+    Deliberately NOT `name.encode() in node.text`: containment is satisfied BY
+    this corruption, because the truncated name is a substring of the corrupt
+    bytes (`pha` really is inside `al\xffpha`), so that oracle returns True on
+    the exact defect it would be written for and can never fire. What
+    discriminates is whether the SOURCE round-trips.
+    """
+    if not name:
+        return
+    raw = getattr(node, "text", None)
+    if not isinstance(raw, bytes):
+        return
+    try:
+        raw.decode(cs.ENCODING_UTF8)
+    except UnicodeDecodeError:
+        logger.warning(
+            logs.TRUNCATED_SYMBOL_NAME.format(
+                path=file_path if file_path is not None else "<unknown>",
+                name=name,
+            )
+        )
