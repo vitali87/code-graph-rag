@@ -261,12 +261,24 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
 _BLOCK_LINE_PREFIX = re.compile(r"^\s*\*+/?\s?")
 # The delimiters themselves, stripped before the per-line pass.
 _BLOCK_OPEN = re.compile(r"^/\*+!?")
-# The lookbehind pins the match to the first asterisk of the closing run. Bare
-# `\*+/$` can start at any asterisk in the run, so a long line of them with no
-# closing slash -- a separator rule inside a block comment -- costs one failed
-# match attempt per asterisk. Same result on every terminating input, linear
-# rather than quadratic on the pathological one.
-_BLOCK_CLOSE = re.compile(r"(?<!\*)\*+/$")
+
+
+def _strip_block_close(body: str) -> str:
+    """Drop the trailing `**/` of a block comment.
+
+    A scan rather than a regex. `\\*+/$` backtracks once per asterisk on a
+    long rule with no closing slash -- `/****...` with no terminator is a
+    separator inside a block comment, not a rarity -- and every regex spelling
+    that fixes the backtracking either keeps a quantifier a static analyser
+    still reads as super-linear or caps the run at an arbitrary length. The
+    scan is linear, has no cap, and says plainly what it removes.
+    """
+    if not body.endswith("/"):
+        return body
+    index = end = len(body) - 1
+    while index > 0 and body[index - 1] == "*":
+        index -= 1
+    return body[:index] if index < end else body
 
 
 def _strip_line(text: str, markers: tuple[str, ...]) -> str:
@@ -280,7 +292,7 @@ def _strip_line(text: str, markers: tuple[str, ...]) -> str:
 
 
 def _clean_block(text: str) -> str:
-    body = _BLOCK_CLOSE.sub("", _BLOCK_OPEN.sub("", text))
+    body = _strip_block_close(_BLOCK_OPEN.sub("", text))
     lines = [_BLOCK_LINE_PREFIX.sub("", line) for line in body.splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)
