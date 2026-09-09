@@ -79,7 +79,16 @@ class Neo4jCursor:
                 f"got {type(params).__name__}. Batched writes pass "
                 "BatchWrapper({'batch': rows})."
             )
-        result = self._session.run(query, parameters)
+        # The driver types every query entry point as `LiteralString` to
+        # discourage string-built Cypher, and `Query()` demands one too,
+        # so there is no typed route for a statement assembled at
+        # runtime. Ours comes from the dialect and the query builders,
+        # never from user input; the parameters below are always bound,
+        # never interpolated.
+        result = self._session.run(
+            query,  # ty: ignore[invalid-argument-type]
+            parameters,
+        )
         self._keys = list(result.keys())
         # Materialise before the result is invalidated by the next
         # statement on this session; the ingestor reads rows after the
