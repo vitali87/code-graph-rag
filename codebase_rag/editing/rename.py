@@ -768,22 +768,31 @@ class Renamer:
             self.after_apply(list(report.files))
         return report
 
-    def _transaction_is_recorded(self, transaction_id: str) -> bool:
-        """Whether this rename's transaction is still in the edit history.
+    def _undo_state(self, transaction_id: str) -> str:
+        """What a `TransactionConflict` on this transaction actually means.
 
-        Present means a LATER edit was stacked on top (the rollback refused,
-        and the rename is still applied). Absent means someone else already
-        reversed it (the files are restored). A history that cannot be read
-        is treated as present, because keeping `applied` as it was is the
-        conservative answer when the tree's state is unknown.
+        `"stacked"`  - the entry is still there, so a LATER edit sits on top
+                       and the rename remains applied.
+        `"undone"`   - the entry is gone from a history that never filled, so
+                       another actor reversed it and the files are restored.
+        `"unknown"`  - the entry is gone but the history is at its retention
+                       limit, so absence proves nothing: enough later edits
+                       evict an entry whose rename is still on disk
+                       (Greptile, PR #1547). Reporting `applied=False` there
+                       would claim a rollback that never happened.
         """
         try:
             entries = load_history(self.repo_root)
-        except Exception:  # noqa: BLE001 -- unknown state, change nothing
-            return True
-        return any(
+        except Exception:  # noqa: BLE001 - unknown state, change nothing
+            return cs.RENAME_UNDO_STACKED
+        if any(
             str(entry.get(cs.EDIT_KEY_ID, "")) == transaction_id for entry in entries
-        )
+        ):
+            return cs.RENAME_UNDO_STACKED
+        # Absence is only evidence while nothing can have been evicted.
+        if len(entries) >= cs.EDIT_HISTORY_LIMIT:
+            return cs.RENAME_UNDO_UNKNOWN
+        return cs.RENAME_UNDO_UNDONE
 
     def _enforce_contract(
         self, report: RenameReport, new_name: str, allow_heuristic: bool
@@ -840,10 +849,17 @@ class Renamer:
             # transaction being ABSENT means someone else already reversed
             # it, so the files are restored and `applied=True` would be a
             # lie about the tree (Greptile, PR #1547).
-            if self._transaction_is_recorded(report.transaction_id):
+            state = self._undo_state(report.transaction_id)
+            if state == cs.RENAME_UNDO_STACKED:
                 return report._replace(
                     verdict=verdict,
                     message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
+                )
+            if state == cs.RENAME_UNDO_UNKNOWN:
+                # `applied` stays true: the rename may well still be on disk.
+                return report._replace(
+                    verdict=verdict,
+                    message=cs.RENAME_ROLLBACK_UNKNOWN.format(reasons=reasons),
                 )
             return report._replace(
                 applied=False,

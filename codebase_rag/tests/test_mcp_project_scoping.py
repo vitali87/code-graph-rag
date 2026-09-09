@@ -2795,11 +2795,14 @@ def test_every_graph_reader_is_guarded() -> None:
             continue
         func = node.func
         name = func.attr if isinstance(func, ast.Attribute) else None
-        if name != "_incomplete_refusal":
+        # `_refusal_under_lock` is the same decision taken while holding the
+        # ingestor lock; a tool guarded through it is guarded.
+        if name not in {"_incomplete_refusal", "_refusal_under_lock"}:
             # `asyncio.to_thread(self._incomplete_refusal, project, TOOL)`
             # passes it as an argument rather than calling it directly.
             passed = any(
-                isinstance(a, ast.Attribute) and a.attr == "_incomplete_refusal"
+                isinstance(a, ast.Attribute)
+                and a.attr in {"_incomplete_refusal", "_refusal_under_lock"}
                 for a in node.args
             )
             if not passed:
@@ -2908,3 +2911,35 @@ def test_unattributed_damage_still_blocks_everything() -> None:
 
     assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
     assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_query_refuses_only_the_DAMAGED_project() -> None:
+    # `_graph_query` read the bare registry flag while the direct readers
+    # used the project-scoped helper, so project A's failed recovery blocked
+    # a read explicitly scoped to healthy project B (Greptile, PR #1547).
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._persisted_incomplete = MagicMock(return_value=False)
+
+    ran: list[str] = []
+    damaged = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, ALPHA, lambda n: ran.append(n)
+    )
+    healthy = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, BETA, lambda n: ran.append(n) or {"ok": True}
+    )
+
+    assert cs.DICT_KEY_ERROR in damaged
+    assert healthy == {"ok": True}, "a healthy project was refused"
+    assert ran == [BETA]

@@ -1306,6 +1306,19 @@ class MCPToolsRegistry:
             return None
         return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
+    async def _refusal_under_lock(
+        self, project_name: str, tool: cs.MCPToolName
+    ) -> str | None:
+        """`_incomplete_refusal`, evaluated while holding the ingestor lock.
+
+        For a caller that cannot simply move the guard inside its own lock
+        scope. Checking outside the lock lets an update land between the
+        decision and the read, so an approved read runs against the partial
+        graph (Greptile, PR #1547).
+        """
+        async with self._ingestor_lock:
+            return await asyncio.to_thread(self._incomplete_refusal, project_name, tool)
+
     def _incomplete_refusal(
         self, project_name: str, tool: cs.MCPToolName
     ) -> str | None:
@@ -1338,7 +1351,7 @@ class MCPToolsRegistry:
                 cq.CYPHER_PROJECT_IS_INCOMPLETE,
                 {cs.KEY_PROJECT_NAME: project_name},
             )
-        except Exception:  # noqa: BLE001 -- let the read itself report this
+        except Exception:  # noqa: BLE001 - let the read itself report this
             return False
         return self._persisted_incomplete(project_name)
 
@@ -1712,13 +1725,16 @@ class MCPToolsRegistry:
         # the GRAPH, so a partial graph loses matches the embeddings still
         # know about.
         search_project = project or derive_project_name(Path(self.project_root))
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal, search_project, cs.MCPToolName.SEMANTIC_SEARCH
-        ):
-            return refusal
         # Serialise against index/update, which delete and rebuild the graph
-        # under this lock; an interleaved read mixes generations.
+        # under this lock; an interleaved read mixes generations. The guard
+        # is inside the lock for the same reason: an update landing between
+        # the check and the read would leave an approved read running against
+        # the partial graph (Greptile, PR #1547).
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal, search_project, cs.MCPToolName.SEMANTIC_SEARCH
+            ):
+                return refusal
             result = await self._semantic_search_tool.function(
                 query=natural_language_query, top_k=top_k, project=project
             )
@@ -1740,11 +1756,13 @@ class MCPToolsRegistry:
         coverage from another.
         """
         dup_project = project or derive_project_name(Path(self.project_root))
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal, dup_project, cs.MCPToolName.FIND_DUPLICATE_CODE
-        ):
-            return refusal
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal,
+                dup_project,
+                cs.MCPToolName.FIND_DUPLICATE_CODE,
+            ):
+                return refusal
             result = await self._find_duplicates_tool.function(
                 project=project, threshold=threshold, min_size=min_size, limit=limit
             )
@@ -1758,13 +1776,13 @@ class MCPToolsRegistry:
         """
         # A node id from a partial graph may name a node that the completed
         # index would not have produced at all.
-        if refusal := await asyncio.to_thread(
-            self._incomplete_refusal,
-            derive_project_name(Path(self.project_root)),
-            cs.MCPToolName.GET_FUNCTION_SOURCE,
-        ):
-            return refusal
         async with self._ingestor_lock:
+            if refusal := await asyncio.to_thread(
+                self._incomplete_refusal,
+                derive_project_name(Path(self.project_root)),
+                cs.MCPToolName.GET_FUNCTION_SOURCE,
+            ):
+                return refusal
             result = await self._function_source_tool.function(node_id=node_id)
         return str(result)
 
@@ -1943,17 +1961,20 @@ class MCPToolsRegistry:
                 # report every store outage as "graph incomplete" and bury
                 # the real error the caller needs to see. A read that cannot
                 # reach the store fails below as itself.
+                # The same project-scoped decision the direct readers use:
+                # reading the bare flag here refused project B because
+                # project A's recovery failed (Greptile, PR #1547).
+                #
+                # Evaluated INSIDE the lock, with the read, because they must
+                # serialise: an update that lands between an approval and the
+                # read sets the graph incomplete and the approved read then
+                # runs against the partial graph.
                 if tool in _READS_THE_GRAPH and (
-                    self._graph_incomplete
-                    or await asyncio.to_thread(
-                        self._marker_says_incomplete, project_name
+                    refusal := await asyncio.to_thread(
+                        self._incomplete_refusal, project_name, tool
                     )
                 ):
-                    return {
-                        cs.DICT_KEY_ERROR: cs.MCP_QUERY_AFTER_FAILED_RUN.format(
-                            project=project_name, tool=tool
-                        )
-                    }
+                    return {cs.DICT_KEY_ERROR: refusal}
                 return await asyncio.to_thread(run, project_name)
         except Exception as e:
             logger.error(lg.MCP_GRAPH_QUERY_ERROR.format(tool=tool, error=e))
@@ -2213,10 +2234,8 @@ class MCPToolsRegistry:
             # does not share that path -- it binds a per-request query tool
             # below -- so the check is repeated here rather than inherited.
             project_name = project or derive_project_name(Path(self.project_root))
-            if refusal := await asyncio.to_thread(
-                self._incomplete_refusal,
-                project_name,
-                cs.MCPToolName.QUERY_CODE_GRAPH,
+            if refusal := await self._refusal_under_lock(
+                project_name, cs.MCPToolName.QUERY_CODE_GRAPH
             ):
                 return QueryResultDict(
                     error=refusal,
@@ -2271,17 +2290,19 @@ class MCPToolsRegistry:
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         try:
-            if refusal := await asyncio.to_thread(
-                self._incomplete_refusal,
-                derive_project_name(Path(self.project_root)),
-                cs.MCPToolName.GET_CODE_SNIPPET,
-            ):
-                return CodeSnippetResultDict(
-                    error=refusal, found=False, error_message=refusal
-                )
             # Serialise against index/update, which delete and rebuild the
             # graph under this lock; an interleaved read mixes generations.
+            # The guard is inside the lock so an update cannot land between
+            # the check and the read (Greptile, PR #1547).
             async with self._ingestor_lock:
+                if refusal := await asyncio.to_thread(
+                    self._incomplete_refusal,
+                    derive_project_name(Path(self.project_root)),
+                    cs.MCPToolName.GET_CODE_SNIPPET,
+                ):
+                    return CodeSnippetResultDict(
+                        error=refusal, found=False, error_message=refusal
+                    )
                 snippet = await self._code_tool.function(qualified_name=qualified_name)
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:

@@ -942,3 +942,50 @@ def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
     assert not report.verdict.ok
     assert "already been reversed" in report.message
     assert "def helper(a):" in (root / "pkg" / "util.py").read_text()
+
+
+def test_an_evicted_transaction_is_not_reported_as_rolled_back(
+    temp_repo: Path,
+) -> None:
+    # The history keeps EDIT_HISTORY_LIMIT entries. Enough later edits evict
+    # this rename's entry while its rename is still on disk, and reading that
+    # absence as "another actor undid it" claims a rollback that never
+    # happened (Greptile, PR #1547). Absence is evidence only while the
+    # history has not reached its limit.
+    from codebase_rag.editing.transaction import EditTransaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_then_flood(paths: list[str]) -> None:
+        updater.reingest(paths)
+        # Push this rename's entry out of the bounded history.
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            tx.commit()
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_flood,
+    )
+
+    # The rename IS still on disk, so it must not be reported as reverted.
+    assert (
+        "def assist(a):\n    return a\n\n\ndef assist(a):"
+        in (root / "pkg" / "util.py").read_text()
+    )
+    assert report.applied, "an evicted entry was misread as a completed undo"
+    assert "cannot be told" in report.message

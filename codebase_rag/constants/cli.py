@@ -587,6 +587,11 @@ RENAME_ROLLBACK_REFUSED = (
     "recorded on top of it, so it was not rolled back; undo the later edit "
     "and rerun"
 )
+RENAME_ROLLBACK_UNKNOWN = (
+    "Rename kept: its postcondition failed ({reasons}) and its transaction is "
+    "no longer in the edit history, so whether it was already reversed cannot "
+    "be told from a truncated history; check the working tree"
+)
 RENAME_ROLLBACK_ALREADY_UNDONE = (
     "Rename rolled back: its postcondition failed ({reasons}) and its "
     "transaction had already been reversed by another actor, so the files "
