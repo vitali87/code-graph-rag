@@ -37,9 +37,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          # A missing head SHA must NOT be a pass. `workflow_dispatch`
+          # carries no pull_request payload, so an earlier `exit 0` here
+          # let anyone manufacture a green `CI Ran At Head` by dispatching
+          # this workflow by hand -- a gate that reports success without
+          # asserting anything, which is the exact defect it exists to
+          # prevent.
           if [ -z "${HEAD_SHA:-}" ]; then
-            echo "No pull_request head SHA in the event payload; nothing to assert."
-            exit 0
+            echo "::error::No pull_request head SHA in the event payload."
+            echo "This check asserts a property of a pull request head and"
+            echo "cannot do so outside a pull_request event. Dispatching it"
+            echo "manually proves nothing and must not report success."
+            exit 1
           fi
 
           echo "Head SHA: $HEAD_SHA"
@@ -49,15 +58,21 @@ jobs:
           # runs belonging to OTHER PRs (issue #1582 records this trap).
           runs=$(gh api \
             "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | {name, conclusion, status, event}]')
+            --jq '[.workflow_runs[] | {name, path, conclusion, status, event}]')
 
           echo "Runs at this head:"
-          echo "$runs" | jq -r '.[] | "  \(.name): \(.status)/\(.conclusion // "pending") (\(.event))"' || true
+          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)]: \(.status)/\(.conclusion // "pending") (\(.event))"' || true
 
-          # `| length == 0` is indistinguishable from "the name did not
-          # match", so match on the workflow's `name:` field exactly as
-          # ci.yml declares it, and print what was found either way.
-          ci_count=$(echo "$runs" | jq '[.[] | select(.name == "CI")] | length')
+          # Match the workflow's PATH, not its display `name`. A display
+          # name is just a string any workflow may declare, so a second
+          # file named `CI` would satisfy a name-only check without
+          # running a single test. The path identifies the file itself.
+          #
+          # `| length == 0` is also indistinguishable from "nothing
+          # matched the filter", so every run found is printed above
+          # whether the assertion passes or fails.
+          ci_count=$(echo "$runs" \
+            | jq '[.[] | select(.path == ".github/workflows/ci.yml")] | length')
 
           if [ "$ci_count" -eq 0 ]; then
             echo
