@@ -289,7 +289,7 @@ class TestLegacyMigrationUsesTheDiscoveredName:
         ingestor.ensure_constraints()
 
         drops = [q for q in conn.log if q.startswith("DROP CONSTRAINT")]
-        assert drops == ["DROP CONSTRAINT legacy_folder_path_uc IF EXISTS"]
+        assert drops == ["DROP CONSTRAINT `legacy_folder_path_uc` IF EXISTS"]
 
     def test_memgraph_still_drops_by_pattern(self) -> None:
         ingestor = MemgraphIngestor(

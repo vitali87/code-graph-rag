@@ -87,8 +87,10 @@ class TestSchemaSetup:
         """
         legacy = ingestor._dialect.create_constraint("Folder", "path")
         if ingestor._dialect.name == DIALECT_NEO4J:
+            # Punctuation on purpose: an unquoted DROP of this name is a
+            # CypherSyntaxError, and `ensure_constraints` would swallow it.
             legacy = (
-                "CREATE CONSTRAINT someone_elses_folder_path IF NOT EXISTS "
+                "CREATE CONSTRAINT `someone-elses folder.path` IF NOT EXISTS "
                 "FOR (n:Folder) REQUIRE n.path IS UNIQUE"
             )
         ingestor._execute_query(legacy)

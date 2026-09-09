@@ -39,6 +39,20 @@ DIALECT_MEMGRAPH = "memgraph"
 DIALECT_NEO4J = "neo4j"
 
 
+def _quote_identifier(name: str) -> str:
+    """Backtick-quote a Cypher identifier, escaping any backticks in it.
+
+    `discovered_name` comes from the server's own catalogue and can be
+    anything a previous operator chose: a hyphen, a space or a dot makes
+    an unquoted `DROP CONSTRAINT` a syntax error. Verified against Neo4j
+    5.26 -- dropping `legacy-folder path.uc` unquoted raises
+    CypherSyntaxError, quoted it succeeds. The failure would be silent,
+    because `ensure_constraints` swallows DDL errors, leaving the
+    obsolete constraint enforced.
+    """
+    return "`" + name.replace("`", "``") + "`"
+
+
 def _constraint_name(label: str, prop: str) -> str:
     """A deterministic name for a constraint or index.
 
@@ -170,7 +184,9 @@ class Neo4jDialect:
         # created before this code existed and need not carry the name we
         # would derive, in which case dropping the derived name is a
         # no-op and the obsolete key stays enforced.
-        return f"DROP CONSTRAINT {discovered_name or _constraint_name(label, prop)} IF EXISTS"
+        return f"DROP CONSTRAINT {
+            _quote_identifier(discovered_name or _constraint_name(label, prop))
+        } IF EXISTS"
 
     def create_index(self, label: str, prop: str) -> str:
         return (

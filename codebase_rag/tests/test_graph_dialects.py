@@ -115,7 +115,7 @@ class TestNeo4j:
         # has to be derivable from (label, prop) without a database read.
         assert (
             Neo4jDialect().drop_constraint("Folder", "path")
-            == "DROP CONSTRAINT cgr_folder_path IF EXISTS"
+            == "DROP CONSTRAINT `cgr_folder_path` IF EXISTS"
         )
 
     def test_create_index_uses_the_for_on_form(self) -> None:
@@ -201,13 +201,13 @@ class TestLegacyConstraintIsDroppedByItsRealName:
     def test_neo4j_drops_the_discovered_name(self) -> None:
         assert (
             Neo4jDialect().drop_constraint("Folder", "path", "legacy_folder_path_uc")
-            == "DROP CONSTRAINT legacy_folder_path_uc IF EXISTS"
+            == "DROP CONSTRAINT `legacy_folder_path_uc` IF EXISTS"
         )
 
     def test_neo4j_falls_back_to_the_derived_name(self) -> None:
         assert (
             Neo4jDialect().drop_constraint("Folder", "path", None)
-            == "DROP CONSTRAINT cgr_folder_path IF EXISTS"
+            == "DROP CONSTRAINT `cgr_folder_path` IF EXISTS"
         )
 
     def test_a_row_without_a_name_yields_none(self) -> None:
@@ -229,3 +229,37 @@ class TestLegacyConstraintIsDroppedByItsRealName:
 
     def test_memgraph_reports_no_name(self) -> None:
         assert MemgraphDialect().constraint_row_name({"label": "Folder"}) is None
+
+
+class TestNeo4jQuotesConstraintNames:
+    """A server-chosen name may contain characters Cypher cannot parse bare.
+
+    Verified against Neo4j 5.26: `DROP CONSTRAINT legacy-folder path.uc
+    IF EXISTS` raises CypherSyntaxError, the backtick-quoted form
+    succeeds. The failure would be silent, since `ensure_constraints`
+    swallows DDL errors and would leave the obsolete constraint enforced.
+    """
+
+    def test_a_punctuated_name_is_quoted(self) -> None:
+        assert (
+            Neo4jDialect().drop_constraint("Folder", "path", "legacy-folder path.uc")
+            == "DROP CONSTRAINT `legacy-folder path.uc` IF EXISTS"
+        )
+
+    def test_an_embedded_backtick_is_doubled(self) -> None:
+        # A single backtick would close the quoting early and change the
+        # statement's meaning.
+        assert (
+            Neo4jDialect().drop_constraint("Folder", "path", "weird`name")
+            == "DROP CONSTRAINT `weird``name` IF EXISTS"
+        )
+
+    def test_the_derived_fallback_is_quoted_too(self) -> None:
+        assert (
+            Neo4jDialect().drop_constraint("Folder", "path", None)
+            == "DROP CONSTRAINT `cgr_folder_path` IF EXISTS"
+        )
+
+    def test_memgraph_does_not_quote(self) -> None:
+        # Memgraph drops by pattern, so there is no identifier to quote.
+        assert "`" not in MemgraphDialect().drop_constraint("Folder", "path")
