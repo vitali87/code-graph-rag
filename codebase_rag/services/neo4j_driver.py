@@ -170,6 +170,20 @@ class Neo4jDriver:
         self._database = database
 
     def connect(self) -> Neo4jConnection:
+        """Open a session.
+
+        This does NOT prove the server is reachable. The Neo4j driver
+        connects lazily: `GraphDatabase.driver()` and `session()` touch
+        no socket, and an unreachable server first surfaces as
+        `ServiceUnavailable` when a query runs. `mgclient.connect()` by
+        contrast fails immediately.
+
+        So a reachability probe that only opens a connection detects a
+        dead Memgraph and reports a dead Neo4j as HEALTHY -- silently, and
+        in the reassuring direction. Any such check must issue a query;
+        `HealthChecker.check_memgraph_connection` runs `RETURN 1` for
+        exactly this reason.
+        """
         return Neo4jConnection(self._driver.session(database=self._database))
 
     def close(self) -> None:
