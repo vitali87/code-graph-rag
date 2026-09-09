@@ -243,3 +243,63 @@ class TestNeo4jDriverLifecycle:
         ingestor = MemgraphIngestor(host="h", port=1)
         ingestor.conn = RecordingConn()
         ingestor.__exit__(None, None, None)
+
+
+class TestLegacyMigrationUsesTheDiscoveredName:
+    """The DROP must name the constraint the server actually reported."""
+
+    class _RowsConn(RecordingConn):
+        """A connection whose SHOW CONSTRAINTS returns one legacy row."""
+
+        def __init__(self, rows: list[tuple], columns: list[str]) -> None:
+            super().__init__()
+            self._rows, self._columns = rows, columns
+
+        def cursor(self):  # type: ignore[no-untyped-def]
+            conn = self
+
+            class _Cursor:
+                def execute(self, query: str, params=None) -> None:
+                    conn.log.append(query)
+                    self._is_show = "SHOW CONSTRAINT" in query
+
+                @property
+                def description(self):  # type: ignore[no-untyped-def]
+                    if not getattr(self, "_is_show", False):
+                        return None
+                    return [type("C", (), {"name": c})() for c in conn._columns]
+
+                def fetchall(self):  # type: ignore[no-untyped-def]
+                    return conn._rows if getattr(self, "_is_show", False) else []
+
+                def close(self) -> None:
+                    pass
+
+            return _Cursor()
+
+    def test_neo4j_drops_the_name_the_server_reported(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="h", port=1, dialect=get_dialect(DIALECT_NEO4J)
+        )
+        conn = self._RowsConn(
+            rows=[("legacy_folder_path_uc", ["Folder"], ["path"])],
+            columns=["name", "labelsOrTypes", "properties"],
+        )
+        ingestor.conn = conn
+        ingestor.ensure_constraints()
+
+        drops = [q for q in conn.log if q.startswith("DROP CONSTRAINT")]
+        assert drops == ["DROP CONSTRAINT legacy_folder_path_uc IF EXISTS"]
+
+    def test_memgraph_still_drops_by_pattern(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="h", port=1, dialect=get_dialect(DIALECT_MEMGRAPH)
+        )
+        conn = self._RowsConn(
+            rows=[("Folder", ["path"])], columns=["label", "properties"]
+        )
+        ingestor.conn = conn
+        ingestor.ensure_constraints()
+
+        drops = [q for q in conn.log if q.startswith("DROP CONSTRAINT")]
+        assert drops == ["DROP CONSTRAINT ON (n:Folder) ASSERT n.path IS UNIQUE;"]

@@ -391,16 +391,22 @@ class MemgraphIngestor:
         when an earlier partial upgrade already dropped them.
         """
         existing_rows = self._execute_query(self._dialect.show_constraints())
-        legacy_present = [
-            (label, prop)
-            for label, prop in LEGACY_NODE_CONSTRAINTS
-            if any(
-                self._dialect.constraint_row_matches(row, label, prop)
-                for row in existing_rows
+        # Carry the server's own name for each match: engines that drop by
+        # name (Neo4j) must drop the constraint that actually exists, not
+        # one whose name we derived -- a legacy constraint predates this
+        # code and may be named anything.
+        legacy_present: list[tuple[str, str, str | None]] = []
+        for label, prop in LEGACY_NODE_CONSTRAINTS:
+            for row in existing_rows:
+                if self._dialect.constraint_row_matches(row, label, prop):
+                    legacy_present.append(
+                        (label, prop, self._dialect.constraint_row_name(row))
+                    )
+                    break
+        for label, prop, discovered_name in legacy_present:
+            self._execute_query(
+                self._dialect.drop_constraint(label, prop, discovered_name)
             )
-        ]
-        for label, prop in legacy_present:
-            self._execute_query(self._dialect.drop_constraint(label, prop))
         damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
             self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
         )

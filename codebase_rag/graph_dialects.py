@@ -60,8 +60,18 @@ class GraphDialect(Protocol):
         """Statement making `prop` unique across `label`."""
         ...
 
-    def drop_constraint(self, label: str, prop: str) -> str:
-        """Statement removing the uniqueness of `prop` on `label`."""
+    def drop_constraint(
+        self, label: str, prop: str, discovered_name: str | None = None
+    ) -> str:
+        """Statement removing the uniqueness of `prop` on `label`.
+
+        `discovered_name` is the name the server reported for this
+        constraint, where the engine addresses constraints by name. It
+        matters because the constraint being dropped predates this code
+        and may carry any name: dropping a name we derive ourselves would
+        silently leave someone else's legacy constraint enforcing an
+        obsolete key.
+        """
         ...
 
     def create_index(self, label: str, prop: str) -> str:
@@ -81,6 +91,10 @@ class GraphDialect(Protocol):
         """
         ...
 
+    def constraint_row_name(self, row: ResultRow) -> str | None:
+        """The server's own name for a `show_constraints` row, if any."""
+        ...
+
     def apply_memory_limit(self, query: str, mb: int) -> str:
         """Bound a read's memory, where the engine supports it."""
         ...
@@ -94,7 +108,12 @@ class MemgraphDialect:
     def create_constraint(self, label: str, prop: str) -> str:
         return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
-    def drop_constraint(self, label: str, prop: str) -> str:
+    def drop_constraint(
+        self, label: str, prop: str, discovered_name: str | None = None
+    ) -> str:
+        # Memgraph addresses constraints by pattern, so the name is
+        # irrelevant here.
+        del discovered_name
         return f"DROP CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
     def create_index(self, label: str, prop: str) -> str:
@@ -105,6 +124,11 @@ class MemgraphDialect:
 
     def constraint_row_matches(self, row: ResultRow, label: str, prop: str) -> bool:
         return row.get("label") == label and row.get("properties") == [prop]
+
+    def constraint_row_name(self, row: ResultRow) -> str | None:
+        # Memgraph drops by pattern, so it never needs one.
+        del row
+        return None
 
     def apply_memory_limit(self, query: str, mb: int) -> str:
         if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():
@@ -139,8 +163,14 @@ class Neo4jDialect:
             f"FOR (n:{label}) REQUIRE n.{prop} IS UNIQUE"
         )
 
-    def drop_constraint(self, label: str, prop: str) -> str:
-        return f"DROP CONSTRAINT {_constraint_name(label, prop)} IF EXISTS"
+    def drop_constraint(
+        self, label: str, prop: str, discovered_name: str | None = None
+    ) -> str:
+        # Prefer the name the server reported: a legacy constraint was
+        # created before this code existed and need not carry the name we
+        # would derive, in which case dropping the derived name is a
+        # no-op and the obsolete key stays enforced.
+        return f"DROP CONSTRAINT {discovered_name or _constraint_name(label, prop)} IF EXISTS"
 
     def create_index(self, label: str, prop: str) -> str:
         return (
@@ -156,6 +186,10 @@ class Neo4jDialect:
         if not isinstance(labels, list):
             return False
         return label in labels and row.get("properties") == [prop]
+
+    def constraint_row_name(self, row: ResultRow) -> str | None:
+        name = row.get("name")
+        return name if isinstance(name, str) and name else None
 
     def apply_memory_limit(self, query: str, mb: int) -> str:
         # `mb` is part of the protocol every dialect implements; Neo4j has

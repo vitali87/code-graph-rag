@@ -139,13 +139,10 @@ class TestCredentialValidationIsPerEngine:
         )
 
     def test_memgraph_still_rejects_a_half_set_credential(self) -> None:
+        dialect = get_dialect(DIALECT_MEMGRAPH)
         with pytest.raises(ValueError, match="(?i)both"):
             MemgraphIngestor(
-                host="h",
-                port=7687,
-                username="u",
-                password=None,
-                dialect=get_dialect(DIALECT_MEMGRAPH),
+                host="h", port=7687, username="u", password=None, dialect=dialect
             )
 
 

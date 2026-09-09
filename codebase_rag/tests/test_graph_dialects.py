@@ -180,3 +180,52 @@ class TestNoCrossDialectLeakage:
         d = Neo4jDialect()
         names = {d.create_constraint(label, prop) for label, prop in REAL_PAIRS}
         assert len(names) == len(set(REAL_PAIRS))
+
+
+class TestLegacyConstraintIsDroppedByItsRealName:
+    """A legacy constraint predates this code and may be named anything.
+
+    Neo4j drops constraints by name only, so detecting one by label and
+    property but dropping a name we derived leaves the obsolete key
+    enforced -- silently, since `ensure_constraints` swallows DDL errors.
+    """
+
+    def test_neo4j_reads_the_servers_own_name(self) -> None:
+        row = {
+            "name": "legacy_folder_path_uc",
+            "labelsOrTypes": ["Folder"],
+            "properties": ["path"],
+        }
+        assert Neo4jDialect().constraint_row_name(row) == "legacy_folder_path_uc"
+
+    def test_neo4j_drops_the_discovered_name(self) -> None:
+        assert (
+            Neo4jDialect().drop_constraint("Folder", "path", "legacy_folder_path_uc")
+            == "DROP CONSTRAINT legacy_folder_path_uc IF EXISTS"
+        )
+
+    def test_neo4j_falls_back_to_the_derived_name(self) -> None:
+        assert (
+            Neo4jDialect().drop_constraint("Folder", "path", None)
+            == "DROP CONSTRAINT cgr_folder_path IF EXISTS"
+        )
+
+    def test_a_row_without_a_name_yields_none(self) -> None:
+        row = {"labelsOrTypes": ["Folder"], "properties": ["path"]}
+        assert Neo4jDialect().constraint_row_name(row) is None
+
+    def test_an_empty_name_yields_none(self) -> None:
+        # An empty string would produce `DROP CONSTRAINT  IF EXISTS`.
+        row = {"name": "", "labelsOrTypes": ["Folder"], "properties": ["path"]}
+        assert Neo4jDialect().constraint_row_name(row) is None
+
+    def test_memgraph_ignores_the_name_entirely(self) -> None:
+        # Memgraph addresses constraints by pattern, so passing a name
+        # must not change the statement it emits.
+        dialect = MemgraphDialect()
+        assert dialect.drop_constraint("Folder", "path", "anything") == (
+            dialect.drop_constraint("Folder", "path", None)
+        )
+
+    def test_memgraph_reports_no_name(self) -> None:
+        assert MemgraphDialect().constraint_row_name({"label": "Folder"}) is None

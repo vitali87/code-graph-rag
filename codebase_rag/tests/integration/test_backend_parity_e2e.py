@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.graph_dialects import DIALECT_NEO4J
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 pytestmark = pytest.mark.integration
@@ -72,6 +73,34 @@ class TestSchemaSetup:
     def test_running_it_twice_is_idempotent(self, ingestor: MemgraphIngestor) -> None:
         ingestor.ensure_constraints()
         ingestor.ensure_constraints()
+
+    def test_a_legacy_constraint_under_another_name_is_dropped(
+        self, ingestor: MemgraphIngestor
+    ) -> None:
+        """The migration must drop the constraint that actually exists.
+
+        Neo4j addresses constraints by name only, so detecting a legacy
+        one by label and property but dropping a name derived here would
+        leave the obsolete key enforced -- and `ensure_constraints`
+        swallows DDL errors, so it would fail silently. The constraint is
+        created under a name this code would never derive.
+        """
+        legacy = ingestor._dialect.create_constraint("Folder", "path")
+        if ingestor._dialect.name == DIALECT_NEO4J:
+            legacy = (
+                "CREATE CONSTRAINT someone_elses_folder_path IF NOT EXISTS "
+                "FOR (n:Folder) REQUIRE n.path IS UNIQUE"
+            )
+        ingestor._execute_query(legacy)
+
+        ingestor.ensure_constraints()
+
+        rows = ingestor._execute_query(ingestor._dialect.show_constraints())
+        assert not [
+            row
+            for row in rows
+            if ingestor._dialect.constraint_row_matches(row, "Folder", "path")
+        ]
 
 
 @pytest.mark.parametrize("ingestor", BACKENDS, indirect=True)
