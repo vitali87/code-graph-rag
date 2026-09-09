@@ -74,3 +74,20 @@ class TestCaptureContract:
             seen.extend(rels)
         assert len(seen) == len(set(seen)), "a relationship is in two groups"
         assert set(seen) == set(RelationshipType)
+
+
+class TestItsTargets:
+    def test_targets_are_exactly_what_resolve_can_return(self) -> None:
+        """The comment on `_GLOSS_TARGET_LABELS` claims this; assert it.
+
+        An agent names an anchor and `graph_query.resolve()` turns it into a
+        (label, qualified_name). If the sets drift apart, either an anchor
+        resolves to something no ANNOTATES edge may point at, or a schema
+        advertises a target nothing can produce. Both fail silently.
+        """
+        from codebase_rag.graph_query import _DEFINITION_LABELS
+        from codebase_rag.types_defs import _GLOSS_TARGET_LABELS
+
+        assert {label.value for label in _GLOSS_TARGET_LABELS} == set(
+            _DEFINITION_LABELS
+        )
