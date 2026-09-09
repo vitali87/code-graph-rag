@@ -228,8 +228,11 @@ def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> Non
     for name in sorted(_KNOWN_DEFECT_SEEDS):
         seed = FUZZ_DIR / "corpus" / "fuzz_parse_source" / name
         assert seed.exists(), f"missing seed {name}; run fuzz/build_corpus.py"
-        with pytest.raises(AssertionError, match="not valid UTF-8"):
-            parse_harness.fuzz_parse_source(seed.read_bytes())
+        # Read OUTSIDE the raises block: a missing or unreadable seed would
+        # otherwise raise in here and be credited to the detector.
+        payload = seed.read_bytes()
+        with pytest.raises(AssertionError, match="truncated name"):
+            parse_harness.fuzz_parse_source(payload)
 
 
 def test_parse_harness_reaches_the_extractor(parse_harness: ModuleType) -> None:
@@ -293,7 +296,7 @@ def test_parse_harness_detects_a_truncated_name(
         pytest.skip(f"no {language_name} grammar available")
     tree = parse_harness._PARSERS[language].parse(source)
 
-    with pytest.raises(AssertionError, match="not valid UTF-8"):
+    with pytest.raises(AssertionError, match="truncated name"):
         parse_harness._extract_names(language, tree.root_node, source)
 
 

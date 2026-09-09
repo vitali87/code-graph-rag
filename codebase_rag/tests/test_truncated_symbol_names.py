@@ -154,6 +154,34 @@ def test_a_bad_byte_that_damages_no_name_is_not_reported(
     assert "proj.a.alpha" in names, "the symbol indexed under its real name"
 
 
+def test_a_name_bound_by_an_enclosing_field_is_reported(
+    parsers_and_queries: tuple[dict, dict],
+) -> None:
+    """A TS class-field arrow is named by its ENCLOSING field definition.
+
+    `_js_ts_field_member_name` reads the binding from the parent, so the
+    identifier sits ABOVE the node handed to the check. Searching only
+    downwards missed it: `Greeter.eet` reached the graph with no warning while
+    every other shape was covered, which is the shape a downward-only search
+    cannot see by construction.
+
+    JS is deliberately not covered here: it does not index class-field arrows
+    as methods at all (verified -- the clean control indexes only `Greeter`),
+    so there is no truncated name to report.
+    """
+    clean = b"class Greeter {\n  greet = (n: string) => n;\n}\n"
+    dirty = b"class Greeter {\n  gr\xffeet = (n: string) => n;\n}\n"
+
+    clean_names, clean_warnings = _index(parsers_and_queries, "a.ts", clean)
+    dirty_names, dirty_warnings = _index(parsers_and_queries, "a.ts", dirty)
+
+    assert "proj.a.Greeter.greet" in clean_names, "control: the arrow is indexed"
+    assert not clean_warnings, "false alarm on a clean field arrow"
+    assert dirty_warnings, (
+        f"a field-bound name truncated with no warning; indexed {sorted(dirty_names)}"
+    )
+
+
 def test_one_bad_byte_does_not_warn_once_per_enclosing_definition(
     parsers_and_queries: tuple[dict, dict],
 ) -> None:
@@ -174,6 +202,56 @@ def test_one_bad_byte_does_not_warn_once_per_enclosing_definition(
 
     assert not warnings, f"{len(warnings)} warning(s) for one harmless bad byte"
     assert "proj.a.Outer.Mid.Inner" in names
+
+
+def test_a_valid_multibyte_character_beside_a_name_is_not_reported(
+    parsers_and_queries: tuple[dict, dict],
+) -> None:
+    """A one-byte adjacency probe calls valid source corrupt.
+
+    Under error recovery `def alpha\u00a9():` puts the two bytes c2 a9 next to the
+    name. Together they are a valid `\u00a9`; NEITHER decodes alone, so probing a
+    single byte either side reports a truncated name for well-formed source.
+    The probe is a window the width of the longest UTF-8 sequence, with the
+    partial character at the cut edge trimmed before decoding.
+    """
+    source = "def alpha\u00a9():\n    return 1\n".encode()
+
+    _names, warnings = _index(parsers_and_queries, "a.py", source)
+
+    assert not warnings, "false alarm on a valid multi-byte character"
+
+
+def test_a_synthesized_name_still_resolves_to_its_source_span(
+    parsers_and_queries: tuple[dict, dict],
+) -> None:
+    """C# destructors are ingested as `~Greeter` while the source leaf is bare.
+
+    The span lookup matches the extracted name against the tree, so a name the
+    ingestor SYNTHESIZED finds nothing and the check returns before inspecting
+    anything. A leading sigil is the general shape of that, so it is stripped
+    before the lookup.
+    """
+    from codebase_rag.parsers.utils import _name_span
+
+    parsers, _queries = parsers_and_queries
+    source = b"class Greeter {\n  ~Gr\xffeeter() { }\n}\n"
+    tree = parsers[cs.SupportedLanguage.CSHARP].parse(source)
+
+    stack = [tree.root_node]
+    destructor = None
+    while stack:
+        node = stack.pop()
+        if "destructor" in node.type:
+            destructor = node
+            break
+        stack.extend(node.children)
+    assert destructor is not None, "fixture did not produce a destructor node"
+
+    # The grammar keeps the LEADING fragment here, so the ingested name is `~Gr`.
+    assert _name_span(destructor, "~Gr") is not None, (
+        "a synthesized name must still resolve to the span it came from"
+    )
 
 
 def test_the_name_nodes_own_bytes_cannot_detect_this() -> None:

@@ -1655,12 +1655,18 @@ def warn_if_name_truncated(
     if span is None:
         return
     start, end = span
-    for probe in (source[max(0, start - 1) : start], source[end : end + 1]):
+    # A WINDOW either side, not a single byte. A legitimate multi-byte
+    # character next to the name (`def alpha\u00a9()` under error recovery, where
+    # `\u00a9` is the two bytes c2 a9) has neither half decodable ALONE, so a
+    # one-byte probe calls valid source corrupt. Four bytes is the longest
+    # UTF-8 sequence, so a window that size decodes cleanly whenever the
+    # neighbouring text is well-formed.
+    before = source[max(0, start - cs.UTF8_MAX_SEQUENCE_BYTES) : start]
+    after = source[end : end + cs.UTF8_MAX_SEQUENCE_BYTES]
+    for probe, at_end in ((before, False), (after, True)):
         if not probe:
             continue
-        try:
-            probe.decode(cs.ENCODING_UTF8)
-        except UnicodeDecodeError:
+        if _has_invalid_byte(probe, at_end=at_end):
             logger.warning(
                 logs.TRUNCATED_SYMBOL_NAME.format(
                     path=file_path if file_path is not None else "<unknown>",
@@ -1670,6 +1676,12 @@ def warn_if_name_truncated(
             return
 
 
+# A definition's own name is at most a step or two above it (the JS/TS
+# field-definition wrapper is one). Bounded so a deeply nested node cannot walk
+# to the root and match an unrelated enclosing definition of the same name.
+_NAME_SPAN_ANCESTOR_LIMIT = 3
+
+
 def _name_span(node: Node, name: str) -> tuple[int, int] | None:
     """Byte span of the identifier `name` was decoded from, or None.
 
@@ -1677,6 +1689,13 @@ def _name_span(node: Node, name: str) -> tuple[int, int] | None:
     equals the extracted name. The search is bounded to identifier-ish leaves
     and stops at the first match, so it stays cheap on large definitions.
     """
+    # A synthesized name need not appear in the source at all: C# destructor
+    # ingestion builds `~Greeter` while the source leaf is just `Greeter`, and
+    # a leading sigil is the general shape of that. Strip non-identifier
+    # prefixes so the span lookup matches what the grammar actually holds.
+    name = name.lstrip(cs.SYNTHETIC_NAME_PREFIXES)
+    if not name:
+        return None
     encoded = name.encode(cs.ENCODING_UTF8)
     direct = node.child_by_field_name(cs.FIELD_NAME)
     if direct is not None and direct.text == encoded:
@@ -1688,7 +1707,44 @@ def _name_span(node: Node, name: str) -> tuple[int, int] | None:
         if current is not node and current.text == encoded and not current.children:
             return current.start_byte, current.end_byte
         stack.extend(current.children)
+
+    # Not below the node: a JS/TS class-field arrow or function expression is
+    # named by its ENCLOSING field definition (`greet = (n) => n`), and
+    # `_js_ts_field_member_name` reads the binding from there, so the
+    # identifier sits above the node the caller passed. Walk out a bounded
+    # distance rather than threading a node through every extraction branch --
+    # a name that belongs to this definition is always within a step or two.
+    ancestor = node.parent
+    for _ in range(_NAME_SPAN_ANCESTOR_LIMIT):
+        if ancestor is None:
+            break
+        field = ancestor.child_by_field_name(cs.FIELD_NAME)
+        if field is not None and field.text == encoded:
+            return field.start_byte, field.end_byte
+        ancestor = ancestor.parent
     return None
+
+
+def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
+    """Whether `window` contains a byte that no valid UTF-8 sequence explains.
+
+    The window is sliced at an arbitrary offset, so it can begin or end
+    mid-character even when the source is well-formed: `\u00a9` is the two bytes
+    c2 a9, and either half alone fails to decode. Only a genuinely invalid
+    byte should count, so the partial sequence at the cut edge is trimmed
+    before decoding -- `at_end` says which edge is the cut one (the window
+    BEFORE the name is cut at its start, the one AFTER at its end).
+    """
+    for trim in range(len(window)):
+        candidate = window[trim:] if not at_end else window[: len(window) - trim]
+        if not candidate:
+            return False
+        try:
+            candidate.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
+            continue
+        return False
+    return True
 
 
 def _node_source_bytes(node: Node) -> bytes | None:

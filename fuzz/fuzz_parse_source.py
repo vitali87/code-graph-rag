@@ -84,16 +84,6 @@ def _extract_names(language: cs.SupportedLanguage, root: object, source: bytes) 
     if not wanted:
         return
 
-    # The whole file, once: a name is suspect when the bytes it was extracted
-    # from are not valid UTF-8, and the cheap file-level question decides
-    # whether any per-node work is worth doing at all.
-    try:
-        source.decode(cs.ENCODING_UTF8)
-    except UnicodeDecodeError:
-        file_is_valid_utf8 = False
-    else:
-        file_is_valid_utf8 = True
-
     stack = [root]
     while stack:
         current = stack.pop()
@@ -105,46 +95,95 @@ def _extract_names(language: cs.SupportedLanguage, root: object, source: bytes) 
             # a crash rather than being silently tolerated.
             name = fqn_spec.get_name(current)  # type: ignore[arg-type]
             if name is not None:
-                _check_truncated_name(language, current, name)
+                _check_truncated_name(language, current, name, source)
         stack.extend(current.children)  # type: ignore[attr-defined]
 
 
 def _check_truncated_name(
-    language: cs.SupportedLanguage, node: object, name: str
+    language: cs.SupportedLanguage, node: object, name: str, source: bytes
 ) -> None:
-    """Fail when a name was extracted from bytes that are not valid UTF-8.
+    """Fail when a name was truncated by an invalid byte beside it.
 
-    Deliberately NOT `name.encode() in raw`: that containment check is
-    satisfied by the very corruption it looks for, because the truncated name
-    is a SUBSTRING of the corrupt bytes -- `pha` really is inside
-    `al\xffpha`, so the oracle returns True on the exact defect it was
-    written for and could never fire. What discriminates is whether the
-    SOURCE round-trips, not whether the result is contained in it.
+    Mirrors `parsers.utils.warn_if_name_truncated`: the discriminator is the
+    byte IMMEDIATELY ADJACENT to the NAME's span, the one the grammar split
+    on. Two narrower-sounding shapes are both wrong -- the name node's own
+    bytes never contain the bad byte (tree-sitter excludes it, so they decode
+    cleanly either way and detect nothing), and the enclosing DEFINITION's
+    span contains it but also spans the whole body, so it fires on a bad byte
+    in any body comment or string while the symbol is indexed correctly.
 
-    Scoped honestly: this detects a superset (any name extracted from a span
-    that is not valid UTF-8), it needs the enclosing node's bytes to carry the
-    bad byte, and a payload placing that byte outside every captured node
-    stays invisible. It is silent on legitimate non-ASCII identifiers such as
-    `café`, which a naive "is it ASCII" check would flag on every non-English
-    codebase.
+    Deliberately NOT `name.encode() in raw`: containment is satisfied BY this
+    corruption, because the truncated name is a substring of the corrupt bytes
+    (`pha` really is inside `al\xffpha`), so that oracle returns True on the
+    exact defect it would be written for and can never fire.
     """
-    raw = _node_bytes(node)
-    if raw is None:
+    span = _name_span(node, name)
+    if span is None:
         return
-    try:
-        raw.decode(cs.ENCODING_UTF8)
-    except UnicodeDecodeError:
-        raise AssertionError(
-            f"{language}: extracted the name {name!r} from bytes that are not "
-            f"valid UTF-8 ({raw!r}); tree-sitter split the token at the bad "
-            f"byte and the symbol is indexed under a truncated name (#1810)"
-        ) from None
+    start, end = span
+    for probe, at_end in (
+        (source[max(0, start - _UTF8_MAX_SEQUENCE_BYTES) : start], False),
+        (source[end : end + _UTF8_MAX_SEQUENCE_BYTES], True),
+    ):
+        if probe and _has_invalid_byte(probe, at_end=at_end):
+            raise AssertionError(
+                f"{language}: the name {name!r} was extracted from a token the "
+                f"grammar split at an invalid byte, so the symbol is indexed "
+                f"under a truncated name (#1810)"
+            )
 
 
-def _node_bytes(node: object) -> bytes | None:
-    """The raw source bytes a node covers, or None when unavailable."""
-    text = getattr(node, "text", None)
-    return text if isinstance(text, bytes) else None
+# Longest UTF-8 sequence: a window this size either side of a name spans any
+# single character that could legitimately sit next to it.
+_UTF8_MAX_SEQUENCE_BYTES = 4
+# A definition's own name is at most a step or two above it (the JS/TS
+# field-definition wrapper is one).
+_NAME_SPAN_ANCESTOR_LIMIT = 3
+
+
+def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
+    """Whether `window` holds a byte no valid UTF-8 sequence explains.
+
+    The window is cut at an arbitrary offset, so it can begin or end
+    mid-character even when the source is well-formed (`\u00a9` is c2 a9, and
+    either half alone fails). The partial sequence at the CUT edge is trimmed
+    before decoding; `at_end` says which edge that is.
+    """
+    for trim in range(len(window)):
+        candidate = window[trim:] if not at_end else window[: len(window) - trim]
+        if not candidate:
+            return False
+        try:
+            candidate.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
+            continue
+        return False
+    return True
+
+
+def _name_span(node: object, name: str) -> tuple[int, int] | None:
+    """Byte span the extracted `name` came from, or None."""
+    encoded = name.encode(cs.ENCODING_UTF8)
+    direct = node.child_by_field_name("name")  # type: ignore[attr-defined]
+    if direct is not None and direct.text == encoded:
+        return direct.start_byte, direct.end_byte
+
+    stack = [node]
+    while stack:
+        current = stack.pop(0)
+        if current is not node and current.text == encoded and not current.children:  # type: ignore[attr-defined]
+            return current.start_byte, current.end_byte  # type: ignore[attr-defined]
+        stack.extend(current.children)  # type: ignore[attr-defined]
+
+    ancestor = node.parent  # type: ignore[attr-defined]
+    for _ in range(_NAME_SPAN_ANCESTOR_LIMIT):
+        if ancestor is None:
+            break
+        field = ancestor.child_by_field_name("name")
+        if field is not None and field.text == encoded:
+            return field.start_byte, field.end_byte
+        ancestor = ancestor.parent
+    return None
 
 
 def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
