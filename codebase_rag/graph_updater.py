@@ -4529,14 +4529,23 @@ class GraphUpdater:
         self, paths: Iterable[Path | str], deleted: Iterable[Path | str]
     ) -> tuple[dict[str, Path], dict[str, Path], set[str]]:
         # (present, gone, skipped): a listed path missing on disk counts as
-        # gone, an explicit deletion wins over a same-named file that
-        # reappeared, and a path the ignore rules exclude is reported back
-        # rather than indexed. A directory in `paths` is refused: present or
-        # gone is inferred from disk there, and the delete queries match
-        # nothing for a directory, so it would be reported as removed while
-        # the graph stayed untouched. `deleted` is an instruction, not an
-        # inference, and a directory may now sit where the deleted file was
-        # (the watcher sees exactly that race), so its delete goes ahead.
+        # gone, and a path the ignore rules exclude is reported back rather
+        # than indexed. A directory in `paths` is refused: present or gone is
+        # inferred from disk there, and the delete queries match nothing for a
+        # directory, so it would be reported as removed while the graph stayed
+        # untouched. `deleted` is an instruction, not an inference, and a
+        # directory may now sit where the deleted file was (the watcher sees
+        # exactly that race), so its delete goes ahead.
+        #
+        # A deleted path that is still a FILE is the atomic-save race: an
+        # editor writing via delete-then-rename makes the watcher forward a
+        # DELETE for a path that exists again by now. Retracting it erases the
+        # definitions of a file that is present and parseable, and no later
+        # incremental run repairs that -- the file is unchanged, so its hash
+        # still matches and the walk never revisits it (issue #1799). It goes
+        # to `present`, which re-parses it; the stale graph state is dropped
+        # either way, because `_reingest_delete` clears every reparse key
+        # before the re-parse writes the current one.
         present: dict[str, Path] = {}
         gone: dict[str, Path] = {}
         skipped: set[str] = set()
@@ -4552,7 +4561,10 @@ class GraphUpdater:
             if self._reingest_ignored(path):
                 skipped.add(key)
                 continue
-            gone[key] = path
+            # `is_file` and not `exists`: a directory sitting where the deleted
+            # file was is still a deletion, and the existing behaviour for it
+            # must not change.
+            (present if path.is_file() else gone)[key] = path
         return present, gone, skipped
 
     def _reingest_file_target(self, raw: Path | str) -> tuple[str, Path]:
@@ -4814,9 +4826,12 @@ class GraphUpdater:
 
         ``paths`` that no longer exist on disk are treated as deleted;
         ``deleted`` names files whose removal should be applied even if a
-        same-named file has since reappeared (a watch DELETE event). Paths
-        the project's ignore rules exclude are reported as ``skipped`` and
-        left out of the graph, as the walk would leave them.
+        same-named file has since reappeared (a watch DELETE event). The old
+        file's definitions go in that case, but a reappeared path that is
+        still a file is re-parsed rather than retracted, so the graph ends up
+        describing what is on disk (issue #1799). Paths the project's ignore
+        rules exclude are reported as ``skipped`` and left out of the graph,
+        as the walk would leave them.
         """
         started = time.perf_counter()
         # A scoped re-ingest is never a full build, whatever the previous

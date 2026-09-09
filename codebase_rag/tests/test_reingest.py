@@ -631,6 +631,71 @@ def test_reingest_refuses_a_directory(fixture_root: Path) -> None:
     assert _snapshot(store) == before
 
 
+@pytest.mark.parametrize(
+    "changed",
+    [[], ["pkg/util.py"]],
+    ids=["deleted_only", "changed_and_deleted"],
+)
+def test_reingest_reindexes_a_deleted_path_that_is_present_on_disk(
+    fixture_root: Path, changed: list[str]
+) -> None:
+    # Issue #1799. An editor that saves by delete-then-rename makes the
+    # watcher forward a DELETE for a path that exists again by the time
+    # reingest runs. The forced removal is right -- the graph still holds the
+    # OLD file's definitions and they must go -- but the file is present and
+    # parseable, so its current definitions have to be written back. Without
+    # the re-parse the symbols are erased and no later incremental run
+    # revisits them: the file is unchanged, so its hash still matches.
+    #
+    # Both spellings of the event pair reproduce it, so the trigger is
+    # "named deleted while existing", not the combination with `changed`.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    _write(fixture_root, "pkg/util.py", "def helper():\n    return 99\n")
+
+    updater.reingest(changed, deleted=["pkg/util.py"])
+
+    actual = _snapshot(store)
+    expected = _clean_index(fixture_root)
+    assert actual == expected, _diff(actual, expected)
+
+
+def test_reingest_drops_definitions_the_reappeared_file_no_longer_has(
+    fixture_root: Path,
+) -> None:
+    # The other half of #1799, and the reason the fix cannot be "skip the
+    # delete when the file is present": the graph holds the OLD file's
+    # symbols. `other` is gone from the new source and must not survive the
+    # re-ingest, so the delete has to happen AND be followed by a re-parse.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.other") in store.nodes
+    _write(fixture_root, "pkg/util.py", "def helper():\n    return 99\n")
+
+    updater.reingest([], deleted=["pkg/util.py"])
+
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.helper") in store.nodes
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.other") not in store.nodes
+
+
+def test_reingest_reports_a_present_deleted_path_as_reparsed_not_removed(
+    fixture_root: Path,
+) -> None:
+    # The report drives the watcher's logging and the MCP tool's answer, so
+    # it must say what happened: the file is still there and was re-indexed.
+    store = _StatefulIngestor()
+    updater = _updater(store, fixture_root)
+    updater.run(force=True)
+    _write(fixture_root, "pkg/util.py", "def helper():\n    return 99\n")
+
+    report = updater.reingest([], deleted=["pkg/util.py"])
+
+    assert report.removed == ()
+    assert "pkg/util.py" in report.reparsed
+
+
 def test_reingest_deletes_a_file_a_directory_has_replaced(fixture_root: Path) -> None:
     # The watcher's DELETE event can arrive after a directory of the same
     # name has been created; the deletion is an instruction, so the stale
