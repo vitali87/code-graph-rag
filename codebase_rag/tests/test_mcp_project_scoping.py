@@ -2829,3 +2829,47 @@ def test_the_reader_inventory_covers_every_tool() -> None:
     covered = mcp_tools._GRAPH_READING_TOOLS | mcp_tools._NOT_GRAPH_READERS
     assert covered == frozenset(cs.MCPToolName)
     assert not (mcp_tools._GRAPH_READING_TOOLS & mcp_tools._NOT_GRAPH_READERS)
+
+
+# A store OUTAGE is not an incomplete graph.
+#
+# `_persisted_incomplete` answers True when it cannot reach the store, which
+# is right for a reingest (never start on an unknown state) and wrong for a
+# read: it reported every outage as "graph incomplete" and buried the real
+# error. Reads go through `_marker_says_incomplete`, which treats an
+# unreachable store as no verdict. `test_mcp_errors_are_reported_not_raised`
+# in test_graph_query.py pins this for the `_graph_query` dispatcher; these
+# seven bypass that dispatcher, so the covered path is not the broken one
+# (M1 CGR-3, PR #1547).
+def _registry_with_a_dead_store():
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(side_effect=RuntimeError("store is down"))
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    return handler
+
+
+def test_a_dead_store_is_not_reported_as_an_incomplete_graph() -> None:
+    handler = _registry_with_a_dead_store()
+
+    # The decision the seven share. False means "no verdict, carry on and let
+    # the read fail as itself" -- NOT "the graph is fine".
+    assert handler._marker_says_incomplete(ALPHA) is False
+    assert (
+        handler._incomplete_refusal(ALPHA, cs.MCPToolName.GET_FUNCTION_SOURCE) is None
+    )
+
+
+def test_the_reingest_default_still_refuses_on_a_dead_store() -> None:
+    # The asymmetry is the point: same store, opposite answer, because a
+    # write that starts on an unknown graph cannot be undone.
+    handler = _registry_with_a_dead_store()
+
+    assert handler._persisted_incomplete(ALPHA) is True
