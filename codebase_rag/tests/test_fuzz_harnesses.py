@@ -211,8 +211,6 @@ def test_parse_harness_runs_every_seed(parse_harness: ModuleType) -> None:
     seeds = sorted((FUZZ_DIR / "corpus" / "fuzz_parse_source").iterdir())
     assert seeds, "the parse corpus is empty; run fuzz/build_corpus.py"
     for seed in seeds:
-        if seed.name in _KNOWN_DEFECT_SEEDS:
-            continue
         parse_harness.fuzz_parse_source(seed.read_bytes())
 
 
@@ -228,11 +226,15 @@ def test_known_defect_seeds_are_still_detected(parse_harness: ModuleType) -> Non
     for name in sorted(_KNOWN_DEFECT_SEEDS):
         seed = FUZZ_DIR / "corpus" / "fuzz_parse_source" / name
         assert seed.exists(), f"missing seed {name}; run fuzz/build_corpus.py"
-        # Read OUTSIDE the raises block: a missing or unreadable seed would
-        # otherwise raise in here and be credited to the detector.
         payload = seed.read_bytes()
-        with pytest.raises(AssertionError, match="truncated name"):
-            parse_harness.fuzz_parse_source(payload)
+
+        parse_harness._TRUNCATED_NAMES.clear()
+        parse_harness.fuzz_parse_source(payload)
+
+        assert parse_harness._TRUNCATED_NAMES, (
+            f"{name} no longer trips the truncation oracle; if #1810's "
+            "extractors were fixed, drop it from _KNOWN_DEFECT_SEEDS"
+        )
 
 
 def test_parse_harness_reaches_the_extractor(parse_harness: ModuleType) -> None:
@@ -296,8 +298,12 @@ def test_parse_harness_detects_a_truncated_name(
         pytest.skip(f"no {language_name} grammar available")
     tree = parse_harness._PARSERS[language].parse(source)
 
-    with pytest.raises(AssertionError, match="truncated name"):
-        parse_harness._extract_names(language, tree.root_node, source)
+    parse_harness._TRUNCATED_NAMES.clear()
+    parse_harness._extract_names(language, tree.root_node, source)
+
+    assert parse_harness._TRUNCATED_NAMES, (
+        f"{language_name}: the oracle did not record a truncated name"
+    )
 
 
 @pytest.mark.parametrize(
