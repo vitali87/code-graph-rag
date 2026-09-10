@@ -304,3 +304,76 @@ class TestEveryPartTypeIsCounted:
             f"some part types contribute nothing to the context estimate: "
             f"{ {n: c for n, c in zero.items() if c == 0} }"
         )
+
+
+class TestTheRefreshDoesNotBlockTheEventLoop:
+    """The estimate must not freeze the UI while it runs (#1832 review).
+
+    A coroutine runs synchronously until its first await, so tokenising the
+    history inline stalled the interactive loop for as long as it took --
+    measured at 3.3 seconds on a twelve-message tool-call history, with every
+    keystroke and spinner frozen. This is a background refresh feeding a
+    status line; it must never be why the UI waits.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_large_history_does_not_stall_the_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Measures the LOOP, not the function.
+
+        Asserting the refresh is fast would be the wrong test: the work is
+        genuinely slow and is allowed to be. What must not happen is other
+        tasks being starved while it runs, so this times a concurrent ticker
+        and asserts its worst gap stays small.
+
+        The threshold is deliberately loose. A real regression here is
+        seconds, so the gap between pass and fail is two orders of magnitude
+        -- this is not a test that goes red because a laptop was busy.
+        """
+        import asyncio
+        import time
+
+        from codebase_rag import main as main_mod
+
+        slow_calls = 0
+
+        def slow_estimate(messages: object) -> int:
+            nonlocal slow_calls
+            slow_calls += 1
+            time.sleep(0.6)
+            return 4321
+
+        monkeypatch.setattr(main_mod, "estimate_message_tokens", slow_estimate)
+        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        main_mod.app_context.session.context_tokens = 0
+
+        stop = asyncio.Event()
+        worst = 0.0
+
+        async def ticker() -> None:
+            nonlocal worst
+            last = time.perf_counter()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                worst = max(worst, now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        await main_mod._refresh_context_tokens(_messages())
+        stop.set()
+        await task
+
+        assert slow_calls == 1, (
+            "fixture guard: the estimator must actually have run, or a gap of "
+            "zero proves nothing"
+        )
+        assert main_mod.app_context.session.context_tokens == 4321, (
+            "fixture guard: the estimate must have been written back"
+        )
+        assert worst < 0.3, (
+            f"the event loop was starved for {worst:.3f}s while the context "
+            "estimate ran, so the whole UI freezes on a long history"
+        )

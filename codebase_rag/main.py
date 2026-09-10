@@ -913,16 +913,27 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     the context used", which is indistinguishable from a genuinely empty
     session and looks like abundant headroom. An approximate number is worth
     far more here than an exact absence.
+
+    The estimate runs in a THREAD. A coroutine runs synchronously until its
+    first await, so tokenising here inline blocked the interactive loop for as
+    long as it took -- measured at 3.3s on a twelve-message tool-call history,
+    with the whole UI frozen for the duration (Greptile, PR #1832). This is
+    a background refresh feeding a status line and a compaction trigger, so
+    it must never be the reason a keystroke waits.
     """
     try:
         config = settings.active_orchestrator_config
     except Exception:
         # No config at all still deserves a number: the estimate needs only
         # the messages, and the count drives compaction rather than billing.
-        app_context.session.context_tokens = estimate_message_tokens(messages)
+        app_context.session.context_tokens = await asyncio.to_thread(
+            estimate_message_tokens, messages
+        )
         return
 
-    app_context.session.context_tokens = estimate_message_tokens(messages)
+    app_context.session.context_tokens = await asyncio.to_thread(
+        estimate_message_tokens, messages
+    )
 
     # An exact count beats the estimate where it exists -- it accounts for
     # tool definitions and system-prompt overhead that tiktoken over a message
