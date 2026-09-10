@@ -59,6 +59,24 @@ class StructureProcessor:
             cached_resolve_posix(self.repo_path / parent_rel_path),
         )
 
+    @staticmethod
+    def package_indicator_names() -> set[str]:
+        """Filenames whose presence makes a directory a package.
+
+        Package detection needs only the static language specs, never a
+        loaded grammar; iterating `self.queries.values()` would force every
+        lazy grammar to load (issue #68).
+
+        A method rather than an inline set because `reingest` needs the same
+        answer to decide whether an edited file could have changed a
+        directory's kind (issue #1798), and two copies of this would drift
+        the moment a language added an indicator.
+        """
+        names: set[str] = set()
+        for lang_config in LANGUAGE_SPECS.values():
+            names.update(lang_config.package_indicators)
+        return names
+
     def identify_structure(self) -> None:
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
@@ -70,12 +88,7 @@ class StructureProcessor:
             ):
                 directories.add(path)
 
-        # Package detection needs only the static language specs, never a
-        # loaded grammar; iterating self.queries.values() would force every
-        # lazy grammar to load (issue #68).
-        package_indicators: set[str] = set()
-        for lang_config in LANGUAGE_SPECS.values():
-            package_indicators.update(lang_config.package_indicators)
+        package_indicators = self.package_indicator_names()
 
         for root in sorted(directories):
             relative_root = cached_relative_path(root, self.repo_path)

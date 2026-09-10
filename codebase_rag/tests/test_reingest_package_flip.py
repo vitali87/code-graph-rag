@@ -1,0 +1,222 @@
+"""A directory's package-ness must be re-evaluated by `reingest` too (#1798).
+
+Adding or deleting an `__init__.py` changes what a directory IS: with one it
+is a `Package` keyed on a dotted qualified name, without one a `Folder` keyed
+on an absolute path. Every `CONTAINS_FILE` and `CONTAINS_MODULE` edge under it
+hangs off whichever node it is.
+
+`run()` handles this (issue #1570): it captures the package set before Pass 1,
+computes the symmetric difference in `_package_flip_dirs`, re-parses the
+flipped directory's siblings so their containment edges re-point, and prunes
+the node of the wrong kind in `_prune_orphan_nodes`.
+
+The scoped `reingest` path did none of that. It never captured the before-set,
+never computed the flip, never re-parsed the siblings, and never pruned -- so
+the directory kept its old identity and every edge stayed anchored to it.
+
+Both DIRECTIONS are tested. The issue reports the demotion (deleting
+`__init__.py`), but the promotion is broken identically and is arguably the
+more common event: creating a package means creating the directory and its
+`__init__.py` in quick succession, so the watcher may well see the directory
+as a `Folder` first and never correct it.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _StatefulIngestor
+
+UTIL = "def helper():\n    return 1\n"
+
+
+def _fixture(root: Path, *, with_init: bool) -> None:
+    (root / "pkg").mkdir(parents=True)
+    if with_init:
+        (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "util.py").write_text(UTIL, encoding="utf-8")
+
+
+def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.PYTHON not in parsers:
+        pytest.skip("python parser not available")
+    return GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+
+
+def _containers(store: _StatefulIngestor) -> set[tuple[str, str]]:
+    """Package and Folder nodes, with paths reduced to their last segment.
+
+    A Folder is keyed on an absolute path and a Package on a dotted qn, so the
+    raw uids are not comparable between two different temp roots. The last
+    segment is what distinguishes them here, and keeping the LABEL is what the
+    assertion is actually about.
+    """
+    return {
+        (label, str(uid).split("/")[-1])
+        for (label, uid) in store.nodes
+        if label in (cs.NodeLabel.PACKAGE.value, cs.NodeLabel.FOLDER.value)
+    }
+
+
+def _containment(store: _StatefulIngestor) -> set[tuple[str, str, str]]:
+    return {
+        (str(src).split("/")[-1], rel, str(dst).split("/")[-1])
+        for (_sl, src, rel, _tl, dst) in store.edges
+        if rel.startswith("CONTAINS")
+    }
+
+
+def _clean_index(root: Path, *, with_init: bool) -> _StatefulIngestor:
+    _fixture(root, with_init=with_init)
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+    return store
+
+
+@pytest.mark.parametrize("direction", ["demote", "promote"])
+def test_reingest_re_evaluates_a_directorys_package_ness(
+    tmp_path: Path, direction: str
+) -> None:
+    """The incremental result must match a clean index of the same tree.
+
+    Asserted as a comparison against a real rebuild rather than against a
+    hardcoded label, because the node IDENTITY changes with the kind -- a
+    Package is keyed on `proj.pkg`, a Folder on an absolute path -- so an
+    assertion naming one expected uid would pin the wrong thing and would not
+    notice the containment edges staying behind.
+    """
+    started_as_package = direction == "demote"
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=started_as_package)
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+
+    init = root / "pkg" / "__init__.py"
+    if started_as_package:
+        assert ("Package", "proj.pkg") in _containers(store), (
+            "fixture guard: the initial index must produce a Package, or the "
+            "demotion below has nothing to demote"
+        )
+        init.unlink()
+        updater.reingest([], deleted=["pkg/__init__.py"])
+    else:
+        assert ("Folder", "pkg") in _containers(store), (
+            "fixture guard: the initial index must produce a Folder, or the "
+            "promotion below has nothing to promote"
+        )
+        init.write_text("", encoding="utf-8")
+        updater.reingest(["pkg/__init__.py"])
+    store.flush_all()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    clean = _clean_index(clean_root, with_init=not started_as_package)
+
+    assert _containers(store) == _containers(clean), (
+        f"after a {direction}, the directory's kind disagrees with a clean "
+        f"index: incremental={sorted(_containers(store))} "
+        f"clean={sorted(_containers(clean))}"
+    )
+    assert _containment(store) == _containment(clean), (
+        "the directory's kind changed but its containment edges did not "
+        f"move with it: incremental={sorted(_containment(store))} "
+        f"clean={sorted(_containment(clean))}"
+    )
+
+
+def test_an_unrelated_reingest_does_not_disturb_a_package(tmp_path: Path) -> None:
+    """The control against re-evaluating too eagerly.
+
+    A fix that re-derived every directory's kind on every scoped re-ingest, or
+    that pruned whenever it could not prove a directory was still a package,
+    would satisfy both cases above while churning nodes on ordinary edits.
+    Re-parsing a file that is not an `__init__.py` must leave the container
+    exactly as it was.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=True)
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    before = _containers(store)
+    assert ("Package", "proj.pkg") in before, "fixture guard: expected a Package"
+
+    (root / "pkg" / "util.py").write_text("def helper():\n    return 2\n", "utf-8")
+    updater.reingest(["pkg/util.py"])
+    store.flush_all()
+
+    assert _containers(store) == before, (
+        "an ordinary edit changed the containing directory's kind: "
+        f"{sorted(before)} -> {sorted(_containers(store))}"
+    )
+
+
+def test_a_flip_elsewhere_is_not_this_calls_to_reconcile(tmp_path: Path) -> None:
+    """The narrowing to directories this call actually touched.
+
+    `before ^ after` finds every directory whose package-ness differs from the
+    last derivation, which on a reused updater includes directories changed by
+    something else entirely. Reconciling those would make a scoped re-ingest
+    unbounded: it would re-parse and prune directories the caller never named,
+    which is the whole-project claim `_prune_orphan_nodes` is careful not to
+    make from a partial walk.
+
+    Here `other/` loses its `__init__.py` on disk without being named in the
+    call, and the re-ingest of `pkg/` must leave it alone. A full index will
+    reconcile it; a scoped call that walked two files must not.
+
+    Without the `& touched` narrowing this test goes red, and the tests above
+    stay green -- over-reach is invisible to them, because they only assert
+    that the touched directory IS reconciled.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=True)
+    (root / "other").mkdir()
+    (root / "other" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "other" / "mod.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    assert ("Package", "proj.other") in _containers(store), (
+        "fixture guard: other/ must start as a Package"
+    )
+
+    # Someone else's change, on disk, not named in the call below.
+    (root / "other" / "__init__.py").unlink()
+
+    (root / "pkg" / "util.py").write_text("def helper():\n    return 2\n", "utf-8")
+    updater.reingest(["pkg/util.py"])
+    store.flush_all()
+
+    assert ("Folder", "other") not in _containers(store), (
+        "a scoped re-ingest of pkg/ demoted an unrelated directory whose "
+        "__init__.py was removed by something else, so it acted on a "
+        "whole-project claim it had not earned from walking two files"
+    )
+    assert ("Package", "proj.other") in _containers(store), (
+        "the unrelated directory's Package node was pruned by a call that "
+        "never named it"
+    )

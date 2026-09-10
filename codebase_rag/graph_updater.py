@@ -106,6 +106,7 @@ from .utils.path_utils import (
     base_module_qn,
     cached_file_identity_posix,
     cached_relative_path,
+    cached_resolve_posix,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -4613,6 +4614,103 @@ class GraphUpdater:
                 survivors[key] = candidate
         return flux_stems, survivors
 
+    def _reingest_package_flip(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> tuple[set[str], dict[str, Path]]:
+        """Directories whose package-ness this call changes, and their files.
+
+        A directory with a package indicator (`__init__.py`, `Cargo.toml`) is
+        a Package keyed on a dotted qn; without one it is a Folder keyed on an
+        absolute path. Every CONTAINS_FILE and CONTAINS_MODULE edge under it
+        hangs off whichever node it is, and that edge is emitted only when the
+        module is parsed -- so a directory that changes kind needs its files
+        re-parsed to re-point them, exactly as `run()` does for the same
+        reason (issue #1570, `_package_flip_dirs`).
+
+        `reingest` computed none of this: it never re-derived the structure,
+        so a deleted `__init__.py` left the Package node and all its edges in
+        place, and an ADDED one left the Folder (issue #1798 -- the issue
+        reports the deletion, but both directions were broken).
+
+        Returns the flipped directories and the on-disk files under them that
+        this call has not already named, for the re-parse.
+        """
+        indicators = self.factory.structure_processor.package_indicator_names()
+        touched = {
+            Path(key).parent.as_posix()
+            for key in (*present, *gone)
+            if Path(key).name in indicators
+        }
+        # Narrowed to directories this call actually named an indicator for.
+        # Without it a scoped re-ingest reconciles directories the caller
+        # never mentioned -- measured: editing `pkg/util.py` demoted an
+        # unrelated `other/` whose `__init__.py` had been deleted on disk by
+        # something else. That is the whole-project claim `_prune_orphan_nodes`
+        # is careful not to make from a partial walk, and a full index is what
+        # reconciles the rest.
+        if not touched:
+            return set(), {}
+
+        # Re-derive the structure so `structural_elements` describes DISK, not
+        # the last run. A reused updater short-circuits `_hydrate_for_reingest`
+        # and would otherwise still hold the pre-change map.
+        before = {
+            rel.as_posix()
+            for rel, qn in self.factory.structure_processor.structural_elements.items()
+            if qn
+        }
+        self.factory.structure_processor.identify_structure()
+        after = {
+            rel.as_posix()
+            for rel, qn in self.factory.structure_processor.structural_elements.items()
+            if qn
+        }
+        # Symmetric difference, so a promotion and a demotion are one case.
+        flipped = (before ^ after) & touched
+        if not flipped:
+            return set(), {}
+
+        siblings: dict[str, Path] = {}
+        for rel in flipped:
+            directory = self.repo_path / rel if rel else self.repo_path
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.iterdir()):
+                if not candidate.is_file():
+                    continue
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if key in present or key in gone or self._reingest_ignored(candidate):
+                    continue
+                siblings[key] = candidate
+        return flipped, siblings
+
+    def _prune_flipped_containers(self, flipped_dirs: set[str]) -> None:
+        """Delete the node of the kind a flipped directory no longer is.
+
+        A directory is represented by exactly ONE of Folder and Package, and
+        the re-parse above has just written the correct one. The other is
+        stale even though the directory still exists on disk -- the same
+        `stale_kind` rule `_prune_orphan_nodes` applies at the end of a full
+        run (issue #1570), scoped here to the directories this call flipped.
+
+        Scoped rather than reusing `_prune_orphan_nodes` wholesale: that walks
+        every node in the project and deletes anything whose path is absent
+        from disk, which is a whole-project claim a scoped re-ingest has not
+        earned -- it walked a handful of files and cannot say what the project
+        still holds.
+        """
+        if not flipped_dirs or not isinstance(self.ingestor, QueryProtocol):
+            return
+        elements = self.factory.structure_processor.structural_elements
+        for rel in sorted(flipped_dirs):
+            directory = self.repo_path / rel if rel else self.repo_path
+            absolute = cached_resolve_posix(directory)
+            is_package_now = bool(elements.get(Path(rel))) if rel else False
+            stale = (
+                cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
+            )
+            self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
+
     def _reingest_dependents(
         self, present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -4891,6 +4989,12 @@ class GraphUpdater:
             # below keys on to free its qn and forget its rehydrated form.
             self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
 
+            # A directory that gained or lost a package indicator changes the
+            # container every file under it hangs off, so those files re-parse
+            # too and the stale node of the other kind is pruned below.
+            flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
+            survivors.update(flip_siblings)
+
             affected = self._reingest_dependents({**present, **survivors}, gone)
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
@@ -4935,6 +5039,11 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # AFTER the re-parse, never before: the surviving node of the correct
+        # kind and its re-pointed containment edges are written by the parse
+        # above, so pruning first would delete the old node while every edge
+        # still hung off it and leave the files unparented in between.
+        self._prune_flipped_containers(flipped_dirs)
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
