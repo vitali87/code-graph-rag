@@ -3043,13 +3043,60 @@ class GraphUpdater:
 
         qns_to_remove = set()
 
+        # A directory may share a sibling FILE's stem, and then the module qns
+        # nest: `proj/a.py` records `proj.a` while `proj/a/b.py` records
+        # `proj.a.b`. Deleting `a.py` matches the prefix `proj.a.` and would
+        # take `b.py`'s definitions with it, though `b.py` still exists and
+        # this event does not re-parse it, so nothing restores them (issue
+        # #1773). `foreign_qns` does not save them: it is built from function
+        # SPAN records, so it protects `proj.a.b.Nested.deep` while leaving
+        # the class `proj.a.b.Nested`, which records no span -- exactly the
+        # asymmetry measured on `A.cs` beside `A/B.cs`, and reproduced here on
+        # `a.py` beside `a/b.py`. The sweep is language-agnostic, so this is
+        # not a C#-only shape.
+        #
+        # A qn under a SURVIVING module qn is therefore kept, whichever
+        # shorter prefix also matches. #1769 hit the same shape in
+        # `csharp_class_generic_arity` but could not use this rule: a C# class
+        # qn embeds its namespace, so it can sit under a sibling module it was
+        # never declared in, and a prefix rule errs in BOTH directions there.
+        # A Python/Rust/Go module qn is derived from the path, so "under a
+        # longer surviving module" does identify the real owner here.
+        surviving_modules = {
+            module_qn
+            for module_qn in self.factory.definition_processor.module_qn_to_file_path
+            if module_qn not in module_qn_prefixes
+        }
+
+        def _under_a_surviving_module(qn: str, matched: str) -> bool:
+            # Only a module LONGER than the prefix that matched can be the
+            # real owner; a shorter or equal one is the deleted file itself.
+            return any(
+                len(module_qn) > len(matched)
+                and (qn.startswith(f"{module_qn}.") or qn == module_qn)
+                for module_qn in surviving_modules
+            )
+
         for qn in list(self.function_registry.keys()):
-            if (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
+            matched_prefix = next(
+                (
+                    prefix
                     for prefix in module_qn_prefixes
-                )
-                or qn in owned_qns
+                    if qn.startswith(f"{prefix}.") or qn == prefix
+                ),
+                None,
+            )
+            if (
+                matched_prefix is not None
+                and _under_a_surviving_module(qn, matched_prefix)
+                and qn not in owned_qns
+            ):
+                # Belongs to a file that still exists; the prefix match is an
+                # accident of the shared stem. `owned_qns` still wins, since
+                # that is this file's own span-record evidence.
+                continue
+            if (
+                matched_prefix is not None or qn in owned_qns
             ) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
