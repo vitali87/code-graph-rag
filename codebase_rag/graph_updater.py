@@ -5028,7 +5028,25 @@ class GraphUpdater:
         # containment edges onto it, and `_prune_flipped_containers` removes
         # the node of the old kind once both have happened.
         if flipped_dirs:
-            self.factory.structure_processor.identify_structure()
+            # Scoped to the flipped directories AND their ancestors: the
+            # unrestricted walk emits a node for every directory that changed
+            # on disk since the last derivation, so an unrelated directory
+            # whose indicator was removed elsewhere gained a second container
+            # identity beside the one it already had (Greptile, PR #1835).
+            # Ancestors are included because each directory's parent lookup
+            # reads `structural_elements` for the enclosing package. Measured
+            # caveat: dropping them reddens nothing, because that map PERSISTS
+            # across calls, so an ancestor derived by an earlier run is still
+            # there. It is defensive against a first derivation that starts
+            # from an empty map -- not load-bearing on the paths the tests
+            # cover, and its greenness is not evidence that it works.
+            scope: set[str] = set()
+            for rel in flipped_dirs:
+                parts = Path(rel).parts if rel != "." else ()
+                scope.add(".")
+                for i in range(1, len(parts) + 1):
+                    scope.add(Path(*parts[:i]).as_posix())
+            self.factory.structure_processor.identify_structure(only=scope)
 
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header

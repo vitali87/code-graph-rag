@@ -339,3 +339,67 @@ def test_a_named_flip_does_not_drag_in_an_unnamed_one(tmp_path: Path) -> None:
         "a re-ingest that named pkg/ also reconciled other/, acting on a "
         "whole-project claim it had not earned from walking one file"
     )
+    # The half this test originally missed. Asserting the Package SURVIVES
+    # says nothing about whether a Folder was added beside it: the structure
+    # derivation walks every directory and emits a node for each, so an
+    # unrelated directory ended up with BOTH identities at once -- worse than
+    # either reconciling it or leaving it alone (Greptile, PR #1835).
+    assert ("Folder", "other") not in _containers(store), (
+        "the unrelated directory gained a second container identity: it is "
+        f"now both a Package and a Folder: {sorted(_containers(store))}"
+    )
+
+
+def test_a_nested_directory_flips_under_its_parent_package(tmp_path: Path) -> None:
+    """The case the scoped derivation's ancestors exist for.
+
+    Restricting the structure walk to the flipped directories stops an
+    unrelated one gaining a second identity, but each directory's parent
+    lookup reads the enclosing package's entry -- so a nested flip needs its
+    ancestors in scope or it hangs off the wrong container.
+
+    Honest caveat: removing the ancestor walk leaves THIS test green too.
+    `structural_elements` persists across calls, so an ancestor derived by an
+    earlier run is still in the map. The ancestor scope is defensive against a
+    first derivation over an empty map; what this test genuinely pins is that
+    a nested flip matches a clean index, which the scope narrowing could
+    otherwise have broken.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    (root / "pkg").mkdir()
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "sub").mkdir()
+    (root / "pkg" / "sub" / "mod.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    assert ("Folder", "sub") in _containers(store), (
+        "fixture guard: sub/ must start as a Folder inside a Package"
+    )
+
+    (root / "pkg" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    updater.reingest(["pkg/sub/__init__.py"])
+    store.flush_all()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    (clean_root / "pkg").mkdir()
+    (clean_root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (clean_root / "pkg" / "sub").mkdir()
+    (clean_root / "pkg" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+    (clean_root / "pkg" / "sub" / "mod.py").write_text(UTIL, encoding="utf-8")
+    clean_store = _StatefulIngestor()
+    _updater(clean_root, clean_store).run(force=True)
+    clean_store.flush_all()
+
+    assert _containers(store) == _containers(clean_store), (
+        "a nested promotion disagrees with a clean index: "
+        f"incremental={sorted(_containers(store))} "
+        f"clean={sorted(_containers(clean_store))}"
+    )
+    assert _containment(store) == _containment(clean_store), (
+        "the nested directory's containment edges do not match a clean index"
+    )
