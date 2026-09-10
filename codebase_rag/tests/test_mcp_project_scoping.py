@@ -3127,9 +3127,17 @@ def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
             handler._incomplete_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
         )
 
-    assert refused(ALPHA) and refused(BETA) and refused("gamma"), (
-        "fixture guard: with two projects damaged and unattributed, every "
-        "project must refuse -- otherwise the repair below proves nothing"
+    # One assertion per project: a composite reports "some project did not
+    # refuse" and leaves the reader to find which, and WHICH is the whole
+    # diagnosis here -- a damaged project not refusing is a different bug
+    # from an undamaged one not refusing (SonarCloud S9073).
+    assert refused(ALPHA), (
+        "fixture guard: a damaged project must refuse before the repair below"
+    )
+    assert refused(BETA), "fixture guard: the second damaged project must refuse too"
+    assert refused("gamma"), (
+        "fixture guard: an unattributed flag must block a project it does not "
+        "name, or the widening is not in the broad state this test needs"
     )
 
     handler._require_marker_cleared(ALPHA)
@@ -3139,9 +3147,13 @@ def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
 
     handler._require_marker_cleared(BETA)
 
-    assert not refused(ALPHA) and not refused(BETA), (
-        "both damaged projects were repaired and their reads are still "
+    assert not refused(ALPHA), (
+        "the first damaged project was repaired and its reads are still "
         "refused; nothing short of a full wipe can clear this"
+    )
+    assert not refused(BETA), (
+        "the last damaged project was repaired and its reads are still "
+        "refused, so the outstanding set never empties"
     )
     assert not refused("gamma"), (
         "a project that was never damaged is still refused after every "
@@ -3272,9 +3284,13 @@ def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
         "a completed wipe left the graph flagged incomplete, so no project "
         "can ever read again"
     )
-    assert not handler._incomplete_projects and not handler._incomplete_unbounded, (
-        "the wipe cleared the flag but left damage outstanding, so the next "
-        "damaged project inherits a refusal no damage explains"
+    assert not handler._incomplete_projects, (
+        "the wipe cleared the flag but left named projects outstanding, so "
+        "the next damaged project inherits a refusal no damage explains"
+    )
+    assert not handler._incomplete_unbounded, (
+        "the wipe cleared the flag but left the unbounded marker set, so no "
+        "sequence of repairs can ever settle the graph again"
     )
 
 
