@@ -2926,6 +2926,16 @@ class GraphUpdater:
         # The call pass iterates _parsed_files; a removed file must leave it
         # (a re-parse re-registers), or deleted files keep contributing and
         # created files never do (issue #1028).
+        #
+        # This removal is ALSO what keeps the list free of duplicates. The
+        # appender in `_process_single_file` appends unconditionally, so
+        # every re-parse route has to strip the old entry first -- the
+        # incremental path calls this method, and `reingest` gets there via
+        # `_reingest_delete`. A deduplicating appender is deliberately not
+        # the mechanism: one existed (`register_parsed_file`, added for
+        # #1028) and was left callerless when #1524 moved the watcher onto
+        # `reingest`, where it read as the guarantee's source while never
+        # running. Removed in #1784; the invariant lives here.
         self._parsed_files = [
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
@@ -4397,15 +4407,6 @@ class GraphUpdater:
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
-
-    def register_parsed_file(
-        self, file_path: Path, language: cs.SupportedLanguage
-    ) -> None:
-        # Watch-mode events parse outside run(): the file must join the
-        # call pass's iteration set or its outgoing CALLS edges are never
-        # emitted (issue #1028).
-        if all(existing != file_path for existing, _ in self._parsed_files):
-            self._parsed_files.append((file_path, language))
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every
