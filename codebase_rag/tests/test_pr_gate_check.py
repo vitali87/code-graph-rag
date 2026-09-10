@@ -720,3 +720,50 @@ class TestCiRunsAtHeadFailsClosedOnMalformedPages:
     ) -> None:
         """Guards against an infinite loop when the decoder cannot advance."""
         assert self._runs(monkeypatch, "not json" + self._page()) == []
+
+
+class TestTheTrueNegativeSurvivesTheFix:
+    """Removing the false "no CI run" must not weaken the real one.
+
+    The point of this gate is to refuse a PR whose CI never ran, so a fix
+    aimed at a false negative has to be checked against the true one --
+    otherwise it trades a tool that cries wolf for one that waves
+    everything through.
+    """
+
+    HEAD = "a" * 40
+
+    def test_a_head_with_no_runs_at_all_reports_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: json.dumps({"total_count": 0, "workflow_runs": []}),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_a_head_whose_runs_are_all_other_workflows_reports_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CodeQL and OSV run without CI on a queued head -- a real case.
+
+        Observed on #1847: every other workflow had reported while
+        `ci.yml` was still pending, so the head carried runs but none of
+        them was the one the gate requires.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: json.dumps(
+                {
+                    "workflow_runs": [
+                        {"id": 1, "path": ".github/workflows/codeql.yml"},
+                        {"id": 2, "path": ".github/workflows/osv-scanner.yml"},
+                    ]
+                }
+            ),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
