@@ -1436,14 +1436,14 @@ def test_a_multiline_import_is_read_to_its_closing_bracket(
     )
 
 
-def _all_offsets(text: str, name: str) -> list[int]:
-    """Where `rename_in_all` would rewrite `name`, by the same literal scan."""
+def _all_offsets(text: str, name: str) -> list[tuple[int, int, int]]:
+    """`(offset, block_start, block_end)` for each `name` entry, as staged."""
     import re
 
     from codebase_rag.editing.rename import _ALL_BLOCK, _ALL_ENTRY
 
     return [
-        block.start(1) + literal.start("name")
+        (block.start(1) + literal.start("name"), block.start(1), block.end(1))
         for block in re.finditer(_ALL_BLOCK, text, re.S)
         for literal in re.finditer(_ALL_ENTRY, block.group(1))
         if literal.group("name") == name
@@ -1489,7 +1489,7 @@ def test_the_all_check_reads_the_entries_this_rename_rewrote(
     if restore == "full":
         after = before
     else:
-        last = offsets[-1]
+        last = offsets[-1][0]
         after = before[:last] + "assist" + before[last + len("helper") :]
 
     (tmp_path / "util.py").write_text(after, encoding="utf-8")
@@ -1499,6 +1499,45 @@ def test_the_all_check_reads_the_entries_this_rename_rewrote(
     assert run._all_rewrites_are_undone("util.py", "helper", offsets) is complete, (
         f"a {restore} restoration of {before!r} judged "
         f"{'incomplete' if complete else 'complete'}, which is backwards"
+    )
+
+
+def test_a_shifted_file_does_not_mimic_a_restoration(tmp_path: Path) -> None:
+    """An offset is only meaningful against the file it was staged from.
+
+    If an unrelated edit shifts text before a rewritten entry AND the old name
+    happens to sit at exactly the stale offset, a position-only check reads it
+    as restored (Greptile, PR #1547). Narrower than the three variants before
+    it -- those fired on ordinary content with no concurrent editor -- but the
+    assumption "the file is byte-for-byte what we staged" was stated in the
+    docstring and checked nowhere.
+
+    The recorded block bounds make it checkable: an edit that shifts an entry
+    shifts its enclosing `__all__` block too, so a coincidental `helper` at
+    the old position no longer falls inside a block at the staged bounds.
+    """
+    from codebase_rag.editing.rename import Renamer
+
+    staged = '__all__ = ["helper"]\n'
+    offsets = _all_offsets(staged, "helper")
+
+    # The rename applied, then an unrelated edit prepended a line -- and by
+    # coincidence `helper` now sits at the offset the rename recorded.
+    shifted = "X = 1\n" + staged.replace("helper", "assist")
+    at = offsets[0][0]
+    shifted = shifted[:at] + "helper" + shifted[at + len("helper") :]
+    assert shifted[at : at + len("helper")] == "helper", (
+        "fixture guard: the coincidence must actually be constructed, or this "
+        "test passes without exercising it"
+    )
+
+    (tmp_path / "util.py").write_text(shifted, encoding="utf-8")
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+
+    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is False, (
+        "a shifted file with a coincidental old name at the stale offset was "
+        "read as a completed rollback"
     )
 
 

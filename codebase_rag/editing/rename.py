@@ -898,7 +898,7 @@ class Renamer:
         )
 
     def _all_rewrites_are_undone(
-        self, path: str, old_name: str, offsets: list[int]
+        self, path: str, old_name: str, offsets: list[tuple[int, int, int]]
     ) -> bool:
         """Whether the exact `__all__` entries this rename rewrote read the old name.
 
@@ -925,13 +925,33 @@ class Renamer:
         at the same literals. An offset that no longer lands on the old name
         means the file is not the file this rename edited, which is itself a
         failed restoration.
+
+        The recorded BLOCK BOUNDS make that assumption checkable rather than
+        merely stated. An unrelated edit that shifts text before an entry
+        moves every later block too, so a coincidental `old_name` sitting at
+        the stale offset no longer falls inside a block at the bounds this
+        rename staged from, and the check answers False -- conservative, and
+        the same answer it gives for a genuinely unrestored entry.
         """
         try:
             text = (self.repo_root / path).read_text(encoding="utf-8")
         except OSError:
             return False
+        # Every recorded entry must read the old name AND still sit inside an
+        # `__all__` block at the bounds it was staged from. The second half is
+        # what makes a stale offset detectable: if an unrelated edit shifted
+        # the file, the blocks move too, so a coincidental `old_name` at the
+        # old position no longer falls inside a block that starts and ends
+        # where this rename saw one (Greptile, PR #1547).
+        blocks = {
+            (block.start(1), block.end(1))
+            for block in re.finditer(_ALL_BLOCK, text, re.S)
+        }
         return all(
-            text[offset : offset + len(old_name)] == old_name for offset in offsets
+            text[offset : offset + len(old_name)] == old_name
+            and (block_start, block_end) in blocks
+            and block_start <= offset < block_end
+            for offset, block_start, block_end in offsets
         )
 
     def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:

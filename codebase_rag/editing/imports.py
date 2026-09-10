@@ -504,11 +504,15 @@ class ImportRewriter:
             return _rs_rewrite(statement, move)
         return None
 
-    def rename_in_all(self, path: str, old_name: str, new_name: str) -> list[int]:
+    def rename_in_all(
+        self, path: str, old_name: str, new_name: str
+    ) -> list[tuple[int, int, int]]:
         """Rewrite `"old_name"` entries of a Python `__all__` list in `path`.
 
-        Returns the CHARACTER OFFSET of every literal it rewrote, so a caller
-        can later ask whether those exact entries were restored.
+        Returns `(offset, block_start, block_end)` for every literal it
+        rewrote, so a caller can later ask whether those exact entries were
+        restored -- and can tell a shifted file from a restored one, because
+        the block bounds move with any edit that shifts the offset.
 
         A count is not enough, and neither is any whole-file scan: three
         rollback checks in a row failed because they could not tell an entry
@@ -520,7 +524,7 @@ class ImportRewriter:
         """
         source = self.patcher.source(path)
         text = source.decode(cs.ENCODING_UTF8)
-        offsets: list[int] = []
+        offsets: list[tuple[int, int, int]] = []
         for m in re.finditer(
             r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]", text, re.S
         ):
@@ -538,5 +542,11 @@ class ImportRewriter:
                     ),
                     new_name,
                 )
-                offsets.append(start)
+                # The offset PLUS the block it sits in, so a shift is
+                # detectable rather than silently absorbed. An offset alone
+                # is only meaningful against a file unmodified since staging;
+                # if an unrelated edit moves text before this entry AND the
+                # old name happens to land at the stale offset, a position-only
+                # check reads it as restored (Greptile, PR #1547).
+                offsets.append((start, m.start(1), m.end(1)))
         return offsets

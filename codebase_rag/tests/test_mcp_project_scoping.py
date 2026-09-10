@@ -3949,7 +3949,7 @@ async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> N
     with (
         patch.object(handler, "_updater_for_reingest", return_value=updater),
         patch("codebase_rag.editing.rename.rename", fake_rename),
-        patch.object(graph_query_module, "source_root_for", lambda *a, **k: tmp_path),
+        patch.object(graph_query_module, "source_root_for", return_value=tmp_path),
         contextlib.suppress(Exception),
     ):
         await handler._run_rename(project, "pkg.mod.helper", "assist", False, False)
