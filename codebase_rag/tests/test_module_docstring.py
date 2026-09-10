@@ -711,6 +711,7 @@ class TestAFunctionValuedBindingOwnsItsDoc:
         src = b"/** Mixed */\nconst a = 1, f = () => {};\n"
         assert self._module_doc(parsers, "javascript", src) is None
 
+
 class TestModuleDocstringPerLanguageIsExercised:
     """Guard against ``TestModuleDocstringPerLanguage`` going green by collecting nothing (#1817)."""
 
@@ -728,6 +729,7 @@ class TestModuleDocstringPerLanguageIsExercised:
         ("dart", "dart"),
         ("lua", "lua"),
         ("php", "php"),
+        ("sql", "sql"),
     )
 
     def test_per_language_class_is_not_gated_on_the_python_grammar(self) -> None:
