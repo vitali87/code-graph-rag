@@ -3055,49 +3055,45 @@ class GraphUpdater:
         # `a.py` beside `a/b.py`. The sweep is language-agnostic, so this is
         # not a C#-only shape.
         #
-        # A qn under a SURVIVING module qn is therefore kept, whichever
-        # shorter prefix also matches. #1769 hit the same shape in
-        # `csharp_class_generic_arity` but could not use this rule: a C# class
-        # qn embeds its namespace, so it can sit under a sibling module it was
-        # never declared in, and a prefix rule errs in BOTH directions there.
-        # A Python/Rust/Go module qn is derived from the path, so "under a
-        # longer surviving module" does identify the real owner here.
-        surviving_modules = {
-            module_qn
-            for module_qn in self.factory.definition_processor.module_qn_to_file_path
-            if module_qn not in module_qn_prefixes
-        }
+        # Ownership must come from a RECORD, not from the qn's shape. The
+        # obvious rule -- keep a qn that also sits under a longer surviving
+        # module -- is wrong for C#, whose class qn embeds its namespace:
+        # `proj/Core.cs` with `namespace Util` yields `proj.Core.Util.Helper`,
+        # sitting under the SIBLING module `proj.Core.Util` from
+        # `proj/Core/Util.cs`. That rule would keep `Helper` after deleting
+        # the file that declares it (measured; caught in review of #1844).
+        # #1769 hit the same trap and answered it the same way, with an
+        # explicit owner record.
+        #
+        # `class_owner_module` is that record, cross-language and written by
+        # every language's ingest (#1772). A qn whose declaring module is
+        # still mapped to a file, and is not itself being deleted, belongs to
+        # a file that still exists: keep it. A qn with no recorded owner is
+        # left to the prefix rule, which is the pre-existing behaviour.
+        owner_module = self.factory.definition_processor.class_owner_module
+        live_modules = set(self.factory.definition_processor.module_qn_to_file_path)
 
-        def _under_a_surviving_module(qn: str, matched: str) -> bool:
-            # Only a module LONGER than the prefix that matched can be the
-            # real owner; a shorter or equal one is the deleted file itself.
-            return any(
-                len(module_qn) > len(matched)
-                and (qn.startswith(f"{module_qn}.") or qn == module_qn)
-                for module_qn in surviving_modules
-            )
+        def _owned_by_a_surviving_file(qn: str) -> bool:
+            owner = owner_module.get(qn)
+            if owner is None:
+                return False
+            return owner not in module_qn_prefixes and owner in live_modules
 
         for qn in list(self.function_registry.keys()):
-            matched_prefix = next(
-                (
-                    prefix
-                    for prefix in module_qn_prefixes
-                    if qn.startswith(f"{prefix}.") or qn == prefix
-                ),
-                None,
+            matched_prefix = any(
+                qn.startswith(f"{prefix}.") or qn == prefix
+                for prefix in module_qn_prefixes
             )
             if (
-                matched_prefix is not None
-                and _under_a_surviving_module(qn, matched_prefix)
+                matched_prefix
                 and qn not in owned_qns
+                and _owned_by_a_surviving_file(qn)
             ):
-                # Belongs to a file that still exists; the prefix match is an
+                # Declared by a file that still exists; the prefix match is an
                 # accident of the shared stem. `owned_qns` still wins, since
                 # that is this file's own span-record evidence.
                 continue
-            if (
-                matched_prefix is not None or qn in owned_qns
-            ) and qn not in foreign_qns:
+            if (matched_prefix or qn in owned_qns) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 

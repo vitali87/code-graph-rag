@@ -172,3 +172,74 @@ def test_deeper_stem_collisions_are_kept_too(tmp_path: Path, depth: int) -> None
 
     lost = sorted(survivors - _qns(updater))
     assert not lost, f"nested surviving file lost entries: {lost}"
+
+
+_CS_CORE = (
+    "namespace Util\n{\n    public class Helper\n    {\n"
+    "        public int Go() { return 1; }\n    }\n}\n"
+)
+_CS_SIBLING = (
+    "namespace Other\n{\n    public class Sibling\n    {\n"
+    "        public int Go() { return 2; }\n    }\n}\n"
+)
+
+
+def test_a_deleted_csharp_class_goes_even_when_its_namespace_mimics_a_sibling(
+    tmp_path: Path,
+) -> None:
+    """Ownership comes from a RECORD, never from the qn's shape.
+
+    Raised by Greptile in review of #1844, and confirmed: a C# class qn
+    embeds its namespace, so `proj/Core.cs` declaring `namespace Util`
+    yields `proj.Core.Util.Helper`, which sits under the SIBLING module
+    `proj.Core.Util` from `proj/Core/Util.cs`. The obvious version of this
+    fix -- keep a qn that also sits under a longer surviving module -- kept
+    `Helper` after deleting the file that declares it, leaving a stale class
+    steering resolution at a definition that is gone.
+
+    #1769 hit the same trap in `csharp_class_generic_arity` and answered it
+    the same way, with an explicit owner record. `class_owner_module` is the
+    cross-language one (#1772).
+    """
+    updater = _build(
+        tmp_path,
+        {"Core.cs": _CS_CORE, "Core/Util.cs": _CS_SIBLING},
+    )
+    project = tmp_path.name
+    assert f"{project}.Core.Util.Helper" in _qns(updater), (
+        "fixture guard: the namespace-embedding qn was not produced, so this "
+        "test cannot exercise the shape it exists for"
+    )
+
+    (tmp_path / "Core.cs").unlink()
+    updater.remove_file_from_state(tmp_path / "Core.cs")
+
+    after = _qns(updater)
+    assert f"{project}.Core.Util.Helper" not in after, (
+        "a class from the DELETED file survived because its namespace put "
+        "its qn under a surviving sibling module"
+    )
+
+
+def test_a_surviving_csharp_siblings_class_is_kept(tmp_path: Path) -> None:
+    """The #1773 defect itself, in C# -- the shape the issue measured.
+
+    Pairs with the test above: one requires the deleted file's class to go,
+    this one requires the surviving file's class to stay. A fix satisfying
+    only one of them is the bug in the other direction, and `main` fails
+    this one.
+    """
+    updater = _build(
+        tmp_path,
+        {"Core.cs": _CS_CORE, "Core/Util.cs": _CS_SIBLING},
+    )
+    project = tmp_path.name
+    survivor = f"{project}.Core.Util.Other.Sibling"
+    assert survivor in _qns(updater), "fixture guard: sibling class not registered"
+
+    (tmp_path / "Core.cs").unlink()
+    updater.remove_file_from_state(tmp_path / "Core.cs")
+
+    assert survivor in _qns(updater), (
+        "Core/Util.cs still exists but lost its class to Core.cs's deletion"
+    )
