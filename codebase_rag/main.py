@@ -999,7 +999,13 @@ async def _estimate_off_loop(messages: list[ModelMessage]) -> int:
                 return
             try:
                 result = estimate_message_tokens(messages)
-            except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
+            except Exception as exc:  # noqa: BLE001 - relayed to the awaiter
+                # `Exception`, not `BaseException` (SonarCloud S5754). A
+                # tokenisation failure belongs to the awaiter; a
+                # KeyboardInterrupt or SystemExit does not -- relaying one
+                # would report a shutdown signal as an estimation error, and
+                # this thread is a daemon that the interpreter is entitled to
+                # stop without ceremony.
                 _settle(loop, future, error=exc)
             else:
                 _settle(loop, future, value=result)
