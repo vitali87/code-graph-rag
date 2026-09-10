@@ -1088,6 +1088,85 @@ class TestIncompleteMarkerSurvivesTheProcess:
         """
         assert not hasattr(MCPToolsRegistry, "_updater_for_reingest")
 
+    async def test_a_successful_structural_delta_lifts_its_own_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (b) on the structural-delta path (#1845 review).
+
+        Routing this path through `_hydrate_reingest_updater` (#1783) brings
+        its MARK with it: that helper marks before its constraint migration.
+        Without a matching clear a SUCCESSFUL delta left the project durably
+        marked, and every later run -- delta or scoped reingest, in this
+        process or a fresh one -- refused on a marker no failure earned.
+
+        The delta must genuinely succeed here: on the failure path a retained
+        marker is correct, so a test whose delta errored would pass against
+        the bug.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+            )
+            updater_cls.return_value.project_name = project
+            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" not in result, (
+            f"fixture guard: the delta FAILED, so a retained marker is "
+            f"correct and this test cannot see the defect; got {result!r}"
+        )
+        assert ingestor._marker_store.get(project) is not True, (
+            "a successful structural delta left its own marker set; every "
+            "later run would refuse on it"
+        )
+
+        # The consequence, end to end: a fresh process must not refuse.
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            after = await second.reingest(["a.py"])
+        assert "failed part way" not in after.get("error", ""), (
+            f"a fresh registry refused after a SUCCESSFUL delta; got {after}"
+        )
+
+    async def test_a_failed_structural_delta_keeps_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control for the clear above.
+
+        The marker must come off only on SUCCESS. A delta that fails after
+        mutating may have left a subtree deleted and not rebuilt, and that is
+        exactly what the marker exists to record -- so a fix that simply
+        always cleared would satisfy the test above while discarding the
+        protection.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=RuntimeError("delta died mid-write"),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" in result, f"fixture guard: expected failure; {result!r}"
+        assert ingestor._marker_store.get(project) is True, (
+            "a delta that failed after mutating dropped its marker; a fresh "
+            "process could not tell the partial graph from a complete one"
+        )
+
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
         self, temp_project_root: Path
     ) -> None:

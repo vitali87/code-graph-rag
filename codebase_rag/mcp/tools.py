@@ -1609,6 +1609,9 @@ class MCPToolsRegistry:
         """
         root = Path(self.project_root)
         relative = sd.normalise_paths(paths, root)
+        # Set when the hydration below marks the run, so the success path can
+        # lift that marker (invariant b) -- see the comment at the call.
+        marked_here: str | None = None
         try:
             if self._live_updater is None and (
                 derive_project_name(root) not in self.ingestor.list_projects()
@@ -1627,11 +1630,18 @@ class MCPToolsRegistry:
             # not this one, which the #1546 stack added after that branch was
             # written -- so the two paths refused and proceeded in the same
             # registry state, and neither call site showed it.
-            updater = (
-                self._live_updater
-                if self._live_updater is not None
-                else self._hydrate_reingest_updater(derive_project_name(root))
-            )
+            #
+            # Invariant (b) comes with it: that helper MARKS before its
+            # destructive migration, so a completed delta has to lift the
+            # marker or every later run refuses on it -- a successful delta
+            # would durably wedge the project (caught in review of #1845).
+            # `_reingest_sync` pairs the same mark with a clear via
+            # `marked_here`; this tracks it the same way.
+            if self._live_updater is not None:
+                updater = self._live_updater
+            else:
+                marked_here = derive_project_name(root)
+                updater = self._hydrate_reingest_updater(marked_here)
             deleted = [p for p in relative if not (root / p).exists()]
             changed = [p for p in relative if p not in deleted]
             delta = sd.observe(
@@ -1663,6 +1673,14 @@ class MCPToolsRegistry:
             # attribution was written, so it had no way to know about it.
             self._flag_from_failed_clear = None
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        if marked_here is not None:
+            # Invariant (b): the hydration marked before its constraint
+            # migration, so a completed delta must lift it. A failed clear is
+            # reported in place of the delta rather than silently retained --
+            # this method never raises, so the message is the only channel.
+            if (stuck := self._require_marker_cleared(marked_here)) is not None:
+                logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
+                return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
         return (
             "\n\n"
             + cs.MCP_DELTA_HEADER
