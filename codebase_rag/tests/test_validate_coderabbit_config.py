@@ -40,7 +40,8 @@ reviews:
 """
 
 
-def shipped() -> str:
+def read_shipped_config_text() -> str:
+    """Return the contents of the repository's own `.coderabbit.yaml`."""
     return CONFIG_PATH.read_text(encoding="utf-8")
 
 
@@ -51,7 +52,7 @@ class TestAcceptsValid:
 
     def test_the_shipped_config_is_valid(self) -> None:
         """The real file must satisfy its own validator."""
-        assert validate_coderabbit_config(shipped()) >= 1
+        assert validate_coderabbit_config(read_shipped_config_text()) >= 1
 
     def test_extra_unknown_settings_are_not_rejected(self) -> None:
         """Without the vendor schema, unrecognised keys are not our business.
@@ -253,7 +254,9 @@ class TestSchemaAloneIsInsufficient:
         import yaml
         from jsonschema import Draft202012Validator
 
-        broken = yaml.safe_load(shipped().replace("base_branches:", "base_branchez:"))
+        broken = yaml.safe_load(
+            read_shipped_config_text().replace("base_branches:", "base_branchez:")
+        )
         errors = list(Draft202012Validator(self._schema()).iter_errors(broken))
         assert errors == [], (
             "the vendor schema now rejects the typo; if that is permanent, "
@@ -266,12 +269,17 @@ class TestSchemaAloneIsInsufficient:
         # throw: otherwise a failure in the fixture would satisfy the
         # assertion and the test would pass for the wrong reason.
         schema = self._schema()
-        text = shipped().replace("base_branches:", "base_branchez:")
+        text = read_shipped_config_text().replace("base_branches:", "base_branchez:")
         with pytest.raises(ConfigError):
             validate_coderabbit_config(text, schema=schema)
 
     def test_the_shipped_config_passes_the_vendor_schema_too(self) -> None:
-        assert validate_coderabbit_config(shipped(), schema=self._schema()) >= 1
+        assert (
+            validate_coderabbit_config(
+                read_shipped_config_text(), schema=self._schema()
+            )
+            >= 1
+        )
 
     def test_a_schema_violation_is_reported_when_a_schema_is_given(self) -> None:
         """An unknown ROOT key is what the schema does catch."""
@@ -350,4 +358,6 @@ class TestShippedEntrypointEnforcesTheSchema:
         assert "schema=ROOT_KEY_SCHEMA" in source
 
     def test_the_shipped_config_passes_the_shipped_schema(self) -> None:
-        assert validate_coderabbit_config(shipped(), ROOT_KEY_SCHEMA) >= 1
+        assert (
+            validate_coderabbit_config(read_shipped_config_text(), ROOT_KEY_SCHEMA) >= 1
+        )
