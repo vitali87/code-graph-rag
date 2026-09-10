@@ -79,6 +79,17 @@ _MEMBER_NAME_TYPES = frozenset(
 _ALL_BLOCK = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
 _ALL_ENTRY = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
 
+# How far a parenthesised import is followed looking for its closing bracket.
+# Bounded so a file with an unbalanced paren cannot make this walk the rest of
+# the file; a real import list is far shorter than this.
+#
+# No test pins the bound, and removing it reddens nothing: on well-formed
+# input the loop stops at the closing bracket either way, so the cap only
+# changes behaviour on a file that does not parse as Python at all. It is
+# defensive, not load-bearing -- do not read the suite's greenness as evidence
+# that it works.
+_MAX_IMPORT_LINES = 200
+
 
 class RenameSite(NamedTuple):
     """One place the old name is written and must become the new one."""
@@ -871,35 +882,39 @@ class Renamer:
         # definition, reference and import restored but an export still
         # naming the NEW symbol is not fully reversed (Greptile, PR #1547).
         return all(
-            self._all_entries_name_the_old_name(path, report.old_name)
+            self._no_all_entry_names_the_new_name(path, report.new_name)
             for path in sorted({site.path for site in report.sites})
         )
 
-    def _all_entries_name_the_old_name(self, path: str, old_name: str) -> bool:
-        """Whether no `__all__` in `path` still lists something else in its place.
+    def _no_all_entry_names_the_new_name(self, path: str, new_name: str) -> bool:
+        """Whether no `__all__` in `path` still exports the NEW name.
 
-        Answers True when the file has no `__all__` at all, or when its
-        entries do not concern this rename: absence of the export is not
-        evidence the rollback failed. The question is only whether an entry
-        that SHOULD read `old_name` reads something else, which is decided by
-        the same literal scan `rename_in_all` uses to rewrite them, so the
-        check and the rewrite agree by construction.
+        Phrased against the new name rather than the old one, because that is
+        what `rename_in_all` actually did: it rewrites EVERY matching literal
+        in EVERY `__all__` block in the file, so a complete undo leaves none
+        of them reading `new_name`.
+
+        The previous phrasing -- "some entry reads `old_name`" -- accepted a
+        file where ONE block had been restored and another had not, since a
+        single restored entry satisfied it. A module with a second `__all__`
+        under `if TYPE_CHECKING:` is exactly that shape, and it reported a
+        complete rollback with an export still naming the renamed symbol
+        (Greptile, PR #1547, third round on this function).
+
+        Absence is still not evidence of failure: a file with no `__all__`,
+        or whose entries never mentioned either name, answers True. The check
+        uses the same literal scan `rename_in_all` uses to rewrite, so the two
+        agree by construction.
         """
         try:
             text = (self.repo_root / path).read_text(encoding="utf-8")
         except OSError:
             return False
-        found_old = False
-        found_any = False
-        for block in re.finditer(_ALL_BLOCK, text, re.S):
-            for literal in re.finditer(_ALL_ENTRY, block.group(1)):
-                found_any = True
-                if literal.group("name") == old_name:
-                    found_old = True
-        # No `__all__` list, or an empty one: nothing to contradict.
-        if not found_any:
-            return True
-        return found_old
+        return not any(
+            literal.group("name") == new_name
+            for block in re.finditer(_ALL_BLOCK, text, re.S)
+            for literal in re.finditer(_ALL_ENTRY, block.group(1))
+        )
 
     def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:
         """Whether the statement IMPORTS the old name again.
@@ -926,16 +941,30 @@ class Renamer:
         if not 0 < site.line <= len(lines):
             return False
         line = lines[site.line - 1]
+        # A parenthesised import spans lines, and the recorded line is the
+        # STATEMENT's first one, so reading it alone never sees an entry on a
+        # continuation line: a fully restored multiline import read as not
+        # restored (Greptile, PR #1547). That direction is safe -- it refuses
+        # to claim a complete undo -- but it makes a restored tree and a
+        # partly-restored one indistinguishable, which is the property this
+        # check exists to provide.
+        if "(" in line and ")" not in line[line.index("(") :]:
+            for extra in lines[site.line : site.line + _MAX_IMPORT_LINES]:
+                line += " " + extra.strip()
+                if ")" in extra:
+                    break
         _head, _sep, tail = line.partition("import ")
         # No `import` on the line: fall back to a word match rather than
         # claiming restored, since a language whose form this cannot parse
         # must not be read as evidence either way.
         if not _sep:
             return bool(re.search(rf"\b{re.escape(old_name)}\b", line))
+        # Brackets stripped per entry: a joined parenthesised import yields
+        # `( helper` and `)` as entries, and neither parses as a name.
         return any(
-            _imported(entry.strip()) == old_name
+            _imported(entry.strip(" ()\t")) == old_name
             for entry in tail.split(",")
-            if entry.strip()
+            if entry.strip(" ()\t")
         )
 
     def _file_has_old_name_at(

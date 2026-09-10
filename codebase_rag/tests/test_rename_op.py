@@ -1017,6 +1017,7 @@ def test_a_restored_rename_is_seen_past_multibyte_text(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [RenameSite("call", "m.py", 1, byte_col, "m.caller", None)]
 
     assert run._old_name_is_back(report) is True
@@ -1104,6 +1105,7 @@ def test_one_restored_site_is_not_a_full_undo(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "a.py", 1, 4, "a.helper", None),
         RenameSite("call", "b.py", 1, 0, "b.caller", None),
@@ -1127,6 +1129,7 @@ def test_every_site_restored_is_a_full_undo(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "a.py", 1, 4, "a.helper", None),
         RenameSite("call", "b.py", 1, 0, "b.caller", None),
@@ -1158,6 +1161,7 @@ def test_an_import_site_does_not_block_a_full_undo(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "util.py", 1, 4, "util.helper", None),
         RenameSite("call", "app.py", 5, 11, "app.run", None),
@@ -1183,6 +1187,7 @@ def test_a_rename_of_only_import_sites_is_not_a_full_undo(tmp_path: Path) -> Non
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [RenameSite("import", "app.py", 1, 0, "app", None)]
 
     assert run._old_name_is_back(report) is False
@@ -1215,6 +1220,7 @@ def test_a_rewritten_import_left_on_the_new_name_is_not_a_full_undo(
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "util.py", 1, 4, "util.helper", None),
         RenameSite("call", "app.py", 5, 11, "app.run", None),
@@ -1244,6 +1250,7 @@ def test_a_restored_import_completes_the_undo(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "util.py", 1, 4, "util.helper", None),
         RenameSite("call", "app.py", 5, 11, "app.run", None),
@@ -1276,6 +1283,7 @@ def test_a_near_miss_name_in_an_import_is_not_the_old_name(tmp_path: Path) -> No
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "util.py", 1, 4, "util.helper", None),
         RenameSite("call", "app.py", 5, 11, "app.run", None),
@@ -1313,6 +1321,7 @@ def test_an_alias_matching_the_old_name_is_not_the_restored_import(
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     # Only the definition and the import: every non-import site must be
     # RESTORED, or the check short-circuits before the import logic runs and
     # the test passes for the wrong reason (measured -- an earlier version of
@@ -1348,6 +1357,7 @@ def test_an_aliased_import_of_the_old_name_still_counts_as_restored(
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [
         RenameSite("definition", "util.py", 1, 4, "util.helper", None),
         RenameSite("import", "app.py", 1, 0, "app", None),
@@ -1375,9 +1385,131 @@ def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) ->
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
 
     assert run._old_name_is_back(report) is False
+
+
+@pytest.mark.parametrize(
+    ("body", "restored"),
+    [
+        ("from pkg.util import (\n    helper,\n    other,\n)\n", True),
+        ("from pkg.util import (\n    assist,\n    other,\n)\n", False),
+        ("from pkg.util import helper\n", True),
+        ("from pkg.util import assist\n", False),
+    ],
+    ids=["multiline-restored", "multiline-not", "single-restored", "single-not"],
+)
+def test_a_multiline_import_is_read_to_its_closing_bracket(
+    tmp_path: Path, body: str, restored: bool
+) -> None:
+    """A parenthesised import spans lines; the recorded line is only the first.
+
+    Reading that line alone never sees an entry on a continuation line, so a
+    fully restored multiline import read as NOT restored. That direction is
+    safe -- it refuses to claim a complete undo -- but it made a restored tree
+    and a partly-restored one indistinguishable, which is the one property
+    this check exists to provide (Greptile, PR #1547).
+
+    Parametrised over both forms and both answers: a fix that always returned
+    True for a multiline import would satisfy the restored case alone, and the
+    single-line rows are the control that the join did not break the ordinary
+    path.
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "app.py").write_text(body, encoding="utf-8")
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+
+    site = RenameSite("import", "app.py", 1, 0, "app", None)
+    assert run._import_names_the_old_name(site, "helper") is restored, (
+        f"import form read as {'not ' if restored else ''}restored: {body!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "complete"),
+    [
+        ('__all__ = ["unrelated"]\n', True),
+        ('__all__ = ["helper"]\n__all__ = ["assist"]\n', False),
+        ('__all__ = ["helper"]\n', True),
+        ('__all__ = ["assist"]\n', False),
+        ("x = 1\n", True),
+    ],
+    ids=["unrelated", "mixed", "restored", "still-new", "no-all"],
+)
+def test_the_all_check_answers_per_entry_not_per_file(
+    tmp_path: Path, body: str, complete: bool
+) -> None:
+    """The whole truth table, because the old rule failed BOTH ways.
+
+    Aggregating every export into one "did the old name appear" flag was
+    wrong in opposite directions at once:
+
+    * too STRICT -- `__all__ = ["unrelated"]` has nothing to do with this
+      rename, yet reported an incomplete rollback;
+    * too LOOSE -- one block restored while another still held the new name
+      reported a complete one.
+
+    A fix that only relaxes the rule cures the first and worsens the second,
+    which is why this is a table rather than one case. The question is per
+    ENTRY: does anything still export the NEW name (4-55 and CGR-3, PR #1547).
+    """
+    from codebase_rag.editing.rename import Renamer
+
+    (tmp_path / "util.py").write_text(body, encoding="utf-8")
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+
+    assert run._no_all_entry_names_the_new_name("util.py", "assist") is complete, (
+        f"__all__ body {body!r} judged "
+        f"{'incomplete' if complete else 'complete'}, which is backwards"
+    )
+
+
+def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
+    """A file may hold more than one `__all__`, and all of them are rewritten.
+
+    `rename_in_all` rewrites EVERY matching literal in EVERY block, so a
+    complete undo leaves none of them naming the new symbol. The check was
+    phrased the other way -- "some entry reads the old name" -- which a single
+    restored block satisfied while another still exported the renamed one.
+
+    A second `__all__` under `if TYPE_CHECKING:` is the ordinary shape of
+    this, and it reported a complete rollback with a live export still on the
+    new name (Greptile, PR #1547, third round on this function).
+    """
+    from codebase_rag.editing.rename import Renamer, RenameSite
+
+    (tmp_path / "util.py").write_text(
+        '__all__ = ["helper"]\n\n'
+        "if TYPE_CHECKING:\n"
+        '    __all__ = ["assist"]\n\n\n'
+        "def helper(a):\n    return a\n",
+        encoding="utf-8",
+    )
+
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+    report = MagicMock()
+    report.old_name = "helper"
+    report.new_name = "assist"
+    # Line 7 is `def helper(a):`. Pointing at a blank line instead makes the
+    # per-site slice check fail and return False BEFORE the `__all__` scan
+    # runs, so the test would pass without exercising its subject at all --
+    # the same trap this file already documents.
+    report.sites = [RenameSite("definition", "util.py", 7, 4, "util.helper", None)]
+
+    assert run._no_all_entry_names_the_new_name("util.py", "assist") is False, (
+        "fixture guard: the __all__ scan itself must reject this file, or the "
+        "assertion below is satisfied by an earlier check short-circuiting"
+    )
+    assert run._old_name_is_back(report) is False, (
+        "one restored __all__ block excused a second block still exporting "
+        "the renamed symbol, so a partial undo reported as complete"
+    )
 
 
 def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
@@ -1396,6 +1528,7 @@ def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 4, 4, "util.helper", None)]
 
     assert run._old_name_is_back(report) is True
@@ -1413,6 +1546,7 @@ def test_a_file_without_an_all_list_is_unaffected(tmp_path: Path) -> None:
     run.repo_root = tmp_path
     report = MagicMock()
     report.old_name = "helper"
+    report.new_name = "assist"
     report.sites = [RenameSite("definition", "util.py", 1, 4, "util.helper", None)]
 
     assert run._old_name_is_back(report) is True
