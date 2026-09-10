@@ -111,6 +111,22 @@ class MCPToolsRegistry:
         # an unrelated marker-less failure earned, whenever some recoverable
         # marker happens to be pending at guard time (#1705 review).
         self._flag_from_failed_clear: str | None = None
+        # WHICH project's damage `_graph_incomplete` records, when a marker
+        # does not say. The flag is registry-wide but every writer of it is
+        # project-scoped, so a successful clear for project B discarded a
+        # flag project A earned (issue #1774): `_require_marker_cleared` set
+        # it from one project's result with `self._graph_incomplete = not
+        # cleared`. The durable marker cannot cover that case, being per
+        # project -- a wipe that dies before the graph is gone writes no
+        # marker for A at all, leaving this flag the only record that A is
+        # partial, and an unrelated delete erased it.
+        #
+        # `None` means "spans every project, or owner unknown", which is what
+        # a WIPE leaves: no single project's clear may settle it. A named
+        # project means an operation on THAT project raised it and its own
+        # clear is entitled to settle it -- which is what keeps
+        # delete/index/update working, since each clears the flag it raised.
+        self._incomplete_owner: str | None = None
 
         self.parsers, self.queries = load_parsers()
 
@@ -793,6 +809,9 @@ class MCPToolsRegistry:
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
+        # This operation's own project owns the flag, so its own successful
+        # clear may settle it; an unrelated project's may not (issue #1774).
+        self._incomplete_owner = project_name
         # Invariant (a). Nothing has been touched yet, so refusing costs
         # nothing; proceeding would leave a half-removed graph a fresh
         # registry cannot tell from a completed delete.
@@ -834,6 +853,11 @@ class MCPToolsRegistry:
                 self._graph_incomplete = True
                 # Not a stranded marker: this flag must not be healed by one.
                 self._flag_from_failed_clear = None
+                # A wipe spans EVERY project and writes no marker, so its
+                # damage is attributable to none of them and no single
+                # project's clear may settle it (issue #1774). The success
+                # path below clears the flag itself.
+                self._incomplete_owner = None
                 await asyncio.to_thread(self.ingestor.clean_database)
                 await asyncio.to_thread(clear_all_embeddings)
                 self._graph_incomplete = False
@@ -872,6 +896,9 @@ class MCPToolsRegistry:
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
+        # This operation's own project owns the flag, so its own successful
+        # clear may settle it; an unrelated project's may not (issue #1774).
+        self._incomplete_owner = project_name
         # Persisted BEFORE the delete, and on a node the delete cannot reach:
         # this path removes the Project and rebuilds it, so a marker stored on
         # the Project would be destroyed by the very operation whose failure it
@@ -968,6 +995,9 @@ class MCPToolsRegistry:
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
+        # This operation's own project owns the flag, so its own successful
+        # clear may settle it; an unrelated project's may not (issue #1774).
+        self._incomplete_owner = project_name
         # The marker goes down BEFORE ensure_constraints, not after.
         # `ensure_constraints` runs `_migrate_legacy_path_keys`, which drops
         # constraints and can run purge queries -- autocommitted, destructive
@@ -1201,14 +1231,30 @@ class MCPToolsRegistry:
         and the next agree. Returns None on success, or the failure message.
         """
         cleared = self._persist_incomplete(project_name, False)
-        self._graph_incomplete = not cleared
-        # Attribute the flag to this project's stranded marker (or drop a
-        # stale attribution when the clear succeeded), so the recovery in
-        # `_hydrate_reingest_updater` heals only the flag it explains.
-        self._flag_from_failed_clear = project_name if not cleared else None
-        if cleared:
-            return None
-        return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+        if not cleared:
+            self._graph_incomplete = True
+            self._incomplete_owner = project_name
+            # Attribute the flag to this project's stranded marker, so the
+            # recovery in `_hydrate_reingest_updater` heals only the flag it
+            # explains.
+            self._flag_from_failed_clear = project_name
+            return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+
+        # A successful clear settles only the damage THIS project owns.
+        # `self._graph_incomplete = not cleared` settled everything, so a
+        # clean clear for project B discarded a flag project A earned from a
+        # failure that wrote no marker -- and the durable marker cannot cover
+        # that, being per project (issue #1774).
+        #
+        # An unowned flag (`None`) is a WIPE's: it spans every project, no
+        # single project's clear may settle it, and the wipe's own success
+        # path clears it inline. A flag owned by another project stands until
+        # that project's own operation settles it.
+        if self._incomplete_owner == project_name or not self._graph_incomplete:
+            self._graph_incomplete = False
+            self._incomplete_owner = None
+        self._flag_from_failed_clear = None
+        return None
 
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
@@ -1480,7 +1526,11 @@ class MCPToolsRegistry:
                 # clear would then satisfy `recoverable_here`, heal the flag,
                 # and let a scoped reingest run over the partial graph this
                 # very branch left (#1705 review, final round).
+                #
+                # Owned by this project: the damage is this project's and its
+                # own clear may settle it (issue #1774).
                 self._flag_from_failed_clear = None
+                self._incomplete_owner = project_name
             elif marked_here is not None:
                 # Nothing was written, so the marker this call created is a
                 # lie about a run that changed nothing and must come off.
@@ -1678,6 +1728,9 @@ class MCPToolsRegistry:
             # Added on the rebase: this site landed on main (#1525) after the
             # attribution was written, so it had no way to know about it.
             self._flag_from_failed_clear = None
+            # Owned by this project (issue #1774): the subtree that may be
+            # missing is this project's, so its own clear may settle it.
+            self._incomplete_owner = derive_project_name(root)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         return (
             "\n\n"

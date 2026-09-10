@@ -994,6 +994,94 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"graph left by a crashed update; got {refused}"
         )
 
+    async def test_an_unrelated_projects_clear_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """A successful clear settles only what it owns (#1774).
+
+        `_graph_incomplete` is registry-wide while every writer of it is
+        project-scoped, so `self._graph_incomplete = not cleared` let project
+        B's clean clear discard a flag project A earned.
+
+        The durable marker does not cover this. It is per project, so
+        `_persisted_incomplete(A)` correctly returns False: a wipe that dies
+        before the graph is gone writes no marker for A at all, leaving the
+        in-process flag the ONLY record that A is partial.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        # A wipe that fails part way: flag up, no marker written anywhere.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert not ingestor._marker_store, (
+            "fixture guard: the wipe must write NO marker, or the durable "
+            "check would refuse on its own and this proves nothing"
+        )
+
+        # An unrelated project B completes and clears its own marker.
+        assert registry._require_marker("project-B") is None
+        assert registry._require_marker_cleared("project-B") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's successful clear discarded the flag the "
+            "failed wipe earned; the next reingest would run over a partial graph"
+        )
+
+        # And the refusal it protects still fires.
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_projects_own_clear_still_settles_its_own_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control, and the one that constrains the fix.
+
+        Making the flag harder to clear must not break the operations that
+        legitimately clear the flag they raised: delete, index and update
+        each set it before their first write and settle it on success. A fix
+        that simply refused every clear would satisfy the test above while
+        wedging all three.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await registry.update_repository()
+
+        assert registry._graph_incomplete is False, (
+            "a completed update must clear the flag it raised for its own project"
+        )
+        assert registry._incomplete_owner is None
+
+    async def test_a_delete_still_settles_the_flag_it_raised(
+        self, temp_project_root: Path
+    ) -> None:
+        """Second control, on a different owner-setting path.
+
+        `_delete_project_sync` raises the flag for its own project and
+        settles it via its own `_require_marker_cleared`. Pinning only the
+        update path would leave the delete and index paths free to regress.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor.list_projects.return_value = [project, "other"]
+
+        result = await registry.delete_project(project)
+        assert result.get("success") is True, result
+        assert registry._graph_incomplete is False, (
+            "a completed delete must settle the flag it raised"
+        )
+
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
         self, temp_project_root: Path
     ) -> None:
