@@ -200,6 +200,16 @@ def context_name(entry: dict[str, object]) -> str:
     return ""
 
 
+def aggregated_job_for(name: str) -> str | None:
+    """The `AGGREGATED_JOBS` entry `name` belongs to, or None.
+
+    Prefix-matched for the same reason `missing_aggregated_jobs` is: the
+    matrix jobs carry their platform in the name (`Unit Tests
+    (ubuntu-latest, py3.12)`), so an exact comparison matches none of them.
+    """
+    return next((job for job in AGGREGATED_JOBS if name.startswith(job)), None)
+
+
 def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
     """Why `context` is missing: still coming, never arriving, or no run.
 
@@ -216,7 +226,17 @@ def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
     """
     if not rollup:
         return f"no check reported at the head at all, so '{context}' cannot appear"
-    pending = [entry for entry in rollup if not entry_finished(entry)]
+    # Only the jobs the aggregate WAITS ON can explain its absence. Any
+    # unfinished entry used to count, so a single unrelated pending check --
+    # CodeRabbit is pending on nearly every PR here -- flipped the verdict
+    # from "investigate" to "wait" while every dependency had concluded.
+    # That is the #1582 case reported as its opposite, which is the exact
+    # confusion this function exists to remove.
+    pending = [
+        entry
+        for entry in rollup
+        if not entry_finished(entry) and aggregated_job_for(context_name(entry))
+    ]
     if pending:
         names = sorted(name for name in map(context_name, pending) if name)
         shown = ", ".join(names[:3]) + ("..." if len(names) > 3 else "")

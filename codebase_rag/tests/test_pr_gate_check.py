@@ -938,6 +938,90 @@ class TestEntryFinishedHandlesBothRollupShapes:
         assert "YET" not in reason
 
 
+class TestOnlyDependenciesExplainAnAbsentAggregate:
+    """An unrelated pending check must not suppress "investigate".
+
+    `All Checks Pass` waits on AGGREGATED_JOBS and nothing else, so only
+    those being unfinished can explain its absence. Counting every
+    unfinished entry meant one unrelated pending check flipped the verdict
+    from "investigate" to "wait" -- and CodeRabbit is pending on nearly
+    every PR here, so the wrong branch was the common case. Reported by
+    Greptile on #1831.
+    """
+
+    @staticmethod
+    def _concluded() -> list[dict[str, object]]:
+        return [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+    @staticmethod
+    def _pending(name: str) -> dict[str, object]:
+        return {
+            "__typename": "CheckRun",
+            "name": name,
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+        }
+
+    def test_an_unrelated_pending_check_does_not_say_wait(self) -> None:
+        rollup = [*self._concluded(), self._pending("CodeRabbit")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" not in reason
+        assert "not going to appear" in reason
+
+    def test_a_pending_dependency_still_says_wait(self) -> None:
+        rollup = [*self._concluded()[:-1], self._pending("Binary Smoke Test")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_matrix_dependency_is_matched_by_prefix(self) -> None:
+        """Matrix jobs carry a platform suffix, so exact matching finds none."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Unit Tests (ubuntu-latest, py3.12)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_dependency_wins_over_unrelated_noise(self) -> None:
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+        assert "Binary Smoke Test" in reason
+
+    def test_the_count_names_only_dependencies(self) -> None:
+        """The number must not include checks the aggregate does not await."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+            self._pending("Fuzz (address)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "1 check(s)" in reason
+
+
 class TestPendingNamesReadHonestly:
     """The parenthetical must not claim names it does not have."""
 
@@ -947,17 +1031,29 @@ class TestPendingNamesReadHonestly:
         assert "(Type Check)" in absent_context_reason("X", one)
 
     def test_ellipsis_only_once_names_are_omitted(self) -> None:
+        """Names must be jobs the aggregate waits on, or they are filtered.
+
+        Synthetic names (`Check 0`) no longer reach the parenthetical:
+        only unfinished AGGREGATED_JOBS entries can explain the
+        aggregate's absence, so the fixture uses four real ones.
+        """
         four = [
-            {"__typename": "CheckRun", "name": f"Check {n}", "conclusion": ""}
-            for n in range(4)
+            {"__typename": "CheckRun", "name": name, "conclusion": ""}
+            for name in AGGREGATED_JOBS[:4]
         ]
 
         assert "..." in absent_context_reason("X", four)
 
     def test_no_empty_parentheses_when_no_name_is_known(self) -> None:
+        """A dependency-shaped entry whose name cannot be read.
+
+        `context_name` returns "" for a shape carrying neither `name` nor
+        `context`, so such an entry is filtered out with the unrelated
+        ones and cannot produce an empty parenthetical.
+        """
         nameless = [{"conclusion": ""}, {"conclusion": ""}]
 
         reason = absent_context_reason("X", nameless)
 
-        assert "2 check(s)" in reason
         assert "()" not in reason
+        assert "still running" not in reason
