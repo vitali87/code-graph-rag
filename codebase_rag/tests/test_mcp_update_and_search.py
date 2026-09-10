@@ -2376,6 +2376,77 @@ class TestIncompleteMarkerInvariant:
             f"the half-wiped graph it left: {result}"
         )
 
+    async def test_a_successful_clear_cannot_settle_a_widened_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """`None` means two opposite things, and the clear reads the wrong one.
+
+        `_invalidate_graph_for` WIDENS the attribution to None when a second,
+        different project is damaged: None there is the BROADEST state, "more
+        than one project is suspect, so trust none of them".
+        `_require_marker_cleared` reads that same None as the NARROWEST,
+        "owned by nobody, the single-project case", and settles the flag.
+
+        So: ALPHA is damaged, BETA is damaged, the attribution widens to None
+        -- and then ALPHA clearing its own marker discards the only
+        in-process record that BETA may be partial. A read of BETA is then
+        allowed onto a graph nothing ever finished.
+
+        Written on the WIPE case deliberately. A marker-less wipe is the one
+        kind of damage no durable marker records, so the in-process flag is
+        the sole evidence; on a path that DOES leave a marker,
+        `_marker_says_incomplete` refuses the read anyway and the assertion
+        below passes whether or not the flag was wrongly settled -- the
+        assertion-satisfied-by-both trap this file already documents on
+        `_abandon_before_writing`.
+
+        Found by 4-55 reading the invariant end to end rather than reading
+        either function on its own; both docstrings are locally correct and
+        globally contradictory (#1547 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        alpha = _mark_indexed(registry)
+        beta = "beta"
+
+        # Marker-less damage to ALPHA: the wipe dies and writes no marker.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._incomplete_project in (None, alpha), (
+            "fixture guard: the failed wipe must leave the flag up"
+        )
+
+        # A SECOND project is damaged, which widens the attribution to None.
+        registry._invalidate_graph_for(beta)
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the flag must still be up after the second damage"
+        )
+        assert registry._incomplete_project is None, (
+            "fixture guard: two different damaged projects must widen the "
+            "attribution to None -- if it is still attributed, the clear "
+            "below takes the other branch and this test proves nothing"
+        )
+
+        # ALPHA now clears its own marker, successfully.
+        registry._require_marker_cleared(alpha)
+
+        assert registry._graph_incomplete is True, (
+            "a successful clear for one project settled a flag that had been "
+            "WIDENED because a second project was damaged too, so the only "
+            "record that the other project is partial is gone"
+        )
+
+        # The consequence, stated as behaviour rather than as state: BETA's
+        # reads must still refuse.
+        assert (
+            registry._incomplete_refusal(beta, cs.MCPToolName.ASK_AGENT) is not None
+        ), (
+            "reads of the second damaged project were reopened onto a graph "
+            "nothing ever finished"
+        )
+
     async def test_a_failed_structural_delta_does_not_inherit_an_attribution(
         self, temp_project_root: Path
     ) -> None:

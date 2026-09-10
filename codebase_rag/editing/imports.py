@@ -504,11 +504,27 @@ class ImportRewriter:
             return _rs_rewrite(statement, move)
         return None
 
-    def rename_in_all(self, path: str, old_name: str, new_name: str) -> int:
-        """Rewrite `"old_name"` entries of a Python `__all__` list in `path`."""
+    def rename_in_all(
+        self, path: str, old_name: str, new_name: str
+    ) -> list[tuple[int, int, int]]:
+        """Rewrite `"old_name"` entries of a Python `__all__` list in `path`.
+
+        Returns `(offset, block_start, block_end)` for every literal it
+        rewrote, so a caller can later ask whether those exact entries were
+        restored -- and can tell a shifted file from a restored one, because
+        the block bounds move with any edit that shifts the offset.
+
+        A count is not enough, and neither is any whole-file scan: three
+        rollback checks in a row failed because they could not tell an entry
+        this rename touched from one that merely matched. A pre-existing
+        export of the NEW name made a complete undo look incomplete; a
+        pre-existing export of the OLD name made an incomplete one look
+        complete (Greptile and CGR-3, PR #1547). Offsets carry the identity
+        that both aggregates discard.
+        """
         source = self.patcher.source(path)
         text = source.decode(cs.ENCODING_UTF8)
-        count = 0
+        offsets: list[tuple[int, int, int]] = []
         for m in re.finditer(
             r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]", text, re.S
         ):
@@ -526,5 +542,11 @@ class ImportRewriter:
                     ),
                     new_name,
                 )
-                count += 1
-        return count
+                # The offset PLUS the block it sits in, so a shift is
+                # detectable rather than silently absorbed. An offset alone
+                # is only meaningful against a file unmodified since staging;
+                # if an unrelated edit moves text before this entry AND the
+                # old name happens to land at the stale offset, a position-only
+                # check reads it as restored (Greptile, PR #1547).
+                offsets.append((start, m.start(1), m.end(1)))
+        return offsets

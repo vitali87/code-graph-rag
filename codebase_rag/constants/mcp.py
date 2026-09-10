@@ -146,6 +146,11 @@ MCP_REINGEST_AFTER_FAILED_RUN = (
     "The last index or update of project {project} failed part way, so its "
     "graph is incomplete; run update_repository before reingest"
 )
+MCP_QUERY_AFTER_FAILED_RUN = (
+    "The last index or update of project {project} failed part way, so its "
+    "graph is incomplete; {tool} would answer from a partial graph. Run "
+    "update_repository before reading it"
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
 REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"

@@ -1,0 +1,1338 @@
+# Postcondition contract for edit operations (issue #1531): verify(expectation,
+# delta) passes or fails with reasons and lists the affected tests. Each
+# expectation is exercised against synthetic deltas; the rename operation is
+# then run for real on a fixture repo and held to its contract through the
+# in-memory graph.
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.editing import (
+    Expectation,
+    change_signature_expectation,
+    move_expectation,
+    rename_expectation,
+    verify,
+)
+from codebase_rag.editing.rename import rename
+from codebase_rag.editing.transaction import load_history
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.structural_delta import StructuralDelta
+from evals.cgr_graph import _StatefulIngestor
+
+# --- synthetic deltas --------------------------------------------------------------
+
+
+def _delta(**overrides: object) -> StructuralDelta:
+    base: dict[str, object] = {
+        "paths": ["pkg/util.py"],
+        "reparsed": ["pkg/util.py"],
+        "affected": [],
+        "removed_files": [],
+        "symbols": {"added": [], "removed": [], "renamed": [], "changed": []},
+        "dangling_callers": [],
+        "signature_changes": [],
+        "arity_findings": [],
+        "new_duplicates": [],
+        "new_import_cycles": [],
+        "stale_importers": [],
+        "tests_reaching": [
+            {
+                "qualified_name": "p.tests.test_util.test_helper",
+                "path": "tests/test_util.py",
+                "depth": 1,
+                "through": "p.pkg.util.helper",
+            }
+        ],
+        "call_sites": {"before": 3, "after": 3},
+        "reingest_ms": 1.0,
+        "delta_ms": 1.0,
+    }
+    base.update(overrides)
+    return base  # type: ignore[return-value]
+
+
+def _dangling(path: str = "pkg/app.py", line: int = 5) -> dict[str, object]:
+    return {
+        "caller": "p.pkg.app.run",
+        "path": path,
+        "line": line,
+        "col": 11,
+        "target": "p.pkg.util.helper",
+        "renamed_to": "p.pkg.util.assist",
+    }
+
+
+def _site(path: str, line: int, verdict: str) -> dict[str, object]:
+    return {
+        "caller": "p.pkg.app.run",
+        "path": path,
+        "line": line,
+        "col": 11,
+        "arg_count": 2,
+        "kwarg_names": [],
+        "declared_count": 1,
+        "verdict": verdict,
+    }
+
+
+RENAMED = [
+    {"old": "p.pkg.util.helper", "new": "p.pkg.util.assist", "path": "pkg/util.py"}
+]
+
+
+def test_rename_passes_when_only_the_hierarchy_was_renamed() -> None:
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(
+        expectation,
+        _delta(symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []}),
+    )
+    assert verdict.ok
+    assert verdict.failures == ()
+    assert [t["qualified_name"] for t in verdict.affected_tests] == [
+        "p.tests.test_util.test_helper"
+    ]
+
+
+def test_rename_fails_when_an_UNRELATED_symbol_was_also_renamed() -> None:
+    """Membership is not equality: extra renames must fail the contract.
+
+    `_check_symbols` asks whether each EXPECTED pair is present, which catches
+    a rename that did not happen and is blind to one that happened as well.
+    `added` and `removed` are already checked in both directions against the
+    expectation; `renamed` was checked in one. An edit that renames the
+    requested hierarchy AND collaterally renames something else therefore
+    passes, and `rename.py` keeps the unrelated change instead of rolling the
+    whole edit back -- the contract exists precisely to prevent that.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    collateral = {
+        "old": "p.pkg.other.thing",
+        "new": "p.pkg.other.renamed",
+        "path": "pkg/other.py",
+    }
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [*RENAMED, collateral],
+                "changed": [],
+            }
+        ),
+    )
+    assert not verdict.ok, "an unexpected rename must not pass the contract"
+    assert any("p.pkg.other.thing" in f for f in verdict.failures), (
+        f"the failure must name the unexpected symbol, got {verdict.failures}"
+    )
+
+
+def test_rename_allows_a_descendant_carried_by_its_renamed_ancestor() -> None:
+    """A nested definition's qn moves WITH its parent; that is not collateral.
+
+    A qualified name is a path, so renaming `helper` necessarily renames
+    `helper.inner` -- the child did not change, its parent's segment did.
+    `_hierarchy` (rename.py) walks only `overrides` edges, so a descendant is
+    never among the enumerated pairs and set equality reports it as an
+    unexpected rename, failing the contract and rolling back a correct edit.
+    Renames are not independent the way `added`/`removed` are.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    carried = {
+        "old": "p.pkg.util.helper.inner",
+        "new": "p.pkg.util.assist.inner",
+        "path": "pkg/util.py",
+    }
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [*RENAMED, carried],
+                "changed": [],
+            }
+        ),
+    )
+    assert verdict.ok, (
+        f"a descendant carried by its renamed ancestor must pass, got {verdict.failures}"
+    )
+
+
+def test_waiving_symbol_counts_does_not_waive_unexpected_renames() -> None:
+    """An inline waives symbol COUNTS; that is not consent to rename.
+
+    The two properties are independent, so gating unexpected renames on
+    `symbol_count_unchanged` would let any operation that legitimately adds or
+    removes symbols also rename whatever it liked, silently.
+    """
+    expectation = Expectation(
+        operation="inline",
+        renames=(),
+        symbol_count_unchanged=False,
+    )
+    collateral = {
+        "old": "p.pkg.other.thing",
+        "new": "p.pkg.other.renamed",
+        "path": "pkg/other.py",
+    }
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [collateral],
+                "changed": [],
+            }
+        ),
+    )
+    assert not verdict.ok, (
+        "waiving symbol counts must not waive the unexpected-rename check"
+    )
+    assert any("p.pkg.other.thing" in f for f in verdict.failures)
+
+    waived = verify(
+        expectation._replace(no_unexpected_rename=False),
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [collateral],
+                "changed": [],
+            }
+        ),
+    )
+    assert waived.ok, "the dedicated flag must be able to waive the check"
+
+
+def test_rename_still_rejects_a_prefix_that_is_not_an_ancestor() -> None:
+    """`helperX` merely starts with `helper`; it is a different symbol.
+
+    The boundary the ancestor rule must not overrun: matching on a bare string
+    prefix would swallow every sibling whose name extends the renamed one, so
+    the separator is load-bearing rather than cosmetic.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    sibling = {
+        "old": "p.pkg.util.helperX",
+        "new": "p.pkg.util.assistX",
+        "path": "pkg/util.py",
+    }
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [*RENAMED, sibling],
+                "changed": [],
+            }
+        ),
+    )
+    assert not verdict.ok, "a non-ancestor prefix match must still fail"
+    assert any("helperX" in f for f in verdict.failures), (
+        f"the failure must name the sibling, got {verdict.failures}"
+    )
+
+
+def test_rename_rejects_a_descendant_whose_new_name_does_not_follow() -> None:
+    """The descendant must land where the ancestor rename PUTS it.
+
+    `helper.inner -> assist.other` shares the authorised ancestor prefix but
+    renames the child's own segment too, which nobody asked for. Checking only
+    that the old name is a descendant would let that through, so the new name
+    must be the ancestor substitution applied to the old one.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    also_renamed = {
+        "old": "p.pkg.util.helper.inner",
+        "new": "p.pkg.util.assist.other",
+        "path": "pkg/util.py",
+    }
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [*RENAMED, also_renamed],
+                "changed": [],
+            }
+        ),
+    )
+    assert not verdict.ok, "a descendant renamed beyond the carry must fail"
+    assert any("inner" in f for f in verdict.failures), (
+        f"the failure must name the over-renamed child, got {verdict.failures}"
+    )
+
+
+def test_move_allows_methods_carried_by_their_moved_class() -> None:
+    """Moving a class relocates every method's qualified name with it.
+
+    `move_expectation` enumerates exactly one pair, so without the ancestor
+    rule the new check makes a class move unsatisfiable by construction.
+    """
+    expectation = move_expectation("p.pkg.util.Helper", "p.pkg.core.Helper")
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": [],
+                "removed": [],
+                "renamed": [
+                    {
+                        "old": "p.pkg.util.Helper",
+                        "new": "p.pkg.core.Helper",
+                        "path": "pkg/core.py",
+                    },
+                    {
+                        "old": "p.pkg.util.Helper.work",
+                        "new": "p.pkg.core.Helper.work",
+                        "path": "pkg/core.py",
+                    },
+                ],
+                "changed": [],
+            }
+        ),
+    )
+    assert verdict.ok, (
+        f"a method carried by its moved class must pass, got {verdict.failures}"
+    )
+
+
+def test_rename_fails_when_the_symbol_was_not_renamed() -> None:
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(expectation, _delta())
+    assert not verdict.ok
+    assert verdict.failures == (
+        cs.CONTRACT_RENAME_MISSING.format(
+            old="p.pkg.util.helper", new="p.pkg.util.assist"
+        ),
+    )
+
+
+def test_rename_fails_on_dangling_callers_and_caller_count() -> None:
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []},
+            dangling_callers=[_dangling()],
+            call_sites={"before": 3, "after": 2},
+        ),
+    )
+    assert verdict.failures == (
+        cs.CONTRACT_CALLERS_MOVED.format(before=3, after=2),
+        cs.CONTRACT_DANGLING.format(sites="pkg/app.py:5"),
+    )
+
+
+def test_rename_fails_when_the_symbol_set_moved() -> None:
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    verdict = verify(
+        expectation,
+        _delta(
+            symbols={
+                "added": ["p.pkg.util.extra"],
+                "removed": [],
+                "renamed": RENAMED,
+                "changed": [],
+            }
+        ),
+    )
+    assert verdict.failures == (
+        cs.CONTRACT_SYMBOLS_MOVED.format(added="p.pkg.util.extra", removed="-"),
+    )
+
+
+def test_rename_refuses_silently_rewritten_heuristic_sites() -> None:
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], False
+    )
+    delta = _delta(
+        symbols={"added": [], "removed": [], "renamed": RENAMED, "changed": []}
+    )
+    rewritten = [("pkg/app.py:5", "exact"), ("pkg/other.py:9", "heuristic")]
+    assert verify(expectation, delta, rewritten=rewritten).failures == (
+        cs.CONTRACT_HEURISTIC_REWRITTEN.format(sites="pkg/other.py:9"),
+    )
+    allowed = rename_expectation([("p.pkg.util.helper", "p.pkg.util.assist")], True)
+    assert verify(allowed, delta, rewritten=rewritten).ok
+
+
+def test_change_signature_requires_every_site_mapped_or_listed() -> None:
+    change = {
+        "qualified_name": "p.pkg.util.helper",
+        "path": "pkg/util.py",
+        "before": ["a"],
+        "after": ["a", "b"],
+        "sites": [
+            _site("pkg/app.py", 5, cs.DELTA_ARITY_OK),
+            _site("pkg/app.py", 9, cs.DELTA_ARITY_POSSIBLY_MISSING),
+            _site("pkg/cli.py", 3, cs.DELTA_ARITY_TOO_MANY),
+        ],
+    }
+    delta = _delta(
+        symbols={
+            "added": [],
+            "removed": [],
+            "renamed": [],
+            "changed": ["p.pkg.util.helper"],
+        },
+        signature_changes=[change],
+        arity_findings=[_site("pkg/cli.py", 3, cs.DELTA_ARITY_TOO_MANY)],
+    )
+    strict = verify(change_signature_expectation([]), delta)
+    assert strict.failures == (
+        cs.CONTRACT_SITES_UNMAPPED.format(
+            sites="pkg/app.py:9 (possibly_missing), pkg/cli.py:3 (too_many)"
+        ),
+    )
+    listed = verify(
+        change_signature_expectation(["pkg/app.py:9", "pkg/cli.py:3"]), delta
+    )
+    assert listed.ok
+    # A site the operation rewrote is mapped by construction: a
+    # `possibly_missing` there relies on a default the mapping supplied.
+    rewritten = verify(
+        change_signature_expectation(["pkg/cli.py:3"]),
+        delta,
+        rewritten=[("pkg/app.py:9", "exact")],
+    )
+    assert rewritten.ok
+
+
+def test_move_requires_no_new_cycle_and_updated_importers() -> None:
+    expectation = move_expectation("p.pkg.util.helper", "p.pkg.core.helper")
+    moved = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.core.helper", "path": "pkg/util.py"}
+    ]
+    clean = _delta(
+        symbols={"added": [], "removed": [], "renamed": moved, "changed": []}
+    )
+    assert verify(expectation, clean).ok
+    cyclic = _delta(
+        symbols={"added": [], "removed": [], "renamed": moved, "changed": []},
+        new_import_cycles=[["p.pkg.core", "p.pkg.util"]],
+        dangling_callers=[_dangling("main.py", 4)],
+    )
+    assert verify(expectation, cyclic).failures == (
+        cs.CONTRACT_DANGLING.format(sites="main.py:4"),
+        cs.CONTRACT_NEW_CYCLE.format(cycles="p.pkg.core -> p.pkg.util"),
+    )
+
+
+def test_every_operation_refuses_new_duplicates_and_parse_failures() -> None:
+    expectation = Expectation(operation="extract", added=("p.pkg.util.piece",))
+    delta = _delta(
+        symbols={
+            "added": ["p.pkg.util.piece"],
+            "removed": [],
+            "renamed": [],
+            "changed": [],
+        },
+        new_duplicates=[
+            {
+                "qualified_name": "p.pkg.util.piece",
+                "path": "pkg/util.py",
+                "start_line": 20,
+                "kind": cs.KIND_EXACT,
+                "similarity": 1.0,
+                "original": {
+                    "qualified_name": "p.pkg.core.piece",
+                    "path": "pkg/core.py",
+                    "start_line": 3,
+                },
+            }
+        ],
+    )
+    verdict = verify(expectation, delta, parse_failures=["pkg/util.py"])
+    assert verdict.failures == (
+        cs.CONTRACT_NEW_DUPLICATE.format(pairs="p.pkg.util.piece = p.pkg.core.piece"),
+        cs.CONTRACT_PARSE_FAILED.format(files="pkg/util.py"),
+    )
+
+
+def test_expectation_flags_can_waive_each_check() -> None:
+    lax = Expectation(
+        operation="inline",
+        removed=("p.pkg.util.helper",),
+        caller_count_unchanged=False,
+        no_dangling=False,
+        no_new_cycle=False,
+        no_new_duplicate=False,
+    )
+    delta = _delta(
+        symbols={
+            "added": [],
+            "removed": ["p.pkg.util.helper"],
+            "renamed": [],
+            "changed": [],
+        },
+        dangling_callers=[_dangling()],
+        call_sites={"before": 3, "after": 0},
+        new_import_cycles=[["a", "b"]],
+    )
+    assert verify(lax, delta).ok
+
+
+# --- through a real rename -------------------------------------------------------
+
+
+PROJECT = "contract_fixture"
+FIXTURE: dict[str, str] = {
+    "pkg/__init__.py": "",
+    "pkg/util.py": "def helper(a):\n    return a + 1\n",
+    "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+    "tests/__init__.py": "",
+    "tests/test_app.py": "from pkg.app import run\n\n\ndef test_run():\n    assert run() == 2\n",
+}
+
+
+def _write(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+@pytest.fixture
+def indexed(temp_repo: Path) -> tuple[Path, _StatefulIngestor, GraphUpdater]:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    return root, store, updater
+
+
+def test_real_rename_passes_its_contract_and_lists_affected_tests(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok
+    assert [t["qualified_name"] for t in report.verdict.affected_tests] == [
+        f"{PROJECT}.tests.test_app.test_run"
+    ]
+    assert "def assist(a):" in (root / "pkg/util.py").read_text()
+    assert "return assist(1)" in (root / "pkg/app.py").read_text()
+    # The graph followed the rename: the new name is what the graph knows.
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.assist") in store.nodes
+    assert (
+        cs.NodeLabel.FUNCTION.value,
+        f"{PROJECT}.pkg.util.helper",
+    ) not in store.nodes
+
+
+def test_real_rename_is_undone_when_the_contract_fails(
+    temp_repo: Path,
+) -> None:
+    # The new name already exists in the module: the planner does not check
+    # for collisions, so the rename lands two `assist` definitions and the
+    # graph reports the old symbol gone without a rename. The contract is
+    # what catches it, after the fact, and undoes the transaction.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    fixture = dict(FIXTURE)
+    fixture["pkg/util.py"] = (
+        "def assist(a):\n    return a\n\n\n" + FIXTURE["pkg/util.py"]
+    )
+    for rel, text in fixture.items():
+        _write(root, rel, text)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    before = {rel: (root / rel).read_text() for rel in fixture}
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+
+    assert not report.applied
+    assert report.verdict is not None
+    assert not report.verdict.ok
+    assert (
+        cs.CONTRACT_RENAME_MISSING.format(
+            old=f"{PROJECT}.pkg.util.helper", new=f"{PROJECT}.pkg.util.assist"
+        )
+        in report.message
+    )
+    for rel, text in before.items():
+        assert (root / rel).read_text() == text
+    assert load_history(root) == []
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.helper") in store.nodes
+
+
+def _real_project(
+    root: Path, files: dict[str, str]
+) -> tuple[_StatefulIngestor, GraphUpdater]:
+    for rel, text in files.items():
+        _write(root, rel, text)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=PROJECT,
+    )
+    updater.run(force=True)
+    return store, updater
+
+
+def test_real_class_rename_passes_its_contract(temp_repo: Path) -> None:
+    # A class carries no fingerprint; its methods do, and their rename is
+    # what proves the class moved with them.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "class Helper:\n    def one(self):\n        return 1\n\n    def two(self):\n        return 2\n",
+            "pkg/app.py": "from pkg.util import Helper\n\n\ndef run():\n    return Helper().two()\n",
+        },
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.Helper",
+        "Assist",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
+    assert (root / "pkg" / "util.py").read_text().startswith("class Assist:")
+    assert "Assist().two()" in (root / "pkg" / "app.py").read_text()
+
+
+def test_real_rename_survives_a_pre_existing_duplicate(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    body = "    x = a + 1\n    y = x * 2\n    z = y - 3\n    w = z / 4\n    return w\n"
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n" + body + "\n\ndef twin(a):\n" + body,
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+    # `twin` duplicated `helper` before the edit; the rename introduced nothing.
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
+
+
+def test_real_rename_survives_a_pre_existing_arity_fault(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n    return a\n\n\ndef other(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper, other\n\n\ndef run():\n    return helper(1)\n\n\ndef broken():\n    return other(1, 2)\n",
+        },
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+    # `broken()` was wrong before the edit; a rename maps no sites.
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
+
+
+def test_a_measurement_failure_is_reported_not_raised(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, _updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def broken_reingest(paths: list[str]) -> None:
+        raise RuntimeError("memgraph went away")
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=broken_reingest,
+    )
+    # The transaction landed; the unmeasured contract is a message, not a traceback.
+    assert report.applied
+    assert report.transaction_id
+    assert report.verdict is None
+    assert "memgraph went away" in report.message
+    assert (root / "pkg" / "util.py").read_text().startswith("def assist(a):")
+
+
+def test_verdict_serialises_as_an_object(temp_repo: Path) -> None:
+    import json
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+    assert report.verdict is not None
+    payload = json.loads(json.dumps(report.verdict._asdict()))
+    assert payload["ok"] is True
+    assert set(payload) >= {"ok", "failures", "affected_tests", "delta"}
+
+
+def test_real_empty_class_rename_passes_its_contract(temp_repo: Path) -> None:
+    # No methods to carry the class: the lone removed/added container pair
+    # in the same file is the rename.
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "class Marker:\n    pass\n",
+            "pkg/app.py": "from pkg.util import Marker\n\n\ndef run():\n    return Marker()\n",
+        },
+    )
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.Marker",
+        "Flag",
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
+
+
+def test_a_failed_contract_refuses_to_roll_back_over_a_later_edit(
+    temp_repo: Path,
+) -> None:
+    from codebase_rag.editing.transaction import EditTransaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    # The new name already exists, so the contract fails (see the test above).
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_then_edit(paths: list[str]) -> None:
+        # Another edit lands between the rename's commit and its rollback.
+        updater.reingest(paths)
+        tx = EditTransaction(root)
+        tx.stage("pkg/note.py", "# later edit\n")
+        tx.commit()
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_edit,
+    )
+    # Not rolled back: the later edit would have been undone instead.
+    assert report.applied
+    assert report.verdict is not None
+    assert not report.verdict.ok
+    assert "not rolled back" in report.message
+    assert (root / "pkg" / "note.py").read_text() == "# later edit\n"
+    assert (
+        "def assist(a):\n    return a\n\n\ndef assist(a):"
+        in (root / "pkg" / "util.py").read_text()
+    )
+
+
+def test_a_failed_rollback_reingest_is_reported_not_raised(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+    calls: list[int] = []
+
+    def flaky_reingest(paths: list[str]) -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            updater.reingest(paths)
+            return
+        raise RuntimeError("memgraph went away")
+
+    before = (root / "pkg" / "util.py").read_text()
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=flaky_reingest,
+    )
+    # The files are restored, the failure is in the report, and the graph is flagged.
+    assert not report.applied
+    assert report.graph_incomplete
+    assert "memgraph went away" in report.message
+    assert (root / "pkg" / "util.py").read_text() == before
+
+
+def test_change_signature_does_not_accept_an_unknown_verdict() -> None:
+    delta = _delta(
+        signature_changes=[
+            {
+                "qualified_name": "proj.pkg.util.helper",
+                "before": ["a"],
+                "after": ["a", "b"],
+                "sites": [_site("pkg/app.py", 5, cs.DELTA_ARITY_UNKNOWN)],
+            }
+        ]
+    )
+    verdict = verify(change_signature_expectation([]), delta)
+    assert not verdict.ok
+    assert any("pkg/app.py:5" in f for f in verdict.failures)
+
+
+def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
+    # `TransactionConflict` covers two opposite situations. The test above
+    # pins the one where a LATER edit is stacked on top: the rename is still
+    # applied and must say so. Here another actor reverses the rename's own
+    # transaction while the postcondition is being measured, so the files are
+    # restored -- and reporting `applied=True` would be a lie about the tree
+    # (Greptile, PR #1547).
+    from codebase_rag.editing.transaction import undo_transaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    # The new name already exists, so the contract fails and a rollback runs.
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+    undone: list[str] = []
+
+    def reingest_then_undo(paths: list[str]) -> None:
+        updater.reingest(paths)
+        # The other actor: reverses this very transaction before the
+        # rollback below can, leaving the history empty.
+        from codebase_rag.editing.transaction import load_history
+
+        entries = load_history(root)
+        if entries:
+            tx_id = str(entries[-1][cs.EDIT_KEY_ID])
+            undo_transaction(root, tx_id)
+            undone.append(tx_id)
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_undo,
+    )
+
+    assert undone, "the concurrent undo never ran; the race was not exercised"
+    # The tree was restored by the other actor, so this is NOT applied.
+    assert not report.applied
+    assert report.verdict is not None
+    assert not report.verdict.ok
+    assert "already been reversed" in report.message
+    assert "def helper(a):" in (root / "pkg" / "util.py").read_text()
+
+
+def test_an_evicted_transaction_is_not_reported_as_rolled_back(
+    temp_repo: Path,
+) -> None:
+    # The history keeps EDIT_HISTORY_LIMIT entries. Enough later edits evict
+    # this rename's entry while its rename is still on disk, and reading that
+    # absence as "another actor undid it" claims a rollback that never
+    # happened (Greptile, PR #1547). Absence is evidence only while the
+    # history has not reached its limit.
+    from codebase_rag.editing.transaction import EditTransaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_then_flood(paths: list[str]) -> None:
+        updater.reingest(paths)
+        # Push this rename's entry out of the bounded history.
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            tx.commit()
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_flood,
+    )
+
+    # The rename IS still on disk, so it must not be reported as reverted.
+    assert (
+        "def assist(a):\n    return a\n\n\ndef assist(a):"
+        in (root / "pkg" / "util.py").read_text()
+    )
+    assert report.applied, "an evicted entry was misread as a completed undo"
+    assert "cannot be told" in report.message
+
+
+def test_an_evicted_rename_survives_the_history_shrinking_again(
+    temp_repo: Path,
+) -> None:
+    # The sharper form of the eviction bug. My first fix asked whether the
+    # history was at its limit -- but undoing the retained entries shrinks it
+    # again, so the eviction becomes invisible and absence read as "undone"
+    # for a rename still on disk (Greptile, PR #1547). `applied` is a claim
+    # about the tree, so the tree decides it.
+    from codebase_rag.editing.transaction import EditTransaction, undo_transaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_evict_then_shrink(paths: list[str]) -> None:
+        updater.reingest(paths)
+        ids: list[str] = []
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            ids.append(tx.commit())
+        # Undo the retained entries: the history is now SHORT again, so its
+        # length no longer records that anything was evicted.
+        for _ in range(len(ids) - 1):
+            from codebase_rag.editing.transaction import load_history
+
+            entries = load_history(root)
+            if not entries:
+                break
+            undo_transaction(root, str(entries[-1][cs.EDIT_KEY_ID]))
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_evict_then_shrink,
+    )
+
+    on_disk = (root / "pkg" / "util.py").read_text()
+    assert "def assist(a):\n    return a\n\n\ndef assist(a):" in on_disk
+    assert report.applied, "a rename still on disk was reported as rolled back"
+
+
+def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
+    temp_repo: Path,
+) -> None:
+    # A whole-file search for the old name matched any symbol that happened
+    # to share it, so an independent `helper` in a touched file read as proof
+    # this rename had been reversed (Greptile, PR #1547). The recorded sites
+    # are the only places its reversal can show.
+    from codebase_rag.editing.transaction import EditTransaction
+
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            # `Independent.helper` shares the old name but is a different
+            # symbol, untouched by the rename.
+            "pkg/util.py": (
+                "def assist(a):\n    return a\n\n\n"
+                "class Independent:\n    def helper(self):\n        return 1\n\n\n"
+                "def helper(a):\n    return a\n"
+            ),
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def reingest_then_evict(paths: list[str]) -> None:
+        updater.reingest(paths)
+        for i in range(cs.EDIT_HISTORY_LIMIT + 1):
+            tx = EditTransaction(root)
+            tx.stage(f"pkg/filler_{i}.py", f"# {i}\n")
+            tx.commit()
+
+    report = rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=reingest_then_evict,
+    )
+
+    # `Independent.helper` is still there, but it is not this rename's site.
+    assert "def helper(self):" in (root / "pkg" / "util.py").read_text()
+    assert report.applied, "an unrelated same-named symbol was read as a rollback"
+
+
+# A move must leave importers updated, which the module docstring has always
+# promised and nothing checked: the contract asked "is the definition at its
+# new home?" and never "does an importer still target the old one?" (#1825).
+def test_a_move_fails_while_an_importer_targets_the_old_module() -> None:
+    """The whole point of the operation is that nobody points at the old path.
+
+    Passing here tells the caller the move is complete. The symptom then
+    surfaces later as a resolution failure far from the move that caused it,
+    which is the shape this repo keeps hitting.
+    """
+    expectation = move_expectation("p.pkg.util.helper", "p.pkg.core.helper")
+    moved = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.core.helper", "path": "pkg/util.py"}
+    ]
+    stale = _delta(
+        symbols={"added": [], "removed": [], "renamed": moved, "changed": []},
+        stale_importers=[{"importer": "p.pkg.app", "path": "pkg/app.py", "line": 1}],
+    )
+
+    verdict = verify(expectation, stale)
+
+    assert not verdict.ok
+    assert cs.CONTRACT_STALE_IMPORTER.format(sites="pkg/app.py:1") in verdict.failures
+
+
+def test_a_move_passes_when_every_importer_followed() -> None:
+    """The control: no stale importer must still pass.
+
+    Without this, "always fail a move" satisfies the test above and makes
+    the operation unusable.
+    """
+    expectation = move_expectation("p.pkg.util.helper", "p.pkg.core.helper")
+    moved = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.core.helper", "path": "pkg/util.py"}
+    ]
+
+    assert verify(
+        expectation,
+        _delta(symbols={"added": [], "removed": [], "renamed": moved, "changed": []}),
+    ).ok
+
+
+def test_a_rename_is_not_failed_by_a_stale_importer() -> None:
+    """The second control: this is a MOVE postcondition, not a global one.
+
+    A rename does not change a module path, so an importer edge reported
+    against it is not that rename's fault, and failing it here would break
+    every rename whose delta happens to carry one.
+    """
+    expectation = rename_expectation(
+        [("p.pkg.util.helper", "p.pkg.util.assist")], heuristic_allowed=False
+    )
+    renamed = [
+        {"old": "p.pkg.util.helper", "new": "p.pkg.util.assist", "path": "pkg/util.py"}
+    ]
+
+    assert verify(
+        expectation,
+        _delta(
+            symbols={"added": [], "removed": [], "renamed": renamed, "changed": []},
+            stale_importers=[
+                {"importer": "p.pkg.app", "path": "pkg/app.py", "line": 1}
+            ],
+        ),
+    ).ok
+
+
+# The producer behind `stale_importers`. The contract tests above feed it a
+# synthetic delta, so without these the detection logic itself is untested
+# and the contract check would pass over a field nothing ever populates.
+def _snapshot(
+    definitions: dict[str, str],
+    imports: dict[str, set[str]],
+    fingerprint: str = "",
+):
+    """A Snapshot carrying only what `_stale_importers` reads.
+
+    `definitions` maps qualified name -> path; `imports` maps importing
+    module -> the modules it imports.
+
+    `fingerprint` matters only to the end-to-end wiring test: the delta pairs
+    a removal with an addition by SHAPE, and `_pair_by_shape` skips a
+    definition whose fingerprint is empty. A fixture without one produces
+    add + remove rather than a rename, so a move never reads as one.
+    """
+    from codebase_rag.structural_delta import Definition, Snapshot
+
+    return Snapshot(
+        paths=frozenset(definitions.values()),
+        definitions={
+            qn: Definition(
+                label="Function",
+                qualified_name=qn,
+                name=qn.rpartition(".")[2],
+                path=path,
+                start_line=1,
+                end_line=2,
+                positional_params=None,
+                fingerprint=fingerprint,
+                fingerprint_nodes=1 if fingerprint else 0,
+                branches=frozenset(),
+            )
+            for qn, path in definitions.items()
+        },
+        callees={},
+        sites=(),
+        imports={qn: frozenset(t) for qn, t in imports.items()},
+        module_paths={qn: f"{qn.replace('.', '/')}.py" for qn in imports},
+    )
+
+
+def _renamed(old: str, new: str) -> dict:
+    return {
+        "added": [],
+        "removed": [],
+        "changed": [],
+        "renamed": [{"old": old, "new": new}],
+    }
+
+
+def test_an_importer_of_a_vacated_module_is_reported() -> None:
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    stale = _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+
+    assert [entry["importer"] for entry in stale] == ["p.pkg.app"]
+
+
+def test_a_module_that_still_defines_something_is_not_vacated() -> None:
+    """Moving one helper out of a busy module must not indict its siblings.
+
+    Without this the check reports every importer of everything left behind,
+    which would make the contract unusable on any real move.
+    """
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={
+            "p.pkg.core.helper": "pkg/core.py",
+            # The old module still has a resident.
+            "p.pkg.util.other": "pkg/util.py",
+        },
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+        == []
+    )
+
+
+def test_a_plain_rename_vacates_no_module() -> None:
+    """A rename keeps the module, so it can produce no stale importer.
+
+    This is what keeps the check specific to moves without the contract
+    having to distinguish them.
+
+    The fixture leaves `p.pkg.util` with NO surviving definition, so the
+    vacancy check cannot be what saves it -- only the module-changed test
+    can. An earlier version defined the renamed symbol in that same module,
+    which meant both guards suppressed the finding and removing either one
+    left the test green: it could not tell which guard was working
+    (measured, #1825).
+    """
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.other.thing": "other.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.util.assist"))
+        == []
+    )
+
+
+def test_an_importer_of_an_untouched_module_is_not_reported() -> None:
+    """The control: only the VACATED module's importers count."""
+    from codebase_rag.structural_delta import _stale_importers
+
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.unrelated"}},
+    )
+
+    assert (
+        _stale_importers(after, _renamed("p.pkg.util.helper", "p.pkg.core.helper"))
+        == []
+    )
+
+
+def test_the_assembled_delta_actually_carries_stale_importers() -> None:
+    """The WIRING, not the unit: does anything consult the producer?
+
+    The tests above drive `_stale_importers` directly and hand-build the
+    delta the contract reads, so between them nothing asserts the two are
+    connected. Replacing the call with a literal `[]` left all of them
+    green (measured) -- a correct producer nothing invokes, which is the
+    same shape as a correct check nothing wires in.
+
+    Drives the real assembler and asserts the field arrives populated.
+    """
+    from codebase_rag.structural_delta import structural_delta
+
+    # Same name, same body, different file: `_pair_by_move` reads that as a
+    # move, which is what makes `renamed` carry the pair the producer needs.
+    before = _snapshot(
+        definitions={"p.pkg.util.helper": "pkg/util.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+        fingerprint="shape-1",
+    )
+    # The symbol moved to `core`, leaving `util` with no residents, while
+    # `app` still imports `util`.
+    after = _snapshot(
+        definitions={"p.pkg.core.helper": "pkg/core.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+        fingerprint="shape-1",
+    )
+
+    delta = structural_delta(lambda *_args, **_kwargs: [], "p", before, after)
+
+    assert [entry["importer"] for entry in delta["stale_importers"]] == ["p.pkg.app"]
+
+
+def test_the_assembled_delta_reports_none_when_nothing_moved() -> None:
+    """The control: the wiring must not manufacture a finding.
+
+    Without this, "always report every importer" satisfies the test above.
+    """
+    from codebase_rag.structural_delta import structural_delta
+
+    snapshot = _snapshot(
+        definitions={"p.pkg.util.helper": "pkg/util.py"},
+        imports={"p.pkg.app": {"p.pkg.util"}},
+    )
+
+    delta = structural_delta(lambda *_args, **_kwargs: [], "p", snapshot, snapshot)
+
+    assert delta["stale_importers"] == []

@@ -120,7 +120,9 @@ def test_python_barrel_and_dunder_all(tmp_path: Path) -> None:
     )
     # The barrel keeps exporting `helper`; only the leaf moved.
     assert rewrite.after == "from pkg.helpers import assist as helper"
-    assert rewriter.rename_in_all("pkg/__init__.py", "other", "another") == 1
+    # Returns the OFFSET of each rewritten literal, not a count: the rollback
+    # check needs to know WHICH entries were touched (PR #1547).
+    assert len(rewriter.rename_in_all("pkg/__init__.py", "other", "another")) == 1
     (result,) = rewriter.patcher.apply().values()
     assert (
         result.content.decode()

@@ -15,6 +15,7 @@
 # survive the filter.
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from codebase_rag import constants as cs
 # passes whether or not scoping works, so it would prove nothing.
 ALPHA = "alpha__aaaa1111"
 BETA = "beta__bbbb2222"
+GAMMA = "gamma__cccc3333"
 
 _ROWS = [
     {"qualified_name": f"{ALPHA}.service.handler", "name": "handler"},
@@ -1298,6 +1300,12 @@ class TestSemanticSearchScope:
 
         handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
         handler._ingestor_lock = _NullLock()
+        # A complete graph: `query_code_graph` and the `_graph_query`
+        # tools refuse when these say otherwise, so a fixture that
+        # omits them raises AttributeError instead of testing anything.
+        handler._graph_incomplete = False
+        handler._persisted_incomplete = lambda _project: False
+        handler.project_root = "/repo"
         handler._semantic_search_tool = MagicMock()
         handler._semantic_search_tool.function = AsyncMock(return_value="ok")
         handler.ingestor = MagicMock()
@@ -1322,6 +1330,12 @@ class TestSemanticSearchScope:
 
         handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
         handler._ingestor_lock = _NullLock()
+        # A complete graph: `query_code_graph` and the `_graph_query`
+        # tools refuse when these say otherwise, so a fixture that
+        # omits them raises AttributeError instead of testing anything.
+        handler._graph_incomplete = False
+        handler._persisted_incomplete = lambda _project: False
+        handler.project_root = "/repo"
         handler._semantic_search_tool = MagicMock()
         handler._semantic_search_tool.function = AsyncMock(return_value="ok")
         handler.ingestor = MagicMock()
@@ -1361,6 +1375,12 @@ def _handler_returning(
 
     handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
     handler._ingestor_lock = _NullLock()
+    # A complete graph: `query_code_graph` and the `_graph_query`
+    # tools refuse when these say otherwise, so a fixture that
+    # omits them raises AttributeError instead of testing anything.
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = lambda _project: False
+    handler.project_root = "/repo"
     handler._query_tool = MagicMock()
     handler._query_tool.function = AsyncMock(
         return_value=QueryGraphData(
@@ -1404,6 +1424,12 @@ def _registry_over_graph(rows: list[dict], cypher: str):
 
     handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
     handler._ingestor_lock = _NullLock()
+    # A complete graph: `query_code_graph` and the `_graph_query`
+    # tools refuse when these say otherwise, so a fixture that
+    # omits them raises AttributeError instead of testing anything.
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = lambda _project: False
+    handler.project_root = "/repo"
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=list(rows))
     handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
@@ -2421,3 +2447,1518 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
 
         ingestor.fetch_all.assert_called_once()
         assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
+
+
+class TestTheCachedUpdatersProject:
+    """A cached updater belongs to one project and must not answer for another.
+
+    `_live_updater` is built by `_update_repository_sync` for the DERIVED
+    project name. A caller naming a different project (the rename tool takes
+    an explicit `project`) would otherwise be handed that updater: the delta
+    is then measured under the selected prefix while the re-ingest writes
+    under the derived one, so a correct rename reads as not applied, is
+    rolled back, and the graph ends up split across two project names.
+    """
+
+    def _registry(self, tmp_path: Path, cached_project: str | None):
+        from unittest.mock import MagicMock
+
+        from codebase_rag.mcp.tools import MCPToolsRegistry
+
+        registry = MCPToolsRegistry(
+            project_root=str(tmp_path),
+            ingestor=MagicMock(),
+            cypher_gen=MagicMock(),
+        )
+        if cached_project is not None:
+            cached = MagicMock()
+            cached.project_name = cached_project
+            registry._live_updater = cached
+        return registry
+
+    def test_a_cached_updater_for_another_project_is_not_reused(
+        self, tmp_path: Path
+    ) -> None:
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        # Asking for BETA must not hand back ALPHA's updater. There is no
+        # graph here, so rebuilding refuses -- which is the point: the
+        # refusal proves the cached one was rejected rather than returned.
+        registry.ingestor.list_projects.return_value = []
+        with pytest.raises(ValueError):
+            registry._updater_for_reingest(BETA)
+
+    def test_the_cached_updater_is_reused_for_its_own_project(
+        self, tmp_path: Path
+    ) -> None:
+        # The known-positive: without this, the test above would pass just as
+        # well against a method that never reuses a cached updater at all.
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        assert registry._updater_for_reingest(ALPHA) is registry._live_updater
+
+    def test_an_unnamed_caller_still_reuses_the_cached_updater(
+        self, tmp_path: Path
+    ) -> None:
+        registry = self._registry(tmp_path, cached_project=ALPHA)
+        assert registry._updater_for_reingest() is registry._live_updater
+
+
+# A graph known to be partial must not be READ as if it were whole.
+#
+# `_reingest` has always refused on `_graph_incomplete`, but every read tool
+# dispatched regardless, so after a failed run -- or a rename whose rollback
+# re-ingest failed -- `definition`, `callers`, `resolve` and
+# `query_code_graph` answered from the partial graph. A missing definition
+# is indistinguishable from one that never existed, so the caller cannot
+# tell a restored graph from a complete one (Greptile, PR #1547).
+def _registry_with_incomplete_flag(*, in_process: bool, persisted: bool):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = in_process
+    handler._persisted_incomplete = MagicMock(return_value=persisted)
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_read_refuses_while_this_process_knows_the_graph_is_partial() -> None:
+    handler = _registry_with_incomplete_flag(in_process=True, persisted=False)
+    ran = []
+
+    result = await handler._graph_query(cs.MCPToolName.DEFINITION, ALPHA, ran.append)
+
+    assert ran == [], "the query ran against a graph known to be incomplete"
+    assert cs.DICT_KEY_ERROR in result
+    assert ALPHA in result[cs.DICT_KEY_ERROR]
+
+
+@pytest.mark.asyncio
+async def test_a_read_refuses_on_a_marker_left_by_an_EARLIER_process() -> None:
+    # The in-process flag is lost on restart; the durable marker is not.
+    handler = _registry_with_incomplete_flag(in_process=False, persisted=True)
+    ran = []
+
+    result = await handler._graph_query(cs.MCPToolName.CALLERS, ALPHA, ran.append)
+
+    assert ran == []
+    assert cs.DICT_KEY_ERROR in result
+
+
+@pytest.mark.asyncio
+async def test_a_read_runs_normally_when_the_graph_is_whole() -> None:
+    # The control: without it, a guard that refused EVERYTHING would pass
+    # both tests above.
+    handler = _registry_with_incomplete_flag(in_process=False, persisted=False)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, ALPHA, lambda name: ran.append(name) or {"ok": True}
+    )
+
+    assert ran == [ALPHA]
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_the_incomplete_guard_does_not_intercept_a_WRITE() -> None:
+    # `rename` shares `_graph_query` for the ingestor lock but is a write:
+    # guarding it too replaced its own refusal payload (carrying `ambiguous`
+    # and `unlocatable`) with a generic error, breaking three rename tests.
+    # The guard is keyed on an explicit read-tool set for exactly this reason.
+    handler = _registry_with_incomplete_flag(in_process=True, persisted=True)
+    ran = []
+
+    result = await handler._graph_query(
+        cs.MCPToolName.RENAME, ALPHA, lambda name: ran.append(name) or {"applied": True}
+    )
+
+    assert ran == [ALPHA], "the write was refused by the read guard"
+    assert result == {"applied": True}
+
+
+@pytest.mark.asyncio
+async def test_query_code_graph_refuses_on_an_incomplete_graph() -> None:
+    # It does NOT route through `_graph_query` -- it binds a per-request
+    # query tool -- so it needs the check of its own. Without it the guard
+    # covered eight tools while the commit claimed nine (greptile-local,
+    # PR #1547): the freeform query still returned rows from a partial graph.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._persisted_incomplete = MagicMock(return_value=True)
+    handler._query_tool = MagicMock()
+    handler._query_tool.function = AsyncMock()
+    # The guard now runs INSIDE the read's lock, i.e. after the per-request
+    # tool is built, so the fixture needs what that construction touches.
+    handler.cypher_gen = MagicMock()
+    handler._stderr_console = MagicMock()
+
+    result = await handler.query_code_graph("anything", project=ALPHA)
+
+    # The tool is never reached: `query_code_graph` swallows exceptions into
+    # an error payload, so a raising double would look like a pass. Assert
+    # the call did not happen instead.
+    handler._query_tool.function.assert_not_awaited()
+    assert result[cs.DICT_KEY_RESULTS] == []
+    assert ALPHA in result[cs.MCP_KEY_ERROR]
+
+
+@pytest.mark.asyncio
+async def test_query_code_graph_runs_when_the_graph_is_whole() -> None:
+    # The control: without it a guard that refused unconditionally would
+    # pass the test above.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._query_tool = MagicMock()
+    handler._query_tool.function = AsyncMock(
+        return_value=_GraphData(error=None, results=[{"qualified_name": "m.f"}])
+    )
+
+    result = await handler.query_code_graph("anything")
+
+    handler._query_tool.function.assert_awaited_once_with("anything")
+    assert result[cs.DICT_KEY_RESULTS] == [{"qualified_name": "m.f"}]
+
+
+class _GraphData:
+    """The minimal shape `query_code_graph` consumes: `.model_dump()` + `.error`."""
+
+    def __init__(self, error: str | None, results: list[dict]) -> None:
+        self.error = error
+        self._results = results
+
+    def model_dump(self) -> dict:
+        return {
+            "error": self.error,
+            "query_used": "MATCH (n) RETURN n",
+            "results": self._results,
+            "summary": "",
+        }
+
+
+def test_a_failed_rollback_reingest_is_marked_DURABLY() -> None:
+    # The in-process flag dies with the process; the half-restored graph does
+    # not. Without a durable marker a fresh registry sees a project that looks
+    # whole and serves reads from it (Greptile, PR #1547).
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=True)
+
+    report = MagicMock()
+    report.graph_incomplete = True
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    # Durable, not merely in-process: this is the whole point of the finding.
+    handler._persist_incomplete.assert_called_once()
+    assert handler._persist_incomplete.call_args.args[0] == ALPHA
+    assert handler._persist_incomplete.call_args.args[1] is True
+    assert handler._persist_incomplete.call_args.kwargs["writing"] is True
+    assert handler._graph_incomplete is True
+    assert isinstance(payload, dict)
+
+
+def test_a_marker_that_cannot_be_written_is_REPORTED() -> None:
+    # Graph partial AND unrecordable: the caller must be told, because a
+    # restarted process cannot infer it.
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=False)
+
+    report = MagicMock()
+    report.graph_incomplete = True
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    assert cs.DICT_KEY_ERROR in payload
+    assert ALPHA in payload[cs.DICT_KEY_ERROR]
+
+
+def test_a_clean_rename_marks_NOTHING() -> None:
+    # The control: without it a fix that always marked would pass both above.
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    # Not indexed here, so `_run_rename` passes reingest=None and does not
+    # build an updater: this test is about what happens AFTER the report
+    # comes back saying the rollback's re-ingest failed.
+    handler.ingestor.list_projects = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._persist_incomplete = MagicMock(return_value=True)
+
+    report = MagicMock()
+    report.graph_incomplete = False
+    report.verdict = None
+    report.sites = []
+    report.ambiguous = []
+    report._asdict = MagicMock(return_value={"applied": True})
+
+    with (
+        patch("codebase_rag.graph_query.source_root_for", return_value=Path("/repo")),
+        patch("codebase_rag.editing.rename.rename", return_value=report),
+        patch("codebase_rag.editing.rename.sites_for", return_value=[]),
+    ):
+        payload = handler._run_rename(ALPHA, "p.m.f", "g", False, False)
+
+    handler._persist_incomplete.assert_not_called()
+    assert handler._graph_incomplete is False
+    assert cs.DICT_KEY_ERROR not in payload
+
+
+def test_every_graph_reader_is_guarded() -> None:
+    """A tool that reads the graph must refuse while the graph is partial.
+
+    The point is the FAILURE MODE, not today's list. An explicit inventory of
+    guarded readers fails open: seven readers went unguarded from the day the
+    refusal was written because nobody added them to it (PR #1547). Here a
+    new `MCPToolName` counts as a reader by default, so this test fails until
+    it is either routed through `_graph_query`, calls `_incomplete_refusal`
+    itself, or is named a non-reader deliberately.
+    """
+    import ast
+    import inspect
+
+    from codebase_rag.mcp import tools as mcp_tools
+
+    # AST, not a substring search. Every tool also names itself in its
+    # `_tools[...]` registration, so `"cs.MCPToolName.X" in source` is true
+    # for all of them and the check could never fail -- verified by removing
+    # a guard and watching it still pass.
+    tree = ast.parse(inspect.getsource(mcp_tools))
+    refused: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else None
+        if name != "_incomplete_refusal":
+            # `asyncio.to_thread(self._incomplete_refusal, project, TOOL)`
+            # passes it as an argument rather than calling it directly.
+            passed = any(
+                isinstance(a, ast.Attribute) and a.attr == "_incomplete_refusal"
+                for a in node.args
+            )
+            if not passed:
+                continue
+        for arg in node.args:
+            if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Attribute):
+                if arg.value.attr == "MCPToolName":
+                    refused.add(arg.attr)
+
+    unguarded = []
+    for tool in mcp_tools._GRAPH_READING_TOOLS:
+        if tool in mcp_tools._READS_THE_GRAPH:
+            continue  # guarded by the `_graph_query` dispatcher
+        if tool.name not in refused:
+            unguarded.append(tool.value)
+    assert not unguarded, (
+        f"these tools read the graph but never refuse on a partial one: "
+        f"{sorted(unguarded)}. Guard them, or add them to _NOT_GRAPH_READERS."
+    )
+
+
+def test_the_reader_inventory_covers_every_tool() -> None:
+    # Neither set may drift from the enum: a member in neither would be
+    # silently skipped by the test above.
+    from codebase_rag.mcp import tools as mcp_tools
+
+    covered = mcp_tools._GRAPH_READING_TOOLS | mcp_tools._NOT_GRAPH_READERS
+    assert covered == frozenset(cs.MCPToolName)
+    assert not (mcp_tools._GRAPH_READING_TOOLS & mcp_tools._NOT_GRAPH_READERS)
+
+
+# A store OUTAGE is not an incomplete graph.
+#
+# `_persisted_incomplete` answers True when it cannot reach the store, which
+# is right for a reingest (never start on an unknown state) and wrong for a
+# read: it reported every outage as "graph incomplete" and buried the real
+# error. Reads go through `_marker_says_incomplete`, which treats an
+# unreachable store as no verdict. `test_mcp_errors_are_reported_not_raised`
+# in test_graph_query.py pins this for the `_graph_query` dispatcher; these
+# seven bypass that dispatcher, so the covered path is not the broken one
+# (M1 CGR-3, PR #1547).
+def _registry_with_a_dead_store():
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(side_effect=RuntimeError("store is down"))
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    return handler
+
+
+def test_a_dead_store_is_not_reported_as_an_incomplete_graph() -> None:
+    handler = _registry_with_a_dead_store()
+
+    # The decision the seven share. False means "no verdict, carry on and let
+    # the read fail as itself" -- NOT "the graph is fine".
+    assert handler._marker_says_incomplete(ALPHA) is False
+    assert (
+        handler._incomplete_refusal(ALPHA, cs.MCPToolName.GET_FUNCTION_SOURCE) is None
+    )
+
+
+def test_the_reingest_default_still_refuses_on_a_dead_store() -> None:
+    # The asymmetry is the point: same store, opposite answer, because a
+    # write that starts on an unknown graph cannot be undone.
+    handler = _registry_with_a_dead_store()
+
+    assert handler._persisted_incomplete(ALPHA) is True
+
+
+# One project's damage must not make every other project unreadable, and a
+# healthy project's recovery must not clear the damaged one's warning
+# (Greptile, PR #1547).
+def _registry_incomplete_for(project: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._incomplete_project = project
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_one_projects_damage_does_not_block_another() -> None:
+    handler = _registry_incomplete_for(ALPHA)
+
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_unattributed_damage_still_blocks_everything() -> None:
+    # A wipe spans every project, and a failure before the name is known
+    # could have touched anything: None must refuse for all.
+    handler = _registry_incomplete_for(None)
+
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is not None
+
+
+@pytest.mark.asyncio
+async def test_graph_query_refuses_only_the_DAMAGED_project() -> None:
+    # `_graph_query` read the bare registry flag while the direct readers
+    # used the project-scoped helper, so project A's failed recovery blocked
+    # a read explicitly scoped to healthy project B (Greptile, PR #1547).
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._persisted_incomplete = MagicMock(return_value=False)
+
+    ran: list[str] = []
+    damaged = await handler._graph_query(cs.MCPToolName.DEFINITION, ALPHA, ran.append)
+    healthy = await handler._graph_query(
+        cs.MCPToolName.DEFINITION, BETA, lambda n: ran.append(n) or {"ok": True}
+    )
+
+    assert cs.DICT_KEY_ERROR in damaged
+    assert healthy == {"ok": True}, "a healthy project was refused"
+    assert ran == [BETA]
+
+
+def test_every_guard_sits_inside_its_lock() -> None:
+    """A guard evaluated before the lock decides on a graph it has not pinned.
+
+    An index or update can acquire the lock, mark the graph incomplete and
+    release it between the check and the read, after which the approved read
+    runs against the partial graph. I fixed four readers this way and missed
+    three, and reported the race closed (Greptile, PR #1547) -- so this is
+    structural rather than a test per reader.
+    """
+    import ast
+    import inspect
+
+    from codebase_rag.mcp import tools as mcp_tools
+
+    tree = ast.parse(inspect.getsource(mcp_tools))
+    offenders: list[str] = []
+
+    def guard_lines(node: ast.AST) -> list[int]:
+        found = []
+        for n in ast.walk(node):
+            if isinstance(n, ast.Call):
+                names = [
+                    a.attr for a in [n.func, *n.args] if isinstance(a, ast.Attribute)
+                ]
+                if "_incomplete_refusal" in names:
+                    found.append(n.lineno)
+        return found
+
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        guards = guard_lines(fn)
+        if not guards:
+            continue
+        locks = [
+            n.lineno
+            for n in ast.walk(fn)
+            if isinstance(n, ast.AsyncWith) and "_ingestor_lock" in ast.dump(n)
+        ]
+        if not locks:
+            continue  # no lock in this handler at all
+        # Every guard must come after the lock statement that encloses it.
+        if min(guards) < min(locks):
+            offenders.append(
+                f"{fn.name} (guard line {min(guards)} < lock {min(locks)})"
+            )
+
+    assert not offenders, (
+        "these handlers decide before pinning the graph: "
+        + ", ".join(sorted(offenders))
+    )
+
+
+# A successful clear for ONE project must not speak for another, and a
+# project-scoped latch must not block an unrelated project's recovery
+# (Greptile, PR #1547).
+def _registry_for_marker_clear(cleared: bool):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persist_incomplete = MagicMock(return_value=cleared)
+    # Healthy on disk: the in-process flag is the only thing in play.
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_clearing_one_project_keeps_anothers_warning() -> None:
+    """ALPHA is partial in-process only; clearing healthy BETA must not heal it.
+
+    The damaging failure could not write ALPHA's durable marker, so the
+    in-process flag is the ONLY record that ALPHA is partial. A blanket
+    reset on BETA's success discards it and lets reads onto ALPHA's
+    partial graph.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+
+    assert handler._require_marker_cleared(BETA) is None
+
+    assert handler._graph_incomplete is True, "BETA's clear healed ALPHA's flag"
+    assert handler._incomplete_project == ALPHA
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+
+
+def test_clearing_a_project_still_heals_its_own_warning() -> None:
+    """The control: a clear for the project the flag is ABOUT must heal it.
+
+    Without this, scoping the reset could be implemented as "never reset",
+    which passes the test above and breaks recovery entirely.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+
+    assert handler._require_marker_cleared(ALPHA) is None
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_clearing_a_project_still_heals_unattributed_damage() -> None:
+    """An unattributed flag is owned by nobody, so any clear may settle it.
+
+    This is the pre-existing behaviour for the common single-project case,
+    where the flag is set with no name and cleared by the run that earned it.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+
+    assert handler._require_marker_cleared(ALPHA) is None
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+
+
+def test_two_damaged_projects_block_either_projects_clear() -> None:
+    """The two-named-projects route into the broad unattributed state.
+
+    `_invalidate_graph_for` widens the attribution to None when a SECOND,
+    different project is damaged. That None means "more than one project is
+    partial", and neither project's successful clear may retire it.
+
+    Distinct from the failed-wipe route asserted in
+    `test_a_successful_clear_cannot_settle_a_widened_flag`: both end at
+    `_incomplete_project is None`, and mutating this widening was invisible
+    to every other test in the suite. Both directions are checked below,
+    because a guard reading the flag for ALPHA and not for BETA would be
+    satisfied by testing only one.
+    """
+    for clearing in (ALPHA, BETA):
+        handler = _registry_for_marker_clear(cleared=True)
+        handler._invalidate_graph_for(ALPHA)
+        handler._invalidate_graph_for(BETA)
+
+        assert handler._incomplete_project is None, (
+            "fixture guard: two different damaged projects must widen the "
+            "attribution to None, or the clear takes the attributed branch "
+            "and this proves nothing"
+        )
+
+        assert handler._require_marker_cleared(clearing) is None
+
+        assert handler._graph_incomplete is True, (
+            f"{clearing} cleared its own marker and settled a flag that "
+            "records damage to two projects"
+        )
+
+
+def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
+    """The mirror-image bug: a refusal with no way out.
+
+    The first version of this guard was a BOOLEAN saying "the damage spans
+    projects". Nothing could ever lower it -- no sequence of successful
+    repairs retires a flag that counts nothing -- so once two projects were
+    damaged, every project was refused for the life of the process, including
+    projects never damaged at all, with `wipe_database` the only escape.
+
+    That is worse than the leak it fixed: a leak lets a stale read through,
+    this makes the server useless until restarted. Recording WHICH projects
+    are outstanding is what makes the flag retirable.
+
+    Asserted through the refusal rather than the field, and on a project that
+    was never damaged as well as the two that were: an over-broad latch
+    refuses GAMMA too, and only a behavioural assertion notices.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._invalidate_graph_for(ALPHA)
+    handler._invalidate_graph_for(BETA)
+
+    def refused(project: str) -> bool:
+        return (
+            handler._incomplete_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
+        )
+
+    # One assertion per project: a composite reports "some project did not
+    # refuse" and leaves the reader to find which, and WHICH is the whole
+    # diagnosis here -- a damaged project not refusing is a different bug
+    # from an undamaged one not refusing (SonarCloud S9073).
+    assert refused(ALPHA), (
+        "fixture guard: a damaged project must refuse before the repair below"
+    )
+    assert refused(BETA), "fixture guard: the second damaged project must refuse too"
+    assert refused("gamma"), (
+        "fixture guard: an unattributed flag must block a project it does not "
+        "name, or the widening is not in the broad state this test needs"
+    )
+
+    handler._require_marker_cleared(ALPHA)
+    assert refused(BETA), (
+        "repairing one of two damaged projects lifted the other's refusal"
+    )
+
+    handler._require_marker_cleared(BETA)
+
+    assert not refused(ALPHA), (
+        "the first damaged project was repaired and its reads are still "
+        "refused; nothing short of a full wipe can clear this"
+    )
+    assert not refused(BETA), (
+        "the last damaged project was repaired and its reads are still "
+        "refused, so the outstanding set never empties"
+    )
+    assert not refused("gamma"), (
+        "a project that was never damaged is still refused after every "
+        "damaged project was repaired"
+    )
+
+
+def test_a_third_damaged_project_is_recorded_like_the_first_two() -> None:
+    """The route into the broad state that recorded nothing.
+
+    `_invalidate_graph_for` notes BOTH names when the attribution widens, but
+    a THIRD project damaged afterwards takes the "already unattributed, keep
+    it" branch -- correct about the attribution, and silent about the fact
+    that another project is now outstanding.
+
+    So A, B and C damaged, then A and B repaired, and the set empties while C
+    is still partial: C's reads reopen onto a graph nothing ever finished
+    (Greptile, PR #1547). Two damaged projects was the case I tested and
+    three is the case that was broken, which is the whole lesson.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    for project in (ALPHA, BETA, GAMMA):
+        handler._invalidate_graph_for(project)
+
+    def refused(project: str) -> bool:
+        return (
+            handler._incomplete_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
+        )
+
+    assert refused(GAMMA), "fixture guard: three damaged projects must all refuse"
+
+    handler._require_marker_cleared(ALPHA)
+    handler._require_marker_cleared(BETA)
+
+    assert refused(GAMMA), (
+        "repairing two of three damaged projects settled the flag, so the "
+        "third project's reads reopened while it is still partial"
+    )
+
+    handler._require_marker_cleared(GAMMA)
+    assert not refused(GAMMA), (
+        "the last outstanding project was repaired and the flag still stands"
+    )
+
+
+def test_damage_under_an_unbounded_flag_stays_unbounded() -> None:
+    """The control on the guard the third-project fix needed.
+
+    A project damaged while a FAILED WIPE's flag is up must not create a
+    named outstanding set: that would make the wipe look settleable by
+    enumerating repairs, when it spans projects this process has never seen.
+    The fix for the third-project case is guarded on the set being non-empty
+    for exactly this reason.
+
+    Measured caveat: removing that guard leaves this test GREEN, because the
+    settle branch checks `_incomplete_unbounded` independently and refuses
+    first. So the guard is defence in depth rather than the load-bearing
+    protection, and this test pins the BEHAVIOUR (a wipe is never settled by
+    repairing one named project) rather than the guard. Do not read its
+    greenness as evidence that the guard is doing work -- the assertion holds
+    either way, and it is the settle branch that earns it.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+    handler._incomplete_unbounded = True
+
+    handler._invalidate_graph_for(ALPHA)
+    handler._require_marker_cleared(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "a project damaged under a failed wipe's flag turned it into a "
+        "settleable named set, so repairing that one project retired damage "
+        "spanning every project"
+    )
+
+
+def test_a_failed_wipe_is_not_settled_by_repairing_named_projects() -> None:
+    """The unbounded case, which a set cannot enumerate.
+
+    A half-done wipe damages every project at once, including ones this
+    process has never named, so there is no set of repairs that proves the
+    graph whole. Only a completed wipe retires it.
+
+    Without this the outstanding set is empty after a failed wipe, and the
+    first successful clear by any project would settle a flag that records
+    damage to all of them -- the original bug, reached from the one route
+    that cannot be counted.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+    handler._incomplete_unbounded = True
+
+    handler._require_marker_cleared(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "a named project's successful clear settled a failed wipe's flag, "
+        "which records damage to every project including unnamed ones"
+    )
+
+
+def test_a_completed_wipe_does_settle_damage_spanning_projects() -> None:
+    """The over-correction control for the whole spans-projects mechanism.
+
+    A wipe rebuilds every project, so it is the one operation entitled to
+    retire a flag covering all of them. Without this, "never settle a
+    spanning flag" latches the refusal for the life of the process and the
+    only escape hatch is gone -- the mirror-image bug, and the one that
+    survives a suite full of tests asserting refusals.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._invalidate_graph_for(ALPHA)
+    handler._invalidate_graph_for(BETA)
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "fixture guard: both damaged projects must be outstanding before the "
+        "wipe, or the wipe has nothing to retire and this proves nothing"
+    )
+
+    # Drive the REAL wipe. Resetting the three fields by hand here would
+    # assert nothing about the production reset: the test would pass with the
+    # reset line deleted, which is how this started out (measured).
+    import asyncio
+
+    asyncio.run(handler.wipe_database(confirm=True))
+
+    assert handler._graph_incomplete is False, (
+        "a completed wipe left the graph flagged incomplete, so no project "
+        "can ever read again"
+    )
+    assert not handler._incomplete_projects, (
+        "the wipe cleared the flag but left named projects outstanding, so "
+        "the next damaged project inherits a refusal no damage explains"
+    )
+    assert not handler._incomplete_unbounded, (
+        "the wipe cleared the flag but left the unbounded marker set, so no "
+        "sequence of repairs can ever settle the graph again"
+    )
+
+
+def test_a_recovered_marker_cannot_retire_a_flag_spanning_projects() -> None:
+    """`_hydrate_reingest_updater`, the third reader, on the same trap.
+
+    A stranded marker that this project later recovers lifts the flag its
+    own failed clear raised. But if a SECOND project was damaged in between,
+    the flag no longer describes only this project's stranded marker, and
+    recovering the marker is evidence about one project rather than two.
+
+    The route into the state matters: the flag must be spanning at the
+    moment of recovery, with `_flag_from_failed_clear` still naming this
+    project, or the guard is never reached and the test is vacuous.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+
+    # ALPHA's clear fails, stranding a marker it is licensed to recover.
+    assert handler._require_marker_cleared(ALPHA) is not None
+    assert handler._flag_from_failed_clear == ALPHA, (
+        "fixture guard: ALPHA must hold the recovery licence, or the guard "
+        "under test is never reached"
+    )
+
+    # BETA is damaged too, so the flag now spans both.
+    handler._invalidate_graph_for(BETA)
+    handler._flag_from_failed_clear = ALPHA
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "fixture guard: both projects must be outstanding before the recovery"
+    )
+
+    handler._live_updater = None
+    # The refusal is the wanted outcome, and it is stronger evidence than a
+    # state read: it can only be raised from the state under test, so it
+    # cannot be produced by a fixture that never reached the guard.
+    with pytest.raises(ValueError, match="incomplete"):
+        handler._hydrate_reingest_updater(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "ALPHA recovering its own stranded marker retired a flag that also "
+        "records BETA's damage"
+    )
+
+
+def test_a_rollback_widening_is_recorded_like_any_other() -> None:
+    """`_abandon_before_writing` widens to None too, and must say so.
+
+    It reaches the broad unattributed state by the same reasoning as
+    `_invalidate_graph_for` -- an owner already in place naming a different
+    project cannot be replaced, so the pair becomes None. Recording it there
+    and not here would leave one route into the state indistinguishable from
+    a never-attributed flag, which is the original bug with a different
+    entry point.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._flag_from_failed_clear = None
+
+    handler._abandon_before_writing(BETA)
+
+    assert handler._incomplete_project is None, (
+        "fixture guard: an abandon naming a different project, over a flag "
+        "already owned by ALPHA, must widen the attribution to None"
+    )
+    assert handler._incomplete_projects == {ALPHA, BETA}, (
+        "the rollback widened the attribution without recording WHICH "
+        "projects are outstanding, so the next successful clear settles it"
+    )
+
+
+def test_a_failed_clear_from_clean_attributes_the_flag_to_itself() -> None:
+    """A stuck marker on an otherwise clean registry is this project's to own.
+
+    Nothing else has claimed the flag, so the refusal and the
+    `_flag_from_failed_clear` recovery are both about the project whose
+    marker is actually stuck.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+
+    assert handler._require_marker_cleared(BETA) is not None
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == BETA
+    assert handler._flag_from_failed_clear == BETA
+
+
+def test_a_failed_clear_does_not_steal_an_earlier_owners_flag() -> None:
+    """A flag already up records damage this run did not cause.
+
+    Claiming it would let BETA's recoverable marker lift the refusal ALPHA
+    earned: `_hydrate_reingest_updater` heals a flag whose
+    `_flag_from_failed_clear` names the project being re-ingested, so
+    attributing ALPHA's flag to BETA hands BETA the licence to clear it.
+    `_abandon_before_writing` already takes exactly this care.
+    """
+    handler = _registry_for_marker_clear(cleared=False)
+    handler._graph_incomplete = True
+    handler._incomplete_project = ALPHA
+    handler._flag_from_failed_clear = None
+
+    assert handler._require_marker_cleared(BETA) is not None
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA, "BETA stole ALPHA's attribution"
+    assert handler._flag_from_failed_clear is None, "BETA gained a licence to heal"
+
+
+def _registry_for_hydration(incomplete_project: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = True
+    handler._incomplete_project = incomplete_project
+    handler._flag_from_failed_clear = None
+    # Healthy on disk for whichever project is asked: the in-process latch
+    # is the only thing that could refuse.
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    return handler
+
+
+def test_one_projects_damage_does_not_block_anothers_reingest() -> None:
+    """ALPHA's latch must not stop BETA re-ingesting its own healthy graph.
+
+    Refusing here is not a safe default: a scoped re-ingest is how a
+    project recovers, so blocking BETA on ALPHA's damage removes BETA's
+    only route back to a complete graph.
+    """
+    handler = _registry_for_hydration(ALPHA)
+
+    with pytest.raises(ValueError) as damaged:
+        handler._hydrate_reingest_updater(ALPHA)
+    assert ALPHA in str(damaged.value)
+
+    # BETA must get past the incomplete-graph guard. It stops at the next
+    # one only because this fake has no parsers to build an updater with;
+    # what matters is WHICH refusal it earns.
+    try:
+        handler._hydrate_reingest_updater(BETA)
+    except ValueError as exc:
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+            "healthy BETA was refused for ALPHA's damage"
+        )
+    except Exception:
+        pass
+
+
+def test_unattributed_damage_still_blocks_every_reingest() -> None:
+    """The control: a wipe-shaped failure names no project and blocks all."""
+    handler = _registry_for_hydration(None)
+
+    for project in (ALPHA, BETA):
+        with pytest.raises(ValueError) as refused:
+            handler._hydrate_reingest_updater(project)
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project) == str(
+            refused.value
+        )
+
+
+def test_the_cached_path_also_scopes_the_latch() -> None:
+    """`_updater_for_reingest` carries its own copy of the same guard."""
+    handler = _registry_for_hydration(ALPHA)
+
+    with pytest.raises(ValueError) as damaged:
+        handler._updater_for_reingest(ALPHA)
+    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(damaged.value)
+
+    try:
+        handler._updater_for_reingest(BETA)
+    except ValueError as exc:
+        assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
+            "healthy BETA was refused for ALPHA's damage"
+        )
+    except Exception:
+        pass
+
+
+# The attribution field holds ONE project, so it can only ever narrow to a
+# name when nothing broader already owns the flag (Greptile, PR #1547).
+def _registry_for_invalidation(flagged: bool, owner: str | None):
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler._graph_incomplete = flagged
+    handler._incomplete_project = owner
+    handler._flag_from_failed_clear = None
+    return handler
+
+
+def test_a_named_failure_does_not_narrow_a_wipes_unattributed_flag() -> None:
+    """A wipe spans every project; naming one would declare the rest healthy.
+
+    This is what the reingest and read guards now key off, so overwriting
+    the `None` lets a scoped reingest run over the half-wiped graph the
+    wipe left behind.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=None)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, "a wipe's flag was narrowed"
+
+
+def test_a_second_damaged_project_widens_to_unattributed() -> None:
+    """Two damaged projects cannot both be named in a one-project field.
+
+    Keeping ALPHA would declare BETA healthy and replacing it would declare
+    ALPHA healthy, so the only safe answer is that neither is.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=ALPHA)
+
+    handler._invalidate_graph_for(BETA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None
+
+
+def test_a_first_failure_still_attributes_to_its_project() -> None:
+    """The control: with no flag up, the damage IS this project's.
+
+    Without this, the widening rule could be implemented as "never
+    attribute", which passes both tests above and makes every failure block
+    every project -- the bug the scoping was added to fix.
+    """
+    handler = _registry_for_invalidation(flagged=False, owner=None)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA
+
+
+def test_re_flagging_the_same_project_keeps_its_name() -> None:
+    """The second control: repeated damage to ONE project must not widen.
+
+    A project that fails twice is still the only damaged project, and
+    widening would block every other project for no reason.
+    """
+    handler = _registry_for_invalidation(flagged=True, owner=ALPHA)
+
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project == ALPHA
+
+
+# Three writers that were harmless while the guards read the bare flag, and
+# became correctness bugs once the guards trusted the attribution
+# (greptile-local, PR #1547).
+@pytest.mark.asyncio
+async def test_a_failed_wipe_widens_an_existing_attribution() -> None:
+    """A wipe spans every project, so it cannot leave one project's name up.
+
+    The try-block raises the flag but never touches the attribution, so a
+    prior failure's name survives and records the wipe's damage under it --
+    telling the guards every other project is healthy.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.ingestor.clean_database = MagicMock(side_effect=RuntimeError("wipe died"))
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.clear_all_embeddings"):
+        await handler.wipe_database(confirm=True)
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, (
+        "the wipe's damage was recorded under one project's name"
+    )
+    assert handler._incomplete_refusal(BETA, cs.MCPToolName.DEFINITION) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_successful_wipe_still_clears_everything() -> None:
+    """The control: a completed wipe leaves an empty graph, so nothing is partial."""
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.clear_all_embeddings"):
+        await handler.wipe_database(confirm=True)
+
+    assert handler._graph_incomplete is False
+    assert handler._incomplete_project is None
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is None
+
+
+def test_a_delta_failure_does_not_overwrite_another_projects_attribution() -> None:
+    """A delta failure names its own root, which must not erase a prior owner.
+
+    Its comment already argues that leaving an earlier attribution in place
+    matters -- but it reasoned only about the healing licence, and assigned
+    the owner unconditionally. Driven through the real handler, not through
+    the helper: the helper already narrows correctly, so a test calling it
+    passes whether or not this site was ever fixed.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._live_updater = MagicMock()
+    handler._live_updater.reingest = MagicMock(side_effect=RuntimeError("delta died"))
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._require_marker = MagicMock(return_value=None)
+    # ALPHA's marker-less damage is the only record that ALPHA is partial.
+    handler._invalidate_graph_for(ALPHA)
+
+    with patch("codebase_rag.mcp.tools.derive_project_name", return_value=BETA):
+        handler._delta_after_write([Path("/repo/f.py")])
+
+    assert handler._graph_incomplete is True
+    assert handler._incomplete_project is None, (
+        "a delta failure for BETA erased ALPHA's attribution"
+    )
+    assert handler._incomplete_refusal(ALPHA, cs.MCPToolName.DEFINITION) is not None
+
+
+def test_widening_the_owner_drops_a_stale_healing_licence() -> None:
+    """A licence naming a project the flag is no longer about must not survive.
+
+    `recoverable_here` keys off the licence alone, so a surviving one lets
+    that project's reingest clear a flag that now covers everything. This
+    asserts the INVARIANT over the state the rollback site produces, which
+    is where the divergent inline copy lives.
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = True
+    handler._incomplete_project = BETA
+    handler._flag_from_failed_clear = BETA
+    handler._persisted_incomplete = MagicMock(return_value=False)
+
+    # The rollback site's inline narrowing, for a DIFFERENT project.
+    handler._invalidate_graph_for(ALPHA)
+
+    assert handler._incomplete_project is None
+    assert handler._flag_from_failed_clear is None, (
+        "a licence for BETA survived a widening BETA no longer owns"
+    )
+    # The consequence the licence would have had.
+    with pytest.raises(ValueError):
+        handler._hydrate_reingest_updater(BETA)
+
+
+# `ask_agent` hands the agent the RAW tool objects, so its graph reads bypass
+# every guarded wrapper: the refusal has to be made before the run starts
+# (Greptile, PR #1547).
+def _registry_for_ask_agent(incomplete: bool):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler._ingestor_lock = _NullLock()
+    handler.ingestor = MagicMock()
+    handler.ingestor.fetch_all = MagicMock(return_value=[])
+    handler.project_root = "/repo"
+    handler._graph_incomplete = incomplete
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    response = MagicMock()
+    response.output = "an authoritative-looking answer"
+    handler.rag_agent = MagicMock()
+    handler.rag_agent.run = AsyncMock(return_value=response)
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_refuses_on_an_incomplete_graph() -> None:
+    """The agent must not answer from a graph known to be partial.
+
+    Its answer is composed across several raw tool calls and comes back
+    with no indication that the definitions behind it were missing, which
+    is worse than a single unguarded read: the caller cannot tell.
+    """
+    handler = _registry_for_ask_agent(incomplete=True)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert cs.DICT_KEY_ERROR in result
+    handler.rag_agent.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_runs_when_the_graph_is_whole() -> None:
+    """The control: the guard must not refuse a healthy graph.
+
+    Without this, "refuse always" passes the test above and removes the
+    tool entirely.
+    """
+    handler = _registry_for_ask_agent(incomplete=False)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert result == {"output": "an authoritative-looking answer"}
+    handler.rag_agent.run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ask_agent_refuses_on_a_durable_marker_alone() -> None:
+    """A marker from an EARLIER process must refuse too.
+
+    `_graph_incomplete` is False in a fresh registry after a crash, so the
+    in-process latch alone would let the agent answer from the partial
+    graph that crash left behind.
+    """
+    from unittest.mock import MagicMock
+
+    handler = _registry_for_ask_agent(incomplete=False)
+    handler._persisted_incomplete = MagicMock(return_value=True)
+
+    result = await handler.ask_agent("what calls helper?")
+
+    assert cs.DICT_KEY_ERROR in result
+    handler.rag_agent.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_cached_path_honours_a_marker_from_an_earlier_process() -> None:
+    """`_graph_incomplete` is False in a fresh registry after a crash.
+
+    `_hydrate_reingest_updater` checks the durable marker for exactly this
+    reason (#1679); the cached path did not, so the rename and delta
+    callers would build an updater over the graph a previous process left
+    partial (Greptile, PR #1547).
+    """
+    from unittest.mock import MagicMock
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    # Nothing in THIS process failed: the crash was in an earlier one.
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=True)
+
+    with pytest.raises(ValueError) as refused:
+        handler._updater_for_reingest(ALPHA)
+
+    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_the_cached_path_still_builds_on_a_clean_durable_state() -> None:
+    """The control: a healthy project must still get its updater.
+
+    Without this, "always consult the marker and always refuse" passes the
+    test above while breaking every legitimate re-ingest.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+
+    handler = MCPToolsRegistry.__new__(MCPToolsRegistry)
+    handler.ingestor = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler.project_root = "/repo"
+    handler._live_updater = None
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._flag_from_failed_clear = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._ignore_sets = MagicMock(return_value=(None, None))
+    handler.parsers = {}
+    handler.queries = {}
+
+    with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+        built = handler._updater_for_reingest(ALPHA)
+
+    assert built is updater_cls.return_value
+    handler._persisted_incomplete.assert_called_once_with(ALPHA)
+
+
+def test_a_renames_reingest_marks_before_it_writes() -> None:
+    """The rename path used the raw callback, with no marker (Greptile, #1547).
+
+    Every other re-ingest writes an incomplete-run marker before its first
+    delete and clears it after, so a process death mid-run leaves evidence
+    that a restarted server can see. The rename's callback was passed
+    straight through, so the one operation that rewrites source AND graph
+    together was the one without that protection: a crash part way left a
+    partial graph a fresh process read as complete.
+
+    Asserted on ORDER, not merely on the calls happening: marking after the
+    write would satisfy a call-count assertion while protecting nothing.
+    """
+    from unittest.mock import MagicMock, patch
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+
+    order: list[str] = []
+    handler._require_marker = MagicMock(
+        side_effect=lambda *a, **k: order.append("mark") or None
+    )
+    handler._require_marker_cleared = MagicMock(
+        side_effect=lambda *a, **k: order.append("clear") or None
+    )
+    handler._begin_writing_or_refuse = MagicMock(
+        side_effect=lambda *a, **k: order.append("begin-writing")
+    )
+
+    updater = MagicMock()
+
+    def fake_reingest(*_a: object, before_write=None, **_k: object) -> str:
+        if before_write is not None:
+            before_write()
+        order.append("write")
+        return "done"
+
+    updater.reingest = fake_reingest
+
+    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+        callback = handler._guarded_rename_reingest(ALPHA)
+        assert callback is not None, (
+            "fixture guard: an indexed project must yield a callback, or this "
+            "test asserts nothing"
+        )
+        callback(["a.py"])
+
+    assert order.index("mark") < order.index("write"), (
+        f"the marker was not written before the first graph write: {order}"
+    )
+    assert order.index("begin-writing") < order.index("write"), (
+        f"the writing phase was not entered before the write: {order}"
+    )
+    assert order[-1] == "clear", (
+        f"the marker was not cleared after the run finished: {order}"
+    )
+
+
+def test_a_crash_in_the_rename_reingest_still_clears_the_marker() -> None:
+    """A failure must not leave the marker up forever.
+
+    The clear is in a `finally`, so a raising re-ingest still releases it --
+    the failure invalidates the graph through the caller's own handling, and
+    leaving the marker would refuse every later run for a failure already
+    reported. Without the `finally` this test goes red while the one above
+    stays green.
+    """
+    from unittest.mock import MagicMock, patch
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler._require_marker = MagicMock(return_value=None)
+    handler._begin_writing_or_refuse = MagicMock()
+    cleared: list[str] = []
+    handler._require_marker_cleared = MagicMock(
+        side_effect=lambda p, *a, **k: cleared.append(p) or None
+    )
+
+    updater = MagicMock()
+    updater.reingest = MagicMock(side_effect=RuntimeError("re-ingest died"))
+
+    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+        callback = handler._guarded_rename_reingest(ALPHA)
+        assert callback is not None, "fixture guard: expected a callback"
+        with pytest.raises(RuntimeError, match="died"):
+            callback(["a.py"])
+
+    assert cleared == [ALPHA], (
+        f"a failed rename re-ingest left the marker up: cleared={cleared}"
+    )
+
+
+async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> None:
+    """The WIRING, which the two tests above cannot see.
+
+    They call `_guarded_rename_reingest` directly, so reverting the call site
+    to pass the raw `updater.reingest` leaves both green -- the helper is
+    still correct, it is simply no longer used. A unit-level mutation cannot
+    see a severed connection; only driving the real handler can.
+
+    Asserts the callback `rename()` receives is NOT the updater's bound
+    method, which is exactly what the reverted call site would hand it.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag import graph_query as graph_query_module
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler.project_root = str(tmp_path)
+    project = derive_project_name(tmp_path)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[project])
+
+    updater = MagicMock()
+    seen: dict[str, object] = {}
+
+    def fake_rename(*_a: object, reingest: object = None, **_k: object) -> object:
+        seen["reingest"] = reingest
+        raise RuntimeError("stop here; the callback identity is the subject")
+
+    # Patched at the SOURCE module: `_run_rename` imports `rename` locally, so
+    # there is no `codebase_rag.mcp.tools.rename` attribute to replace.
+    with (
+        patch.object(handler, "_updater_for_reingest", return_value=updater),
+        patch("codebase_rag.editing.rename.rename", fake_rename),
+        patch.object(graph_query_module, "source_root_for", return_value=tmp_path),
+        contextlib.suppress(Exception),
+    ):
+        await handler._run_rename(project, "pkg.mod.helper", "assist", False, False)
+
+    assert "reingest" in seen, (
+        "fixture guard: rename() was never reached, so the callback identity "
+        "was never observed and this test proves nothing"
+    )
+    assert seen["reingest"] is not updater.reingest, (
+        "the rename handler passed the updater's raw reingest, so a crash "
+        "mid-run leaves a partial graph with no marker recording it"
+    )

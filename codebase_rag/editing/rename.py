@@ -30,6 +30,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple
 
+from loguru import logger
 from tree_sitter import Node
 
 from .. import constants as cs
@@ -39,9 +40,17 @@ from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyDict, ResultRow
 from ..utils.path_utils import base_module_qn
-from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove
+from .contract import Reingest, Verdict, measure, rename_expectation, verify
+from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
-from .transaction import EditTransaction, StagedTree, VerificationResult
+from .transaction import (
+    EditTransaction,
+    StagedTree,
+    TransactionConflict,
+    VerificationResult,
+    load_history,
+    undo_transaction,
+)
 
 QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
 
@@ -62,6 +71,24 @@ _CHAIN = "chain"
 _MEMBER_NAME_TYPES = frozenset(
     {cs.TS_IDENTIFIER, cs.TS_PROPERTY_IDENTIFIER, "field_identifier"}
 )
+
+
+# The same shapes `ImportRewriter.rename_in_all` rewrites. Kept identical so
+# the restoration check and the rewrite cannot disagree about what an
+# `__all__` entry is (Greptile, PR #1547).
+_ALL_BLOCK = r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]"
+_ALL_ENTRY = r"""(['"])(?P<name>[A-Za-z_]\w*)\1"""
+
+# How far a parenthesised import is followed looking for its closing bracket.
+# Bounded so a file with an unbalanced paren cannot make this walk the rest of
+# the file; a real import list is far shorter than this.
+#
+# No test pins the bound, and removing it reddens nothing: on well-formed
+# input the loop stops at the closing bracket either way, so the cap only
+# changes behaviour on a file that does not parse as Python at all. It is
+# defensive, not load-bearing -- do not read the suite's greenness as evidence
+# that it works.
+_MAX_IMPORT_LINES = 200
 
 
 class RenameSite(NamedTuple):
@@ -100,6 +127,10 @@ class RenameReport(NamedTuple):
     hierarchy: tuple[str, ...]
     diff: str
     message: str
+    verdict: Verdict | None = None
+    # True when a rollback re-ingest failed after the files were restored:
+    # the graph may hold a partial picture and must be rebuilt.
+    graph_incomplete: bool = False
 
 
 # --- site collection -----------------------------------------------------------
@@ -313,12 +344,17 @@ class Renamer:
         project_name: str,
         verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
         after_apply: Callable[[list[str]], None] | None = None,
+        reingest: Reingest | None = None,
     ) -> None:
         self.repo_root = repo_root.resolve()
         self.fetch_all = fetch_all
         self.project = project_name
         self.verify = verify
         self.after_apply = after_apply
+        # With a re-ingest the rename is held to its postcondition contract
+        # (issue #1531): the delta of what it wrote is measured and the
+        # transaction undone when the contract fails.
+        self.reingest = reingest
 
     def _module_of(self, qn: str) -> tuple[str, str | None]:
         # The defining module's qn and path, from the definition's own path:
@@ -696,8 +732,19 @@ class Renamer:
         # `__all__` entries live in the defining module and in any Python
         # module re-exporting the name (a package `__init__`); only a
         # module-level member can be listed there.
+        # Record HOW MANY entries each file had rewritten. The restoration
+        # check needs to know what this rename touched, not what the file
+        # contains: a whole-file existence question cannot answer a per-site
+        # one, and both earlier phrasings of that check failed for exactly
+        # that reason -- "does the old name appear anywhere" accepted a
+        # partial undo, and "does the new name appear anywhere" rejected a
+        # complete one when the new name was ALREADY exported before the
+        # rename ran (Greptile and CGR-3, PR #1547).
+        self._all_rewrites = {}
         for path in sorted(self._all_paths(list(report.hierarchy), old_name)):
-            rewriter.rename_in_all(path, old_name, new_name)
+            offsets = rewriter.rename_in_all(path, old_name, new_name)
+            if offsets:
+                self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
         broken = [key for key, result in results.items() if result.parses is False]
@@ -737,14 +784,373 @@ class Renamer:
             return self.verify(tree) if self.verify is not None else True
 
         outcome = tx.commit(verify)
-        if outcome.applied and self.after_apply is not None:
-            self.after_apply(list(outcome.files))
-        return report._replace(
+        report = report._replace(
             applied=outcome.applied,
             transaction_id=outcome.transaction_id,
             files=outcome.files,
             diff=outcome.diff,
             message=outcome.message,
+        )
+        if outcome.applied and self.reingest is not None:
+            report = self._enforce_contract(report, new_name, allow_heuristic)
+        if report.applied and self.after_apply is not None:
+            self.after_apply(list(report.files))
+        return report
+
+    def _undo_state(self, transaction_id: str) -> str:
+        """What a `TransactionConflict` on this transaction actually means.
+
+        `"stacked"` - the entry is still in the history, so a LATER edit sits
+        on top of this rename and it remains applied.
+
+        `"unknown"` - the entry is absent. That is NOT evidence of an undo:
+        the history keeps `EDIT_HISTORY_LIMIT` entries, so enough later edits
+        evict an entry whose rename is still on disk. An earlier version of
+        this method inferred "undone" whenever the history was below its
+        limit, which fails once those later entries are themselves undone --
+        the history shrinks and the eviction becomes invisible (Greptile,
+        PR #1547). Absence can never prove a reversal, so it is never
+        reported as one; the caller keeps `applied` and is told the state
+        could not be determined.
+
+        Whether the files were actually restored is settled by
+        `_rename_is_on_disk`, which reads the tree rather than the history.
+        """
+        try:
+            entries = load_history(self.repo_root)
+        # An unreadable history is an unknown state: keep `applied` as it
+        # was rather than guessing in either direction.
+        except Exception:  # noqa: BLE001
+            return cs.RENAME_UNDO_STACKED
+        if any(
+            str(entry.get(cs.EDIT_KEY_ID, "")) == transaction_id for entry in entries
+        ):
+            return cs.RENAME_UNDO_STACKED
+        return cs.RENAME_UNDO_UNKNOWN
+
+    def _old_name_is_back(self, report: RenameReport) -> bool:
+        """Whether the old name has returned AT THE SITES this rename edited.
+
+        `applied` is a claim about the working tree, so the tree settles it,
+        not the history: an entry can be evicted by later edits while its
+        rename stands, and once those later entries are themselves undone the
+        history is short again and the eviction leaves no trace.
+
+        Checked at the recorded SITES, not by searching the file. A
+        whole-file token search for the old name matches any unrelated
+        symbol that happens to share it -- an independent `helper` elsewhere
+        in a touched file read as proof that this rename had been reversed
+        (Greptile, PR #1547). The sites are the exact positions this rename
+        rewrote, so they are the only places its reversal can show.
+
+        The test is the OLD name, not the new one: the new name is routinely
+        present either way, since renaming onto an existing symbol is exactly
+        what makes the contract fail. A site that cannot be read counts as
+        NOT reverted, keeping `applied` unchanged rather than claiming a
+        rollback that may not have happened.
+        """
+        by_path: dict[str, list[RenameSite]] = {}
+        import_sites: list[RenameSite] = []
+        for site in report.sites:
+            # An `unlocatable` site has no usable position at all, so nothing
+            # can be read at it either way.
+            if site.kind == "unlocatable":
+                continue
+            # An `import` site IS rewritten -- by `ImportRewriter.retarget`,
+            # not by the identifier patcher -- so it must show a reversal like
+            # any other. `_stage_sites` skips it only because its recorded
+            # column points at the import STATEMENT, which the patcher cannot
+            # use; reading a slice there yields `from p` and never the name.
+            # Excluding it outright let a tree whose import still carried the
+            # NEW name report as fully reversed (Greptile, PR #1547), so it is
+            # checked by LINE CONTENT instead of by column.
+            if site.kind == "import":
+                import_sites.append(site)
+                continue
+            by_path.setdefault(site.path, []).append(site)
+        if not by_path:
+            # Nothing was rewritten, so there is nothing to find restored.
+            # Claiming a full undo here would report every rename with no
+            # recorded sites as reversed.
+            return False
+        old_bytes = report.old_name.encode("utf-8")
+        # EVERY rewritten site must carry the old name again: one restored
+        # site is a PARTIAL undo, and reporting `applied=False` for it tells
+        # the caller every file is back when other definitions and references
+        # are still renamed (Greptile, PR #1547).
+        if not all(
+            self._file_has_old_name_at(relative, sites, old_bytes)
+            for relative, sites in by_path.items()
+        ):
+            return False
+        if not all(
+            self._import_names_the_old_name(site, report.old_name)
+            for site in import_sites
+        ):
+            return False
+        # `__all__` entries are rewritten by `rename_in_all` and are NOT
+        # recorded as sites, so nothing above can see them. A tree with every
+        # definition, reference and import restored but an export still
+        # naming the NEW symbol is not fully reversed (Greptile, PR #1547).
+        return all(
+            self._all_rewrites_are_undone(path, report.old_name, offsets)
+            for path, offsets in sorted(getattr(self, "_all_rewrites", {}).items())
+        )
+
+    def _all_rewrites_are_undone(
+        self, path: str, old_name: str, offsets: list[tuple[int, int, int]]
+    ) -> bool:
+        """Whether the exact `__all__` entries this rename rewrote read the old name.
+
+        Checked AT THE RECORDED OFFSETS, not by scanning the file. `__all__`
+        entries are not `RenameSite`s, so the offsets `rename_in_all` returns
+        are the only record of which literals this rename touched.
+
+        Three previous versions asked a whole-file question and all three
+        failed, because none could tell an entry this rename rewrote from one
+        that merely matched:
+
+        * "does the old name appear anywhere" -- accepted a partial undo, one
+          block restored while another still held the new name;
+        * "does the new name appear anywhere" -- rejected a COMPLETE undo when
+          the new name was already exported before the rename ran;
+        * "at least `count` entries read the old name" -- accepted an
+          INCOMPLETE undo when the old name was already exported elsewhere,
+          since a pre-existing entry pushed the total over the threshold.
+
+        Each fix moved the failure rather than removing it. An aggregate
+        discards exactly the identity the question needs (CGR-3, PR #1547).
+
+        A rollback restores the file byte for byte, so the offsets still point
+        at the same literals. An offset that no longer lands on the old name
+        means the file is not the file this rename edited, which is itself a
+        failed restoration.
+
+        DELIBERATE LIMITATION, and the fifth appearance of this pair on this
+        function. The bounds are matched EXACTLY, so an unrelated edit that
+        merely SHIFTS an `__all__` block -- a comment added above it, an
+        import removed -- makes a genuine restoration answer False.
+
+        That is accepted rather than fixed, because the consequence is not
+        symmetric with the four variants above. Those failed by reporting a
+        rollback COMPLETE when it was not, and a caller then trusts a
+        corrupted tree. This one reports UNKNOWN when it was in fact complete,
+        and the caller is told to look. `RENAME_ROLLBACK_UNKNOWN` is the
+        honest answer to "someone rewrote this file underneath me and I can no
+        longer identify my own edits".
+
+        It is also reached only on an already-degraded path: the postcondition
+        must have FAILED, and the undo entry must have been evicted from
+        history, before this is consulted at all. Trading a conservative
+        unknown for a confident wrong answer is the exact trade the previous
+        four rounds were undoing (CGR-3, PR #1547).
+
+        Matching the block by CONTENT (its text hash, or the entry's index
+        within it) would let a pure shift match while a rewrite still fails.
+        That is the fix if the UNKNOWN ever proves costly in practice; it is
+        not free, and it can regress variants three and four.
+
+        The recorded BLOCK BOUNDS make that assumption checkable rather than
+        merely stated. An unrelated edit that shifts text before an entry
+        moves every later block too, so a coincidental `old_name` sitting at
+        the stale offset no longer falls inside a block at the bounds this
+        rename staged from, and the check answers False -- conservative, and
+        the same answer it gives for a genuinely unrestored entry.
+        """
+        try:
+            text = (self.repo_root / path).read_text(encoding="utf-8")
+        except OSError:
+            return False
+        # Every recorded entry must read the old name AND still sit inside an
+        # `__all__` block at the bounds it was staged from. The second half is
+        # what makes a stale offset detectable: if an unrelated edit shifted
+        # the file, the blocks move too, so a coincidental `old_name` at the
+        # old position no longer falls inside a block that starts and ends
+        # where this rename saw one (Greptile, PR #1547).
+        blocks = {
+            (block.start(1), block.end(1))
+            for block in re.finditer(_ALL_BLOCK, text, re.S)
+        }
+        return all(
+            text[offset : offset + len(old_name)] == old_name
+            and (block_start, block_end) in blocks
+            and block_start <= offset < block_end
+            for offset, block_start, block_end in offsets
+        )
+
+    def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:
+        """Whether the statement IMPORTS the old name again.
+
+        Read per ENTRY rather than as a token anywhere on the line. The
+        recorded column is the statement's start, so a column read is
+        useless here; but a line-level search accepts a binding that is not
+        the target at all -- in
+        `from util import assist, helper_of_other as helper` the symbol is
+        still imported as `assist`, and the `helper` on that line is an
+        unrelated alias (Greptile, PR #1547).
+
+        What each entry IMPORTS is the question, and what it binds locally is
+        not: `helper as h` does import the old name. `_imported` is the same
+        parse `ImportRewriter` uses to decide what to rewrite, so the check
+        and the rewrite agree by construction.
+        """
+        try:
+            lines = (
+                (self.repo_root / site.path).read_text(encoding="utf-8").splitlines()
+            )
+        except OSError:
+            return False
+        if not 0 < site.line <= len(lines):
+            return False
+        line = lines[site.line - 1]
+        # A parenthesised import spans lines, and the recorded line is the
+        # STATEMENT's first one, so reading it alone never sees an entry on a
+        # continuation line: a fully restored multiline import read as not
+        # restored (Greptile, PR #1547). That direction is safe -- it refuses
+        # to claim a complete undo -- but it makes a restored tree and a
+        # partly-restored one indistinguishable, which is the property this
+        # check exists to provide.
+        if "(" in line and ")" not in line[line.index("(") :]:
+            for extra in lines[site.line : site.line + _MAX_IMPORT_LINES]:
+                line += " " + extra.strip()
+                if ")" in extra:
+                    break
+        _head, _sep, tail = line.partition("import ")
+        # No `import` on the line: fall back to a word match rather than
+        # claiming restored, since a language whose form this cannot parse
+        # must not be read as evidence either way.
+        if not _sep:
+            return bool(re.search(rf"\b{re.escape(old_name)}\b", line))
+        # Brackets stripped per entry: a joined parenthesised import yields
+        # `( helper` and `)` as entries, and neither parses as a name.
+        return any(
+            _imported(entry.strip(" ()\t")) == old_name
+            for entry in tail.split(",")
+            if entry.strip(" ()\t")
+        )
+
+    def _file_has_old_name_at(
+        self, relative: str, sites: list[RenameSite], old_bytes: bytes
+    ) -> bool:
+        """Whether every site in one file carries the old name at its column.
+
+        An unreadable file and a site whose line is gone both answer False:
+        `applied=False` claims EVERY site is back, so anything that cannot be
+        SHOWN restored is a no rather than a skip.
+        """
+        try:
+            lines = (self.repo_root / relative).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return False
+        for site in sites:
+            if not 0 < site.line <= len(lines):
+                return False
+            # Compared as BYTES: `site.col` is a tree-sitter byte column,
+            # while a decoded line is indexed by code points, so any multibyte
+            # character earlier on the line shifts the two apart and the slice
+            # lands mid-token (Greptile, PR #1547).
+            text = lines[site.line - 1].encode("utf-8")
+            # The token must sit at the recorded column: another occurrence
+            # on the same line is a different symbol.
+            if text[site.col : site.col + len(old_bytes)] != old_bytes:
+                return False
+        return True
+
+    def _enforce_contract(
+        self, report: RenameReport, new_name: str, allow_heuristic: bool
+    ) -> RenameReport:
+        assert self.reingest is not None
+        # The pairs this rename applied, computed here rather than after the
+        # measurement: the delta needs them to recognise an empty container,
+        # whose identity nothing in the two snapshots can show.
+        pairs = [
+            (
+                member,
+                member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
+            )
+            for member in report.hierarchy
+        ]
+        try:
+            delta = measure(
+                self.fetch_all,
+                self.project,
+                self.repo_root,
+                report.files,
+                self.reingest,
+                declared_renames=pairs,
+            )
+        # The transaction has landed; a graph that cannot be measured is
+        # reported, never raised past the committed edit.
+        except Exception as error:  # noqa: BLE001
+            # The files are renamed and recorded; a graph that cannot be
+            # measured is reported, never raised past the committed edit.
+            logger.warning(cs.RENAME_CONTRACT_UNMEASURED.format(error=error))
+            return report._replace(
+                verdict=None,
+                message=cs.RENAME_CONTRACT_UNMEASURED.format(error=error),
+            )
+        verdict = verify(
+            rename_expectation(pairs, allow_heuristic),
+            delta,
+            rewritten=[
+                (f"{site.path}:{site.line}", site.resolution)
+                for site in report.sites
+                if site.kind != "unlocatable"
+            ],
+        )
+        if verdict.ok:
+            return report._replace(verdict=verdict)
+        reasons = "; ".join(verdict.failures)
+        try:
+            # This rename's own transaction, not whatever is newest: a
+            # later edit stacked on it refuses the rollback instead.
+            undo_transaction(self.repo_root, report.transaction_id)
+        except TransactionConflict as conflict:
+            logger.warning(str(conflict))
+            # The conflict covers two opposite situations needing opposite
+            # answers: a NEWER edit stacked on top (still applied) versus
+            # another actor having already reversed this one (restored).
+            if self._undo_state(report.transaction_id) == cs.RENAME_UNDO_STACKED:
+                return report._replace(
+                    verdict=verdict,
+                    message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
+                )
+            # The entry is absent, which proves nothing on its own -- a
+            # bounded history evicts entries whose rename is still on disk.
+            # So ask the TREE, which is the thing `applied` describes, rather
+            # than reasoning about history bookkeeping (Greptile, PR #1547).
+            if self._old_name_is_back(report):
+                return report._replace(
+                    applied=False,
+                    verdict=verdict,
+                    message=cs.RENAME_ROLLBACK_ALREADY_UNDONE.format(reasons=reasons),
+                )
+            return report._replace(
+                verdict=verdict,
+                message=cs.RENAME_ROLLBACK_UNKNOWN.format(reasons=reasons),
+            )
+        try:
+            self.reingest(list(report.files))
+        # The files are restored; the graph may have lost the subtree the
+        # re-ingest deleted before failing. Say so, never raise.
+        except Exception as error:  # noqa: BLE001
+            # The tree is back; the graph may have lost the subtree the
+            # re-ingest deleted before failing. Say so, never raise.
+            logger.warning(
+                cs.RENAME_ROLLBACK_UNMEASURED.format(reasons=reasons, error=error)
+            )
+            return report._replace(
+                applied=False,
+                verdict=verdict,
+                graph_incomplete=True,
+                message=cs.RENAME_ROLLBACK_UNMEASURED.format(
+                    reasons=reasons, error=error
+                ),
+            )
+        return report._replace(
+            applied=False,
+            verdict=verdict,
+            message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
 
 
@@ -758,10 +1164,20 @@ def rename(
     dry_run: bool = False,
     verify: Callable[[StagedTree], VerificationResult | bool | None] | None = None,
     after_apply: Callable[[list[str]], None] | None = None,
+    reingest: Reingest | None = None,
 ) -> RenameReport:
-    """The op: plan (and refuse on ambiguity) or plan and apply."""
+    """The op: plan (and refuse on ambiguity) or plan and apply.
+
+    With `reingest` the applied rename is measured through the structural
+    delta and undone when its postcondition contract fails (issue #1531).
+    """
     renamer = Renamer(
-        repo_root, fetch_all, project_name, verify=verify, after_apply=after_apply
+        repo_root,
+        fetch_all,
+        project_name,
+        verify=verify,
+        after_apply=after_apply,
+        reingest=reingest,
     )
     if dry_run:
         return renamer.preview(qualified_name, new_name, allow_heuristic)
