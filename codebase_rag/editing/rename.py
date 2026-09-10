@@ -926,6 +926,30 @@ class Renamer:
         means the file is not the file this rename edited, which is itself a
         failed restoration.
 
+        DELIBERATE LIMITATION, and the fifth appearance of this pair on this
+        function. The bounds are matched EXACTLY, so an unrelated edit that
+        merely SHIFTS an `__all__` block -- a comment added above it, an
+        import removed -- makes a genuine restoration answer False.
+
+        That is accepted rather than fixed, because the consequence is not
+        symmetric with the four variants above. Those failed by reporting a
+        rollback COMPLETE when it was not, and a caller then trusts a
+        corrupted tree. This one reports UNKNOWN when it was in fact complete,
+        and the caller is told to look. `RENAME_ROLLBACK_UNKNOWN` is the
+        honest answer to "someone rewrote this file underneath me and I can no
+        longer identify my own edits".
+
+        It is also reached only on an already-degraded path: the postcondition
+        must have FAILED, and the undo entry must have been evicted from
+        history, before this is consulted at all. Trading a conservative
+        unknown for a confident wrong answer is the exact trade the previous
+        four rounds were undoing (CGR-3, PR #1547).
+
+        Matching the block by CONTENT (its text hash, or the entry's index
+        within it) would let a pure shift match while a rewrite still fails.
+        That is the fix if the UNKNOWN ever proves costly in practice; it is
+        not free, and it can regress variants three and four.
+
         The recorded BLOCK BOUNDS make that assumption checkable rather than
         merely stated. An unrelated edit that shifts text before an entry
         moves every later block too, so a coincidental `old_name` sitting at

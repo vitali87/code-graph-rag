@@ -1502,6 +1502,55 @@ def test_the_all_check_reads_the_entries_this_rename_rewrote(
     )
 
 
+def test_a_shifted_block_answers_unknown_rather_than_guessing(
+    tmp_path: Path,
+) -> None:
+    """The accepted cost of the bounds check, pinned so it stays a DECISION.
+
+    Bounds are matched exactly, so an unrelated edit that merely shifts an
+    `__all__` block makes a GENUINE restoration answer False. That is the
+    strictness mirror of the coincidence case, and it is deliberate:
+
+    * the four earlier variants failed by reporting a rollback COMPLETE when
+      it was not, and a caller then trusts a corrupted tree;
+    * this fails by reporting UNKNOWN when it was complete, and the caller is
+      told to look.
+
+    It is also only reached on an already-degraded path -- the postcondition
+    failed AND the undo entry was evicted from history. Trading a conservative
+    unknown for a confident wrong answer is the trade the previous four rounds
+    were undoing (CGR-3, PR #1547).
+
+    If this test starts failing because someone matched blocks by CONTENT
+    instead of coordinates, that is an IMPROVEMENT, not a regression -- delete
+    it and keep their change, provided the coincidence case above still holds.
+    """
+    from codebase_rag.editing.rename import Renamer
+
+    staged = '__all__ = ["helper"]\n\n\ndef helper():\n    return 1\n'
+    offsets = _all_offsets(staged, "helper")
+
+    # A genuine, complete restoration -- with one unrelated line added above.
+    shifted = "# an unrelated comment\n" + staged
+    (tmp_path / "util.py").write_text(shifted, encoding="utf-8")
+    run = Renamer.__new__(Renamer)
+    run.repo_root = tmp_path
+
+    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is False, (
+        "a shifted block was accepted as restored; the bounds check is what "
+        "stops a coincidental old name at a stale offset reading as a repair, "
+        "and it cannot distinguish a pure shift from a rewrite"
+    )
+
+    # The control: unshifted, the same restoration IS recognised. Without it
+    # this test passes against a check that rejects everything.
+    (tmp_path / "same.py").write_text(staged, encoding="utf-8")
+    assert run._all_rewrites_are_undone("same.py", "helper", offsets) is True, (
+        "the unshifted restoration was rejected too, so the check refuses "
+        "everything rather than being merely strict about position"
+    )
+
+
 def test_a_shifted_file_does_not_mimic_a_restoration(tmp_path: Path) -> None:
     """An offset is only meaningful against the file it was staged from.
 
