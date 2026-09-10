@@ -403,3 +403,94 @@ def test_a_nested_directory_flips_under_its_parent_package(tmp_path: Path) -> No
     assert _containment(store) == _containment(clean_store), (
         "the nested directory's containment edges do not match a clean index"
     )
+
+
+def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) -> None:
+    """Ancestors must not be re-derived, only the flipped directory's children.
+
+    A re-derivation EMITS the node for whatever kind a directory is on disk
+    now. Putting an ancestor in scope therefore gave one that had changed
+    independently a SECOND container identity beside the one it already had
+    (Greptile, PR #1835).
+
+    I had included ancestors so a nested directory's parent lookup could find
+    its enclosing package, and had already MEASURED that dropping them
+    reddened nothing -- recording it as "defensive, not load-bearing". It was
+    actively harmful, which is the cost of shipping code whose only
+    justification is that no test contradicts it.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    (root / "outer").mkdir()
+    (root / "outer" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "outer" / "inner").mkdir()
+    (root / "outer" / "inner" / "mod.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+
+    # The ancestor changes on disk, by something other than this call.
+    (root / "outer" / "__init__.py").unlink()
+    # This call flips only the nested directory.
+    (root / "outer" / "inner" / "__init__.py").write_text("", encoding="utf-8")
+    updater.reingest(["outer/inner/__init__.py"])
+    store.flush_all()
+
+    containers = _containers(store)
+    assert ("Folder", "outer") not in containers, (
+        "the ancestor was re-derived and gained a Folder node beside its "
+        f"existing Package node: {sorted(containers)}"
+    )
+    assert ("Package", "proj.outer.inner") in containers, (
+        "fixture guard: the nested directory this call named must still have "
+        "been promoted, or the assertion above passes for the wrong reason"
+    )
+
+
+def test_a_demoted_package_keeps_its_child_container_edge(tmp_path: Path) -> None:
+    """The prune deletes a node, and DETACH DELETE takes its edges with it.
+
+    Demoting `pkg/` removes its Package node, and with it the
+    CONTAINS_PACKAGE edge to the child package `pkg/sub`. The sibling
+    re-parse cannot restore that edge -- a child DIRECTORY is not a file it
+    re-parses -- so the child was left unreachable from its parent
+    (Greptile, PR #1835).
+
+    Compared against a clean index rather than asserting one edge, so the
+    test states the invariant rather than a hardcoded shape.
+    """
+
+    def build(base: Path, *, with_init: bool) -> None:
+        (base / "pkg").mkdir(parents=True)
+        if with_init:
+            (base / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        (base / "pkg" / "sub").mkdir()
+        (base / "pkg" / "sub" / "__init__.py").write_text("", encoding="utf-8")
+        (base / "pkg" / "sub" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    root = tmp_path / "incremental"
+    root.mkdir()
+    build(root, with_init=True)
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+
+    (root / "pkg" / "__init__.py").unlink()
+    updater.reingest([], deleted=["pkg/__init__.py"])
+    store.flush_all()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    build(clean_root, with_init=False)
+    clean_store = _StatefulIngestor()
+    _updater(clean_root, clean_store).run(force=True)
+    clean_store.flush_all()
+
+    assert _containment(store) == _containment(clean_store), (
+        "after demoting a package, its containment disagrees with a clean "
+        f"index: incremental={sorted(_containment(store))} "
+        f"clean={sorted(_containment(clean_store))}"
+    )

@@ -4658,30 +4658,83 @@ class GraphUpdater:
         # the graph holding both container nodes for one directory while
         # reporting that nothing changed (greptile-local, issue #1798). The
         # real derivation happens after the caller's last word.
-        flipped = set()
-        for rel in touched:
-            directory = self.repo_path / rel if rel != "." else self.repo_path
-            if not directory.is_dir():
-                continue
-            was_package = bool(structure.structural_elements.get(Path(rel)))
-            if structure.is_package_dir(directory) != was_package:
-                flipped.add(rel)
+        flipped = {rel for rel in touched if self._package_ness_changed(structure, rel)}
         if not flipped:
             return set(), {}
 
+        return flipped, self._flip_sibling_files(flipped, present, gone)
+
+    def _flip_sibling_files(
+        self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, Path]:
+        """On-disk files under a flipped directory that this call has not named.
+
+        They re-parse so their CONTAINS_FILE and CONTAINS_MODULE edges are
+        re-emitted onto the container of the new kind: those edges are written
+        only when the module is parsed, so a directory that changes kind needs
+        its files parsed again or they stay anchored to the old node.
+        """
         siblings: dict[str, Path] = {}
         for rel in flipped:
             directory = self.repo_path / rel if rel != "." else self.repo_path
             if not directory.is_dir():
                 continue
             for candidate in sorted(directory.iterdir()):
-                if not candidate.is_file():
-                    continue
                 key = cached_relative_path(candidate, self.repo_path).as_posix()
-                if key in present or key in gone or self._reingest_ignored(candidate):
+                if (
+                    not candidate.is_file()
+                    or key in present
+                    or key in gone
+                    or self._reingest_ignored(candidate)
+                ):
                     continue
                 siblings[key] = candidate
-        return flipped, siblings
+        return siblings
+
+    def _package_ness_changed(self, structure: object, rel: str) -> bool:
+        """Whether this directory's kind on DISK differs from the recorded one.
+
+        Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        Deriving the structure to answer this would WRITE the new container
+        node inside the prologue, and an abort in `before_write` then left the
+        graph holding both container nodes for one directory while reporting
+        that nothing changed (greptile-local, issue #1798).
+        """
+        directory = self.repo_path / rel if rel != "." else self.repo_path
+        if not directory.is_dir():
+            return False
+        was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
+        return bool(structure.is_package_dir(directory)) != was_package  # type: ignore[attr-defined]
+
+    def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
+        """Directories to re-derive: the flipped ones plus their CHILDREN.
+
+        Children, because the prune DETACH DELETEs the node of the old kind
+        and that takes its CONTAINS_PACKAGE / CONTAINS_FOLDER edges to child
+        containers with it. The sibling re-parse cannot restore those -- a
+        child directory is not a file it re-parses -- so re-deriving the
+        children re-emits their parent edge onto the surviving node
+        (Greptile, PR #1835).
+
+        Never ANCESTORS. A re-derivation EMITS a node for whatever kind the
+        directory is on disk now, so putting an ancestor in scope gave one
+        that had changed independently a SECOND container identity beside the
+        one it already had. The ancestor walk was there so a nested
+        directory's parent lookup could find its enclosing package, and it is
+        not needed: `structural_elements` persists across calls, so the
+        parent's entry is already in the map.
+        """
+        scope = set(flipped_dirs)
+        for rel in flipped_dirs:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            scope.update(
+                cached_relative_path(child, self.repo_path).as_posix()
+                for child in directory.iterdir()
+                if child.is_dir()
+            )
+        return scope
 
     def _prune_flipped_containers(self, flipped_dirs: set[str]) -> None:
         """Delete the node of the kind a flipped directory no longer is.
@@ -5040,13 +5093,21 @@ class GraphUpdater:
             # there. It is defensive against a first derivation that starts
             # from an empty map -- not load-bearing on the paths the tests
             # cover, and its greenness is not evidence that it works.
-            scope: set[str] = set()
-            for rel in flipped_dirs:
-                parts = Path(rel).parts if rel != "." else ()
-                scope.add(".")
-                for i in range(1, len(parts) + 1):
-                    scope.add(Path(*parts[:i]).as_posix())
-            self.factory.structure_processor.identify_structure(only=scope)
+            # EXACTLY the flipped directories -- no ancestors. Putting an
+            # ancestor in scope re-derives it, and a re-derivation EMITS the
+            # node for whatever kind it is on disk now, so an ancestor that
+            # changed independently gained a second container identity beside
+            # the one it already had (Greptile, PR #1835).
+            #
+            # The ancestor walk was there so a nested directory's parent
+            # lookup could find the enclosing package. It is not needed:
+            # `structural_elements` PERSISTS across calls, so the parent's
+            # entry is already in the map from the run that derived it. I had
+            # measured that and recorded it as "defensive, not load-bearing";
+            # it turned out to be actively harmful.
+            self.factory.structure_processor.identify_structure(
+                only=self._flip_derivation_scope(flipped_dirs)
+            )
 
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header

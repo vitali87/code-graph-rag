@@ -92,6 +92,29 @@ class StructureProcessor:
             for indicator in self.package_indicator_names()
         )
 
+    def _directories_to_derive(self, only: set[str] | None) -> set[Path]:
+        """Every walkable directory, or just the ones `only` names.
+
+        The repo root is always included: every directory's parent lookup
+        resolves against it, and it is the fallback container.
+        """
+        directories = {self.repo_path}
+        for path in self.repo_path.rglob(cs.GLOB_ALL):
+            if not path.is_dir():
+                continue
+            if only is not None and (
+                cached_relative_path(path, self.repo_path).as_posix() not in only
+            ):
+                continue
+            if not should_skip_path(
+                path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                directories.add(path)
+        return directories
+
     def identify_structure(self, only: set[str] | None = None) -> None:
         """Derive every directory's kind, emitting Package and Folder nodes.
 
@@ -104,20 +127,7 @@ class StructureProcessor:
         Folder node while keeping its Package node -- two container identities
         for one directory (Greptile, PR #1835).
         """
-        directories = {self.repo_path}
-        for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if only is not None and (
-                cached_relative_path(path, self.repo_path).as_posix() not in only
-            ):
-                continue
-            if path.is_dir() and not should_skip_path(
-                path,
-                self.repo_path,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            ):
-                directories.add(path)
-
+        directories = self._directories_to_derive(only)
         package_indicators = self.package_indicator_names()
 
         for root in sorted(directories):
