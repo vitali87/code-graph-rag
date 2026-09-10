@@ -266,6 +266,29 @@ def node_site_properties(node: Node) -> PropertyDict:
 
 
 def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
+    """A node's text as `str`, or `None` when there is no text to decode.
+
+    "safe" covers BOTH failure modes, and both guarantees are real:
+
+    * a null node, or a node whose `text` is null, yields `None` rather than
+      raising `AttributeError`;
+    * undecodable bytes are replaced, never raised. The decode routes through
+      `language_spec.decode_node_text` (`errors="replace"`), so a single bad
+      byte cannot raise `UnicodeDecodeError` here.
+
+    The second half is worth stating rather than leaving to be re-derived.
+    Until #1797 the decode underneath was strict, so "safe" named only the
+    None handling -- and the name read as "this is the decode that handles
+    bad input", which is exactly the assumption that stops people looking.
+    It cost real time on #1797: a bad byte in a Python decorator dropped
+    every definition in the file through this function, in the repo's primary
+    language, because the per-file handler in `graph_updater` catches
+    `UnicodeDecodeError` and abandons the file. With ~550 call sites, a name
+    asserting a guarantee needs to be checkable against the implementation
+    (issue #1811).
+
+    Returns the value as-is via `str()` when `node.text` is not `bytes`.
+    """
     if node is None or (text_bytes := node.text) is None:
         return None
     if isinstance(text_bytes, bytes):
