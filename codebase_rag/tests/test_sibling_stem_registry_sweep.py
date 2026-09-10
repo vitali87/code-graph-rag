@@ -243,3 +243,65 @@ def test_a_surviving_csharp_siblings_class_is_kept(tmp_path: Path) -> None:
     assert survivor in _qns(updater), (
         "Core/Util.cs still exists but lost its class to Core.cs's deletion"
     )
+
+
+def test_a_rehydrated_siblings_class_is_kept(tmp_path: Path) -> None:
+    """Ownership has TWO records, and both must be consulted.
+
+    `class_owner_module` is written at ingest, so a definition carried over
+    by a REHYDRATE (an incremental run that reads unchanged files back from
+    the graph instead of re-parsing them) has no entry there. Consulting only
+    that map left the rehydrated case falling through to the prefix rule, so
+    an unchanged sibling still lost its class on an incremental run -- the
+    defect fixed here, just one run later. Raised in review of #1844.
+
+    `rehydrated_definition_paths` is the record for exactly those, written
+    when the row is read back, and `_prune_class_keyed_maps` already treats
+    it as ownership evidence.
+    """
+    updater = _build(tmp_path, {"a.py": _A_PY, "a/__init__.py": "", "a/b.py": _B_PY})
+    project = tmp_path.name
+    processor = updater.factory.definition_processor
+
+    # The rehydrated shape: the class is registered and its defining file is
+    # recorded, but the ingest-time owner map does not know about it.
+    survivor = f"{project}.a.b.Nested"
+    processor.class_owner_module.pop(survivor, None)
+    processor.rehydrated_definition_paths[survivor] = "a/b.py"
+    assert survivor not in processor.class_owner_module, (
+        "fixture guard: the ingest-time owner entry must be absent, or this "
+        "test passes through the other branch and proves nothing"
+    )
+
+    (tmp_path / "a.py").unlink()
+    updater.remove_file_from_state(tmp_path / "a.py")
+
+    after = _qns(updater)
+    assert survivor in after, (
+        "a rehydrated class from the surviving a/b.py was swept with a.py"
+    )
+    # ...and the deleted file's own definitions still go.
+    assert f"{project}.a.top" not in after
+
+
+def test_a_rehydrated_class_from_the_deleted_file_still_goes(tmp_path: Path) -> None:
+    """The control for the rehydrated branch.
+
+    Keeping rehydrated definitions must not become "keep everything
+    rehydrated": a definition whose recorded path IS the deleted file has to
+    be removed, or the sweep stops working on incremental runs.
+    """
+    updater = _build(tmp_path, {"a.py": _A_PY, "a/__init__.py": "", "a/b.py": _B_PY})
+    project = tmp_path.name
+    processor = updater.factory.definition_processor
+
+    doomed = f"{project}.a.top"
+    processor.class_owner_module.pop(doomed, None)
+    processor.rehydrated_definition_paths[doomed] = "a.py"
+
+    (tmp_path / "a.py").unlink()
+    updater.remove_file_from_state(tmp_path / "a.py")
+
+    assert doomed not in _qns(updater), (
+        "a rehydrated definition from the DELETED file survived"
+    )

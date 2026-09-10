@@ -3072,12 +3072,28 @@ class GraphUpdater:
         # left to the prefix rule, which is the pre-existing behaviour.
         owner_module = self.factory.definition_processor.class_owner_module
         live_modules = set(self.factory.definition_processor.module_qn_to_file_path)
+        # `class_owner_module` is written at INGEST, so a definition carried
+        # over by a REHYDRATE has no entry there and would fall back to the
+        # prefix rule. `rehydrated_definition_paths` is the record for exactly
+        # those, written when the row is read back from the graph, and it
+        # already serves as ownership evidence in `_prune_class_keyed_maps`.
+        # Consulting both means an unchanged sibling's class is protected on
+        # an incremental run too, not only on the run that parsed it (raised
+        # in review of #1844; pre-existing on main, which loses it either way).
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        deleted_rel = cached_relative_path(file_path, self.repo_path).as_posix()
 
         def _owned_by_a_surviving_file(qn: str) -> bool:
             owner = owner_module.get(qn)
-            if owner is None:
-                return False
-            return owner not in module_qn_prefixes and owner in live_modules
+            if owner is not None:
+                return owner not in module_qn_prefixes and owner in live_modules
+            # The rehydrated half: owned by a file that is not the one being
+            # deleted. Compared as a relative posix path, the form the
+            # rehydrate stores.
+            rehydrated_path = rehydrated.get(qn)
+            if rehydrated_path is not None:
+                return str(rehydrated_path) != deleted_rel
+            return False
 
         for qn in list(self.function_registry.keys()):
             matched_prefix = any(
