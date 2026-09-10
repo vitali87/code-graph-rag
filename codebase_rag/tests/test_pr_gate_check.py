@@ -466,6 +466,36 @@ class TestCiRunsAtHeadIsNotWindowed:
 
         assert any(f"head_sha={self.HEAD}" in arg for call in seen for arg in call)
 
+    def test_the_request_paginates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`head_sha` is exact but not unbounded -- it pages at 30 by default.
+
+        Without --paginate a run on a later page reads as "no run at
+        head", which is the windowing bug this fix removes, returning at
+        a larger size. The decoder test cannot catch this: it feeds
+        pre-concatenated pages to a stub, so it covers the parsing but
+        not the flag that makes multiple pages arrive.
+        """
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        # Assert the ARGUMENT ORDER, not merely that the flag is present.
+        # `gh --paginate api ...` is rejected by gh, and a presence-only
+        # check passes for it -- caught exactly that way while restoring
+        # this flag after a mutation.
+        assert seen, "no gh call was made"
+        call = seen[0]
+        assert call[0] == "api"
+        assert "--paginate" in call
+        assert call.index("--paginate") > call.index("api")
+        assert any("per_page=100" in arg for arg in call)
+
     def test_it_does_not_page_recent_runs(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -652,6 +682,30 @@ class TestCiRunsAtHeadFailsClosedOnMalformedPages:
         body = bodies[label] if raw is None else raw
 
         assert len(self._runs(monkeypatch, body)) == expected
+
+    @pytest.mark.parametrize(
+        "prefix", ["\n", " ", "\t\n ", "\r\n"], ids=["nl", "space", "mixed", "crlf"]
+    )
+    def test_leading_whitespace_does_not_discard_every_page(
+        self, monkeypatch: pytest.MonkeyPatch, prefix: str
+    ) -> None:
+        """`raw_decode` does not tolerate leading whitespace.
+
+        Skipping separators only AFTER a decode means a response that
+        opens with one raises on the first pass and returns nothing,
+        reported as "no CI run exists at the head SHA" -- the very
+        verdict this lookup was rewritten to stop producing falsely.
+        """
+        runs = self._runs(monkeypatch, prefix + self._page())
+
+        assert [r["id"] for r in runs] == [1]
+
+    def test_leading_whitespace_before_multiple_pages_keeps_them_all(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = "\n" + self._page(1) + "\n" + self._page(2)
+
+        assert [r["id"] for r in self._runs(monkeypatch, raw)] == [1, 2]
 
     def test_a_truncated_final_page_keeps_the_pages_already_decoded(
         self, monkeypatch: pytest.MonkeyPatch

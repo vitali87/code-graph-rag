@@ -338,6 +338,14 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
     decoder = json.JSONDecoder()
     index = 0
     while index < len(raw):
+        # Skip separators BEFORE decoding, not only after. `raw_decode` does
+        # not tolerate leading whitespace, so a response starting with one
+        # would raise on the first pass and return no runs at all -- the
+        # exact false "no CI run at the head" this function exists to remove.
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
         try:
             page, offset = decoder.raw_decode(raw, index)
         except ValueError:
@@ -347,8 +355,6 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
             if isinstance(found, list):
                 runs.extend(r for r in found if isinstance(r, dict))
         index = offset
-        while index < len(raw) and raw[index].isspace():
-            index += 1
     return [run for run in runs if str(run.get("path", "")) == CI_WORKFLOW_PATH]
 
 
