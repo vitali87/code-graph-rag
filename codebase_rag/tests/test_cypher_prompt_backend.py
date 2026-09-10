@@ -160,3 +160,32 @@ def test_generated_neo4j_prompt_passes_the_read_only_guard() -> None:
     # can reject at all on the same run.
     with pytest.raises(Exception):
         _validate_call_procedures("CALL gds.pageRank.stream('g') YIELD nodeId")
+
+
+def test_the_neo4j_ranking_example_restricts_every_aggregated_alias() -> None:
+    """An aggregate example must scope BOTH ends of the relationship.
+
+    Raised by Greptile on #1839. The finding as filed attributed the refusal
+    to the pattern predicates this section recommends, which does not hold --
+    varying only the predicate never changes `requires_project_evidence`'s
+    verdict, and its own property-comparison control is refused too. Scoped
+    aggregates are refused on `main` regardless, by design (#1494: a count
+    exposes a MAGNITUDE spanning every indexed project).
+
+    What DID hold is smaller and real: the example named an unrestricted
+    caller alias, so its total would span projects the caller never asked
+    about. That is a bad example independently of any validator, since the
+    prompt teaches the shape the model then emits.
+    """
+    rules = prompts.build_cypher_query_rules(DIALECT_NEO4J)
+    ranking = next(
+        frag for frag in re.findall(r"`([^`]+)`", rules) if "count(r)" in frag
+    )
+    # Every alias the aggregate ranges over is prefix-restricted, not only
+    # the projected one.
+    aliases = set(re.findall(r"\((\w+):Function\)", ranking))
+    assert aliases, "fixture matched no aliases; the loop below would be vacuous"
+    for alias in aliases:
+        assert f"{alias}.qualified_name STARTS WITH" in ranking, (
+            f"alias {alias!r} is aggregated but never restricted: {ranking}"
+        )

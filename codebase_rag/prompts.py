@@ -131,7 +131,7 @@ This deployment is Neo4j. Answer algorithmic questions (paths, cycles, reachabil
 - **Reachability / paths**: a bounded variable-length pattern, e.g. `MATCH p = (a)-[:CALLS*1..6]->(b)`, with `LIMIT`.
 - **Shortest path**: `shortestPath((a)-[:CALLS*1..10]->(b))`, which is built in.
 - **Cycles**: a bounded pattern returning to its start, e.g. `MATCH p = (a)-[:CALLS*1..6]->(a)`.
-- **Ranking / "most called"**: aggregate instead of a centrality procedure, e.g. `MATCH (:Function)-[r:CALLS]->(f:Function) RETURN f.qualified_name AS name, count(r) AS callers ORDER BY callers DESC LIMIT 10`.
+- **Ranking / "most called"**: aggregate instead of a centrality procedure, e.g. `MATCH (c:Function)-[r:CALLS]->(f:Function) WHERE f.qualified_name STARTS WITH '<project>.' AND c.qualified_name STARTS WITH '<project>.' RETURN f.qualified_name AS name, count(r) AS callers ORDER BY callers DESC LIMIT 10`. Restrict EVERY alias the aggregate counts over, not only the one you return: an unrestricted end makes the total span projects you did not ask about.
 - **Existence of an edge**: prefer the bare pattern predicate `WHERE (a)-[:CALLS]->(b)` or `WHERE EXISTS { (a)-[:CALLS]->(b) }`, which is the GQL-conformant spelling.
 
 **2c. When Cypher Can't Answer**
