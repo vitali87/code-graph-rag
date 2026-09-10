@@ -122,8 +122,17 @@ class TestTheCounterRunsForEveryProvider:
         await main_mod._refresh_context_tokens(_messages("hi " * 5000))
         large = main_mod.app_context.session.context_tokens
 
-        assert small > 0 and large > small * 10, (
-            f"the estimate does not scale with the history: {small} then {large}"
+        # Split because the two halves fail for different reasons: the first
+        # says the estimator produced nothing at all, the second that it
+        # produced a constant. A composite assertion reports both as one
+        # message and leaves the reader to work out which (SonarCloud S9073).
+        assert small > 0, (
+            f"the estimator returned {small} for a non-empty history, so it "
+            "measured nothing rather than measuring something small"
+        )
+        assert large > small * 10, (
+            f"a history 100x larger estimated {large} against {small}, so the "
+            "count does not scale with the history and is effectively a constant"
         )
 
     @pytest.mark.asyncio
