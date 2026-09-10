@@ -1167,6 +1167,40 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "process could not tell the partial graph from a complete one"
         )
 
+    async def test_a_delta_whose_marker_clear_fails_reports_it(
+        self, temp_project_root: Path
+    ) -> None:
+        """A stuck clear is a retryable failure, not a silent success.
+
+        The delta itself succeeded but its marker could not be lifted, so the
+        project is still durably marked and every later run will refuse. This
+        method never raises -- it reports in place of the delta -- so the
+        message is the only channel that can say so. Reporting the delta as
+        clean here would leave the caller with a wedged project and no
+        indication why (the same shape #1705 fixed on the reingest path).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+            )
+            updater_cls.return_value.project_name = project
+            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+                ingestor._failing.add("clear")
+                result = registry._delta_after_write(["a.py"])
+                ingestor._failing.discard("clear")
+
+        assert "Structural delta unavailable" in result, (
+            f"a stuck marker clear was reported as a clean delta; got {result!r}"
+        )
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear was expected to fail and leave the marker"
+        )
+
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
         self, temp_project_root: Path
     ) -> None:
