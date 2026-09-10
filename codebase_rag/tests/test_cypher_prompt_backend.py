@@ -157,8 +157,13 @@ def test_generated_neo4j_prompt_passes_the_read_only_guard() -> None:
         _validate_call_procedures(fragment)
 
     # Known-positive: a zero above means "nothing rejected" only if the guard
-    # can reject at all on the same run.
-    with pytest.raises(Exception):
+    # can reject at all on the same run. Pinned to the exact exception and to
+    # the procedure name in its message -- a bare `Exception` would also be
+    # satisfied by a TypeError from a mistyped call, which is the guard NOT
+    # running (python:S5958).
+    from codebase_rag.exceptions import LLMGenerationError
+
+    with pytest.raises(LLMGenerationError, match="gds.pageRank.stream"):
         _validate_call_procedures("CALL gds.pageRank.stream('g') YIELD nodeId")
 
 
