@@ -1039,6 +1039,53 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"expected the incomplete-run refusal; got {refused}"
         )
 
+    async def test_deleting_an_unrelated_project_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Through the PUBLIC path, which is what the helper-level test missed.
+
+        Raised by Greptile on #1846 and confirmed. The sibling test drives
+        `_require_marker_cleared('project-B')` directly, so it never sees
+        `_delete_project_sync` RAISE the flag for its own project first --
+        overwriting the wipe's `owner=None` with `B` -- and then legitimately
+        settle what it now appears to own. Measured before the fix:
+
+            after failed wipe:  flag=True  owner=None
+            after delete of B:  flag=False owner=None
+            reingest of A: ACCEPTED over a partial graph
+
+        The rule is that an operation claims ownership only when it raises
+        the flag FROM CLEAN; an already-set flag belongs to whatever failure
+        set it. Same rule `_abandon_before_writing` already applied to the
+        attribution.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        ingestor.list_projects.return_value = [project, "B"]
+        result = await registry.delete_project("B")
+        assert result.get("success") is True, f"fixture guard: delete failed; {result}"
+
+        assert registry._graph_incomplete is True, (
+            "deleting an unrelated project settled the flag a failed wipe "
+            "earned; the next reingest would run over a partially wiped graph"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
     async def test_a_projects_own_clear_still_settles_its_own_flag(
         self, temp_project_root: Path
     ) -> None:
