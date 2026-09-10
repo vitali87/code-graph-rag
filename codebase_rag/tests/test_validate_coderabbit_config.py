@@ -262,21 +262,23 @@ class TestSchemaAloneIsInsufficient:
 
     def test_the_validator_catches_what_the_schema_misses(self) -> None:
         """The discriminating assertion: same input, opposite verdicts."""
+        # Both built before the raises block, so only the call under test can
+        # throw: otherwise a failure in the fixture would satisfy the
+        # assertion and the test would pass for the wrong reason.
+        schema = self._schema()
+        text = shipped().replace("base_branches:", "base_branchez:")
         with pytest.raises(ConfigError):
-            validate_coderabbit_config(
-                shipped().replace("base_branches:", "base_branchez:"),
-                schema=self._schema(),
-            )
+            validate_coderabbit_config(text, schema=schema)
 
     def test_the_shipped_config_passes_the_vendor_schema_too(self) -> None:
         assert validate_coderabbit_config(shipped(), schema=self._schema()) >= 1
 
     def test_a_schema_violation_is_reported_when_a_schema_is_given(self) -> None:
         """An unknown ROOT key is what the schema does catch."""
+        schema = self._schema()
+        text = VALID + "\nnonsense_root_key: 1\n"
         with pytest.raises(ConfigError, match="schema violation"):
-            validate_coderabbit_config(
-                VALID + "\nnonsense_root_key: 1\n", self._schema()
-            )
+            validate_coderabbit_config(text, schema)
 
 
 class TestWiring:
