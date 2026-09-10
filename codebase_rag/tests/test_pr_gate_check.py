@@ -602,3 +602,67 @@ class TestCheckResolvesRunOwnershipWithTheRestField:
         reasons = check_pr_gated.check("1826")
 
         assert not any("does not resolve to" in r for r in reasons)
+
+
+class TestCiRunsAtHeadFailsClosedOnMalformedPages:
+    """Malformed paginated output must yield fewer runs, never more.
+
+    Every degradation here reports "no CI run at the head", which blocks
+    a merge. The opposite direction -- inventing a run from unparseable
+    output -- would report a PR gated on evidence that does not exist.
+    """
+
+    CI_PATH = ".github/workflows/ci.yml"
+
+    def _page(self, run_id: int = 1) -> str:
+        return json.dumps({"workflow_runs": [{"id": run_id, "path": self.CI_PATH}]})
+
+    def _runs(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> list[dict]:
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *a: raw)
+        return check_pr_gated.ci_runs_at_head("a" * 40)
+
+    @pytest.mark.parametrize(
+        "label,raw,expected",
+        [
+            ("empty", "", 0),
+            ("whitespace only", "   \n  ", 0),
+            ("one page", None, 1),
+            ("trailing whitespace", None, 1),
+            ("page is null", None, 1),
+            ("page is a list", None, 1),
+            ("workflow_runs missing", None, 1),
+            ("workflow_runs not a list", None, 1),
+        ],
+    )
+    def test_malformed_output_never_invents_a_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        label: str,
+        raw: str | None,
+        expected: int,
+    ) -> None:
+        bodies = {
+            "one page": self._page(),
+            "trailing whitespace": self._page() + "\n\n  ",
+            "page is null": "null\n" + self._page(),
+            "page is a list": "[1,2]\n" + self._page(),
+            "workflow_runs missing": '{"total_count":0}' + "\n" + self._page(),
+            "workflow_runs not a list": '{"workflow_runs":"x"}' + "\n" + self._page(),
+        }
+        body = bodies[label] if raw is None else raw
+
+        assert len(self._runs(monkeypatch, body)) == expected
+
+    def test_a_truncated_final_page_keeps_the_pages_already_decoded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cut-off last page must not discard the complete ones before it."""
+        raw = self._page() + "\n" + '{"workflow_runs":[{"id":2,'
+
+        assert [r["id"] for r in self._runs(monkeypatch, raw)] == [1]
+
+    def test_the_page_loop_terminates_on_unparseable_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards against an infinite loop when the decoder cannot advance."""
+        assert self._runs(monkeypatch, "not json" + self._page()) == []

@@ -315,8 +315,15 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
     minutes old, every one of the 40 most recent runs was newer, and the
     tool called a fully green PR ungated.
 
-    The `head_sha` parameter is exact and unbounded, so age and repo
-    traffic cannot affect the answer.
+    The `head_sha` parameter is exact, so age and repo traffic cannot
+    affect the answer. It is NOT unbounded -- it pages at 30 by default,
+    which is why this paginates; an unpaginated query would reintroduce
+    the same bug once a SHA carried enough runs.
+
+    The run is identified by workflow PATH rather than display name: a
+    name is a string any workflow file may declare, so a second file
+    named `CI` would satisfy a name check without running a test. The
+    repo's own require-ci-at-head.yml matches on path for this reason.
     """
     raw = _gh_stdout_or_empty(
         "api",
