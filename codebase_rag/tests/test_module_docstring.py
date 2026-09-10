@@ -613,6 +613,7 @@ class TestModuleDocstringPerLanguageIsExercised:
         ("dart", "dart"),
         ("lua", "lua"),
         ("php", "php"),
+        ("sql", "sql"),
     )
 
     def test_per_language_class_is_not_gated_on_the_python_grammar(self) -> None:
