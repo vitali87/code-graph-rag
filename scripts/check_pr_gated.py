@@ -338,10 +338,15 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
     decoder = json.JSONDecoder()
     index = 0
     while index < len(raw):
-        # Skip separators BEFORE decoding, not only after. `raw_decode` does
-        # not tolerate leading whitespace, so a response starting with one
-        # would raise on the first pass and return no runs at all -- the
-        # exact false "no CI run at the head" this function exists to remove.
+        # Skip separators BEFORE decoding, not only after, and do not
+        # reorder these two steps. `raw_decode` does not tolerate leading
+        # whitespace: skipping only after a successful decode means a
+        # response opening with a newline raises on the first pass and
+        # returns no runs at all, reported as "no CI run exists at the head
+        # SHA" -- the exact false verdict this function was rewritten to
+        # stop producing. Trailing-only skipping looks equivalent and is
+        # not; `test_leading_whitespace_does_not_discard_every_page` fails
+        # if these are swapped back.
         while index < len(raw) and raw[index].isspace():
             index += 1
         if index >= len(raw):
