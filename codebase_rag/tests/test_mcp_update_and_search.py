@@ -994,6 +994,100 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"graph left by a crashed update; got {refused}"
         )
 
+    async def test_a_fresh_registry_refuses_the_structural_delta_after_a_crash(
+        self, temp_project_root: Path
+    ) -> None:
+        """The structural-delta path needs the same durable check (#1783).
+
+        `_updater_for_reingest` guards on the in-process flag alone and never
+        reads the persisted marker, so after a crash or an MCP restart it
+        passes -- `_graph_incomplete` is False because nothing in THIS
+        process failed -- and hydrates from the partial graph.
+
+        The sibling test above covers `_reingest_sync`, which #1705 rebuilt
+        as `_hydrate_reingest_updater` (the marker-reading version). The
+        structural-delta call site was added by the #1546 stack after that
+        branch was written, so it kept the flag-only helper. Same registry,
+        same state, opposite answers -- and invisible from either call site,
+        since each looks correct alone.
+
+        Driven through `_delta_after_write`, the real caller, rather than the
+        helper: the defect is which helper that path REACHES, so calling the
+        helper directly would assert the fix on the wrong subject.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("update died")
+            assert "Error" in await first.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the failed update left no persisted marker, so a "
+            "fresh process has nothing to read and this proves nothing"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        assert second._graph_incomplete is False, (
+            "fixture guard: the new registry must NOT carry the in-process "
+            "flag, or this test cannot tell the persisted marker apart from it"
+        )
+
+        # `_delta_after_write` never raises -- it reports in place of the
+        # delta -- so the refusal shows up in the returned text.
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            result = second._delta_after_write(["a.py"])
+            hydrated = updater_cls.called
+
+        assert not hydrated, (
+            "the structural-delta path built an updater over the partial "
+            "graph left by a crashed update; it must refuse like the scoped "
+            "reingest path does"
+        )
+        assert "failed part way" in result, (
+            f"expected the incomplete-run refusal in the delta text; got {result!r}"
+        )
+
+    async def test_a_completed_update_lets_the_structural_delta_through(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control.
+
+        Without it the fix is indistinguishable from one that refuses every
+        structural delta forever, which also satisfies the test above.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await first.update_repository()
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            second._delta_after_write(["a.py"])
+            assert updater_cls.called, (
+                "a clean store must still let the structural delta hydrate"
+            )
+
+    async def test_the_flag_only_hydration_helper_is_gone(self) -> None:
+        """Both reingest paths now read the durable marker (#1783).
+
+        `_updater_for_reingest` guarded on `_graph_incomplete` alone. With
+        its last caller routed through `_hydrate_reingest_updater` it has
+        none, and a flag-only hydration helper left sitting beside the
+        marker-reading one is how this defect came back once already: the
+        #1546 stack picked the wrong one because both existed and looked
+        interchangeable. If it returns it needs a caller and a reason.
+        """
+        assert not hasattr(MCPToolsRegistry, "_updater_for_reingest")
+
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
         self, temp_project_root: Path
     ) -> None:
