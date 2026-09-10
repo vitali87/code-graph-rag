@@ -4451,8 +4451,22 @@ class GraphUpdater:
                 continue
             if captures_cache is not None and file_path in captures_cache:
                 cached = captures_cache[file_path]
-                if not cached.get(cs.CAPTURE_CALL) and not cached.get(
-                    cs.CAPTURE_FUNCTION
+                # The perf skip (e65d8b08) reads "this file has no call sites
+                # and no functions, so the call walk has nothing to find".
+                # That is only true when the parse produced SOMETHING: a
+                # wholly empty entry means the combined query matched nothing
+                # at all, and a module-level reference (a dispatch dict
+                # holding an imported handler) is a call the walk still has to
+                # emit -- it lives under neither capture.
+                #
+                # This distinction only became reachable when the re-parse
+                # started writing empty entries to keep the cache honest
+                # (#1794). Before that an empty entry could not exist, so the
+                # skip and the emptiness test happened to agree.
+                if (
+                    cached
+                    and not cached.get(cs.CAPTURE_CALL)
+                    and not cached.get(cs.CAPTURE_FUNCTION)
                 ):
                     continue
             self.factory.call_processor.process_calls_in_file(

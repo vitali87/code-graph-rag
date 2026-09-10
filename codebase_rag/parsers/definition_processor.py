@@ -499,13 +499,40 @@ class DefinitionProcessor(
                 if combined_query:
                     cursor = QueryCursor(combined_query)
                     combined_captures = sorted_captures(cursor, root_node)
-            if self._func_class_captures_cache is not None and combined_captures:
+            # An UNAVAILABLE query is not an empty result. `combined_captures`
+            # stays None when the language has no combined query (or building
+            # it raised), and caching {} for that would tell the call walk
+            # "this file has no functions" when the truth is "nobody looked".
+            # Measured: it attributed a call to the MODULE alongside the
+            # correct function-owned edge, so the graph gained a spurious
+            # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
+            # ...` (Greptile, PR #1833). Absent is the honest state there, and
+            # it is what the reader already falls back on.
+            if self._func_class_captures_cache is not None and (
+                combined_captures is not None
+            ):
+                # Write unconditionally, including the EMPTY entry. The two
+                # truthiness guards this replaces both skipped the write when
+                # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
+                # ENTRY in place -- captures holding nodes from a tree that
+                # has since been discarded.
+                #
+                # A file emptied (or made unparseable) between runs is exactly
+                # that case: its AST cache is correctly refreshed to the empty
+                # tree, but `_process_function_calls` reads these captures, so
+                # it walked the OLD call sites and re-emitted a CALLS edge out
+                # of a function that no longer exists in the source (#1794).
+                # `_load_ast_from_disk` already pops this cache on eviction for
+                # the same reason; the re-parse path has to keep it true too.
+                #
+                # An absent entry and an empty one are not the same thing to
+                # the reader: absent means "not parsed this run, look at the
+                # AST", empty means "parsed, and it has nothing".
                 cache_entry: dict[str, list] = {}
                 for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                    if key in combined_captures:
+                    if combined_captures and key in combined_captures:
                         cache_entry[key] = combined_captures[key]
-                if cache_entry:
-                    self._func_class_captures_cache[file_path] = cache_entry
+                self._func_class_captures_cache[file_path] = cache_entry
 
             # A reused updater's second run re-parses this module into a map
             # still holding the first run's spans. The key is (module_qn,
