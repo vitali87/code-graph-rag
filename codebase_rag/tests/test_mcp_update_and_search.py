@@ -880,6 +880,8 @@ class TestIncompleteMarkerSurvivesTheProcess:
         having happened.
         """
         store: dict[str, bool] = {}
+        # {project: {run_id, ...}} -- the outstanding runs behind `store`.
+        runs: dict[str, set[str]] = {}
         # The marker's phase, kept beside the marker itself so the existing
         # `store[name] is True` assertions keep their meaning. Absent reads as
         # writing, exactly as the production query's `coalesce` does.
@@ -903,8 +905,16 @@ class TestIncompleteMarkerSurvivesTheProcess:
             # the code is supposed to answer: with a branch keyed only on
             # "SET m.run_incomplete", reverting MERGE to MATCH left every
             # test green (#1705 review).
+            # The marker node is keyed by (project, run_id) in production
+            # (issue #1709), so the fake keys its per-run set the same way. A
+            # fake keyed only by project cannot express "B's clear leaves A's
+            # marker", which is the whole behaviour under test -- it would
+            # answer the question the code is supposed to answer, exactly as
+            # the MERGE-vs-MATCH note above records.
+            run_id = str((params or {}).get(cs.KEY_RUN_ID, ""))
             if "SET m.run_incomplete" in query:
                 if query.lstrip().startswith("MERGE") or name in store:
+                    runs.setdefault(name, set()).add(run_id)
                     store[name] = True
                     # Monotonic, as the production MERGE is: a later mark can
                     # raise the phase to writing but never lower it.
@@ -912,6 +922,17 @@ class TestIncompleteMarkerSurvivesTheProcess:
                         (params or {}).get(cs.KEY_WRITING, True)
                     )
             elif "DELETE m" in query:
+                if "run_id" in query:
+                    # The ordinary clear: only THIS run's marker. The project
+                    # reads clear once every outstanding run's marker is gone.
+                    remaining = runs.get(name, set())
+                    remaining.discard(run_id)
+                    if remaining:
+                        return
+                # RECOVERY (no run_id in the query): clears every outstanding
+                # marker, which is the point of that path -- it exists to
+                # clear a marker some other run stranded.
+                runs.pop(name, None)
                 store.pop(name, None)
                 writing.pop(name, None)
 
@@ -992,6 +1013,103 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert "failed part way" in refused.get("error", ""), (
             "a fresh registry hydrated a scoped updater from the partial "
             f"graph left by a crashed update; got {refused}"
+        )
+
+    async def test_a_concurrent_runs_clear_cannot_remove_another_runs_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The overlap race (#1709), found by CodeRabbit on #1705.
+
+        `_ingestor_lock` is per INSTANCE, so two registries can index the same
+        project at once. With one marker node per project they interleaved:
+
+            1. A marks the project and starts mutating
+            2. B marks it -- a no-op, the node already exists
+            3. B finishes and CLEARS the marker
+            4. A fails part way
+
+        The graph then held A's partial data with no marker, and a fresh
+        process treated it as complete. Markers are now keyed per run, so B's
+        clear removes only B's.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        second = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+        _mark_indexed(second)
+        assert first._run_id != second._run_id, (
+            "fixture guard: two registries must have distinct run ids, or "
+            "this test cannot tell per-run markers from per-project ones"
+        )
+
+        assert first._require_marker(project) is None
+        assert second._require_marker(project) is None
+        assert second._require_marker_cleared(project) is None
+
+        assert first._persisted_incomplete(project) is True, (
+            "the concurrent run's clear removed this run's marker; A's "
+            "partial graph would look complete to a fresh process"
+        )
+
+        # A fresh process must still refuse, which is the consequence that
+        # matters: the marker exists precisely to survive one.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        refused = await fresh.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_runs_own_clear_still_lifts_its_own_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control.
+
+        Making a clear run-scoped must not stop a run clearing what it wrote,
+        or every completed run would leave its marker behind and block the
+        next one -- a fix that satisfies the overlap test while wedging the
+        ordinary path.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        assert registry._require_marker(project) is None
+        assert registry._persisted_incomplete(project) is True
+        assert registry._require_marker_cleared(project) is None
+        assert registry._persisted_incomplete(project) is False, (
+            "a run could not clear the marker it wrote itself"
+        )
+
+    async def test_recovery_clears_a_marker_stranded_by_another_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery is deliberately NOT run-scoped, and that is load-bearing.
+
+        Its whole purpose is to clear a marker some OTHER run stranded -- one
+        that stopped before its first graph write and could not clear its own.
+        A run-scoped delete matches nothing there, and the project stays
+        blocked until someone runs a full update. Three existing tests cover
+        the paths; this states the property directly so the reason survives.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+
+        # A read-only run marks itself, then fails to clear.
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert ingestor._marker_store.get(project) is True
+
+        # A DIFFERENT registry, with a different run id, recovers it.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        assert fresh._run_id != stranding._run_id, "fixture guard: distinct runs"
+        assert fresh._persisted_incomplete(project) is False, (
+            "a fresh process could not clear a `writing=false` marker another "
+            "run stranded, so the project stays blocked until a full update"
         )
 
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
@@ -2249,15 +2367,18 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: `before_write` must have promoted the marker"
         )
 
-        # Another process finishes a full update and clears the marker.
+        # Another process finishes a full update. Before #1709 its clear
+        # removed THIS registry's marker too -- one node per project -- which
+        # is what made the attribution the deciding factor here. Markers are
+        # now per run, so the other process clears only its own and this
+        # registry's marker survives.
         other = self._registry(temp_project_root, ingestor)
         _mark_indexed(other)
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             assert "Error" not in await other.update_repository()
-        assert registry._persisted_incomplete(project) is False, (
-            "fixture guard: the other process must have cleared the durable "
-            "marker, or _persisted_incomplete refuses on its own and the "
-            "attribution is never the deciding factor"
+        assert registry._persisted_incomplete(project) is True, (
+            "the other process's clear removed this registry's marker; that "
+            "is the #1709 race, and per-run markers exist to stop it"
         )
 
         registry._live_updater = None
@@ -2273,9 +2394,11 @@ class TestIncompleteMarkerInvariant:
             f"(#1705 review): {hydrations}"
         )
         assert "error" in result, (
-            "another process's marker clear healed a flag earned by THIS "
-            "process's mutating failure, so a scoped reingest ran over the "
-            f"partial graph it left: {result}"
+            "a scoped reingest ran over the partial graph THIS process's "
+            "mutating failure left. Before #1709 the way in was the other "
+            "process's clear removing this marker and a stale attribution "
+            "then healing the flag; with per-run markers the durable marker "
+            f"survives and refuses on its own. Either way it must refuse: {result}"
         )
 
     @pytest.mark.parametrize(

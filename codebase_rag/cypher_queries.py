@@ -75,14 +75,35 @@ CYPHER_PROJECT_ROOT_PATH = (
 # marker another process left at `writing=true` over a graph it had started to
 # change, or that process's abort would clear a guard it does not own (#1705
 # review). Ownership of the DELETE is the remaining half, tracked in #1709.
+# One marker node PER RUN, not per project (issue #1709). The ingestor lock is
+# per registry instance, so two registries can index the same project at once;
+# with a single node per project, the second run's clear deleted the first
+# run's marker and a partial graph looked complete to a fresh process.
 CYPHER_MARK_PROJECT_INCOMPLETE = (
-    "MERGE (m:IncompleteRun {project: $project_name}) "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "SET m.run_incomplete = true, "
     "m.writing = coalesce(m.writing, false) OR $writing"
 )
+# Deletes only THIS run's marker, so a concurrent run's marker outlives it.
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) DELETE m"
+)
+# RECOVERY: clears every outstanding marker for the project, whichever run
+# wrote it. Deliberately not run-scoped -- its whole purpose is to clear a
+# marker some OTHER run stranded (a run that stopped before its first graph
+# write and could not, or did not live to, clear its own). A run-scoped
+# delete matches nothing there, and the project stays blocked until someone
+# runs a full update. Guarded by the caller on `writing=false` for EVERY
+# outstanding marker, so no run that has begun writing can be cleared this
+# way (issue #1709).
+CYPHER_RECOVER_PROJECT_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
 )
+# "Is ANY run outstanding": the read was already a boolean question, so it
+# generalises without changing its callers' meaning. `writing` is true if ANY
+# outstanding run has begun writing, which is the conservative reading -- a
+# recoverable `writing=false` state requires every outstanding run to be
+# read-only still.
 CYPHER_PROJECT_IS_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) "
     "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "
