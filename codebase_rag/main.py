@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from collections import deque
 from collections.abc import Callable, Coroutine
@@ -893,11 +894,63 @@ def _token_usage() -> tuple[int, int, float]:
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
+# The context estimate runs on a DAEMON thread, not on `asyncio.to_thread`'s
+# default executor. That executor registers an atexit hook that JOINS its
+# threads, so a cancelled refresh still made shutdown wait out an in-flight
+# estimate -- seconds on a large history (Greptile, PR #1832). A daemon thread
+# is never joined, so an abandoned estimate cannot delay exit.
+#
+# Safe precisely because the estimate is pure and its result is discarded on
+# cancellation: it reads a message list and returns a number, touching no file
+# and no connection, so a thread killed at exit leaves nothing half-written.
+# Do NOT run anything that writes this way.
+
 
 def _spawn_background(coro: Coroutine[None, None, None]) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+
+def _settle(
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[int],
+    *,
+    value: int | None = None,
+    error: BaseException | None = None,
+) -> None:
+    """Resolve `future` from another thread, ignoring an already-settled one.
+
+    A cancelled refresh leaves the future done before the daemon thread
+    finishes, and setting a result on a cancelled future raises.
+    """
+
+    def apply() -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(value or 0)
+
+    loop.call_soon_threadsafe(apply)
+
+
+async def _estimate_off_loop(messages: list[ModelMessage]) -> int:
+    """`estimate_message_tokens` on a daemon thread, awaited without blocking."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[int] = loop.create_future()
+
+    def run() -> None:
+        try:
+            result = estimate_message_tokens(messages)
+        except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
+            _settle(loop, future, error=exc)
+        else:
+            _settle(loop, future, value=result)
+
+    threading.Thread(target=run, name="cgr-context-estimate", daemon=True).start()
+    return await future
 
 
 async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
@@ -926,14 +979,10 @@ async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
     except Exception:
         # No config at all still deserves a number: the estimate needs only
         # the messages, and the count drives compaction rather than billing.
-        app_context.session.context_tokens = await asyncio.to_thread(
-            estimate_message_tokens, messages
-        )
+        app_context.session.context_tokens = await _estimate_off_loop(messages)
         return
 
-    app_context.session.context_tokens = await asyncio.to_thread(
-        estimate_message_tokens, messages
-    )
+    app_context.session.context_tokens = await _estimate_off_loop(messages)
 
     # An exact count beats the estimate where it exists -- it accounts for
     # tool definitions and system-prompt overhead that tiktoken over a message

@@ -386,3 +386,119 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
             f"the event loop was starved for {worst:.3f}s while the context "
             "estimate ran, so the whole UI freezes on a long history"
         )
+
+    @pytest.mark.asyncio
+    async def test_the_no_config_path_also_stays_off_the_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second call site, which the test above does not reach.
+
+        `_refresh_context_tokens` estimates on TWO paths: the configured one,
+        and the fallback when the config cannot be read at all. Mutating the
+        fallback to run inline left every other test green -- it is only
+        reached when reading the config raises, which nothing else here does.
+
+        That path runs at startup, before a model is settled on, so blocking
+        the loop there freezes the UI at exactly the moment a user is waiting
+        for the first prompt.
+        """
+        import asyncio
+        import time
+
+        from codebase_rag import main as main_mod
+
+        def slow(_messages: object) -> int:
+            time.sleep(0.6)
+            return 4321
+
+        monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
+
+        def explode(self: object) -> object:
+            raise RuntimeError("no orchestrator configured")
+
+        monkeypatch.setattr(
+            type(main_mod.settings), "active_orchestrator_config", property(explode)
+        )
+        main_mod.app_context.session.context_tokens = 0
+
+        stop = asyncio.Event()
+        worst = 0.0
+
+        async def ticker() -> None:
+            nonlocal worst
+            last = time.perf_counter()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                worst = max(worst, now - last)
+                last = now
+
+        task = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        await main_mod._refresh_context_tokens(_messages())
+        stop.set()
+        await task
+
+        assert main_mod.app_context.session.context_tokens == 4321, (
+            "fixture guard: the fallback estimate must have run and been "
+            "written back, or a small gap proves nothing"
+        )
+        assert worst < 0.3, (
+            f"the event loop was starved for {worst:.3f}s on the no-config "
+            "path, which runs at startup while the user waits"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_refresh_does_not_hold_a_joined_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An abandoned estimate must not delay interpreter shutdown.
+
+        Moving the estimate off the loop fixed the UI freeze but introduced a
+        second cost: `asyncio.to_thread` uses an executor whose atexit hook
+        JOINS its threads, so a cancelled refresh still made shutdown wait out
+        an in-flight estimate -- seconds on a large history (Greptile, #1832).
+
+        The estimate now runs on a daemon thread, which is never joined. This
+        asserts the two properties that make that safe and observable: the
+        cancellation returns promptly rather than waiting for the work, and
+        the thread doing the work is a daemon.
+        """
+        import asyncio
+        import threading
+        import time
+
+        from codebase_rag import main as main_mod
+
+        started = threading.Event()
+        seen: dict[str, bool] = {}
+
+        def slow(_messages: object) -> int:
+            seen["daemon"] = threading.current_thread().daemon
+            started.set()
+            time.sleep(1.0)
+            return 99
+
+        monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
+        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+
+        task = asyncio.create_task(main_mod._refresh_context_tokens(_messages()))
+        await asyncio.to_thread(started.wait, 5.0)
+        assert started.is_set(), (
+            "fixture guard: the estimate never started, so cancelling it proves nothing"
+        )
+
+        began = time.perf_counter()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        elapsed = time.perf_counter() - began
+
+        assert elapsed < 0.5, (
+            f"cancelling the refresh waited {elapsed:.2f}s for the estimate "
+            "to finish, so shutdown blocks on abandoned work"
+        )
+        assert seen.get("daemon") is True, (
+            "the estimate ran on a non-daemon thread, which the interpreter "
+            "joins at exit however promptly the await returned"
+        )
