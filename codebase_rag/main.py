@@ -733,7 +733,7 @@ async def _run_agent_response_loop(
             # reachability check while doing nothing.
             message_history[:] = prune_old_tool_results(message_history)
 
-        _spawn_background(_refresh_context_tokens(list(message_history)))
+        _spawn_context_refresh(list(message_history))
 
         output_text = response.output
         if not isinstance(output_text, str):
@@ -906,6 +906,30 @@ _background_tasks: set[asyncio.Task[None]] = set()
 # Do NOT run anything that writes this way.
 
 
+_context_refresh_task: asyncio.Task[None] | None = None
+
+
+def _spawn_context_refresh(messages: list[ModelMessage]) -> None:
+    """Start a context refresh, superseding any still in flight.
+
+    Only the NEWEST count is wanted -- it is a percentage on a status line and
+    a compaction trigger, and an older history's total is stale the moment a
+    turn completes. Without this, several turns in quick succession each
+    started a full-history tokenisation and they ran CONCURRENTLY: measured at
+    5 simultaneous estimates from 5 refreshes (Greptile, PR #1832).
+
+    Cancelling is safe because the estimate is pure and its result is
+    discarded: `_settle` already ignores a future nobody holds.
+    """
+    global _context_refresh_task
+    if _context_refresh_task is not None and not _context_refresh_task.done():
+        _context_refresh_task.cancel()
+    task = asyncio.create_task(_refresh_context_tokens(messages))
+    _context_refresh_task = task
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 def _spawn_background(coro: Coroutine[None, None, None]) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
@@ -933,21 +957,52 @@ def _settle(
         else:
             future.set_result(value or 0)
 
-    loop.call_soon_threadsafe(apply)
+    try:
+        loop.call_soon_threadsafe(apply)
+    except RuntimeError:
+        # The loop closed while the daemon thread was still estimating, which
+        # is the normal shape of shutdown: nothing is awaiting this future any
+        # more, and `call_soon_threadsafe` raises "Event loop is closed" on a
+        # thread with no handler, surfacing as an uncaught exception at exit
+        # (Greptile, PR #1832).
+        #
+        # Dropping the result is correct rather than merely quiet. The
+        # estimate is pure and its only consumer is the future nobody holds;
+        # there is nothing to retry, flush or report. This is the one case
+        # where "the answer no longer matters" is literally true.
+        return
+
+
+# One estimate at a time. Cancelling the awaiting TASK does not stop a daemon
+# thread already tokenising, so several turns in quick succession each started
+# a full-history walk and they ran concurrently -- measured at 5 simultaneous
+# estimates (Greptile, PR #1832). The lock makes a later estimate wait, and the
+# generation check below makes it exit instead: only the newest count is wanted.
+_estimate_lock = threading.Lock()
+_estimate_generation = 0
 
 
 async def _estimate_off_loop(messages: list[ModelMessage]) -> int:
     """`estimate_message_tokens` on a daemon thread, awaited without blocking."""
+    global _estimate_generation
     loop = asyncio.get_running_loop()
     future: asyncio.Future[int] = loop.create_future()
+    _estimate_generation += 1
+    mine = _estimate_generation
 
     def run() -> None:
-        try:
-            result = estimate_message_tokens(messages)
-        except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
-            _settle(loop, future, error=exc)
-        else:
-            _settle(loop, future, value=result)
+        with _estimate_lock:
+            if mine != _estimate_generation:
+                # Superseded while queued: a newer history is already the
+                # answer, so tokenising this one is pure waste. Left unsettled
+                # on purpose -- the awaiting task was cancelled with it.
+                return
+            try:
+                result = estimate_message_tokens(messages)
+            except BaseException as exc:  # noqa: BLE001 - relayed to the awaiter
+                _settle(loop, future, error=exc)
+            else:
+                _settle(loop, future, value=result)
 
     threading.Thread(target=run, name="cgr-context-estimate", daemon=True).start()
     return await future
@@ -1022,7 +1077,7 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     baseline_messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
     ]
-    _spawn_background(_refresh_context_tokens(baseline_messages))
+    _spawn_context_refresh(baseline_messages)
 
 
 def _short_model_id() -> tuple[str, str]:

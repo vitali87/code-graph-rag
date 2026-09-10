@@ -502,3 +502,111 @@ class TestTheRefreshDoesNotBlockTheEventLoop:
             "the estimate ran on a non-daemon thread, which the interpreter "
             "joins at exit however promptly the await returned"
         )
+
+    @pytest.mark.asyncio
+    async def test_a_late_estimate_does_not_raise_on_a_closed_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cost of the daemon thread: it outlives the loop it reports to.
+
+        A daemon thread is not joined at exit, which is what stops it delaying
+        shutdown -- and means it can finish AFTER the loop closes.
+        `call_soon_threadsafe` then raises "Event loop is closed" on a thread
+        with no handler, surfacing as an uncaught exception at exit
+        (Greptile, #1832).
+
+        Dropping the result is correct rather than merely quiet: the estimate
+        is pure and the only consumer is a future nobody holds.
+        """
+        import asyncio
+
+        from codebase_rag import main as main_mod
+
+        loop = asyncio.new_event_loop()
+        future: asyncio.Future[int] = loop.create_future()
+        loop.close()
+
+        # No raise, and nothing settled: the loop is gone.
+        main_mod._settle(loop, future, value=42)
+        assert not future.done(), (
+            "a future was settled through a closed loop, which cannot have "
+            "reached the awaiter"
+        )
+
+    @pytest.mark.asyncio
+    async def test_only_one_estimate_runs_at_a_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Several turns in quick succession must not tokenise in parallel.
+
+        Cancelling the awaiting TASK does not stop a daemon thread already
+        running, so five refreshes produced five simultaneous full-history
+        walks. Only the newest count is wanted -- it drives a status line and
+        a compaction trigger, and an older history's total is stale as soon as
+        a turn completes.
+
+        Asserts the PEAK concurrency, not the total count: serialising without
+        superseding would also reach a peak of one while doing all five walks,
+        so the second assertion checks the superseded ones exited instead.
+        """
+        import asyncio
+        import threading
+        import time
+
+        from codebase_rag import main as main_mod
+
+        live = 0
+        peak = 0
+        ran = 0
+        guard = threading.Lock()
+
+        def slow(_messages: object) -> int:
+            nonlocal live, peak, ran
+            with guard:
+                live += 1
+                ran += 1
+                peak = max(peak, live)
+            # Long enough that the next four refreshes are all queued behind
+            # this one. Too short and each finishes before the next arrives,
+            # so nothing is ever concurrent OR superseded and the test agrees
+            # with every implementation (measured: peak=1 ran=1 under the
+            # correct code AND under both mutations).
+            time.sleep(0.4)
+            with guard:
+                live -= 1
+            return 11
+
+        monkeypatch.setattr(main_mod, "estimate_message_tokens", slow)
+        _use_config(monkeypatch, cs.Provider.OPENAI, "sk-whatever")
+        # Reset the generation counter. It is module-global, so estimates from
+        # EARLIER TESTS leave it ahead and every refresh here then reads as
+        # superseded -- which passes this test for the wrong reason and made
+        # it blind to the generation check being removed. Found by mutating
+        # with the class scoped in, where it went green, and alone, where it
+        # went red: an order-dependent test that agreed with the code by
+        # accident.
+        monkeypatch.setattr(main_mod, "_estimate_generation", 0)
+        monkeypatch.setattr(main_mod, "_context_refresh_task", None)
+
+        # A SMALL GAP between refreshes, deliberately. With none, each task is
+        # cancelled before it reaches the estimator at all -- measured:
+        # 5 spawns, generation 1, ONE estimate -- so the test passes under
+        # every implementation and pins nothing. The gap lets each task start,
+        # which is what puts the generation check and the lock in play
+        # (5 spawns, generation 5, two estimates).
+        for _ in range(5):
+            main_mod._spawn_context_refresh(_messages())
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(2.5)
+
+        assert peak == 1, (
+            f"{peak} full-history estimates ran at once; only the newest "
+            "count is wanted, so the rest are pure waste"
+        )
+        # Measured: 1 unmutated, 5 with the generation check removed. The
+        # bound is deliberately loose enough to absorb scheduling jitter and
+        # still two orders of magnitude from the failure it catches.
+        assert ran <= 2, (
+            f"{ran} of 5 estimates ran; superseded ones must exit at the "
+            "generation check rather than tokenise a history nobody wants"
+        )
