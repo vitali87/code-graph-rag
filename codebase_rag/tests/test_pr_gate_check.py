@@ -24,8 +24,11 @@ The four that bite, and which a naive implementation gets wrong:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
     context_name,
@@ -418,3 +421,184 @@ class TestIsRealReview:
         )
 
         assert is_real_review(invented_future_notice, "coderabbitai") is False
+
+
+class TestCiRunsAtHeadIsNotWindowed:
+    """The run lookup must ask by SHA, not page recent runs.
+
+    Measured on PR #1826: its CI run was 36 minutes old, all 40 of the most
+    recent repo runs were newer, and the tool reported a fully green PR as
+    having "no CI run at the head". A windowed lookup turns repo traffic
+    into a false "never ran" verdict, which is the exact confusion this
+    checker exists to remove.
+    """
+
+    HEAD = "8c93429b6e9bc17a61b3096c296cae1a26f1a411"
+
+    CI_PATH = ".github/workflows/ci.yml"
+
+    def _payload(self, *, path: str | None = None) -> str:
+        return json.dumps(
+            {
+                "workflow_runs": [
+                    {
+                        "id": 34416630107,
+                        "name": "CI",
+                        "path": path if path is not None else self.CI_PATH,
+                        "head_sha": self.HEAD,
+                    }
+                ]
+            }
+        )
+
+    def test_the_query_is_scoped_to_the_head_sha(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert any(f"head_sha={self.HEAD}" in arg for call in seen for arg in call)
+
+    def test_it_does_not_page_recent_runs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `--limit` listing is the bug; it must not be how the answer is got."""
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert not any("--limit" in call for call in seen)
+
+    def test_a_run_older_than_any_window_is_still_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", lambda *a: self._payload()
+        )
+
+        runs = check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert [r["id"] for r in runs] == [34416630107]
+
+    def test_a_non_ci_workflow_at_the_same_sha_is_excluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: self._payload(path=".github/workflows/codeql.yml"),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_an_impostor_workflow_merely_named_ci_is_excluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A display name is a string any workflow file may declare.
+
+        Matching on it would let a second file called `CI` satisfy the
+        check without running a single test, so the run is identified by
+        the workflow PATH. The repo's own require-ci-at-head workflow
+        matches on path for this reason.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: self._payload(path=".github/workflows/not-really-ci.yml"),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_a_run_on_a_later_page_is_still_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--paginate` concatenates one JSON object per page.
+
+        Decoding only the first would reintroduce the windowing bug at a
+        larger size: a match on page two would read as "no run at head".
+        """
+        page_one = json.dumps(
+            {
+                "workflow_runs": [
+                    {"id": 1, "name": "OSV", "path": ".github/workflows/osv.yml"}
+                ]
+            }
+        )
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: page_one + "\n" + self._payload(),
+        )
+
+        runs = check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert [r["id"] for r in runs] == [34416630107]
+
+    def test_an_unreachable_api_reports_no_runs_rather_than_raising(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *a: "")
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+
+class TestCheckResolvesRunOwnershipWithTheRestField:
+    """`check` must read the run id by the name the REST payload uses.
+
+    `ci_runs_at_head` returns REST `workflow_runs` entries, which carry
+    `id`. The previous lookup returned `gh run list` entries, which carry
+    `databaseId`. Keeping the old name fetches `actions/runs/None`, leaves
+    `owners` empty, and reports "does not resolve to #<pr>" -- trading one
+    false blocker for another. Verified against live PR #1826.
+    """
+
+    def test_ownership_resolves_rather_than_reporting_an_empty_owner_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        head = "f" * 40
+        view = {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={head}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 555,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": head,
+                            }
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/555"):
+                return json.dumps({"pull_requests": [{"number": 1826}]})
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        reasons = check_pr_gated.check("1826")
+
+        assert not any("does not resolve to" in r for r in reasons)
