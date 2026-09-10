@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -83,21 +83,42 @@ def test_the_appender_itself_does_not_deduplicate(tmp_path: Path) -> None:
     """Pin the MECHANISM, not just the outcome.
 
     The test above would pass just as well if the appender deduplicated, so
-    it cannot show WHERE the invariant comes from. Calling the appender
-    without the preceding removal must duplicate — that is what makes the
-    removal load-bearing rather than incidental, and what a future
-    "simplification" of `remove_file_from_state` would break.
+    it cannot show WHERE the invariant comes from. This one shows that the
+    REMOVAL is what provides it: re-parsing with the removal leaves one
+    entry, and that is the pairing `remove_file_from_state` documents.
+
+    Deliberately does NOT assert that the bare appender produces a duplicate
+    (raised by Greptile on #1842). Requiring `== 2` would make duplicate
+    creation by a private helper a mandated implementation detail and block
+    a future defensive dedup there, which would be a fine change. What must
+    not change silently is that the REMOVAL still runs on the re-parse path,
+    so that is what is asserted -- directly, rather than inferred from a
+    count the appender could also produce.
     """
     updater, _ = _build(tmp_path)
     target = tmp_path / "pkg" / "mod.py"
     assert _counts(updater)[target] == 1
 
-    updater._process_single_file(target)
-    assert _counts(updater)[target] == 2, (
-        "the appender deduplicates after all; if this is now intended, the "
-        "comment in remove_file_from_state naming the removal as the source "
-        "of the invariant is stale"
+    removed: list[Path] = []
+    real_remove = type(updater).remove_file_from_state
+
+    def _spy(self: GraphUpdater, file_path: Path, **kwargs: object) -> None:
+        removed.append(file_path)
+        return real_remove(self, file_path, **kwargs)
+
+    with patch.object(type(updater), "remove_file_from_state", _spy):
+        target.write_text(
+            "from pkg.util import helper\n\n\ndef go():\n    return helper()  # edit\n",
+            encoding="utf-8",
+        )
+        updater.reingest((target,))
+
+    assert target in removed, (
+        "reingest re-parsed the file without removing its old entry first; "
+        "the appender appends unconditionally, so nothing else keeps "
+        "_parsed_files free of duplicates"
     )
+    assert _counts(updater)[target] == 1
 
 
 def test_removal_then_reparse_restores_exactly_one_entry(tmp_path: Path) -> None:
