@@ -55,6 +55,14 @@ repos:
         pass_filenames: false
   - repo: local
     hooks:
+      - id: validate-coderabbit-config
+        name: validate .coderabbit.yaml
+        entry: uv run --frozen --no-sync python scripts/validate_coderabbit_config.py
+        language: system
+        files: ^\.coderabbit\.yaml$
+        pass_filenames: false
+  - repo: local
+    hooks:
       - id: generate-readme
         name: generate README sections
         entry: uv run --frozen --no-sync python scripts/hooks/generate_readme.py

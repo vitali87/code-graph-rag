@@ -68,6 +68,14 @@ jobs:
         run: |
           uv run python scripts/validate_labels.py
 
+      # Neither check-yaml nor the vendor schema can catch a misspelt key
+      # nested under reviews.auto_review: additionalProperties is set on the
+      # root object only, so the typo validates clean and auto-review
+      # silently reverts to the default branch (issues #1581, #1823).
+      - name: Validate .coderabbit.yaml
+        run: |
+          uv run python scripts/validate_coderabbit_config.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
