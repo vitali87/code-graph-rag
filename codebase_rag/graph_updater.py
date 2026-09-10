@@ -4449,12 +4449,25 @@ class GraphUpdater:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
-            if captures_cache is not None and file_path in captures_cache:
-                cached = captures_cache[file_path]
-                if not cached.get(cs.CAPTURE_CALL) and not cached.get(
-                    cs.CAPTURE_FUNCTION
-                ):
-                    continue
+            # Issue #1837: there is deliberately no capture-based skip here.
+            # The old one ("no calls and no functions, so nothing to walk")
+            # was unsound in both directions. A MODULE-LEVEL reference -- a
+            # dispatch table holding an imported handler, a bare
+            # `x = handler`, a JSX element -- is a real CALLS edge that lives
+            # under no capture kind at all, and process_calls_in_file runs
+            # those passes ahead of its own no-calls early return precisely
+            # so such a file is covered. A captured class is positive
+            # evidence of work too: the Python decorator pass takes class
+            # nodes as its targets.
+            #
+            # Only a file recording none of call/function/class could license
+            # a skip, and no such CACHE ENTRY exists: the populator stores a
+            # key only when the query matched it and drops an all-absent
+            # entry (definition_processor.py), so every entry has a non-empty
+            # kind. A narrowed guard would be unreachable rather than merely
+            # cheap -- measured 0 hits over 105 real files, while the old
+            # guard skipped this repo's own class-only parsers/constants.py.
+            # Uncached files were always walked, so the walk is now uniform.
             self.factory.call_processor.process_calls_in_file(
                 file_path,
                 root_node,
