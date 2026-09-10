@@ -1383,8 +1383,21 @@ class MCPToolsRegistry:
             # a later clear cannot mistake it for the never-attributed one and
             # repairing both can still settle it.
             self._note_outstanding(owner, project_name)
+        elif owner is None and self._incomplete_projects:
+            # A THIRD project damaged while the flag is already broad. It
+            # keeps the unattributed attribution, but it is outstanding like
+            # the other two and must be recorded or the flag settles once
+            # they are repaired while this one is still partial (Greptile,
+            # PR #1547): A, B and C damaged, A and B repaired, and C's reads
+            # reopen onto a graph nothing finished.
+            #
+            # Guarded on the set being non-empty so a project damaged under an
+            # UNBOUNDED flag (a failed wipe) does not turn that into a
+            # settleable named set -- a wipe spans projects this process has
+            # never seen, and no enumeration of repairs can retire it.
+            self._note_outstanding(project_name)
         # An existing flag attributed to this same project, or already
-        # unattributed, keeps the attribution it has.
+        # unattributed with nothing outstanding, keeps the attribution it has.
         self._flag_from_failed_clear = None
 
     def _note_outstanding(self, *project_names: str | None) -> None:

@@ -25,6 +25,7 @@ from codebase_rag import constants as cs
 # passes whether or not scoping works, so it would prove nothing.
 ALPHA = "alpha__aaaa1111"
 BETA = "beta__bbbb2222"
+GAMMA = "gamma__cccc3333"
 
 _ROWS = [
     {"qualified_name": f"{ALPHA}.service.handler", "name": "handler"},
@@ -3145,6 +3146,76 @@ def test_repairing_every_damaged_project_lifts_the_refusal() -> None:
     assert not refused("gamma"), (
         "a project that was never damaged is still refused after every "
         "damaged project was repaired"
+    )
+
+
+def test_a_third_damaged_project_is_recorded_like_the_first_two() -> None:
+    """The route into the broad state that recorded nothing.
+
+    `_invalidate_graph_for` notes BOTH names when the attribution widens, but
+    a THIRD project damaged afterwards takes the "already unattributed, keep
+    it" branch -- correct about the attribution, and silent about the fact
+    that another project is now outstanding.
+
+    So A, B and C damaged, then A and B repaired, and the set empties while C
+    is still partial: C's reads reopen onto a graph nothing ever finished
+    (Greptile, PR #1547). Two damaged projects was the case I tested and
+    three is the case that was broken, which is the whole lesson.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    for project in (ALPHA, BETA, GAMMA):
+        handler._invalidate_graph_for(project)
+
+    def refused(project: str) -> bool:
+        return (
+            handler._incomplete_refusal(project, cs.MCPToolName.ASK_AGENT) is not None
+        )
+
+    assert refused(GAMMA), "fixture guard: three damaged projects must all refuse"
+
+    handler._require_marker_cleared(ALPHA)
+    handler._require_marker_cleared(BETA)
+
+    assert refused(GAMMA), (
+        "repairing two of three damaged projects settled the flag, so the "
+        "third project's reads reopened while it is still partial"
+    )
+
+    handler._require_marker_cleared(GAMMA)
+    assert not refused(GAMMA), (
+        "the last outstanding project was repaired and the flag still stands"
+    )
+
+
+def test_damage_under_an_unbounded_flag_stays_unbounded() -> None:
+    """The control on the guard the third-project fix needed.
+
+    A project damaged while a FAILED WIPE's flag is up must not create a
+    named outstanding set: that would make the wipe look settleable by
+    enumerating repairs, when it spans projects this process has never seen.
+    The fix for the third-project case is guarded on the set being non-empty
+    for exactly this reason.
+
+    Measured caveat: removing that guard leaves this test GREEN, because the
+    settle branch checks `_incomplete_unbounded` independently and refuses
+    first. So the guard is defence in depth rather than the load-bearing
+    protection, and this test pins the BEHAVIOUR (a wipe is never settled by
+    repairing one named project) rather than the guard. Do not read its
+    greenness as evidence that the guard is doing work -- the assertion holds
+    either way, and it is the settle branch that earns it.
+    """
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._graph_incomplete = True
+    handler._incomplete_project = None
+    handler._incomplete_unbounded = True
+
+    handler._invalidate_graph_for(ALPHA)
+    handler._require_marker_cleared(ALPHA)
+
+    assert handler._graph_incomplete is True, (
+        "a project damaged under a failed wipe's flag turned it into a "
+        "settleable named set, so repairing that one project retired damage "
+        "spanning every project"
     )
 
 
