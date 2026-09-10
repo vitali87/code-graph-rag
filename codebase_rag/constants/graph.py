@@ -175,6 +175,7 @@ ONEOF_SECTION = "section"
 ONEOF_PATTERN = "pattern"
 ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
+ONEOF_GLOSS = "gloss"
 
 
 class UniqueKeyType(StrEnum):
@@ -210,6 +211,16 @@ class NodeLabel(StrEnum):
     PATTERN = "Pattern"
     CODE_SMELL = "CodeSmell"
     SECURITY_ISSUE = "SecurityIssue"
+    # A durable note an agent writes ABOUT code, never into it (issue #1808).
+    # A node rather than a property because its payload is edges: a note like
+    # "mirrors `parse_header`; safe because `validate()` runs first" mentions
+    # other symbols, and those mentions are the thing worth traversing. Every
+    # surveyed system that only reads documentation back on its owner uses a
+    # field instead; the ones that resolve references (Kythe, Roslyn) use a
+    # node. Kept out of source files because formatters move and occasionally
+    # delete comments, and no cross-language exemption for a structured
+    # comment is achievable.
+    GLOSS = "Gloss"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -238,6 +249,11 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.PATTERN: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.CODE_SMELL: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.SECURITY_ISSUE: UniqueKeyType.QUALIFIED_NAME,
+    # A gloss's identity is its own id, not the symbol it describes:
+    # one symbol carries many glosses, and a gloss outlives the symbol moving.
+    # It reuses the `qualified_name` key so the existing constraint, index
+    # and MERGE machinery apply unchanged.
+    NodeLabel.GLOSS: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -282,6 +298,15 @@ class RelationshipType(StrEnum):
     # (issue #164). The document equivalent of an import: it is how a README
     # or a guide states which files it is about.
     LINKS_TO = "LINKS_TO"
+    # The symbol a gloss is ABOUT (issue #1808). Exactly one per gloss:
+    # a gloss with two subjects is two glosses.
+    ANNOTATES = "ANNOTATES"
+    # A symbol a gloss's text refers to, distinct from its subject.
+    # "mirrors `parse_header`" ANNOTATES the function it is attached to and
+    # MENTIONS `parse_header`. Keeping them apart is the point of the node:
+    # traversing MENTIONS finds glosses that talk about a symbol without
+    # being filed under it.
+    MENTIONS = "MENTIONS"
 
 
 class CaptureGroup(StrEnum):
@@ -291,6 +316,11 @@ class CaptureGroup(StrEnum):
     IMPORTS = "imports"
     IO = "io"
     FINDINGS = "findings"
+    # Not parsed from source like the groups above: glosses are WRITTEN by an
+    # agent and read back later (issue #1808). It is a capture group so the
+    # label and its edges obey the same enable/disable contract as everything
+    # else, rather than becoming a second, parallel mechanism.
+    GLOSSES = "glosses"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -350,6 +380,12 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.HAS_VULNERABILITY,
         }
     ),
+    CaptureGroup.GLOSSES: frozenset(
+        {
+            RelationshipType.ANNOTATES,
+            RelationshipType.MENTIONS,
+        }
+    ),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -360,6 +396,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.FINDINGS: frozenset(
         {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
     ),
+    CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
