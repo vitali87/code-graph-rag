@@ -220,3 +220,122 @@ def test_a_flip_elsewhere_is_not_this_calls_to_reconcile(tmp_path: Path) -> None
         "the unrelated directory's Package node was pruned by a call that "
         "never named it"
     )
+
+
+def test_a_repo_root_that_stops_being_a_package_is_demoted(tmp_path: Path) -> None:
+    """The root is the one directory `identify_structure` treats specially.
+
+    It emits no Folder node for the repo root -- the root's parent is the
+    Project -- and the branch that skipped that emission also skipped
+    RECORDING the root as no longer a package. So the root's stale qn survived
+    a re-derivation, the flip was invisible, and its Package node was never
+    pruned (greptile-local, #1798).
+
+    Promotion needs no equivalent test: nothing stale exists when a root
+    becomes a package for the first time.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "util.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    assert ("Package", "proj") in _containers(store), (
+        "fixture guard: a root with an __init__.py must index as a Package"
+    )
+
+    (root / "__init__.py").unlink()
+    updater.reingest([], deleted=["__init__.py"])
+    store.flush_all()
+
+    assert ("Package", "proj") not in _containers(store), (
+        "the repo root stopped being a package and its Package node survived, "
+        f"so every module still hangs off it: {sorted(_containers(store))}"
+    )
+
+
+def test_an_aborted_reingest_leaves_the_graph_as_it_was(tmp_path: Path) -> None:
+    """The prologue must stay read-only, as `reingest`'s docstring promises.
+
+    Deriving the structure to detect the flip EMITS the container node of the
+    new kind. Doing that in the prologue meant a caller refusing in
+    `before_write` left the graph holding BOTH container nodes for one
+    directory -- while `reingest_mutated` stayed False, telling that caller
+    nothing had changed. Base `main` leaves the graph untouched here, so this
+    was a regression introduced by the fix, not a pre-existing gap
+    (greptile-local, #1798).
+
+    The detection is now a pure filesystem read and the derivation happens
+    after the caller's last word.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=True)
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    before = _containers(store)
+
+    (root / "pkg" / "__init__.py").unlink()
+
+    def refuse() -> None:
+        raise RuntimeError("the caller declined to proceed")
+
+    with pytest.raises(Exception, match="declined"):
+        updater.reingest([], deleted=["pkg/__init__.py"], before_write=refuse)
+    store.flush_all()
+
+    assert _containers(store) == before, (
+        "an aborted re-ingest changed the graph it promised to leave alone: "
+        f"{sorted(before)} -> {sorted(_containers(store))}"
+    )
+    assert updater.reingest_mutated is False, (
+        "the abort reported that nothing changed, which must remain true"
+    )
+
+
+def test_a_named_flip_does_not_drag_in_an_unnamed_one(tmp_path: Path) -> None:
+    """The `& touched` narrowing, on the case that actually reaches it.
+
+    My first control named no indicator in its call, so the `if not touched`
+    early return shielded it and removing the narrowing left it green -- I
+    read that as defence in depth and was wrong. Here `pkg/__init__.py` IS
+    named, so `touched` is non-empty and the narrowing is the only thing
+    stopping an unrelated `other/` (changed on disk by something else) from
+    being reconciled by a call that never mentioned it (greptile-local,
+    #1798).
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=False)
+    (root / "other").mkdir()
+    (root / "other" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "other" / "mod.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+    assert ("Package", "proj.other") in _containers(store), (
+        "fixture guard: other/ must start as a Package"
+    )
+
+    # Someone else's change, on disk, never named below.
+    (root / "other" / "__init__.py").unlink()
+    # This call's own change, which legitimately flips pkg/.
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    updater.reingest(["pkg/__init__.py"])
+    store.flush_all()
+
+    assert ("Package", "proj.pkg") in _containers(store), (
+        "fixture guard: the named directory must actually have been promoted"
+    )
+    assert ("Package", "proj.other") in _containers(store), (
+        "a re-ingest that named pkg/ also reconciled other/, acting on a "
+        "whole-project claim it had not earned from walking one file"
+    )

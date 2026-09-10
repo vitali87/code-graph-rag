@@ -77,6 +77,21 @@ class StructureProcessor:
             names.update(lang_config.package_indicators)
         return names
 
+    def is_package_dir(self, directory: Path) -> bool:
+        """Whether this directory has a package indicator ON DISK, right now.
+
+        Pure: reads the filesystem and writes nothing. `identify_structure`
+        answers the same question but EMITS the Package/Folder nodes as a
+        side effect, which a read-only prologue must not do -- an aborted
+        scoped re-ingest that had already emitted one left the graph holding
+        two container nodes for one directory while reporting that nothing
+        changed (greptile-local, issue #1798).
+        """
+        return any(
+            (directory / indicator).exists()
+            for indicator in self.package_indicator_names()
+        )
+
     def identify_structure(self) -> None:
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
@@ -127,8 +142,16 @@ class StructureProcessor:
                     cs.RelationshipType.CONTAINS_PACKAGE,
                     (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
                 )
-            elif root != self.repo_path:
+            else:
+                # Recorded for the ROOT too, which the Folder emission below
+                # deliberately skips. Without this the root's stale package qn
+                # survived a re-derivation, so a root that stopped being a
+                # package still read as one and its Package node was never
+                # pruned (greptile-local, issue #1798). The repo root gets no
+                # Folder node -- its parent is the Project -- but it still
+                # needs an accurate entry.
                 self.structural_elements[relative_root] = None
+            if not is_package and root != self.repo_path:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )

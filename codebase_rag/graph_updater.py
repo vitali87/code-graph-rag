@@ -4635,7 +4635,8 @@ class GraphUpdater:
         Returns the flipped directories and the on-disk files under them that
         this call has not already named, for the re-parse.
         """
-        indicators = self.factory.structure_processor.package_indicator_names()
+        structure = self.factory.structure_processor
+        indicators = structure.package_indicator_names()
         touched = {
             Path(key).parent.as_posix()
             for key in (*present, *gone)
@@ -4643,36 +4644,34 @@ class GraphUpdater:
         }
         # Narrowed to directories this call actually named an indicator for.
         # Without it a scoped re-ingest reconciles directories the caller
-        # never mentioned -- measured: editing `pkg/util.py` demoted an
-        # unrelated `other/` whose `__init__.py` had been deleted on disk by
-        # something else. That is the whole-project claim `_prune_orphan_nodes`
-        # is careful not to make from a partial walk, and a full index is what
+        # never mentioned -- measured: an unrelated `other/` whose
+        # `__init__.py` had been deleted on disk by something else was demoted
+        # too. That is the whole-project claim `_prune_orphan_nodes` is
+        # careful not to make from a partial walk, and a full index is what
         # reconciles the rest.
         if not touched:
             return set(), {}
 
-        # Re-derive the structure so `structural_elements` describes DISK, not
-        # the last run. A reused updater short-circuits `_hydrate_for_reingest`
-        # and would otherwise still hold the pre-change map.
-        before = {
-            rel.as_posix()
-            for rel, qn in self.factory.structure_processor.structural_elements.items()
-            if qn
-        }
-        self.factory.structure_processor.identify_structure()
-        after = {
-            rel.as_posix()
-            for rel, qn in self.factory.structure_processor.structural_elements.items()
-            if qn
-        }
-        # Symmetric difference, so a promotion and a demotion are one case.
-        flipped = (before ^ after) & touched
+        # Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        # Deriving the structure here instead would WRITE the new container
+        # node inside the prologue, and an abort in `before_write` then left
+        # the graph holding both container nodes for one directory while
+        # reporting that nothing changed (greptile-local, issue #1798). The
+        # real derivation happens after the caller's last word.
+        flipped = set()
+        for rel in touched:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            was_package = bool(structure.structural_elements.get(Path(rel)))
+            if structure.is_package_dir(directory) != was_package:
+                flipped.add(rel)
         if not flipped:
             return set(), {}
 
         siblings: dict[str, Path] = {}
         for rel in flipped:
-            directory = self.repo_path / rel if rel else self.repo_path
+            directory = self.repo_path / rel if rel != "." else self.repo_path
             if not directory.is_dir():
                 continue
             for candidate in sorted(directory.iterdir()):
@@ -4703,9 +4702,14 @@ class GraphUpdater:
             return
         elements = self.factory.structure_processor.structural_elements
         for rel in sorted(flipped_dirs):
-            directory = self.repo_path / rel if rel else self.repo_path
+            directory = self.repo_path / rel if rel != "." else self.repo_path
             absolute = cached_resolve_posix(directory)
-            is_package_now = bool(elements.get(Path(rel))) if rel else False
+            # Keyed on Path(rel), which is Path(".") for the root -- the same
+            # key `identify_structure` uses. An earlier version special-cased
+            # a falsy `rel`, but `Path(key).parent.as_posix()` yields "." for
+            # a root-level file and never "", so that branch was dead and the
+            # root was never resolved (greptile-local, issue #1798).
+            is_package_now = bool(elements.get(Path(rel)))
             stale = (
                 cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
             )
@@ -5017,6 +5021,14 @@ class GraphUpdater:
         # (#1705 review, round 7). This flag records what actually happened.
         self.reingest_mutated = True
         self._reparsed_file_keys = set(all_keys)
+
+        # Past the caller's refusal point, so this may finally WRITE. Re-deriving
+        # the structure updates `structural_elements` and emits the container
+        # node of the new kind; the sibling re-parse below re-points the
+        # containment edges onto it, and `_prune_flipped_containers` removes
+        # the node of the old kind once both have happened.
+        if flipped_dirs:
+            self.factory.structure_processor.identify_structure()
 
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header
