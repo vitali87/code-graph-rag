@@ -187,3 +187,49 @@ def test_a_module_level_reference_survives_the_re_parse(tmp_path: Path) -> None:
         "a module-level reference was dropped by the re-parse: the file's "
         f"captures are empty, so the call walk skipped it entirely: {sorted(_calls(store))}"
     )
+
+
+def test_an_unavailable_query_is_not_cached_as_an_empty_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Nobody looked" must not be recorded as "there is nothing there".
+
+    `combined_captures` stays None when a language has no combined query, or
+    when building it raised. Writing `{}` for that case told the call walk the
+    file has no functions, and it then attributed a call to the MODULE
+    alongside the correct function-owned edge -- a spurious
+    `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS ...`.
+
+    The same absent-vs-empty distinction the fix above depends on, in the
+    opposite direction: there, absent wrongly meant "nothing changed"; here,
+    empty wrongly means "nothing is there". Both are cases of a cache entry
+    that cannot say which question it is answering (Greptile, PR #1833).
+
+    Asserted against the edge set a working combined query produces, so the
+    test states the invariant -- an unavailable query must not CHANGE the
+    answer -- rather than a hardcoded expectation.
+    """
+    from codebase_rag import constants as cs
+    from codebase_rag.parsers import definition_processor as dp
+
+    _fixture(tmp_path)
+    (tmp_path / "pkg" / "caller.py").write_text(
+        "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
+        encoding="utf-8",
+    )
+    _, with_query = _built(tmp_path)
+    expected = _calls(with_query)
+    assert expected, (
+        "fixture guard: the working-query index must emit at least one call "
+        "edge, or the comparison below is vacuous"
+    )
+
+    monkeypatch.setitem(
+        dp.COMBINED_FUNC_CLASS_IMPORT_QUERIES, cs.SupportedLanguage.PYTHON, None
+    )
+    _, without_query = _built(tmp_path)
+
+    assert _calls(without_query) == expected, (
+        "an unavailable combined query changed the call edges: "
+        f"without={sorted(_calls(without_query))} with={sorted(expected)}"
+    )

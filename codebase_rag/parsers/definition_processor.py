@@ -499,7 +499,18 @@ class DefinitionProcessor(
                 if combined_query:
                     cursor = QueryCursor(combined_query)
                     combined_captures = sorted_captures(cursor, root_node)
-            if self._func_class_captures_cache is not None:
+            # An UNAVAILABLE query is not an empty result. `combined_captures`
+            # stays None when the language has no combined query (or building
+            # it raised), and caching {} for that would tell the call walk
+            # "this file has no functions" when the truth is "nobody looked".
+            # Measured: it attributed a call to the MODULE alongside the
+            # correct function-owned edge, so the graph gained a spurious
+            # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
+            # ...` (Greptile, PR #1833). Absent is the honest state there, and
+            # it is what the reader already falls back on.
+            if self._func_class_captures_cache is not None and (
+                combined_captures is not None
+            ):
                 # Write unconditionally, including the EMPTY entry. The two
                 # truthiness guards this replaces both skipped the write when
                 # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
