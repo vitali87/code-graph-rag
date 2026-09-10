@@ -1251,15 +1251,25 @@ class MCPToolsRegistry:
         Also syncs the in-process flag to the durable state, so this process
         and the next agree. Returns None on success, or the failure message.
         """
+        flag_before = self._graph_incomplete
         cleared = self._persist_incomplete(project_name, False)
         if not cleared:
-            if not self._graph_incomplete:
-                self._incomplete_owner = project_name
             self._graph_incomplete = True
             # Attribute the flag to this project's stranded marker, so the
             # recovery in `_hydrate_reingest_updater` heals only the flag it
-            # explains.
-            self._flag_from_failed_clear = project_name
+            # explains -- but ONLY when this failure is what raised it.
+            #
+            # An already-set flag belongs to whatever failure set it, and
+            # claiming it here hands this project recovery authority over
+            # someone else's damage: A fails leaving the flag up, B's clear
+            # then fails and claims the attribution, and when B's marker later
+            # recovers, `recoverable_here` is satisfied and B clears the latch
+            # A owns (caught in review of #1846). Same rule as the ownership
+            # claim below and as `_abandon_before_writing`, which already
+            # guards its attribution with `if not flag_before`.
+            if not flag_before:
+                self._incomplete_owner = project_name
+                self._flag_from_failed_clear = project_name
             return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
         # A successful clear settles only the damage THIS project owns.

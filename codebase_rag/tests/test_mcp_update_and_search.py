@@ -1086,6 +1086,59 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"expected the incomplete-run refusal; got {refused}"
         )
 
+    async def test_a_failed_clear_cannot_claim_another_projects_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery authority follows ownership too (#1846 review, third round).
+
+        The ownership field was guarded but `_flag_from_failed_clear` was not,
+        and it is what grants the heal in `_hydrate_reingest_updater`
+        (`recoverable_here = _flag_from_failed_clear == project_name`). So:
+
+            1. A fails leaving the flag up, owner=None (a failed wipe)
+            2. B's marker clear FAILS and claims the attribution
+            3. B's marker later recovers -> B heals the latch A owns
+
+        Measured before the fix: step 3 left `flag=False`, and B's scoped
+        reingest proceeded over A's partial graph.
+
+        The rule is the same one the ownership claim uses: an already-set flag
+        belongs to whatever failure set it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._flag_from_failed_clear is None, (
+            "fixture guard: a wipe strands no marker, so nothing is attributed"
+        )
+
+        # B strands a marker of its own: its clear fails.
+        assert registry._require_marker("B", writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared("B") is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+
+        assert registry._flag_from_failed_clear is None, (
+            "B's failed clear claimed recovery authority over the flag A owns"
+        )
+
+        # B's marker recovers. The heal must not fire on A's flag.
+        ingestor._marker_store.pop("B", None)
+        registry._live_updater = None
+        ingestor.list_projects.return_value = [project, "B"]
+        with pytest.raises(ValueError, match="failed part way"):
+            registry._hydrate_reingest_updater("B")
+        assert registry._graph_incomplete is True, (
+            "B's marker recovery cleared the latch A owns"
+        )
+
     async def test_a_projects_own_clear_still_settles_its_own_flag(
         self, temp_project_root: Path
     ) -> None:
