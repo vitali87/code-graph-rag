@@ -54,6 +54,7 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     PropertyValue,
     QueryResultDict,
+    ReingestReport,
     ReingestToolResult,
     StructuralReplaceChange,
 )
@@ -2345,7 +2346,7 @@ class MCPToolsRegistry:
 
     def _guarded_rename_reingest(
         self, project_name: str
-    ) -> Callable[..., object] | None:
+    ) -> Callable[[list[str]], ReingestReport] | None:
         """The rename's re-ingest callback, behind the incomplete-run marker.
 
         Returns None when the project has no graph to measure against.
@@ -2368,16 +2369,16 @@ class MCPToolsRegistry:
             return None
         updater = self._updater_for_reingest(project_name)
 
-        def guarded(*args: object, **kwargs: object) -> object:
+        def guarded(paths: list[str]) -> ReingestReport:
             if (
                 refusal := self._require_marker(project_name, writing=False)
             ) is not None:
                 raise RuntimeError(refusal)
-            kwargs.setdefault(
-                "before_write", lambda: self._begin_writing_or_refuse(project_name)
-            )
             try:
-                return updater.reingest(*args, **kwargs)  # type: ignore[arg-type]
+                return updater.reingest(
+                    paths,
+                    before_write=lambda: self._begin_writing_or_refuse(project_name),
+                )
             finally:
                 # Cleared whatever happened: a failure invalidates the graph
                 # through the caller's own handling, and leaving the marker up

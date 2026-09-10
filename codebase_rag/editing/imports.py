@@ -504,11 +504,23 @@ class ImportRewriter:
             return _rs_rewrite(statement, move)
         return None
 
-    def rename_in_all(self, path: str, old_name: str, new_name: str) -> int:
-        """Rewrite `"old_name"` entries of a Python `__all__` list in `path`."""
+    def rename_in_all(self, path: str, old_name: str, new_name: str) -> list[int]:
+        """Rewrite `"old_name"` entries of a Python `__all__` list in `path`.
+
+        Returns the CHARACTER OFFSET of every literal it rewrote, so a caller
+        can later ask whether those exact entries were restored.
+
+        A count is not enough, and neither is any whole-file scan: three
+        rollback checks in a row failed because they could not tell an entry
+        this rename touched from one that merely matched. A pre-existing
+        export of the NEW name made a complete undo look incomplete; a
+        pre-existing export of the OLD name made an incomplete one look
+        complete (Greptile and CGR-3, PR #1547). Offsets carry the identity
+        that both aggregates discard.
+        """
         source = self.patcher.source(path)
         text = source.decode(cs.ENCODING_UTF8)
-        count = 0
+        offsets: list[int] = []
         for m in re.finditer(
             r"__all__\s*(?::[^=]+)?=\s*[\[(]([^\])]*)[\])]", text, re.S
         ):
@@ -526,5 +538,5 @@ class ImportRewriter:
                     ),
                     new_name,
                 )
-                count += 1
-        return count
+                offsets.append(start)
+        return offsets

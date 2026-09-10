@@ -742,9 +742,9 @@ class Renamer:
         # rename ran (Greptile and CGR-3, PR #1547).
         self._all_rewrites = {}
         for path in sorted(self._all_paths(list(report.hierarchy), old_name)):
-            rewritten = rewriter.rename_in_all(path, old_name, new_name)
-            if rewritten:
-                self._all_rewrites[path] = rewritten
+            offsets = rewriter.rename_in_all(path, old_name, new_name)
+            if offsets:
+                self._all_rewrites[path] = offsets
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
         broken = [key for key, result in results.items() if result.parses is False]
@@ -893,47 +893,46 @@ class Renamer:
         # definition, reference and import restored but an export still
         # naming the NEW symbol is not fully reversed (Greptile, PR #1547).
         return all(
-            self._all_rewrites_are_undone(path, report.old_name, count)
-            for path, count in sorted(getattr(self, "_all_rewrites", {}).items())
+            self._all_rewrites_are_undone(path, report.old_name, offsets)
+            for path, offsets in sorted(getattr(self, "_all_rewrites", {}).items())
         )
 
-    def _all_rewrites_are_undone(self, path: str, old_name: str, count: int) -> bool:
-        """Whether every `__all__` entry this rename rewrote reads the old name.
+    def _all_rewrites_are_undone(
+        self, path: str, old_name: str, offsets: list[int]
+    ) -> bool:
+        """Whether the exact `__all__` entries this rename rewrote read the old name.
 
-        Counted against what `rename_in_all` RECORDED rewriting, which is the
-        only per-site fact available here -- `__all__` entries are not
-        recorded as `RenameSite`s, so nothing else in the report can see them.
+        Checked AT THE RECORDED OFFSETS, not by scanning the file. `__all__`
+        entries are not `RenameSite`s, so the offsets `rename_in_all` returns
+        are the only record of which literals this rename touched.
 
-        Both earlier phrasings asked a whole-file existence question and both
-        were wrong, in opposite directions:
+        Three previous versions asked a whole-file question and all three
+        failed, because none could tell an entry this rename rewrote from one
+        that merely matched:
 
-        * "does the old name appear anywhere" accepted a file with one block
-          restored and another still holding the new name -- a partial undo
-          reported as complete;
-        * "does the new name appear anywhere" rejected a COMPLETE undo when
-          the new name was already exported before the rename ran. Renaming
-          onto a pre-existing symbol that is legitimately in `__all__` leaves
-          that entry there after a full revert, and reading it as evidence
-          the rename is still applied is a false alarm (CGR-3 and Greptile,
-          PR #1547).
+        * "does the old name appear anywhere" -- accepted a partial undo, one
+          block restored while another still held the new name;
+        * "does the new name appear anywhere" -- rejected a COMPLETE undo when
+          the new name was already exported before the rename ran;
+        * "at least `count` entries read the old name" -- accepted an
+          INCOMPLETE undo when the old name was already exported elsewhere,
+          since a pre-existing entry pushed the total over the threshold.
 
-        A count settles both: this rename rewrote `count` entries in this
-        file, so a complete undo leaves at least that many reading
-        `old_name`. Entries that named `old_name` beforehand only make the
-        total larger, never smaller, so the comparison stays sound without
-        needing to know which literal was which.
+        Each fix moved the failure rather than removing it. An aggregate
+        discards exactly the identity the question needs (CGR-3, PR #1547).
+
+        A rollback restores the file byte for byte, so the offsets still point
+        at the same literals. An offset that no longer lands on the old name
+        means the file is not the file this rename edited, which is itself a
+        failed restoration.
         """
         try:
             text = (self.repo_root / path).read_text(encoding="utf-8")
         except OSError:
             return False
-        restored = sum(
-            1
-            for block in re.finditer(_ALL_BLOCK, text, re.S)
-            for literal in re.finditer(_ALL_ENTRY, block.group(1))
-            if literal.group("name") == old_name
+        return all(
+            text[offset : offset + len(old_name)] == old_name for offset in offsets
         )
-        return restored >= count
 
     def _import_names_the_old_name(self, site: RenameSite, old_name: str) -> bool:
         """Whether the statement IMPORTS the old name again.

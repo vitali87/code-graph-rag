@@ -1386,7 +1386,10 @@ def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) ->
     # What `_stage_sites` would have recorded: one `__all__` entry rewritten
     # in this file. The check counts against THAT rather than against the
     # file's exports as a set, so the fixture has to supply it.
-    run._all_rewrites = {"util.py": 1}
+    run._all_rewrites = {
+        "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
+        or _all_offsets((tmp_path / "util.py").read_text(), "helper")
+    }
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1433,54 +1436,68 @@ def test_a_multiline_import_is_read_to_its_closing_bracket(
     )
 
 
+def _all_offsets(text: str, name: str) -> list[int]:
+    """Where `rename_in_all` would rewrite `name`, by the same literal scan."""
+    import re
+
+    from codebase_rag.editing.rename import _ALL_BLOCK, _ALL_ENTRY
+
+    return [
+        block.start(1) + literal.start("name")
+        for block in re.finditer(_ALL_BLOCK, text, re.S)
+        for literal in re.finditer(_ALL_ENTRY, block.group(1))
+        if literal.group("name") == name
+    ]
+
+
 @pytest.mark.parametrize(
-    ("body", "rewritten", "complete"),
+    ("before", "restore", "complete"),
     [
-        ('__all__ = ["unrelated"]\n', 0, True),
-        ('__all__ = ["helper"]\n__all__ = ["assist"]\n', 2, False),
-        ('__all__ = ["helper"]\n__all__ = ["helper"]\n', 2, True),
-        ('__all__ = ["assist"]\n', 1, False),
-        ("x = 1\n", 0, True),
-        ('__all__ = ["helper", "assist"]\n', 1, True),
+        ('__all__ = ["helper", "assist"]\n', "full", True),
+        ('__all__ = ["helper"]\n\nif X:\n    __all__ = ["helper"]\n', "partial", False),
+        ('__all__ = ["helper"]\n__all__ = ["helper"]\n', "full", True),
+        ('__all__ = ["helper"]\n', "partial", False),
     ],
     ids=[
-        "unrelated",
-        "mixed",
-        "both-restored",
-        "still-new",
-        "no-all",
         "new-name-pre-existed",
+        "old-name-pre-existed",
+        "both-restored",
+        "not-restored",
     ],
 )
-def test_the_all_check_counts_what_this_rename_rewrote(
-    tmp_path: Path, body: str, rewritten: int, complete: bool
+def test_the_all_check_reads_the_entries_this_rename_rewrote(
+    tmp_path: Path, before: str, restore: str, complete: bool
 ) -> None:
-    """The whole truth table, because two earlier phrasings failed opposite ways.
+    """Checked at the recorded OFFSETS, because three aggregates all failed.
 
-    Both asked a WHOLE-FILE existence question, and neither can answer a
-    per-site one:
+    None of them could tell an entry this rename rewrote from one that merely
+    matched, and each fix moved the failure rather than removing it:
 
-    * "does the old name appear anywhere" accepted a file with one block
-      restored and another still holding the new name -- a partial undo
-      reported as complete (the `mixed` row);
-    * "does the new name appear anywhere" rejected a COMPLETE undo when the
-      new name was already exported before the rename ran -- renaming onto a
-      pre-existing symbol legitimately listed in `__all__` (the
-      `new-name-pre-existed` row).
+    * "old name appears anywhere" accepted a partial undo;
+    * "new name appears anywhere" rejected a complete undo when the new name
+      was already exported (`new-name-pre-existed`);
+    * "at least N entries read the old name" accepted an INCOMPLETE undo when
+      the old name was already exported elsewhere, because a pre-existing
+      entry pushed the total over the threshold (`old-name-pre-existed`).
 
-    The count `rename_in_all` recorded settles both: a complete undo leaves at
-    least that many entries reading the old name. The last row is the one that
-    discriminates against the second phrasing, and it is why the parameter set
-    varies the COUNT and not only the file body.
+    The last two rows are the ones that discriminate: they are the mirror of
+    each other, and no aggregate can satisfy both.
     """
     from codebase_rag.editing.rename import Renamer
 
-    (tmp_path / "util.py").write_text(body, encoding="utf-8")
+    offsets = _all_offsets(before, "helper")
+    if restore == "full":
+        after = before
+    else:
+        last = offsets[-1]
+        after = before[:last] + "assist" + before[last + len("helper") :]
+
+    (tmp_path / "util.py").write_text(after, encoding="utf-8")
     run = Renamer.__new__(Renamer)
     run.repo_root = tmp_path
 
-    assert run._all_rewrites_are_undone("util.py", "helper", rewritten) is complete, (
-        f"__all__ body {body!r} with {rewritten} rewritten entries judged "
+    assert run._all_rewrites_are_undone("util.py", "helper", offsets) is complete, (
+        f"a {restore} restoration of {before!r} judged "
         f"{'incomplete' if complete else 'complete'}, which is backwards"
     )
 
@@ -1518,8 +1535,18 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
     # the same trap this file already documents.
     report.sites = [RenameSite("definition", "util.py", 7, 4, "util.helper", None)]
 
-    run._all_rewrites = {"util.py": 2}
-    assert run._all_rewrites_are_undone("util.py", "helper", 2) is False, (
+    run._all_rewrites = {
+        "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
+        + _all_offsets((tmp_path / "util.py").read_text(), "helper")
+    }
+    assert (
+        run._all_rewrites_are_undone(
+            "util.py",
+            "helper",
+            _all_offsets((tmp_path / "util.py").read_text(), "assist"),
+        )
+        is False
+    ), (
         "fixture guard: the __all__ scan itself must reject this file, or the "
         "assertion below is satisfied by an earlier check short-circuiting"
     )
@@ -1543,7 +1570,10 @@ def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
 
     run = Renamer.__new__(Renamer)
     run.repo_root = tmp_path
-    run._all_rewrites = {"util.py": 1}
+    run._all_rewrites = {
+        "util.py": _all_offsets((tmp_path / "util.py").read_text(), "assist")
+        or _all_offsets((tmp_path / "util.py").read_text(), "helper")
+    }
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
