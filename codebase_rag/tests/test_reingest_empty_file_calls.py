@@ -147,3 +147,43 @@ def test_a_still_defined_function_keeps_its_calls(tmp_path: Path) -> None:
         "a still-present call was retracted, so the fix over-corrected and "
         "drops live edges on every re-parse"
     )
+
+
+def test_a_module_level_reference_survives_the_re_parse(tmp_path: Path) -> None:
+    """The other half of the fix, which nothing here was pinning.
+
+    Writing empty cache entries made them possible for the first time, and a
+    pre-existing perf skip read "no call captures and no function captures" as
+    "nothing to do". That is true only when the parse produced SOMETHING: a
+    module-level reference -- a dispatch dict holding an imported handler --
+    is a real call edge that lives under NEITHER capture, so an empty entry
+    made the walk skip a file that still had an edge to emit.
+
+    Reverting that guard leaves every other test in this file green; the only
+    thing catching it was `test_src_layout_dispatch_dict_value` in
+    `test_python_source_root_imports.py`, whose name gives no hint that it
+    guards this behaviour, so rewriting that test would silently un-fix this
+    branch (greptile-local, #1794).
+    """
+    _fixture(tmp_path)
+    (tmp_path / "pkg" / "dispatch.py").write_text(
+        "from pkg.util import helper\n\nTABLE = {'h': helper}\n", encoding="utf-8"
+    )
+    updater, store = _built(tmp_path)
+
+    edge = ("proj.pkg.dispatch", "proj.pkg.util.helper")
+    assert edge in _calls(store), (
+        "fixture guard: the module-level reference must be emitted by the "
+        f"initial index, or the re-parse below proves nothing: {sorted(_calls(store))}"
+    )
+
+    # Re-parse the dispatch module itself. Its captures are empty -- the
+    # reference is neither a call site nor a function -- so this is exactly
+    # the file the skip would drop.
+    updater.reingest(["pkg/dispatch.py"])
+    store.flush_all()
+
+    assert edge in _calls(store), (
+        "a module-level reference was dropped by the re-parse: the file's "
+        f"captures are empty, so the call walk skipped it entirely: {sorted(_calls(store))}"
+    )
