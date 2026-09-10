@@ -15,6 +15,7 @@
 # survive the filter.
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -3818,3 +3819,146 @@ async def test_the_cached_path_still_builds_on_a_clean_durable_state() -> None:
 
     assert built is updater_cls.return_value
     handler._persisted_incomplete.assert_called_once_with(ALPHA)
+
+
+def test_a_renames_reingest_marks_before_it_writes() -> None:
+    """The rename path used the raw callback, with no marker (Greptile, #1547).
+
+    Every other re-ingest writes an incomplete-run marker before its first
+    delete and clears it after, so a process death mid-run leaves evidence
+    that a restarted server can see. The rename's callback was passed
+    straight through, so the one operation that rewrites source AND graph
+    together was the one without that protection: a crash part way left a
+    partial graph a fresh process read as complete.
+
+    Asserted on ORDER, not merely on the calls happening: marking after the
+    write would satisfy a call-count assertion while protecting nothing.
+    """
+    from unittest.mock import MagicMock, patch
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+
+    order: list[str] = []
+    handler._require_marker = MagicMock(
+        side_effect=lambda *a, **k: order.append("mark") or None
+    )
+    handler._require_marker_cleared = MagicMock(
+        side_effect=lambda *a, **k: order.append("clear") or None
+    )
+    handler._begin_writing_or_refuse = MagicMock(
+        side_effect=lambda *a, **k: order.append("begin-writing")
+    )
+
+    updater = MagicMock()
+
+    def fake_reingest(*_a: object, before_write=None, **_k: object) -> str:
+        if before_write is not None:
+            before_write()
+        order.append("write")
+        return "done"
+
+    updater.reingest = fake_reingest
+
+    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+        callback = handler._guarded_rename_reingest(ALPHA)
+        assert callback is not None, (
+            "fixture guard: an indexed project must yield a callback, or this "
+            "test asserts nothing"
+        )
+        callback(["a.py"])
+
+    assert order.index("mark") < order.index("write"), (
+        f"the marker was not written before the first graph write: {order}"
+    )
+    assert order.index("begin-writing") < order.index("write"), (
+        f"the writing phase was not entered before the write: {order}"
+    )
+    assert order[-1] == "clear", (
+        f"the marker was not cleared after the run finished: {order}"
+    )
+
+
+def test_a_crash_in_the_rename_reingest_still_clears_the_marker() -> None:
+    """A failure must not leave the marker up forever.
+
+    The clear is in a `finally`, so a raising re-ingest still releases it --
+    the failure invalidates the graph through the caller's own handling, and
+    leaving the marker would refuse every later run for a failure already
+    reported. Without the `finally` this test goes red while the one above
+    stays green.
+    """
+    from unittest.mock import MagicMock, patch
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler._require_marker = MagicMock(return_value=None)
+    handler._begin_writing_or_refuse = MagicMock()
+    cleared: list[str] = []
+    handler._require_marker_cleared = MagicMock(
+        side_effect=lambda p, *a, **k: cleared.append(p) or None
+    )
+
+    updater = MagicMock()
+    updater.reingest = MagicMock(side_effect=RuntimeError("re-ingest died"))
+
+    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+        callback = handler._guarded_rename_reingest(ALPHA)
+        assert callback is not None, "fixture guard: expected a callback"
+        with pytest.raises(RuntimeError, match="died"):
+            callback(["a.py"])
+
+    assert cleared == [ALPHA], (
+        f"a failed rename re-ingest left the marker up: cleared={cleared}"
+    )
+
+
+async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> None:
+    """The WIRING, which the two tests above cannot see.
+
+    They call `_guarded_rename_reingest` directly, so reverting the call site
+    to pass the raw `updater.reingest` leaves both green -- the helper is
+    still correct, it is simply no longer used. A unit-level mutation cannot
+    see a severed connection; only driving the real handler can.
+
+    Asserts the callback `rename()` receives is NOT the updater's bound
+    method, which is exactly what the reverted call site would hand it.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from codebase_rag import graph_query as graph_query_module
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler.project_root = str(tmp_path)
+    project = derive_project_name(tmp_path)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[project])
+
+    updater = MagicMock()
+    seen: dict[str, object] = {}
+
+    def fake_rename(*_a: object, reingest: object = None, **_k: object) -> object:
+        seen["reingest"] = reingest
+        raise RuntimeError("stop here; the callback identity is the subject")
+
+    # Patched at the SOURCE module: `_run_rename` imports `rename` locally, so
+    # there is no `codebase_rag.mcp.tools.rename` attribute to replace.
+    with (
+        patch.object(handler, "_updater_for_reingest", return_value=updater),
+        patch("codebase_rag.editing.rename.rename", fake_rename),
+        patch.object(graph_query_module, "source_root_for", lambda *a, **k: tmp_path),
+        contextlib.suppress(Exception),
+    ):
+        await handler._run_rename(project, "pkg.mod.helper", "assist", False, False)
+
+    assert "reingest" in seen, (
+        "fixture guard: rename() was never reached, so the callback identity "
+        "was never observed and this test proves nothing"
+    )
+    assert seen["reingest"] is not updater.reingest, (
+        "the rename handler passed the updater's raw reingest, so a crash "
+        "mid-run leaves a partial graph with no marker recording it"
+    )

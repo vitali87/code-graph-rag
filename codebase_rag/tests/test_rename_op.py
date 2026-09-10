@@ -1383,6 +1383,10 @@ def test_an_all_entry_left_on_the_new_name_is_not_a_full_undo(tmp_path: Path) ->
 
     run = Renamer.__new__(Renamer)
     run.repo_root = tmp_path
+    # What `_stage_sites` would have recorded: one `__all__` entry rewritten
+    # in this file. The check counts against THAT rather than against the
+    # file's exports as a set, so the fixture has to supply it.
+    run._all_rewrites = {"util.py": 1}
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"
@@ -1430,32 +1434,44 @@ def test_a_multiline_import_is_read_to_its_closing_bracket(
 
 
 @pytest.mark.parametrize(
-    ("body", "complete"),
+    ("body", "rewritten", "complete"),
     [
-        ('__all__ = ["unrelated"]\n', True),
-        ('__all__ = ["helper"]\n__all__ = ["assist"]\n', False),
-        ('__all__ = ["helper"]\n', True),
-        ('__all__ = ["assist"]\n', False),
-        ("x = 1\n", True),
+        ('__all__ = ["unrelated"]\n', 0, True),
+        ('__all__ = ["helper"]\n__all__ = ["assist"]\n', 2, False),
+        ('__all__ = ["helper"]\n__all__ = ["helper"]\n', 2, True),
+        ('__all__ = ["assist"]\n', 1, False),
+        ("x = 1\n", 0, True),
+        ('__all__ = ["helper", "assist"]\n', 1, True),
     ],
-    ids=["unrelated", "mixed", "restored", "still-new", "no-all"],
+    ids=[
+        "unrelated",
+        "mixed",
+        "both-restored",
+        "still-new",
+        "no-all",
+        "new-name-pre-existed",
+    ],
 )
-def test_the_all_check_answers_per_entry_not_per_file(
-    tmp_path: Path, body: str, complete: bool
+def test_the_all_check_counts_what_this_rename_rewrote(
+    tmp_path: Path, body: str, rewritten: int, complete: bool
 ) -> None:
-    """The whole truth table, because the old rule failed BOTH ways.
+    """The whole truth table, because two earlier phrasings failed opposite ways.
 
-    Aggregating every export into one "did the old name appear" flag was
-    wrong in opposite directions at once:
+    Both asked a WHOLE-FILE existence question, and neither can answer a
+    per-site one:
 
-    * too STRICT -- `__all__ = ["unrelated"]` has nothing to do with this
-      rename, yet reported an incomplete rollback;
-    * too LOOSE -- one block restored while another still held the new name
-      reported a complete one.
+    * "does the old name appear anywhere" accepted a file with one block
+      restored and another still holding the new name -- a partial undo
+      reported as complete (the `mixed` row);
+    * "does the new name appear anywhere" rejected a COMPLETE undo when the
+      new name was already exported before the rename ran -- renaming onto a
+      pre-existing symbol legitimately listed in `__all__` (the
+      `new-name-pre-existed` row).
 
-    A fix that only relaxes the rule cures the first and worsens the second,
-    which is why this is a table rather than one case. The question is per
-    ENTRY: does anything still export the NEW name (4-55 and CGR-3, PR #1547).
+    The count `rename_in_all` recorded settles both: a complete undo leaves at
+    least that many entries reading the old name. The last row is the one that
+    discriminates against the second phrasing, and it is why the parameter set
+    varies the COUNT and not only the file body.
     """
     from codebase_rag.editing.rename import Renamer
 
@@ -1463,8 +1479,8 @@ def test_the_all_check_answers_per_entry_not_per_file(
     run = Renamer.__new__(Renamer)
     run.repo_root = tmp_path
 
-    assert run._no_all_entry_names_the_new_name("util.py", "assist") is complete, (
-        f"__all__ body {body!r} judged "
+    assert run._all_rewrites_are_undone("util.py", "helper", rewritten) is complete, (
+        f"__all__ body {body!r} with {rewritten} rewritten entries judged "
         f"{'incomplete' if complete else 'complete'}, which is backwards"
     )
 
@@ -1502,7 +1518,8 @@ def test_one_restored_all_block_does_not_excuse_another(tmp_path: Path) -> None:
     # the same trap this file already documents.
     report.sites = [RenameSite("definition", "util.py", 7, 4, "util.helper", None)]
 
-    assert run._no_all_entry_names_the_new_name("util.py", "assist") is False, (
+    run._all_rewrites = {"util.py": 2}
+    assert run._all_rewrites_are_undone("util.py", "helper", 2) is False, (
         "fixture guard: the __all__ scan itself must reject this file, or the "
         "assertion below is satisfied by an earlier check short-circuiting"
     )
@@ -1526,6 +1543,7 @@ def test_a_restored_all_entry_completes_the_undo(tmp_path: Path) -> None:
 
     run = Renamer.__new__(Renamer)
     run.repo_root = tmp_path
+    run._all_rewrites = {"util.py": 1}
     report = MagicMock()
     report.old_name = "helper"
     report.new_name = "assist"

@@ -2343,6 +2343,49 @@ class MCPToolsRegistry:
             ),
         )
 
+    def _guarded_rename_reingest(
+        self, project_name: str
+    ) -> Callable[..., object] | None:
+        """The rename's re-ingest callback, behind the incomplete-run marker.
+
+        Returns None when the project has no graph to measure against.
+
+        The callback was previously passed RAW, so a process death part way
+        through it left a partial graph that a restarted server treated as
+        complete -- the exact failure the marker exists to prevent, on the one
+        path that did not use it (Greptile, PR #1547). Same shape as
+        `_reingest_sync`: mark before the first write, clear after, and refuse
+        rather than start if the marker cannot be written.
+
+        `writing=False` at the mark, because the updater's prologue is
+        read-only; `before_write` advances the phase at the exact point the
+        first delete is about to be issued.
+        """
+        if (
+            self._live_updater is None
+            and project_name not in self.ingestor.list_projects()
+        ):
+            return None
+        updater = self._updater_for_reingest(project_name)
+
+        def guarded(*args: object, **kwargs: object) -> object:
+            if (
+                refusal := self._require_marker(project_name, writing=False)
+            ) is not None:
+                raise RuntimeError(refusal)
+            kwargs.setdefault(
+                "before_write", lambda: self._begin_writing_or_refuse(project_name)
+            )
+            try:
+                return updater.reingest(*args, **kwargs)  # type: ignore[arg-type]
+            finally:
+                # Cleared whatever happened: a failure invalidates the graph
+                # through the caller's own handling, and leaving the marker up
+                # would refuse every later run for a failure already reported.
+                self._require_marker_cleared(project_name)
+
+        return guarded
+
     def _run_rename(
         self,
         project_name: str,
@@ -2371,12 +2414,7 @@ class MCPToolsRegistry:
             # root above, and `_updater_for_reingest` rejects a cached
             # updater built for a different project, so the delta is
             # measured under the same name the re-ingest writes.
-            reingest = (
-                self._updater_for_reingest(project_name).reingest
-                if self._live_updater is not None
-                or project_name in self.ingestor.list_projects()
-                else None
-            )
+            reingest = self._guarded_rename_reingest(project_name)
             report = rename(
                 root,
                 self.ingestor.fetch_all,
