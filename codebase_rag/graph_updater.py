@@ -2926,6 +2926,16 @@ class GraphUpdater:
         # The call pass iterates _parsed_files; a removed file must leave it
         # (a re-parse re-registers), or deleted files keep contributing and
         # created files never do (issue #1028).
+        #
+        # This removal is ALSO what keeps the list free of duplicates. The
+        # appender in `_process_single_file` appends unconditionally, so
+        # every re-parse route has to strip the old entry first -- the
+        # incremental path calls this method, and `reingest` gets there via
+        # `_reingest_delete`. A deduplicating appender is deliberately not
+        # the mechanism: one existed (`register_parsed_file`, added for
+        # #1028) and was left callerless when #1524 moved the watcher onto
+        # `reingest`, where it read as the guarantee's source while never
+        # running. Removed in #1784; the invariant lives here.
         self._parsed_files = [
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
@@ -3043,14 +3053,85 @@ class GraphUpdater:
 
         qns_to_remove = set()
 
-        for qn in list(self.function_registry.keys()):
-            if (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
+        # A directory may share a sibling FILE's stem, and then the module qns
+        # nest: `proj/a.py` records `proj.a` while `proj/a/b.py` records
+        # `proj.a.b`. Deleting `a.py` matches the prefix `proj.a.` and would
+        # take `b.py`'s definitions with it, though `b.py` still exists and
+        # this event does not re-parse it, so nothing restores them (issue
+        # #1773). `foreign_qns` does not save them: it is built from function
+        # SPAN records, so it protects `proj.a.b.Nested.deep` while leaving
+        # the class `proj.a.b.Nested`, which records no span -- exactly the
+        # asymmetry measured on `A.cs` beside `A/B.cs`, and reproduced here on
+        # `a.py` beside `a/b.py`. The sweep is language-agnostic, so this is
+        # not a C#-only shape.
+        #
+        # Ownership must come from a RECORD, not from the qn's shape. The
+        # obvious rule -- keep a qn that also sits under a longer surviving
+        # module -- is wrong for C#, whose class qn embeds its namespace:
+        # `proj/Core.cs` with `namespace Util` yields `proj.Core.Util.Helper`,
+        # sitting under the SIBLING module `proj.Core.Util` from
+        # `proj/Core/Util.cs`. That rule would keep `Helper` after deleting
+        # the file that declares it (measured; caught in review of #1844).
+        # #1769 hit the same trap and answered it the same way, with an
+        # explicit owner record.
+        #
+        # `class_owner_module` is that record, cross-language and written by
+        # every language's ingest (#1772). A qn whose declaring module is
+        # still mapped to a file, and is not itself being deleted, belongs to
+        # a file that still exists: keep it. A qn with no recorded owner is
+        # left to the prefix rule, which is the pre-existing behaviour.
+        owner_module = self.factory.definition_processor.class_owner_module
+        live_modules = set(self.factory.definition_processor.module_qn_to_file_path)
+        # `class_owner_module` is written at INGEST, so a definition carried
+        # over by a REHYDRATE has no entry there and would fall back to the
+        # prefix rule. `rehydrated_definition_paths` is the record for exactly
+        # those, written when the row is read back from the graph, and it
+        # already serves as ownership evidence in `_prune_class_keyed_maps`.
+        # Consulting both means an unchanged sibling's class is protected on
+        # an incremental run too, not only on the run that parsed it (raised
+        # in review of #1844; pre-existing on main, which loses it either way).
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        deleted_rel = cached_relative_path(file_path, self.repo_path).as_posix()
+        # "Not the file being deleted" is not enough: a definition recorded
+        # against a file removed EARLIER also has a different path, and would
+        # be preserved as a stale entry that goes on steering call resolution
+        # (raised by CodeRabbit on #1844). Require the recorded path to belong
+        # to a module that is still live.
+        live_paths = {
+            cached_relative_path(path, self.repo_path).as_posix()
+            for path in self.factory.definition_processor.module_qn_to_file_path.values()
+        }
+
+        def _owned_by_a_surviving_file(qn: str) -> bool:
+            owner = owner_module.get(qn)
+            if owner is not None:
+                return owner not in module_qn_prefixes and owner in live_modules
+            # The rehydrated half: owned by a file that is not the one being
+            # deleted. Compared as a relative posix path, the form the
+            # rehydrate stores.
+            rehydrated_path = rehydrated.get(qn)
+            if rehydrated_path is not None:
+                return (
+                    str(rehydrated_path) != deleted_rel
+                    and str(rehydrated_path) in live_paths
                 )
-                or qn in owned_qns
-            ) and qn not in foreign_qns:
+            return False
+
+        for qn in list(self.function_registry.keys()):
+            matched_prefix = any(
+                qn.startswith(f"{prefix}.") or qn == prefix
+                for prefix in module_qn_prefixes
+            )
+            if (
+                matched_prefix
+                and qn not in owned_qns
+                and _owned_by_a_surviving_file(qn)
+            ):
+                # Declared by a file that still exists; the prefix match is an
+                # accident of the shared stem. `owned_qns` still wins, since
+                # that is this file's own span-record evidence.
+                continue
+            if (matched_prefix or qn in owned_qns) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
@@ -4397,15 +4478,6 @@ class GraphUpdater:
         root_node = parse_with_preproc_recovery(parser, file_bytes, language).root_node
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
-
-    def register_parsed_file(
-        self, file_path: Path, language: cs.SupportedLanguage
-    ) -> None:
-        # Watch-mode events parse outside run(): the file must join the
-        # call pass's iteration set or its outgoing CALLS edges are never
-        # emitted (issue #1028).
-        if all(existing != file_path for existing, _ in self._parsed_files):
-            self._parsed_files.append((file_path, language))
 
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every

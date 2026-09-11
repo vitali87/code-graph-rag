@@ -994,6 +994,516 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"graph left by a crashed update; got {refused}"
         )
 
+    async def test_an_unrelated_projects_clear_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """A successful clear settles only what it owns (#1774).
+
+        `_graph_incomplete` is registry-wide while every writer of it is
+        project-scoped, so `self._graph_incomplete = not cleared` let project
+        B's clean clear discard a flag project A earned.
+
+        The durable marker does not cover this. It is per project, so
+        `_persisted_incomplete(A)` correctly returns False: a wipe that dies
+        before the graph is gone writes no marker for A at all, leaving the
+        in-process flag the ONLY record that A is partial.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        # A wipe that fails part way: flag up, no marker written anywhere.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert not ingestor._marker_store, (
+            "fixture guard: the wipe must write NO marker, or the durable "
+            "check would refuse on its own and this proves nothing"
+        )
+
+        # An unrelated project B completes and clears its own marker.
+        assert registry._require_marker("project-B") is None
+        assert registry._require_marker_cleared("project-B") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's successful clear discarded the flag the "
+            "failed wipe earned; the next reingest would run over a partial graph"
+        )
+
+        # And the refusal it protects still fires.
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_deleting_an_unrelated_project_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Through the PUBLIC path, which is what the helper-level test missed.
+
+        Raised by Greptile on #1846 and confirmed. The sibling test drives
+        `_require_marker_cleared('project-B')` directly, so it never sees
+        `_delete_project_sync` RAISE the flag for its own project first --
+        overwriting the wipe's `owner=None` with `B` -- and then legitimately
+        settle what it now appears to own. Measured before the fix:
+
+            after failed wipe:  flag=True  owner=None
+            after delete of B:  flag=False owner=None
+            reingest of A: ACCEPTED over a partial graph
+
+        The rule is that an operation claims ownership only when it raises
+        the flag FROM CLEAN; an already-set flag belongs to whatever failure
+        set it. Same rule `_abandon_before_writing` already applied to the
+        attribution.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        ingestor.list_projects.return_value = [project, "B"]
+        result = await registry.delete_project("B")
+        assert result.get("success") is True, f"fixture guard: delete failed; {result}"
+
+        assert registry._graph_incomplete is True, (
+            "deleting an unrelated project settled the flag a failed wipe "
+            "earned; the next reingest would run over a partially wiped graph"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_failed_clear_cannot_claim_another_projects_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery authority follows ownership too (#1846 review, third round).
+
+        The ownership field was guarded but `_flag_from_failed_clear` was not,
+        and it is what grants the heal in `_hydrate_reingest_updater`
+        (`recoverable_here = _flag_from_failed_clear == project_name`). So:
+
+            1. A fails leaving the flag up, owner=None (a failed wipe)
+            2. B's marker clear FAILS and claims the attribution
+            3. B's marker later recovers -> B heals the latch A owns
+
+        Measured before the fix: step 3 left `flag=False`, and B's scoped
+        reingest proceeded over A's partial graph.
+
+        The rule is the same one the ownership claim uses: an already-set flag
+        belongs to whatever failure set it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._flag_from_failed_clear is None, (
+            "fixture guard: a wipe strands no marker, so nothing is attributed"
+        )
+
+        # B strands a marker of its own: its clear fails.
+        assert registry._require_marker("B", writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared("B") is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+
+        assert registry._flag_from_failed_clear is None, (
+            "B's failed clear claimed recovery authority over the flag A owns"
+        )
+
+        # B's marker recovers. The heal must not fire on A's flag.
+        ingestor._marker_store.pop("B", None)
+        registry._live_updater = None
+        ingestor.list_projects.return_value = [project, "B"]
+        with pytest.raises(ValueError, match="failed part way"):
+            registry._hydrate_reingest_updater("B")
+        assert registry._graph_incomplete is True, (
+            "B's marker recovery cleared the latch A owns"
+        )
+
+    async def test_a_clean_clear_keeps_another_projects_licence_to_heal(
+        self, temp_project_root: Path
+    ) -> None:
+        """The mirror of the attribution rule, and it fails CLOSED (#1846).
+
+        `_flag_from_failed_clear` is a project's licence to heal itself: A's
+        failed clear strands a recoverable `writing=false` marker and records
+        that the flag is A's to lift once the marker recovers. Dropping the
+        attribution unconditionally on any successful clear meant B's clean
+        clear discarded it, and A's own later reingest could no longer
+        recover -- refused forever though its graph was untouched.
+
+        Harmless compared with the other direction (a wrongly ALLOWED
+        reingest), but it wedges a project with nothing wrong with it, and
+        both directions come from the same unscoped assignment.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A's clear fails, leaving a recoverable marker attributed to A.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: A's failed clear must attribute the flag to A"
+        )
+
+        # B completes and clears its own marker.
+        assert registry._require_marker("B", writing=False) is None
+        assert registry._require_marker_cleared("B") is None
+
+        assert registry._flag_from_failed_clear == project, (
+            "B's clean clear discarded A's licence to heal itself; A's own "
+            "reingest would be refused though its graph was never touched"
+        )
+
+        # And A can still recover: its marker is `writing=false`.
+        registry._live_updater = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            registry._hydrate_reingest_updater(project)
+        assert registry._graph_incomplete is False, (
+            "A could not heal its own recoverable marker"
+        )
+
+    async def test_any_projects_clear_cannot_settle_a_failed_wipe(
+        self, temp_project_root: Path
+    ) -> None:
+        """Issue #1820's reproduction, pinned explicitly.
+
+        That issue is a third face of the same overloaded `None` this PR is
+        about, and it falls out of the ownership rule rather than needing its
+        own change -- but "falls out" is worth an assertion, or a later
+        refactor can quietly take it away again while the two tests above
+        stay green.
+
+        A failed wipe leaves the flag up with no owner (it spans every
+        project and writes no marker), so the in-process flag is the only
+        record the graph is partial. Before the rule, the next successful
+        clear for ANY project settled it and reads proceeded against a
+        half-wiped graph.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        # A clear for a project entirely unrelated to the wipe.
+        assert registry._require_marker("any-project", writing=False) is None
+        assert registry._require_marker_cleared("any-project") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's clear settled the flag a failed wipe "
+            "earned; reads would proceed against a half-wiped graph (#1820)"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_projects_own_clear_still_settles_its_own_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control, and the one that constrains the fix.
+
+        Making the flag harder to clear must not break the operations that
+        legitimately clear the flag they raised: delete, index and update
+        each set it before their first write and settle it on success. A fix
+        that simply refused every clear would satisfy the test above while
+        wedging all three.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await registry.update_repository()
+
+        assert registry._graph_incomplete is False, (
+            "a completed update must clear the flag it raised for its own project"
+        )
+        assert registry._incomplete_owner is None
+
+    async def test_a_delete_still_settles_the_flag_it_raised(
+        self, temp_project_root: Path
+    ) -> None:
+        """Second control, on a different owner-setting path.
+
+        `_delete_project_sync` raises the flag for its own project and
+        settles it via its own `_require_marker_cleared`. Pinning only the
+        update path would leave the delete and index paths free to regress.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor.list_projects.return_value = [project, "other"]
+
+        result = await registry.delete_project(project)
+        assert result.get("success") is True, result
+        assert registry._graph_incomplete is False, (
+            "a completed delete must settle the flag it raised"
+        )
+
+    async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
+        self, temp_project_root: Path
+    ) -> None:
+        """The marker must be CLEARED, not merely set.
+
+        Without this the fix would be indistinguishable from one that refuses
+        every reingest forever, which also passes the test above.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await first.update_repository()
+
+        assert project not in ingestor._marker_store, (
+            "a completed update left the marker set, so every later reingest "
+            "would refuse for a run that actually finished"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = SimpleNamespace(
+                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
+            )
+            result = await second.reingest(["a.py"])
+        assert "error" not in result, f"a completed run must not refuse: {result}"
+
+    async def test_a_failed_first_index_leaves_a_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A FIRST index has no Project node yet, and must still mark.
+
+        The marker used to be a property set on the Project with `MATCH`,
+        which updates zero rows when no Project exists. `GraphUpdater.run()`
+        is what creates it, so a first index that failed left no marker at
+        all -- precisely the run the guard exists to catch (#1705 review).
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        from codebase_rag.utils.path_utils import derive_project_name
+
+        project = derive_project_name(Path(first.project_root))
+        # No list_projects entry: nothing has ever been indexed.
+        ingestor.list_projects.return_value = []
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("first index died")
+            assert "Error" in await first.index_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "a failed FIRST index left no marker, so a fresh process cannot "
+            "tell the graph is partial"
+        )
+
+    async def test_the_marker_survives_the_project_delete_an_index_performs(
+        self, temp_project_root: Path
+    ) -> None:
+        """`index_repository` deletes the Project before rebuilding it.
+
+        A marker stored on the Project would be destroyed by the very
+        operation whose failure it records, so it lives on its own
+        unconnected node instead (#1705 review). The fake's delete_project
+        drops Project-anchored keys, so a regression to that storage fails
+        here rather than passing quietly.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("rebuild died")
+            assert "Error" in await registry.index_repository()
+
+        ingestor.delete_project.assert_called_once()
+        assert ingestor._marker_store.get(project) is True, (
+            "the project delete removed the marker it was supposed to outlive"
+        )
+
+    async def test_a_failed_clear_does_not_report_the_run_complete(
+        self, temp_project_root: Path
+    ) -> None:
+        """A clear that never reached the store must not read as complete.
+
+        Otherwise this process believes the run finished while the graph
+        still says incomplete, and a fresh registry refuses reingest forever
+        with nothing to explain it (#1705 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor._failing.add("clear")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            result = await registry.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear must actually have failed, or this test "
+            "proves nothing"
+        )
+        # Invariant (b): a run whose marker could not be cleared is a
+        # RETRYABLE FAILURE, not a success. Reporting success would leave the
+        # marker blocking every later reingest with nothing to show the user
+        # why (#1705 review, round 4). This assertion was inverted before that
+        # round: it required the run to report success, which is precisely the
+        # state the invariant now forbids.
+        assert "Error" in result, (
+            f"a run that left its marker stuck must report a failure: {result}"
+        )
+        assert registry._graph_incomplete is True, (
+            "the local flag reported complete while the graph still says "
+            "incomplete; a fresh registry would refuse reingest forever"
+        )
+
+    async def test_an_unwritable_marker_aborts_before_destructive_work(
+        self, temp_project_root: Path
+    ) -> None:
+        """A mark that cannot be stored must stop the run, not proceed.
+
+        The marker is the only protection that survives a restart. Indexing
+        on without it means a crash leaves a partial graph a fresh process
+        cannot distinguish from a complete one, and a scoped reingest then
+        treats it as authoritative. Nothing is lost by refusing: no graph
+        state has changed yet (#1705 review).
+
+        Asserts the DELETE never happened, not merely that an error was
+        returned: an abort that still wiped the project would satisfy an
+        error-message assertion while doing the exact damage this prevents.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("mark")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            result = await registry.index_repository()
+
+        assert "Error" in result, "an unstorable marker must fail the run"
+        (
+            ingestor.delete_project.assert_not_called(),
+            (
+                "the run destroyed the existing graph despite having no marker "
+                "to record that it had started"
+            ),
+        )
+        updater_cls.assert_not_called()
+
+    async def test_an_unreadable_marker_refuses_reingest(
+        self, temp_project_root: Path
+    ) -> None:
+        """ "Cannot tell" must not be read as "the last run finished".
+
+        Returning False on a failed read hydrates a scoped reingest from a
+        graph that may be partial, which is precisely the failure the marker
+        exists to prevent. An update_repository recovers either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+        ingestor._failing.add("read")
+
+        refused = await registry.reingest(["a.py"])
+
+        assert "failed part way" in refused.get("error", ""), (
+            f"an unreadable marker was treated as a completed run; got {refused}"
+        )
+
+    async def test_the_marker_precedes_constraint_migration(
+        self, temp_project_root: Path
+    ) -> None:
+        """`ensure_constraints` is destructive, so the marker must precede it.
+
+        It runs `_migrate_legacy_path_keys`, which drops constraints and can
+        run purge queries -- autocommitted work. Marking after it left a
+        window where a crash during migration produced a damaged graph with
+        nothing recording that a run had started (#1705 review, round 2).
+
+        Asserts the ORDER of calls rather than the end state: after a
+        successful run both have happened either way, so only the sequence
+        distinguishes the fixed code from the broken code.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        order: list[str] = []
+        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
+        real_write = ingestor.execute_write.side_effect
+
+        def _tracking_write(query: str, params: dict | None = None) -> None:
+            if "SET m.run_incomplete" in query:
+                order.append("mark")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _tracking_write
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.update_repository()
+
+        assert "mark" in order, f"fixture guard: the mark must run, saw {order}"
+        assert "constraints" in order, (
+            f"fixture guard: the migration must run, saw {order}"
+        )
+        assert order.index("mark") < order.index("constraints"), (
+            "the constraint migration ran before the marker was written, so a "
+            f"crash during it would leave no record of the run: {order}"
+        )
+
+    async def test_deleting_a_project_clears_its_durable_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """An intentional delete must not strand the marker.
+
+        The marker lives on its own node so `delete_project` cannot reach it,
+        which is what lets it survive an index's delete-then-rebuild. The
+        consequence is that a deliberate deletion leaves it behind, and a
+        fresh registry then refuses reingest forever for a project the user
+        removed on purpose (#1705 review, round 2).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        result = await registry.delete_project(project)
+
+        assert result.get("success"), f"the delete itself must succeed: {result}"
+        assert project not in ingestor._marker_store, (
+            "the deleted project kept its incomplete-run marker, so a fresh "
+            "registry would refuse reingest for a project that is gone"
+        )
+
     async def test_a_fresh_registry_refuses_the_structural_delta_after_a_crash(
         self, temp_project_root: Path
     ) -> None:
@@ -1346,238 +1856,6 @@ class TestIncompleteMarkerSurvivesTheProcess:
         )
         assert ingestor._marker_store.get(project) is True, (
             "fixture guard: the clear was expected to fail and leave the marker"
-        )
-
-    async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
-        self, temp_project_root: Path
-    ) -> None:
-        """The marker must be CLEARED, not merely set.
-
-        Without this the fix would be indistinguishable from one that refuses
-        every reingest forever, which also passes the test above.
-        """
-        ingestor = self._store()
-        first = self._registry(temp_project_root, ingestor)
-        project = _mark_indexed(first)
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
-            assert "Error" not in await first.update_repository()
-
-        assert project not in ingestor._marker_store, (
-            "a completed update left the marker set, so every later reingest "
-            "would refuse for a run that actually finished"
-        )
-
-        second = self._registry(temp_project_root, ingestor)
-        _mark_indexed(second)
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
-            updater_cls.return_value.reingest.return_value = SimpleNamespace(
-                reparsed=[], affected=[], removed=[], skipped=[], elapsed_ms=1.0
-            )
-            result = await second.reingest(["a.py"])
-        assert "error" not in result, f"a completed run must not refuse: {result}"
-
-    async def test_a_failed_first_index_leaves_a_marker(
-        self, temp_project_root: Path
-    ) -> None:
-        """A FIRST index has no Project node yet, and must still mark.
-
-        The marker used to be a property set on the Project with `MATCH`,
-        which updates zero rows when no Project exists. `GraphUpdater.run()`
-        is what creates it, so a first index that failed left no marker at
-        all -- precisely the run the guard exists to catch (#1705 review).
-        """
-        ingestor = self._store()
-        first = self._registry(temp_project_root, ingestor)
-        from codebase_rag.utils.path_utils import derive_project_name
-
-        project = derive_project_name(Path(first.project_root))
-        # No list_projects entry: nothing has ever been indexed.
-        ingestor.list_projects.return_value = []
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
-            updater_cls.return_value.run.side_effect = RuntimeError("first index died")
-            assert "Error" in await first.index_repository()
-
-        assert ingestor._marker_store.get(project) is True, (
-            "a failed FIRST index left no marker, so a fresh process cannot "
-            "tell the graph is partial"
-        )
-
-    async def test_the_marker_survives_the_project_delete_an_index_performs(
-        self, temp_project_root: Path
-    ) -> None:
-        """`index_repository` deletes the Project before rebuilding it.
-
-        A marker stored on the Project would be destroyed by the very
-        operation whose failure it records, so it lives on its own
-        unconnected node instead (#1705 review). The fake's delete_project
-        drops Project-anchored keys, so a regression to that storage fails
-        here rather than passing quietly.
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        project = _mark_indexed(registry)
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
-            updater_cls.return_value.run.side_effect = RuntimeError("rebuild died")
-            assert "Error" in await registry.index_repository()
-
-        ingestor.delete_project.assert_called_once()
-        assert ingestor._marker_store.get(project) is True, (
-            "the project delete removed the marker it was supposed to outlive"
-        )
-
-    async def test_a_failed_clear_does_not_report_the_run_complete(
-        self, temp_project_root: Path
-    ) -> None:
-        """A clear that never reached the store must not read as complete.
-
-        Otherwise this process believes the run finished while the graph
-        still says incomplete, and a fresh registry refuses reingest forever
-        with nothing to explain it (#1705 review).
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        project = _mark_indexed(registry)
-        ingestor._failing.add("clear")
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
-            result = await registry.update_repository()
-
-        assert ingestor._marker_store.get(project) is True, (
-            "fixture guard: the clear must actually have failed, or this test "
-            "proves nothing"
-        )
-        # Invariant (b): a run whose marker could not be cleared is a
-        # RETRYABLE FAILURE, not a success. Reporting success would leave the
-        # marker blocking every later reingest with nothing to show the user
-        # why (#1705 review, round 4). This assertion was inverted before that
-        # round: it required the run to report success, which is precisely the
-        # state the invariant now forbids.
-        assert "Error" in result, (
-            f"a run that left its marker stuck must report a failure: {result}"
-        )
-        assert registry._graph_incomplete is True, (
-            "the local flag reported complete while the graph still says "
-            "incomplete; a fresh registry would refuse reingest forever"
-        )
-
-    async def test_an_unwritable_marker_aborts_before_destructive_work(
-        self, temp_project_root: Path
-    ) -> None:
-        """A mark that cannot be stored must stop the run, not proceed.
-
-        The marker is the only protection that survives a restart. Indexing
-        on without it means a crash leaves a partial graph a fresh process
-        cannot distinguish from a complete one, and a scoped reingest then
-        treats it as authoritative. Nothing is lost by refusing: no graph
-        state has changed yet (#1705 review).
-
-        Asserts the DELETE never happened, not merely that an error was
-        returned: an abort that still wiped the project would satisfy an
-        error-message assertion while doing the exact damage this prevents.
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        _mark_indexed(registry)
-        ingestor._failing.add("mark")
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
-            result = await registry.index_repository()
-
-        assert "Error" in result, "an unstorable marker must fail the run"
-        (
-            ingestor.delete_project.assert_not_called(),
-            (
-                "the run destroyed the existing graph despite having no marker "
-                "to record that it had started"
-            ),
-        )
-        updater_cls.assert_not_called()
-
-    async def test_an_unreadable_marker_refuses_reingest(
-        self, temp_project_root: Path
-    ) -> None:
-        """ "Cannot tell" must not be read as "the last run finished".
-
-        Returning False on a failed read hydrates a scoped reingest from a
-        graph that may be partial, which is precisely the failure the marker
-        exists to prevent. An update_repository recovers either way.
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        _mark_indexed(registry)
-        ingestor._failing.add("read")
-
-        refused = await registry.reingest(["a.py"])
-
-        assert "failed part way" in refused.get("error", ""), (
-            f"an unreadable marker was treated as a completed run; got {refused}"
-        )
-
-    async def test_the_marker_precedes_constraint_migration(
-        self, temp_project_root: Path
-    ) -> None:
-        """`ensure_constraints` is destructive, so the marker must precede it.
-
-        It runs `_migrate_legacy_path_keys`, which drops constraints and can
-        run purge queries -- autocommitted work. Marking after it left a
-        window where a crash during migration produced a damaged graph with
-        nothing recording that a run had started (#1705 review, round 2).
-
-        Asserts the ORDER of calls rather than the end state: after a
-        successful run both have happened either way, so only the sequence
-        distinguishes the fixed code from the broken code.
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        _mark_indexed(registry)
-
-        order: list[str] = []
-        ingestor.ensure_constraints.side_effect = lambda: order.append("constraints")
-        real_write = ingestor.execute_write.side_effect
-
-        def _tracking_write(query: str, params: dict | None = None) -> None:
-            if "SET m.run_incomplete" in query:
-                order.append("mark")
-            return real_write(query, params)
-
-        ingestor.execute_write.side_effect = _tracking_write
-
-        with patch("codebase_rag.mcp.tools.GraphUpdater"):
-            await registry.update_repository()
-
-        assert "mark" in order, f"fixture guard: the mark must run, saw {order}"
-        assert "constraints" in order, (
-            f"fixture guard: the migration must run, saw {order}"
-        )
-        assert order.index("mark") < order.index("constraints"), (
-            "the constraint migration ran before the marker was written, so a "
-            f"crash during it would leave no record of the run: {order}"
-        )
-
-    async def test_deleting_a_project_clears_its_durable_marker(
-        self, temp_project_root: Path
-    ) -> None:
-        """An intentional delete must not strand the marker.
-
-        The marker lives on its own node so `delete_project` cannot reach it,
-        which is what lets it survive an index's delete-then-rebuild. The
-        consequence is that a deliberate deletion leaves it behind, and a
-        fresh registry then refuses reingest forever for a project the user
-        removed on purpose (#1705 review, round 2).
-        """
-        ingestor = self._store()
-        registry = self._registry(temp_project_root, ingestor)
-        project = _mark_indexed(registry)
-
-        result = await registry.delete_project(project)
-
-        assert result.get("success"), f"the delete itself must succeed: {result}"
-        assert project not in ingestor._marker_store, (
-            "the deleted project kept its incomplete-run marker, so a fresh "
-            "registry would refuse reingest for a project that is gone"
         )
 
 
