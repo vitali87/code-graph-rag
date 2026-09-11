@@ -1139,6 +1139,52 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "B's marker recovery cleared the latch A owns"
         )
 
+    async def test_a_clean_clear_keeps_another_projects_licence_to_heal(
+        self, temp_project_root: Path
+    ) -> None:
+        """The mirror of the attribution rule, and it fails CLOSED (#1846).
+
+        `_flag_from_failed_clear` is a project's licence to heal itself: A's
+        failed clear strands a recoverable `writing=false` marker and records
+        that the flag is A's to lift once the marker recovers. Dropping the
+        attribution unconditionally on any successful clear meant B's clean
+        clear discarded it, and A's own later reingest could no longer
+        recover -- refused forever though its graph was untouched.
+
+        Harmless compared with the other direction (a wrongly ALLOWED
+        reingest), but it wedges a project with nothing wrong with it, and
+        both directions come from the same unscoped assignment.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A's clear fails, leaving a recoverable marker attributed to A.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: A's failed clear must attribute the flag to A"
+        )
+
+        # B completes and clears its own marker.
+        assert registry._require_marker("B", writing=False) is None
+        assert registry._require_marker_cleared("B") is None
+
+        assert registry._flag_from_failed_clear == project, (
+            "B's clean clear discarded A's licence to heal itself; A's own "
+            "reingest would be refused though its graph was never touched"
+        )
+
+        # And A can still recover: its marker is `writing=false`.
+        registry._live_updater = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            registry._hydrate_reingest_updater(project)
+        assert registry._graph_incomplete is False, (
+            "A could not heal its own recoverable marker"
+        )
+
     async def test_a_projects_own_clear_still_settles_its_own_flag(
         self, temp_project_root: Path
     ) -> None:

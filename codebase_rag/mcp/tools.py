@@ -1285,7 +1285,16 @@ class MCPToolsRegistry:
         if self._incomplete_owner == project_name or not self._graph_incomplete:
             self._graph_incomplete = False
             self._incomplete_owner = None
-        self._flag_from_failed_clear = None
+        # The attribution is scoped the same way, and for the mirror reason.
+        # Dropping it unconditionally discarded ANOTHER project's licence to
+        # heal itself: A's failed clear strands a recoverable `writing=false`
+        # marker and attributes the flag to A, then B's clean clear wiped that
+        # attribution and A's own later reingest could no longer recover --
+        # refused forever though its graph was untouched (raised by CodeRabbit
+        # on #1846). Fails closed rather than open, but it wedges a project
+        # that has nothing wrong with it.
+        if self._flag_from_failed_clear == project_name:
+            self._flag_from_failed_clear = None
         return None
 
     def _persisted_incomplete(self, project_name: str) -> bool:
