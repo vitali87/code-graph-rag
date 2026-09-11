@@ -1344,6 +1344,102 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "writing; a scoped reingest would trust a partial graph"
         )
 
+    async def test_a_failed_legacy_cleanup_does_not_fail_a_completed_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """The legacy cleanup is best effort (#1850 review).
+
+        This run's own clear has already succeeded by the time it runs, so
+        the run IS complete. Letting a failure in optional compatibility
+        cleanup propagate reported a completed operation as incomplete and
+        raised the flag for a graph that is whole. The legacy marker simply
+        waits for the next run.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        assert registry._require_marker(project) is None
+
+        # Fail only the LEGACY delete, leaving this run's own clear working.
+        real_write = ingestor.execute_write.side_effect
+
+        def _fail_legacy(query: str, params: dict | None = None) -> None:
+            if "m.run_id IS NULL" in query:
+                raise RuntimeError("legacy cleanup refused")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _fail_legacy
+        stuck = registry._require_marker_cleared(project)
+        ingestor.execute_write.side_effect = real_write
+
+        assert stuck is None, (
+            "a failure in optional legacy cleanup reported a COMPLETED run as "
+            f"incomplete: {stuck}"
+        )
+        assert registry._graph_incomplete is False, (
+            "the flag was raised for a graph that is whole"
+        )
+
+    async def test_an_unreadable_store_refuses_rather_than_reporting_clear(
+        self, temp_project_root: Path
+    ) -> None:
+        """ "I cannot tell" and "nothing outstanding" are different answers.
+
+        Both the first marker read and the post-recovery re-check treat an
+        unreadable store as "refuse": acting on a graph whose state is
+        unknown is what the guard exists to prevent, and a full update
+        recovers either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor._failing.add("read")
+        try:
+            assert registry._persisted_incomplete(project) is True, (
+                "an unreadable marker store was reported as nothing outstanding"
+            )
+            assert registry._marker_rows(project) is None, (
+                "an unreadable store must be distinguishable from an empty one"
+            )
+        finally:
+            ingestor._failing.discard("read")
+
+    async def test_a_failed_recovery_write_refuses(
+        self, temp_project_root: Path
+    ) -> None:
+        """If the store refuses the recovery write, the run that would follow
+        could not mark itself either, so refuse now and let the next attempt
+        retry."""
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+
+        real_write = ingestor.execute_write.side_effect
+
+        def _fail_recovery(query: str, params: dict | None = None) -> None:
+            if "coalesce(m.writing, true) = false" in query:
+                raise RuntimeError("recovery write refused")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _fail_recovery
+        assert fresh._recover_stranded_markers(project) is False
+        verdict = fresh._persisted_incomplete(project)
+        ingestor.execute_write.side_effect = real_write
+
+        assert verdict is True, (
+            "a store that refused the recovery write was reported as clear"
+        )
+
     async def test_a_runs_own_clear_still_lifts_its_own_marker(
         self, temp_project_root: Path
     ) -> None:
