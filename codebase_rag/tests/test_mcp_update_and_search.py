@@ -1185,6 +1185,50 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "A could not heal its own recoverable marker"
         )
 
+    async def test_any_projects_clear_cannot_settle_a_failed_wipe(
+        self, temp_project_root: Path
+    ) -> None:
+        """Issue #1820's reproduction, pinned explicitly.
+
+        That issue is a third face of the same overloaded `None` this PR is
+        about, and it falls out of the ownership rule rather than needing its
+        own change -- but "falls out" is worth an assertion, or a later
+        refactor can quietly take it away again while the two tests above
+        stay green.
+
+        A failed wipe leaves the flag up with no owner (it spans every
+        project and writes no marker), so the in-process flag is the only
+        record the graph is partial. Before the rule, the next successful
+        clear for ANY project settled it and reads proceeded against a
+        half-wiped graph.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        # A clear for a project entirely unrelated to the wipe.
+        assert registry._require_marker("any-project", writing=False) is None
+        assert registry._require_marker_cleared("any-project") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's clear settled the flag a failed wipe "
+            "earned; reads would proceed against a half-wiped graph (#1820)"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
     async def test_a_projects_own_clear_still_settles_its_own_flag(
         self, temp_project_root: Path
     ) -> None:
