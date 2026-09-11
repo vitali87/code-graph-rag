@@ -291,11 +291,24 @@ def test_a_rehydrated_class_from_the_deleted_file_still_goes(tmp_path: Path) -> 
     rehydrated": a definition whose recorded path IS the deleted file has to
     be removed, or the sweep stops working on incremental runs.
     """
-    updater = _build(tmp_path, {"a.py": _A_PY, "a/__init__.py": "", "a/b.py": _B_PY})
+    # A CLASS, not a function: a function's span puts its qn in `owned_qns`,
+    # and the `qn not in owned_qns` guard then bypasses the rehydrated branch
+    # entirely -- so a function-based fixture passes even if a rehydrated
+    # class from the deleted file is wrongly preserved (raised by CodeRabbit
+    # on #1844). A class records no span, so it reaches the branch under test.
+    updater = _build(
+        tmp_path,
+        {
+            "a.py": _A_PY + "\n\nclass Doomed:\n    pass\n",
+            "a/__init__.py": "",
+            "a/b.py": _B_PY,
+        },
+    )
     project = tmp_path.name
     processor = updater.factory.definition_processor
 
-    doomed = f"{project}.a.top"
+    doomed = f"{project}.a.Doomed"
+    assert doomed in _qns(updater), "fixture guard: the class was not registered"
     processor.class_owner_module.pop(doomed, None)
     processor.rehydrated_definition_paths[doomed] = "a.py"
 

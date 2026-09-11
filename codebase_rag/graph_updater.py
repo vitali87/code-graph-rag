@@ -3082,6 +3082,15 @@ class GraphUpdater:
         # in review of #1844; pre-existing on main, which loses it either way).
         rehydrated = self.factory.definition_processor.rehydrated_definition_paths
         deleted_rel = cached_relative_path(file_path, self.repo_path).as_posix()
+        # "Not the file being deleted" is not enough: a definition recorded
+        # against a file removed EARLIER also has a different path, and would
+        # be preserved as a stale entry that goes on steering call resolution
+        # (raised by CodeRabbit on #1844). Require the recorded path to belong
+        # to a module that is still live.
+        live_paths = {
+            cached_relative_path(path, self.repo_path).as_posix()
+            for path in self.factory.definition_processor.module_qn_to_file_path.values()
+        }
 
         def _owned_by_a_surviving_file(qn: str) -> bool:
             owner = owner_module.get(qn)
@@ -3092,7 +3101,10 @@ class GraphUpdater:
             # rehydrate stores.
             rehydrated_path = rehydrated.get(qn)
             if rehydrated_path is not None:
-                return str(rehydrated_path) != deleted_rel
+                return (
+                    str(rehydrated_path) != deleted_rel
+                    and str(rehydrated_path) in live_paths
+                )
             return False
 
         for qn in list(self.function_registry.keys()):
