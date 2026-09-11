@@ -2453,9 +2453,12 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
 
     So only three of the eight tests below reach the changed line, and each
     of the other five says which earlier gate decides it. The three that do:
-    the accepted grouped count, the property-read refusal, and the `collect`
-    refusal. Dropping the exemption reddens the first; dropping the
-    `not reads[entity]` guard reddens the other two. The remaining five are
+    the accepted grouped count, the property-read refusal, and the
+    collect-of-a-property refusal. Dropping the exemption reddens the first;
+    dropping the `not reads[entity]` guard reddens the other two. The bare
+    `collect` test reddens on its own mutation -- putting COLLECT back into
+    the magnitude pattern -- and the guard/filter agreement test guards the
+    consistency the bare-collect bug broke. The remaining five are
     boundary tests of the accepted shape -- worth keeping, but not evidence
     for this change.
     """
@@ -2586,7 +2589,61 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
 
         assert not requires_project_evidence(cypher, ALPHA)
 
-    def test_collect_over_a_restricted_alias_is_still_refused(self) -> None:
+    def test_bare_collect_over_a_restricted_alias_is_refused(self) -> None:
+        """`collect(c)` returns the ENTITIES, so restriction does not vouch.
+
+        Caught on review after the first version of this change admitted it.
+        The guard accepted the query and `scope_rows_to_project` then dropped
+        the whole row -- `_names_another_project` fails closed on a driver
+        `Node`, which is neither scalar nor a supported container -- so the
+        caller got an empty result instead of either their data or a refusal.
+        Accepted-then-silently-emptied is worse than refused, because nothing
+        in the response says the scope guard was involved.
+
+        Restriction bounds a MAGNITUDE; it does not make the entities
+        themselves attributable. So the exemption covers `count`/`sum`/`avg`/
+        `min`/`max` only, and `collect` is excluded by construction rather
+        than by a separate check that could drift (issue #1843).
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, collect(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_an_accepted_aggregate_survives_the_row_filter(self) -> None:
+        """The guard and the filter must agree, not merely each be safe.
+
+        The `collect` bug was a DISAGREEMENT: admitted by one, emptied by the
+        other. This asserts the pair is consistent for the shape the change
+        exists to allow -- a row whose aggregate is a number survives scoping
+        with its value intact.
+        """
+        from codebase_rag.tools.codebase_query import (
+            requires_project_evidence,
+            scope_rows_to_project,
+        )
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+        assert requires_project_evidence(cypher, ALPHA)
+
+        rows = [{"name": f"{ALPHA}.mod.f", "callers": 3}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+    def test_collect_of_a_property_over_a_restricted_alias_is_refused(
+        self,
+    ) -> None:
         """`collect` returns the names themselves, not only a magnitude."""
         from codebase_rag.tools.codebase_query import requires_project_evidence
 

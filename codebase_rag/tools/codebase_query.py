@@ -58,6 +58,14 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
+# An entity aggregated into a MAGNITUDE -- a number that names nobody.
+# `COLLECT` is deliberately absent: it returns the matched entities
+# themselves, so the restriction that bounds a count does not make a
+# collect safe to exempt (issue #1843).
+_MAGNITUDE_AGGREGATED_ENTITY_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?([A-Z_][A-Z0-9_]*)\s*\)"
+)
+
 # Every aggregate and whatever it is applied to, so the operand can be
 # judged rather than pattern-matched against known-bad spellings. Listing the
 # constant forms was the wrong shape: it caught `*` and digits and missed a
@@ -462,8 +470,16 @@ def _every_projected_entity_is_attributable(
     # Only an alias that reads NO properties may be exempted: one appearing
     # both as `c.name` and inside `count(c)` exposes a name that still has to
     # be attributable, so restriction alone does not settle it.
+    # Only an alias aggregated into a MAGNITUDE may be exempted. `collect(c)`
+    # returns the entities themselves, so restriction does not make it
+    # attributable -- and the row filter, which cannot inspect a driver Node,
+    # drops the whole row, turning a valid query into an empty result rather
+    # than a refusal (issue #1843).
+    measured = set(_MAGNITUDE_AGGREGATED_ENTITY_RE.findall(projection))
     vouched = {
-        entity for entity in restricted or () if entity in reads and not reads[entity]
+        entity
+        for entity in restricted or ()
+        if entity in reads and not reads[entity] and entity in measured
     }
     return all(
         cs.CYPHER_QUALIFIED_NAME_TOKEN in props
