@@ -106,6 +106,7 @@ from .utils.path_utils import (
     base_module_qn,
     cached_file_identity_posix,
     cached_relative_path,
+    cached_resolve_posix,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -4698,6 +4699,160 @@ class GraphUpdater:
                 survivors[key] = candidate
         return flux_stems, survivors
 
+    def _reingest_package_flip(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> tuple[set[str], dict[str, Path]]:
+        """Directories whose package-ness this call changes, and their files.
+
+        A directory with a package indicator (`__init__.py`, `Cargo.toml`) is
+        a Package keyed on a dotted qn; without one it is a Folder keyed on an
+        absolute path. Every CONTAINS_FILE and CONTAINS_MODULE edge under it
+        hangs off whichever node it is, and that edge is emitted only when the
+        module is parsed -- so a directory that changes kind needs its files
+        re-parsed to re-point them, exactly as `run()` does for the same
+        reason (issue #1570, `_package_flip_dirs`).
+
+        `reingest` computed none of this: it never re-derived the structure,
+        so a deleted `__init__.py` left the Package node and all its edges in
+        place, and an ADDED one left the Folder (issue #1798 -- the issue
+        reports the deletion, but both directions were broken).
+
+        Returns the flipped directories and the on-disk files under them that
+        this call has not already named, for the re-parse.
+        """
+        structure = self.factory.structure_processor
+        indicators = structure.package_indicator_names()
+        touched = {
+            Path(key).parent.as_posix()
+            for key in (*present, *gone)
+            if Path(key).name in indicators
+        }
+        # Narrowed to directories this call actually named an indicator for.
+        # Without it a scoped re-ingest reconciles directories the caller
+        # never mentioned -- measured: an unrelated `other/` whose
+        # `__init__.py` had been deleted on disk by something else was demoted
+        # too. That is the whole-project claim `_prune_orphan_nodes` is
+        # careful not to make from a partial walk, and a full index is what
+        # reconciles the rest.
+        if not touched:
+            return set(), {}
+
+        # Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        # Deriving the structure here instead would WRITE the new container
+        # node inside the prologue, and an abort in `before_write` then left
+        # the graph holding both container nodes for one directory while
+        # reporting that nothing changed (greptile-local, issue #1798). The
+        # real derivation happens after the caller's last word.
+        flipped = {rel for rel in touched if self._package_ness_changed(structure, rel)}
+        if not flipped:
+            return set(), {}
+
+        return flipped, self._flip_sibling_files(flipped, present, gone)
+
+    def _flip_sibling_files(
+        self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, Path]:
+        """On-disk files under a flipped directory that this call has not named.
+
+        They re-parse so their CONTAINS_FILE and CONTAINS_MODULE edges are
+        re-emitted onto the container of the new kind: those edges are written
+        only when the module is parsed, so a directory that changes kind needs
+        its files parsed again or they stay anchored to the old node.
+        """
+        siblings: dict[str, Path] = {}
+        for rel in flipped:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.iterdir()):
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if (
+                    not candidate.is_file()
+                    or key in present
+                    or key in gone
+                    or self._reingest_ignored(candidate)
+                ):
+                    continue
+                siblings[key] = candidate
+        return siblings
+
+    def _package_ness_changed(self, structure: object, rel: str) -> bool:
+        """Whether this directory's kind on DISK differs from the recorded one.
+
+        Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        Deriving the structure to answer this would WRITE the new container
+        node inside the prologue, and an abort in `before_write` then left the
+        graph holding both container nodes for one directory while reporting
+        that nothing changed (greptile-local, issue #1798).
+        """
+        directory = self.repo_path / rel if rel != "." else self.repo_path
+        if not directory.is_dir():
+            return False
+        was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
+        return bool(structure.is_package_dir(directory)) != was_package  # type: ignore[attr-defined]
+
+    def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
+        """Directories to re-derive: the flipped ones plus their CHILDREN.
+
+        Children, because the prune DETACH DELETEs the node of the old kind
+        and that takes its CONTAINS_PACKAGE / CONTAINS_FOLDER edges to child
+        containers with it. The sibling re-parse cannot restore those -- a
+        child directory is not a file it re-parses -- so re-deriving the
+        children re-emits their parent edge onto the surviving node
+        (Greptile, PR #1835).
+
+        Never ANCESTORS. A re-derivation EMITS a node for whatever kind the
+        directory is on disk now, so putting an ancestor in scope gave one
+        that had changed independently a SECOND container identity beside the
+        one it already had. The ancestor walk was there so a nested
+        directory's parent lookup could find its enclosing package, and it is
+        not needed: `structural_elements` persists across calls, so the
+        parent's entry is already in the map.
+        """
+        scope = set(flipped_dirs)
+        for rel in flipped_dirs:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            scope.update(
+                cached_relative_path(child, self.repo_path).as_posix()
+                for child in directory.iterdir()
+                if child.is_dir()
+            )
+        return scope
+
+    def _prune_flipped_containers(self, flipped_dirs: set[str]) -> None:
+        """Delete the node of the kind a flipped directory no longer is.
+
+        A directory is represented by exactly ONE of Folder and Package, and
+        the re-parse above has just written the correct one. The other is
+        stale even though the directory still exists on disk -- the same
+        `stale_kind` rule `_prune_orphan_nodes` applies at the end of a full
+        run (issue #1570), scoped here to the directories this call flipped.
+
+        Scoped rather than reusing `_prune_orphan_nodes` wholesale: that walks
+        every node in the project and deletes anything whose path is absent
+        from disk, which is a whole-project claim a scoped re-ingest has not
+        earned -- it walked a handful of files and cannot say what the project
+        still holds.
+        """
+        if not flipped_dirs or not isinstance(self.ingestor, QueryProtocol):
+            return
+        elements = self.factory.structure_processor.structural_elements
+        for rel in sorted(flipped_dirs):
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            absolute = cached_resolve_posix(directory)
+            # Keyed on Path(rel), which is Path(".") for the root -- the same
+            # key `identify_structure` uses. An earlier version special-cased
+            # a falsy `rel`, but `Path(key).parent.as_posix()` yields "." for
+            # a root-level file and never "", so that branch was dead and the
+            # root was never resolved (greptile-local, issue #1798).
+            is_package_now = bool(elements.get(Path(rel)))
+            stale = (
+                cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
+            )
+            self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
+
     def _reingest_dependents(
         self, present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -4976,6 +5131,12 @@ class GraphUpdater:
             # below keys on to free its qn and forget its rehydrated form.
             self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
 
+            # A directory that gained or lost a package indicator changes the
+            # container every file under it hangs off, so those files re-parse
+            # too and the stale node of the other kind is pruned below.
+            flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
+            survivors.update(flip_siblings)
+
             affected = self._reingest_dependents({**present, **survivors}, gone)
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
@@ -4999,6 +5160,40 @@ class GraphUpdater:
         self.reingest_mutated = True
         self._reparsed_file_keys = set(all_keys)
 
+        # Past the caller's refusal point, so this may finally WRITE. Re-deriving
+        # the structure updates `structural_elements` and emits the container
+        # node of the new kind; the sibling re-parse below re-points the
+        # containment edges onto it, and `_prune_flipped_containers` removes
+        # the node of the old kind once both have happened.
+        if flipped_dirs:
+            # Scoped to the flipped directories AND their ancestors: the
+            # unrestricted walk emits a node for every directory that changed
+            # on disk since the last derivation, so an unrelated directory
+            # whose indicator was removed elsewhere gained a second container
+            # identity beside the one it already had (Greptile, PR #1835).
+            # Ancestors are included because each directory's parent lookup
+            # reads `structural_elements` for the enclosing package. Measured
+            # caveat: dropping them reddens nothing, because that map PERSISTS
+            # across calls, so an ancestor derived by an earlier run is still
+            # there. It is defensive against a first derivation that starts
+            # from an empty map -- not load-bearing on the paths the tests
+            # cover, and its greenness is not evidence that it works.
+            # EXACTLY the flipped directories -- no ancestors. Putting an
+            # ancestor in scope re-derives it, and a re-derivation EMITS the
+            # node for whatever kind it is on disk now, so an ancestor that
+            # changed independently gained a second container identity beside
+            # the one it already had (Greptile, PR #1835).
+            #
+            # The ancestor walk was there so a nested directory's parent
+            # lookup could find the enclosing package. It is not needed:
+            # `structural_elements` PERSISTS across calls, so the parent's
+            # entry is already in the map from the run that derived it. I had
+            # measured that and recorded it as "defensive, not load-bearing";
+            # it turned out to be actively harmful.
+            self.factory.structure_processor.identify_structure(
+                only=self._flip_derivation_scope(flipped_dirs)
+            )
+
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header
         # found before its dependent source file would take the qn a clean
@@ -5020,6 +5215,11 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # AFTER the re-parse, never before: the surviving node of the correct
+        # kind and its re-pointed containment edges are written by the parse
+        # above, so pruning first would delete the old node while every edge
+        # still hung off it and leave the files unparented in between.
+        self._prune_flipped_containers(flipped_dirs)
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(

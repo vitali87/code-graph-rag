@@ -59,23 +59,76 @@ class StructureProcessor:
             cached_resolve_posix(self.repo_path / parent_rel_path),
         )
 
-    def identify_structure(self) -> None:
+    @staticmethod
+    def package_indicator_names() -> set[str]:
+        """Filenames whose presence makes a directory a package.
+
+        Package detection needs only the static language specs, never a
+        loaded grammar; iterating `self.queries.values()` would force every
+        lazy grammar to load (issue #68).
+
+        A method rather than an inline set because `reingest` needs the same
+        answer to decide whether an edited file could have changed a
+        directory's kind (issue #1798), and two copies of this would drift
+        the moment a language added an indicator.
+        """
+        names: set[str] = set()
+        for lang_config in LANGUAGE_SPECS.values():
+            names.update(lang_config.package_indicators)
+        return names
+
+    def is_package_dir(self, directory: Path) -> bool:
+        """Whether this directory has a package indicator ON DISK, right now.
+
+        Pure: reads the filesystem and writes nothing. `identify_structure`
+        answers the same question but EMITS the Package/Folder nodes as a
+        side effect, which a read-only prologue must not do -- an aborted
+        scoped re-ingest that had already emitted one left the graph holding
+        two container nodes for one directory while reporting that nothing
+        changed (greptile-local, issue #1798).
+        """
+        return any(
+            (directory / indicator).exists()
+            for indicator in self.package_indicator_names()
+        )
+
+    def _directories_to_derive(self, only: set[str] | None) -> set[Path]:
+        """Every walkable directory, or just the ones `only` names.
+
+        The repo root is always included: every directory's parent lookup
+        resolves against it, and it is the fallback container.
+        """
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if path.is_dir() and not should_skip_path(
+            if not path.is_dir():
+                continue
+            if only is not None and (
+                cached_relative_path(path, self.repo_path).as_posix() not in only
+            ):
+                continue
+            if not should_skip_path(
                 path,
                 self.repo_path,
                 exclude_paths=self.exclude_paths,
                 unignore_paths=self.unignore_paths,
             ):
                 directories.add(path)
+        return directories
 
-        # Package detection needs only the static language specs, never a
-        # loaded grammar; iterating self.queries.values() would force every
-        # lazy grammar to load (issue #68).
-        package_indicators: set[str] = set()
-        for lang_config in LANGUAGE_SPECS.values():
-            package_indicators.update(lang_config.package_indicators)
+    def identify_structure(self, only: set[str] | None = None) -> None:
+        """Derive every directory's kind, emitting Package and Folder nodes.
+
+        `only` restricts BOTH the walk and the emission to the given
+        repo-relative directories (and the repo root, which every parent
+        lookup needs). A scoped re-ingest uses it: the unrestricted walk emits
+        a node for every directory that changed on disk since the last
+        derivation, including ones the call never named, so an unrelated
+        directory whose `__init__.py` had been removed elsewhere gained a
+        Folder node while keeping its Package node -- two container identities
+        for one directory (Greptile, PR #1835).
+        """
+        directories = self._directories_to_derive(only)
+        package_indicators = self.package_indicator_names()
 
         for root in sorted(directories):
             relative_root = cached_relative_path(root, self.repo_path)
@@ -114,8 +167,16 @@ class StructureProcessor:
                     cs.RelationshipType.CONTAINS_PACKAGE,
                     (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
                 )
-            elif root != self.repo_path:
+            else:
+                # Recorded for the ROOT too, which the Folder emission below
+                # deliberately skips. Without this the root's stale package qn
+                # survived a re-derivation, so a root that stopped being a
+                # package still read as one and its Package node was never
+                # pruned (greptile-local, issue #1798). The repo root gets no
+                # Folder node -- its parent is the Project -- but it still
+                # needs an accurate entry.
                 self.structural_elements[relative_root] = None
+            if not is_package and root != self.repo_path:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )
