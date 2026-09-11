@@ -885,7 +885,12 @@ class TestIncompleteMarkerSurvivesTheProcess:
         # The marker's phase, kept beside the marker itself so the existing
         # `store[name] is True` assertions keep their meaning. Absent reads as
         # writing, exactly as the production query's `coalesce` does.
-        writing: dict[str, bool] = {}
+        # PER MARKER, keyed (project, run_id), because production stores the
+        # phase on the marker node. A per-project phase cannot express two
+        # concurrent runs at different phases -- and it silently raised a
+        # legacy marker's phase when an unrelated run marked itself writing,
+        # which is behaviour production does not have (#1850 review).
+        writing: dict[tuple[str, str], bool] = {}
         ingestor = MagicMock()
 
         # A plain dict, never an attribute on the MagicMock: `getattr` on a
@@ -918,17 +923,26 @@ class TestIncompleteMarkerSurvivesTheProcess:
                     store[name] = True
                     # Monotonic, as the production MERGE is: a later mark can
                     # raise the phase to writing but never lower it.
-                    writing[name] = writing.get(name, False) or bool(
-                        (params or {}).get(cs.KEY_WRITING, True)
-                    )
+                    writing[(name, run_id)] = writing.get(
+                        (name, run_id), False
+                    ) or bool((params or {}).get(cs.KEY_WRITING, True))
             elif "DELETE m" in query:
                 if "m.run_id IS NULL" in query:
                     # The LEGACY clear: markers written before run ids
                     # existed. The fake models those as the sentinel run id
                     # "" (see the mark branch, which records whatever the
-                    # params carry).
+                    # params carry). Phase-guarded exactly as production is --
+                    # a legacy marker whose run is still WRITING belongs to an
+                    # old-version process mid-write during a rolling upgrade
+                    # and must not be cleared. A fake that ignored the phase
+                    # would pass tests on behaviour production does not have.
+                    if writing.get((name, ""), True):
+                        return
                     remaining = runs.get(name, set())
                     remaining.discard("")
+                    writing.pop((name, ""), None)
+                    if remaining:
+                        return
                     if remaining:
                         return
                 elif "run_id" in query:
@@ -936,6 +950,7 @@ class TestIncompleteMarkerSurvivesTheProcess:
                     # reads clear once every outstanding run's marker is gone.
                     remaining = runs.get(name, set())
                     remaining.discard(run_id)
+                    writing.pop((name, run_id), None)
                     if remaining:
                         return
                 elif "coalesce(m.writing, true) = false" in query:
@@ -944,11 +959,20 @@ class TestIncompleteMarkerSurvivesTheProcess:
                     # promoted phase blocks the whole delete -- which is the
                     # property under test: a concurrent run that began
                     # writing must not have its marker recovered away.
-                    if writing.get(name, True):
+                    still_writing = {
+                        r for r in runs.get(name, set()) if writing.get((name, r), True)
+                    }
+                    if still_writing:
+                        # Production's WHERE clause deletes the read-only ones
+                        # and leaves the rest; the project stays incomplete.
+                        for r in runs.get(name, set()) - still_writing:
+                            writing.pop((name, r), None)
+                        runs[name] = still_writing
                         return
+                for r in runs.get(name, set()):
+                    writing.pop((name, r), None)
                 runs.pop(name, None)
                 store.pop(name, None)
-                writing.pop(name, None)
 
         def _read(query: str, params: dict | None = None) -> list[dict]:
             if "run_incomplete" not in query:
@@ -961,7 +985,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
             # reads rows[0] would pass against a canned false and fail here.
             if not store.get(name):
                 return []
-            return [{"run_incomplete": True, "writing": writing.get(name, True)}]
+            any_writing = any(
+                writing.get((name, r), True) for r in runs.get(name, {""})
+            )
+            return [{"run_incomplete": True, "writing": any_writing}]
 
         def _delete_project(name: str) -> None:
             # Models CYPHER_DELETE_PROJECT: it detaches the Project and
@@ -973,7 +1000,35 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.fetch_all.side_effect = _read
         ingestor.delete_project.side_effect = _delete_project
         ingestor._marker_store = store
-        ingestor._writing_store = writing
+
+        # Existing tests ask "is THIS PROJECT writing", which is now a view
+        # over the per-marker phases: true when any outstanding run is.
+        class _WritingView:
+            @staticmethod
+            def get(name: str, default: object = None) -> object:
+                marks = runs.get(name) or ({""} if store.get(name) else set())
+                if not marks:
+                    return default
+                return any(writing.get((name, r), True) for r in marks)
+
+            @staticmethod
+            def __setitem__(name: str, value: bool) -> None:
+                # Tests that plant a marker straight into `_marker_store`
+                # set the phase the same way. Record it against every known
+                # run for the project, and against the legacy sentinel when
+                # the marker was injected without one.
+                for r in runs.get(name) or {""}:
+                    writing[(name, r)] = value
+
+            @staticmethod
+            def pop(name: str, default: object = None) -> object:
+                for r in list(runs.get(name) or {""}):
+                    writing.pop((name, r), None)
+                return default
+
+        ingestor._writing_store = _WritingView()
+        ingestor._writing_by_marker = writing
+        ingestor._marker_runs = runs
         ingestor._failing = failing
         return ingestor
 
@@ -1092,16 +1147,21 @@ class TestIncompleteMarkerSurvivesTheProcess:
         registry = self._registry(temp_project_root, ingestor)
         project = _mark_indexed(registry)
 
-        # A legacy marker: modelled as the sentinel empty run id, and left in
-        # the writing phase so neither recovery nor a run-scoped clear can
-        # touch it.
+        # A legacy marker: modelled as the sentinel empty run id. Left in the
+        # READ-ONLY phase, which is the shape a stale pre-upgrade marker has
+        # once its run is gone -- a `writing=true` legacy marker belongs to an
+        # old-version process that may still be mid-write, and the phase guard
+        # deliberately leaves that one alone (see the sibling test below).
         ingestor.execute_write(
             cq.CYPHER_MARK_PROJECT_INCOMPLETE,
-            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: True},
+            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: False},
         )
-        assert registry._persisted_incomplete(project) is True, (
-            "fixture guard: the legacy marker must read as incomplete"
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the legacy marker must be in the store"
         )
+        # Deliberately NOT read through `_persisted_incomplete` here: that
+        # call RECOVERS a read-only marker as a side effect, so it would
+        # clear the very thing under test before the clear below runs.
 
         # A run completes for this project: its clear lifts its own marker
         # and the legacy one with it.
@@ -1113,30 +1173,102 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "blocked with no path that can clear it"
         )
 
+    async def test_a_writing_legacy_marker_is_left_alone(
+        self, temp_project_root: Path
+    ) -> None:
+        """The rolling-deployment case (#1850 review).
+
+        During an upgrade an old-version process can still be WRITING under a
+        legacy marker. A new-version run completing for the same project must
+        not delete that protection, or a later failure in the old process
+        leaves partial data with nothing recording it.
+
+        The pair matters: the sibling test requires a stale read-only legacy
+        marker to be cleared (or an upgraded project is blocked forever), and
+        this one requires a writing legacy marker to survive. A fix
+        satisfying only one is the bug in the other direction.
+        """
+        from codebase_rag import cypher_queries as cq
+
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # An old-version process, mid-write, under a legacy marker.
+        ingestor.execute_write(
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: True},
+        )
+        assert registry._persisted_incomplete(project) is True
+
+        # A new-version run completes for the same project.
+        assert registry._require_marker(project) is None
+        assert registry._require_marker_cleared(project) is None
+
+        assert registry._persisted_incomplete(project) is True, (
+            "a completing new-version run deleted the protection for an "
+            "old-version process that was still writing; a later failure "
+            "there would leave partial data with nothing recording it"
+        )
+
+    async def test_recovery_deletes_only_the_read_only_markers(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery re-checks the phase AT DELETE TIME (#1850 review).
+
+        `_persisted_incomplete` reads the phase and then deletes, and a
+        concurrent run can promote its own marker in between -- an
+        unconditional delete would remove a marker protecting a graph that IS
+        being written. The re-check makes the delete act on the rows as they
+        are now, not as the caller last saw them.
+
+        Reaching it needs a marker set where the read still proceeds (the
+        first row it sees is read-only) while another marker is writing, so
+        the phase must be per MARKER. It is: the store models it that way
+        precisely so this case is expressible.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # One read-only marker (recoverable) and one writing marker.
+        assert stranding._require_marker(project, writing=False) is None
+        assert writer._require_marker(project, writing=True) is None
+        assert ingestor._writing_by_marker[(project, stranding._run_id)] is False
+        assert ingestor._writing_by_marker[(project, writer._run_id)] is True
+
+        # Recovery runs. It may clear the read-only marker; it must NOT clear
+        # the writing one, so the project still reads incomplete.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        fresh._recover_stranded_markers(project)
+
+        assert (project, writer._run_id) in ingestor._writing_by_marker or (
+            writer._run_id in ingestor._marker_runs.get(project, set())
+        ), "recovery deleted a marker belonging to a run that was WRITING"
+        assert ingestor._marker_store.get(project) is True, (
+            "recovery cleared the project though a writing run is outstanding; "
+            "a scoped reingest would trust a graph being written"
+        )
+
     async def test_recovery_leaves_a_marker_that_began_writing(
         self, temp_project_root: Path
     ) -> None:
         """A promoted phase must stop the marker being recovered away.
 
-        MEASURED LIMIT, stated so the greenness is not read as coverage: this
-        test passes through the PHASE READ in `_persisted_incomplete`, which
-        returns before recovery is called at all (instrumented: recovery runs
-        0 times here). So it does NOT exercise the re-check inside
-        `CYPHER_RECOVER_PROJECT_INCOMPLETE`, and removing that re-check leaves
-        this test green.
+        Covers the OUTER property: a project whose marker has been promoted
+        to writing still reads incomplete to a fresh process. It stops at the
+        phase READ in `_persisted_incomplete`, which returns before recovery
+        is called, so it does not reach the re-check inside
+        `CYPHER_RECOVER_PROJECT_INCOMPLETE`.
 
-        The re-check is still right, and it is defence in depth against a real
-        TOCTOU window: `_persisted_incomplete` reads the phase and then
-        deletes, and a concurrent run can promote its own marker in between --
-        an unconditional delete would then remove a marker protecting a graph
-        that IS being written. That window needs two markers with DIFFERENT
-        phases, which this fake cannot express: its phase is per project, not
-        per marker. Widening the fake to per-marker phases would make it
-        testable and is the right follow-up if this line is ever load-bearing.
-
-        What this test does cover is the outer property, which is worth having
-        on its own: a project whose marker has been promoted to writing still
-        reads incomplete to a fresh process.
+        That re-check is covered by
+        `test_recovery_deletes_only_the_read_only_markers`, which needs a
+        marker set where the read still proceeds while another marker is
+        writing -- expressible only because the store models the phase per
+        MARKER rather than per project.
         """
         ingestor = self._store()
         stranding = self._registry(temp_project_root, ingestor)

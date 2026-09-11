@@ -115,8 +115,17 @@ CYPHER_RECOVER_PROJECT_INCOMPLETE = (
 # forever after an upgrade (raised in review of #1850). Cleared alongside this
 # run's own marker on a successful completion, since a run that completes for
 # the project has established the graph is whole.
+#
+# Phase-guarded for the ROLLING DEPLOYMENT case: during an upgrade an
+# old-version process can still be writing under a legacy marker, and a
+# new-version run completing for the same project would otherwise delete the
+# protection for a graph that IS being written (#1850 review). A legacy
+# marker with no `writing` property coalesces to true and is left alone, so
+# the pre-phase markers this was written for stay put until a run can prove
+# they are stale -- fail-closed, which is the safe direction here.
 CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE = (
-    "MATCH (m:IncompleteRun {project: $project_name}) WHERE m.run_id IS NULL DELETE m"
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IS NULL AND coalesce(m.writing, true) = false DELETE m"
 )
 # "Is ANY run outstanding": the read was already a boolean question, so it
 # generalises without changing its callers' meaning. `writing` is true if ANY
