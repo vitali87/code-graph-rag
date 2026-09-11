@@ -193,6 +193,42 @@ pre-commit autoupdate
 
 Now, `pre-commit` will run automatically on `git commit`.
 
+## Fuzzing
+
+The harnesses under `fuzz/` run continuously in CI via
+[ClusterFuzzLite](https://google.github.io/clusterfuzzlite/): `cflite_pr.yml`
+gives each one 600 seconds on every pull request, and `cflite_batch.yml` runs
+them for an hour nightly. A crash fails the job with the reproducing input
+attached.
+
+There are three targets:
+
+| Harness | What it drives | What it asserts |
+| --- | --- | --- |
+| `fuzz_parse_source.py` | a tree-sitter parser for a fuzzer-chosen language, then the queries and name extraction over the resulting tree | the pass never raises on any input |
+| `fuzz_incremental_update.py` | `GraphUpdater.reingest` over a fuzzer-chosen edit plan | the resulting graph equals a clean full index of the same tree |
+| `fuzz_shell_command.py` | the `EXECUTE_SHELL` allowlist and dangerous-command classifier | it never raises, never calls a never-allowlisted program safe, and never lets a prefix launder a dangerous trailing segment |
+
+To run one locally:
+
+```bash
+uv run --extra fuzz python fuzz/fuzz_parse_source.py -max_total_time=60
+```
+
+Seed corpora live in `fuzz/corpus/<harness>/` and are regenerated with
+`uv run python fuzz/build_corpus.py`. Seeds matter: starting from valid
+programs is what gets the fuzzer past the grammar's error recovery and into
+the extraction code.
+
+**atheris does not build on macOS.** It needs libFuzzer, which Apple Clang does
+not ship, so `uv sync --extra fuzz` fails there with `Failed to find
+libFuzzer`. Fuzz on Linux, or let CI do it; the rest of the suite is unaffected
+either way.
+
+When fuzzing finds a crash: add a regression test under `codebase_rag/tests/`
+that fails without the fix, commit the reproducer into the harness' corpus
+directory, and only then fix the bug.
+
 ## Coding Standards
 
 ### Tooling

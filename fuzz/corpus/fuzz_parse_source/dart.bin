@@ -1,0 +1,8 @@
+import 'dart:io';
+
+class Greeter {
+  String greet(String name) => name;
+}
+
+void main() { Greeter().greet('x'); }
+

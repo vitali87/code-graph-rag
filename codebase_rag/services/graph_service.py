@@ -7,28 +7,24 @@ from collections.abc import Generator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
 from codebase_rag.config import settings
-from codebase_rag.types_defs import CursorProtocol, ResultValue
+from codebase_rag.types_defs import ConnectionProtocol, CursorProtocol, ResultValue
 
 from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
-    CYPHER_MEMORY_LIMIT_SUFFIX,
-    CYPHER_MEMORY_LIMIT_TOKEN,
-    CYPHER_SEMICOLON,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
     KEY_FROM_VAL,
-    KEY_LABEL,
     KEY_NAME,
     KEY_PROJECT_NAME,
-    KEY_PROPERTIES,
     KEY_PROPS,
     KEY_PURGED,
     KEY_TO_VAL,
@@ -48,15 +44,17 @@ from ..cypher_queries import (
     CYPHER_LIST_PROJECTS,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
     CYPHER_PURGE_KEYLESS_STRUCTURE,
-    CYPHER_SHOW_CONSTRAINTS,
-    build_constraint_query,
     build_create_node_query,
     build_create_relationship_query,
-    build_drop_constraint_query,
-    build_index_query,
     build_merge_node_query,
     build_merge_relationship_query,
     wrap_with_unwind,
+)
+from ..graph_dialects import (
+    DIALECT_MEMGRAPH,
+    DIALECT_NEO4J,
+    GraphDialect,
+    get_dialect,
 )
 from ..types_defs import (
     BatchParams,
@@ -72,16 +70,22 @@ from ..types_defs import (
 from ..utils.path_utils import project_roots_from_rows
 from .resource_cleanup import prune_unanchored_resources
 
+if TYPE_CHECKING:
+    from .neo4j_driver import Neo4jDriver
 
-def _apply_memory_limit(query: str, mb: int) -> str:
-    if CYPHER_MEMORY_LIMIT_TOKEN in query.upper():
-        return query
-    stripped = query.rstrip()
-    had_semicolon = stripped.endswith(CYPHER_SEMICOLON)
-    if had_semicolon:
-        stripped = stripped[: -len(CYPHER_SEMICOLON)].rstrip()
-    suffix = CYPHER_MEMORY_LIMIT_SUFFIX.format(mb=mb)
-    return f"{stripped}{suffix}{CYPHER_SEMICOLON}"
+
+def _apply_memory_limit(
+    query: str, mb: int, dialect: GraphDialect | None = None
+) -> str:
+    """Bound a read's memory using the configured engine's syntax.
+
+    Kept as a module-level function with a defaulted dialect because it is
+    imported and called directly by tests and by callers that have no
+    ingestor to hand.
+    """
+    return (dialect or get_dialect(settings.GRAPH_BACKEND)).apply_memory_limit(
+        query, mb
+    )
 
 
 class MemgraphIngestor:
@@ -93,6 +97,9 @@ class MemgraphIngestor:
         "_username",
         "_password",
         "_use_merge",
+        "_dialect",
+        "_driver",
+        "_driver_lock",
         "_rel_count",
         "_rel_groups",
         "batch_size",
@@ -108,12 +115,25 @@ class MemgraphIngestor:
         username: str | None = None,
         password: str | None = None,
         use_merge: bool = True,
+        dialect: GraphDialect | None = None,
     ):
+        # The engine is resolved once here rather than read from settings at
+        # each call site, so a single ingestor cannot straddle two dialects
+        # mid-run if configuration changes underneath it.
+        self._dialect = dialect or get_dialect(settings.GRAPH_BACKEND)
+        self._driver: object | None = None
+        self._driver_lock = threading.Lock()
         self._host = host
         self._port = port
         self._username = username.strip() if username and username.strip() else None
         self._password = password.strip() if password and password.strip() else None
-        if (self._username is None) != (self._password is None):
+        # Only for the engine these credentials belong to: Neo4j
+        # authenticates with NEO4J_USERNAME/NEO4J_PASSWORD, so a leftover
+        # half-set MEMGRAPH_* pair must not stop a valid Neo4j
+        # deployment from starting.
+        if self._dialect.name == DIALECT_MEMGRAPH and (
+            (self._username is None) != (self._password is None)
+        ):
             raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
@@ -121,7 +141,7 @@ class MemgraphIngestor:
         self._use_merge = use_merge
         self._conn_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
-        self.conn: mgclient.Connection | None = None
+        self.conn: ConnectionProtocol | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
         self._rel_count = 0
         self._rel_groups: defaultdict[
@@ -160,6 +180,11 @@ class MemgraphIngestor:
             if self.conn:
                 self.conn.close()
                 logger.info(ls.MG_DISCONNECTED)
+            # Sessions handed to flush workers are closed by those
+            # workers; the pooled driver behind them is owned here and
+            # would otherwise leak its connection pool for the life of
+            # the process.
+            self.close_driver()
 
     async def __aenter__(self) -> MemgraphIngestor:
         return self.__enter__()
@@ -213,7 +238,16 @@ class MemgraphIngestor:
                     logger.error(ls.MG_CYPHER_PARAMS.format(params=params))
                 raise
 
-    def _create_connection(self) -> mgclient.Connection:
+    def _create_connection(self) -> ConnectionProtocol:
+        """Open one connection for the configured engine.
+
+        The parallel flush calls this once per worker, so whatever comes
+        back must be safe to use from a single thread and cheap enough to
+        create per flush group. For Neo4j that is a session drawn from a
+        shared, pooled `Driver`; for Memgraph it is a real socket.
+        """
+        if self._dialect.name == DIALECT_NEO4J:
+            return self._neo4j_driver().connect()
         if self._username is not None:
             conn = mgclient.connect(
                 host=self._host,
@@ -226,9 +260,44 @@ class MemgraphIngestor:
         conn.autocommit = True
         return conn
 
+    def close_driver(self) -> None:
+        """Release the Neo4j connection pool, if one was ever built.
+
+        Sessions handed to flush workers are closed by those workers; the
+        pooled driver behind them is owned by this object and would
+        otherwise outlive it. A Memgraph run never builds one, so this is
+        a no-op there.
+        """
+        driver = self._driver
+        if driver is not None:
+            cast("Neo4jDriver", driver).close()
+            self._driver = None
+
+    def _neo4j_driver(self) -> Neo4jDriver:
+        """The process-wide Neo4j driver, created on first use.
+
+        One `Driver` pools connections for the whole ingestor; creating one
+        per flush group would defeat that pooling and open a new TCP
+        connection per label.
+        """
+        from .neo4j_driver import Neo4jDriver as _Neo4jDriver
+
+        # The parallel flush calls this from several worker threads at
+        # once, so an unguarded `if self._driver is None` would build and
+        # leak more than one connection pool.
+        with self._driver_lock:
+            if self._driver is None:
+                self._driver = _Neo4jDriver(
+                    uri=settings.NEO4J_URI,
+                    username=settings.NEO4J_USERNAME,
+                    password=settings.NEO4J_PASSWORD,
+                    database=settings.NEO4J_DATABASE,
+                )
+            return cast("Neo4jDriver", self._driver)
+
     def _execute_batch_on(
         self,
-        conn: mgclient.Connection,
+        conn: ConnectionProtocol,
         query: str,
         params_list: Sequence[BatchParams],
     ) -> None:
@@ -257,7 +326,7 @@ class MemgraphIngestor:
 
     def _execute_batch_with_return_on(
         self,
-        conn: mgclient.Connection,
+        conn: ConnectionProtocol,
         query: str,
         params_list: Sequence[BatchParams],
     ) -> list[ResultRow]:
@@ -302,7 +371,7 @@ class MemgraphIngestor:
         self._migrate_legacy_path_keys()
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
-                self._execute_query(build_constraint_query(label, prop))
+                self._execute_query(self._dialect.create_constraint(label, prop))
             except Exception:
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
@@ -321,17 +390,23 @@ class MemgraphIngestor:
         keys off the data, not the constraints: damage outlives the schema
         when an earlier partial upgrade already dropped them.
         """
-        existing_rows = self._execute_query(CYPHER_SHOW_CONSTRAINTS)
-        legacy_present = [
-            (label, prop)
-            for label, prop in LEGACY_NODE_CONSTRAINTS
-            if any(
-                row.get(KEY_LABEL) == label and row.get(KEY_PROPERTIES) == [prop]
-                for row in existing_rows
+        existing_rows = self._execute_query(self._dialect.show_constraints())
+        # Carry the server's own name for each match: engines that drop by
+        # name (Neo4j) must drop the constraint that actually exists, not
+        # one whose name we derived -- a legacy constraint predates this
+        # code and may be named anything.
+        legacy_present: list[tuple[str, str, str | None]] = []
+        for label, prop in LEGACY_NODE_CONSTRAINTS:
+            for row in existing_rows:
+                if self._dialect.constraint_row_matches(row, label, prop):
+                    legacy_present.append(
+                        (label, prop, self._dialect.constraint_row_name(row))
+                    )
+                    break
+        for label, prop, discovered_name in legacy_present:
+            self._execute_query(
+                self._dialect.drop_constraint(label, prop, discovered_name)
             )
-        ]
-        for label, prop in legacy_present:
-            self._execute_query(build_drop_constraint_query(label, prop))
         damaged = bool(self._execute_query(CYPHER_ANY_SHARED_STRUCTURE)) or bool(
             self._execute_query(CYPHER_ANY_KEYLESS_STRUCTURE)
         )
@@ -352,7 +427,7 @@ class MemgraphIngestor:
         logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
-                self._execute_query(build_index_query(label, prop))
+                self._execute_query(self._dialect.create_index(label, prop))
             except Exception:
                 pass
         # The unique-key indexes serve MERGE at write time; generated Cypher
@@ -360,7 +435,7 @@ class MemgraphIngestor:
         # or every lookup is a full label scan.
         for label in NODE_NAME_INDEXES:
             try:
-                self._execute_query(build_index_query(label, KEY_NAME))
+                self._execute_query(self._dialect.create_index(label, KEY_NAME))
             except Exception:
                 pass
         logger.info(ls.MG_INDEXES_DONE)
@@ -396,7 +471,7 @@ class MemgraphIngestor:
         self,
         label: str,
         props_list: list[dict[str, PropertyValue]],
-        conn: mgclient.Connection | None = None,
+        conn: ConnectionProtocol | None = None,
     ) -> tuple[int, int]:
         if not props_list:
             return 0, 0
@@ -522,7 +597,7 @@ class MemgraphIngestor:
         self,
         pattern: tuple[str, str, str, str, str],
         params_list: list[RelBatchRow],
-        conn: mgclient.Connection | None = None,
+        conn: ConnectionProtocol | None = None,
     ) -> tuple[int, int]:
         from_label, from_key, rel_type, to_label, to_key = pattern
         has_props = any(p[KEY_PROPS] for p in params_list)
@@ -656,7 +731,9 @@ class MemgraphIngestor:
     def fetch_all(
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> list[ResultRow]:
-        bounded_query = _apply_memory_limit(query, settings.QUERY_MEMORY_LIMIT_MB)
+        bounded_query = _apply_memory_limit(
+            query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
+        )
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
         return self._execute_query(bounded_query, params)
 

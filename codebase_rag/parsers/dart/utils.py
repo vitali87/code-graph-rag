@@ -3,6 +3,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from ... import constants as cs
+from ...language_spec import decode_node_text
 
 
 def dart_get_name(node: Node) -> str | None:
@@ -18,14 +19,14 @@ def dart_get_name(node: Node) -> str | None:
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
         if ids:
-            return ids[-1].text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(ids[-1].text)
         return None
     name_node = node.child_by_field_name(cs.FIELD_NAME)
     if name_node and name_node.text:
-        return name_node.text.decode(cs.ENCODING_UTF8)
+        return decode_node_text(name_node.text)
     ids = [c for c in node.named_children if c.type == cs.TS_IDENTIFIER and c.text]
     if ids:
-        return ids[-1].text.decode(cs.ENCODING_UTF8)
+        return decode_node_text(ids[-1].text)
     return None
 
 
@@ -80,7 +81,7 @@ def _selector_member_name(selector: Node) -> str | None:
         ):
             for inner in child.named_children:
                 if inner.type == cs.TS_IDENTIFIER and inner.text:
-                    return inner.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(inner.text)
             return None
     return None
 
@@ -88,7 +89,7 @@ def _selector_member_name(selector: Node) -> str | None:
 def _first_identifier_text(node: Node) -> str | None:
     for inner in node.named_children:
         if inner.type == cs.TS_IDENTIFIER and inner.text:
-            return inner.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(inner.text)
     return None
 
 
@@ -184,7 +185,7 @@ def _chain_part(node: Node) -> str | None:
         case cs.TS_DART_IDENTIFIER:
             if node.text is None:
                 return None
-            return node.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(node.text)
         case cs.TS_DART_THIS | cs.TS_DART_SUPER:
             return _CHAIN_STOP
         case _:
@@ -274,11 +275,11 @@ def dart_return_type_name(node: Node) -> str | None:
     if node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
         for child in node.named_children:
             if child.type == cs.TS_DART_IDENTIFIER and child.text:
-                return child.text.decode(cs.ENCODING_UTF8)
+                return decode_node_text(child.text)
         return None
     for child in node.named_children:
         if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
-            return child.text.decode(cs.ENCODING_UTF8)
+            return decode_node_text(child.text)
         if child.type == cs.TS_DART_IDENTIFIER:
             return None
     return None
@@ -290,7 +291,7 @@ def dart_extract_uri(node: Node) -> str | None:
     while stack:
         current = stack.pop()
         if current.type == cs.TS_DART_URI and current.text:
-            return current.text.decode(cs.ENCODING_UTF8).strip(cs.DART_QUOTE_CHARS)
+            return decode_node_text(current.text).strip(cs.DART_QUOTE_CHARS)
         stack.extend(current.children)
     return None
 

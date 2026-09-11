@@ -41,6 +41,7 @@ from .go import utils as go_utils
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .module_docstring import extract_module_docstring
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -91,6 +92,18 @@ class DefinitionProcessor(
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
+        # {class qn: module qn of the file that DECLARED it}, written for
+        # EVERY language at class ingest. `class_inheritance` and
+        # `class_field_types` are keyed by a class qn, and a class records
+        # no function span, so the span-based ownership the registry sweep
+        # uses cannot attribute one. Nor can a prefix rule: a C# class qn
+        # embeds its namespace, so `proj/Core.cs` with `namespace Util`
+        # yields `proj.Core.Util.Helper`, sitting under the SIBLING module
+        # `proj.Core.Util` (#1769 review). This is the C#-only
+        # `csharp_class_owner_module`'s cross-language counterpart, needed
+        # because both maps above are written by every language's ingest
+        # (#1772).
+        self.class_owner_module: dict[str, str] = {}
         # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
         # whether they override an EXTERNAL base is only decidable once every
         # class is registered, so resolve_deferred_inherits consumes this.
@@ -446,6 +459,8 @@ class DefinitionProcessor(
                     self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
                 ),
             }
+            if docstring := self._get_module_docstring(root_node, language):
+                module_props[cs.KEY_DOCSTRING] = docstring
             if self.generated_source_prefixes and (
                 hint := generator_hint(
                     relative_path_str, self.generated_source_prefixes
@@ -624,13 +639,36 @@ class DefinitionProcessor(
             properties=rel_properties,
         )
 
+    def _get_module_docstring(
+        self, root_node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation for a whole file, in whatever form its language uses.
+
+        Python's is a string literal and reuses `_get_docstring`; every other
+        language marks it with a comment convention, which needs the marker
+        prefixes in `module_docstring` because the grammars report a doc
+        comment and an ordinary one as the same node type.
+        """
+        if language == cs.SupportedLanguage.PYTHON:
+            return self._get_docstring(root_node)
+        return extract_module_docstring(root_node, language)
+
     def _get_docstring(self, node: ASTNode) -> str | None:
-        body_node = node.child_by_field_name(cs.FIELD_BODY)
-        if not body_node or not body_node.children:
+        if node.type == cs.TS_PY_MODULE:
+            # A module node has no `body` field: its statements are direct
+            # children, one level shallower than a class or function body.
+            statements = node.children
+        else:
+            body_node = node.child_by_field_name(cs.FIELD_BODY)
+            if not body_node:
+                return None
+            statements = body_node.children
+        if not statements:
             return None
-        first_statement = body_node.children[0]
+        first_statement = statements[0]
         if (
             first_statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+            and first_statement.children
             and first_statement.children[0].type == cs.TS_PY_STRING
         ):
             text = first_statement.children[0].text

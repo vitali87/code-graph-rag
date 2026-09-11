@@ -68,6 +68,14 @@ jobs:
         run: |
           uv run python scripts/validate_labels.py
 
+      # Neither check-yaml nor the vendor schema can catch a misspelt key
+      # nested under reviews.auto_review: additionalProperties is set on the
+      # root object only, so the typo validates clean and auto-review
+      # silently reverts to the default branch (issues #1581, #1823).
+      - name: Validate .coderabbit.yaml
+        run: |
+          uv run python scripts/validate_coderabbit_config.py
+
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
@@ -129,7 +137,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
 
       # Three unit tests embed for real. Without a cache each job pulled
       # microsoft/unixcoder-base from HuggingFace mid-suite, so a 429 or an
@@ -262,7 +270,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
 
       - name: Run integration tests
         env:

@@ -43,6 +43,7 @@ import sys
 from typing import Any
 
 REPO = "vitali87/code-graph-rag"
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
 # The one context the active ruleset requires on the default branch. It
 # aggregates the jobs below and asserts each result == "success", so a
@@ -455,6 +456,65 @@ def _unresolved_thread_count(pr: str) -> tuple[int, str]:
     )
 
 
+def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
+    """The CI runs at exactly `head`, asked of the API by SHA.
+
+    Listing recent runs and filtering client-side cannot answer this: the
+    listing is a fixed-size window over the WHOLE repo, so on a busy repo a
+    run drops out of it while the PR is still open and the PR then reports
+    as having no CI run at all -- the "never ran" verdict, produced by a
+    run that did happen and passed. Measured on #1826: its run was 36
+    minutes old, every one of the 40 most recent runs was newer, and the
+    tool called a fully green PR ungated.
+
+    The `head_sha` parameter is exact, so age and repo traffic cannot
+    affect the answer. It is NOT unbounded -- it pages at 30 by default,
+    which is why this paginates; an unpaginated query would reintroduce
+    the same bug once a SHA carried enough runs.
+
+    The run is identified by workflow PATH rather than display name: a
+    name is a string any workflow file may declare, so a second file
+    named `CI` would satisfy a name check without running a test. The
+    repo's own require-ci-at-head.yml matches on path for this reason.
+    """
+    raw = _gh_stdout_or_empty(
+        "api",
+        "--paginate",
+        f"repos/{REPO}/actions/runs?head_sha={head}&per_page=100",
+    )
+    runs: list[dict[str, Any]] = []
+    # `--paginate` without `--jq` concatenates one JSON object per page, so
+    # this is a stream of objects rather than one document. `--jq` would
+    # flatten it, but `gh` rejects the `--slurp` needed to rebuild an array
+    # alongside `--jq`, so decode the pages here instead.
+    decoder = json.JSONDecoder()
+    index = 0
+    while index < len(raw):
+        # Skip separators BEFORE decoding, not only after, and do not
+        # reorder these two steps. `raw_decode` does not tolerate leading
+        # whitespace: skipping only after a successful decode means a
+        # response opening with a newline raises on the first pass and
+        # returns no runs at all, reported as "no CI run exists at the head
+        # SHA" -- the exact false verdict this function was rewritten to
+        # stop producing. Trailing-only skipping looks equivalent and is
+        # not; `test_leading_whitespace_does_not_discard_every_page` fails
+        # if these are swapped back.
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        try:
+            page, offset = decoder.raw_decode(raw, index)
+        except ValueError:
+            break
+        if isinstance(page, dict):
+            found = page.get("workflow_runs", [])
+            if isinstance(found, list):
+                runs.extend(r for r in found if isinstance(r, dict))
+        index = offset
+    return [run for run in runs if str(run.get("path", "")) == CI_WORKFLOW_PATH]
+
+
 def check(pr: str) -> tuple[list[str], list[str]]:
     """Reasons `pr` is not verifiably gated, and caveats on the evidence.
 
@@ -495,32 +555,14 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "so nothing is enforced on this PR regardless of its check list"
         )
 
-    runs = _json_list(
-        _gh_stdout_or_empty(
-            "run",
-            "list",
-            "--repo",
-            REPO,
-            "--workflow",
-            "CI",
-            "--limit",
-            "40",
-            "--json",
-            "headSha,databaseId",
-        )
-    )
-    at_head = [
-        r for r in runs if isinstance(r, dict) and str(r.get("headSha", "")) == head
-    ]
+    at_head = ci_runs_at_head(head)
     if not at_head:
         reasons.append(f"no CI run exists at the head SHA {head[:8]}")
     else:
         owners: set[str] = set()
         for run in at_head:
             detail = _json_dict(
-                _gh_stdout_or_empty(
-                    "api", f"repos/{REPO}/actions/runs/{run.get('databaseId')}"
-                )
+                _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
             )
             owners.update(
                 str(p.get("number"))

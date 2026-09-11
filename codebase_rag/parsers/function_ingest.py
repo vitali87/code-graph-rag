@@ -46,6 +46,7 @@ from .utils import (
     python_positional_parameter_names,
     record_cpp_definition_span,
     safe_decode_text,
+    warn_if_name_truncated,
 )
 
 if TYPE_CHECKING:
@@ -592,6 +593,7 @@ class FunctionIngestMixin:
         func_name = fqn_config.get_name(func_node)
         if not func_name:
             return None
+        warn_if_name_truncated(func_node, func_name, file_path)
 
         parts = [func_name]
         current = func_node.parent

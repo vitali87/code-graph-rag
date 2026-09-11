@@ -11,13 +11,19 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **File System Operations**: Improved handling of file system operations with platform-neutral joins and safeguards against removing project root.
+- **Cache Management**: Enhanced cache management with atomic publishing, dedicated cache stamps, and improved deletion handling for orphan caches.
+- **Graph Querying**: Introduced deterministic graph query tools for more precise analysis of code relationships.
+- **Re-ingestion & Parsing**: Improved re-ingestion processes, including handling of deleted files, re-parsing of related files, and rebuilding of key data structures.
+- **Security & Stability**: Addressed security concerns by blocking removal of project root and improved stability by preventing skipped edits and handling orphaned caches.
+- **C++ & Go Integration**: Enhanced integration with C++ and Go, including parsing of module interfaces and handling of module-level class aliases.
+<!-- latest-release-end -->
 - **Index Consistency**: Ensure incremental deletes match clean index states.
 - **Patch Reporting**: Distinguish between unverifiable and verified patches in reports.
 - **Windows Teardown**: Clear the read-only bit when removing a temp repo for successful Windows teardown.
 - **TypeScript Grading**: Grade TypeScript inheritance against the tsc oracle for improved accuracy.
 - **Exclude Set Handling**: Record the exclusion set to ensure `--exclude` flags are correctly applied across runs.
 - **MCP Indexing**: Honour `.cgrignore` and `.gitignore` in MCP index and update processes, matching the CLI.
-<!-- latest-release-end -->
 - **Transactional Multi-File Edits**: Multi-file edits now run as a transaction with staged verification and undo, alongside concrete-syntax-preserving patchers per language and import rewriting for renames and moves.
 - **Scala Inheritance and Markdown Front-Matter**: Scala `INHERITS` edges are read from `extends`/`with` clauses, and declared Markdown front-matter is read onto the `Module` node.
 - **Graph Retrieval**: MCP and CLI graph retrieval is scoped to one project, and call-site and import-site locations are now stored on graph edges.

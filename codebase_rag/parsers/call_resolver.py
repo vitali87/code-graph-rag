@@ -412,6 +412,13 @@ class CallResolver:
         # old path and never learn the new one, and every JEDI fact
         # targeting the renamed file would miss its declared location.
         self._py_rel_to_module.clear()
+        # The C# chained-receiver memo (issue #1800) is a resolution cache
+        # like the rest and expires with them: it is keyed by byte span, and a
+        # re-parsed file's spans name different code. Reached through the
+        # PRIVATE attribute so a project with no C# does not build an engine
+        # just to clear an empty dict.
+        if (csharp := self.type_inference._csharp_type_inference) is not None:
+            csharp._call_memo.clear()
 
     def resolve_function_call(
         self,

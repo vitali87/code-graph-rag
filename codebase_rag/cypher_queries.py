@@ -96,7 +96,6 @@ OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD*]->(defined)
 DETACH DELETE p, container, defined
 """
 
-CYPHER_SHOW_CONSTRAINTS = "SHOW CONSTRAINT INFO;"
 
 # Damage detectors for the issue #897 migration. Sharing always leaves a
 # single-hop signature: the topmost merged node has containment parents in
@@ -359,14 +358,6 @@ ORDER BY n.qualified_name
 
 def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
-
-
-def build_drop_constraint_query(label: str, prop: str) -> str:
-    return f"DROP CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
-
-
-def build_index_query(label: str, prop: str) -> str:
-    return f"CREATE INDEX ON :{label}({prop});"
 
 
 def build_merge_node_query(label: str, id_key: str) -> str:

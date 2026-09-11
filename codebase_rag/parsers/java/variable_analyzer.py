@@ -150,11 +150,12 @@ class JavaVariableAnalyzerMixin:
     ) -> None:
         # One walker for every "find nodes of type T under this scope and feed
         # them to a processor" pass; the passes differ only in (T, processor).
-        if node.type == node_type:
-            process(node, local_var_types, module_qn)
-
-        for child in node.children:
-            self._traverse_for(child, node_type, process, local_var_types, module_qn)
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if current.type == node_type:
+                process(current, local_var_types, module_qn)
+            pending.extend(reversed(current.children))
 
     def _analyze_java_local_variables(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
