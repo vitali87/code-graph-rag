@@ -155,6 +155,57 @@ def test_a_reingest_relinks_endpoint_resources(tmp_path: Path) -> None:
     )
 
 
+def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
+    """Ordering, not just presence (raised in review of #1852).
+
+    `_reingest_update_hashes` saves the hash cache to disk, which records
+    these files as indexed. Queueing the rebuilt finding and link writes
+    AFTER it meant an interruption in between left the caches claiming the
+    files were done while those writes never landed -- and the next run would
+    skip them as unchanged, so the loss became permanent rather than being
+    repaired on the following pass.
+
+    `run()` does both passes before its own cache write; this asserts the
+    re-ingest path matches.
+    """
+    updater, _ = _build(tmp_path, {"risky.py": _RISKY})
+    order: list[str] = []
+
+    real_findings = type(updater)._reingest_rebuild_findings
+    real_link = type(updater)._link_endpoint_resources
+    real_hashes = type(updater)._reingest_update_hashes
+
+    def _findings(self: object, *a: object, **k: object) -> object:
+        order.append("findings")
+        return real_findings(self, *a, **k)
+
+    def _link(self: object, *a: object, **k: object) -> object:
+        order.append("link")
+        return real_link(self, *a, **k)
+
+    def _hashes(self: object, *a: object, **k: object) -> object:
+        order.append("hashes")
+        return real_hashes(self, *a, **k)
+
+    target = tmp_path / "risky.py"
+    target.write_text(_RISKY.replace("eval(data)", "eval(data)  # edited"), "utf-8")
+    with (
+        patch.object(type(updater), "_reingest_rebuild_findings", _findings),
+        patch.object(type(updater), "_link_endpoint_resources", _link),
+        patch.object(type(updater), "_reingest_update_hashes", _hashes),
+    ):
+        updater.reingest((target,))
+
+    assert "hashes" in order, "fixture guard: the hash commit never ran"
+    assert "findings" in order, "fixture guard: the finding rebuild never ran"
+    assert order.index("findings") < order.index("hashes"), (
+        f"the finding rebuild ran AFTER the hash commit: {order}"
+    )
+    assert order.index("link") < order.index("hashes"), (
+        f"the endpoint link pass ran AFTER the hash commit: {order}"
+    )
+
+
 @pytest.mark.parametrize("rel", ["risky.py", "other.py"])
 def test_a_full_run_still_analyses_everything(tmp_path: Path, rel: str) -> None:
     """The control: scoping the re-ingest must not scope the full run.

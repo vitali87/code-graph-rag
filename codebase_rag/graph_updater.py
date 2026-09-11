@@ -5020,9 +5020,16 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
-        self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
+        # BEFORE the hash commit, matching `run()`, which does both passes
+        # ahead of its cache write. `_reingest_update_hashes` saves the hash
+        # cache to disk, which records these files as indexed; queueing the
+        # rebuilt finding and link writes after it meant an interruption in
+        # between left caches claiming the files were done while those writes
+        # never landed -- and the next run would skip them as unchanged
+        # (raised in review of #1852).
         self._reingest_rebuild_findings(reparse)
         self._link_endpoint_resources()
+        self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
             # `parsed`, not `present`: a file that became unreadable between
