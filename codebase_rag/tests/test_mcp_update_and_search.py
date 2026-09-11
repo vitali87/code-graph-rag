@@ -994,6 +994,284 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"graph left by a crashed update; got {refused}"
         )
 
+    async def test_an_unrelated_projects_clear_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """A successful clear settles only what it owns (#1774).
+
+        `_graph_incomplete` is registry-wide while every writer of it is
+        project-scoped, so `self._graph_incomplete = not cleared` let project
+        B's clean clear discard a flag project A earned.
+
+        The durable marker does not cover this. It is per project, so
+        `_persisted_incomplete(A)` correctly returns False: a wipe that dies
+        before the graph is gone writes no marker for A at all, leaving the
+        in-process flag the ONLY record that A is partial.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        # A wipe that fails part way: flag up, no marker written anywhere.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert not ingestor._marker_store, (
+            "fixture guard: the wipe must write NO marker, or the durable "
+            "check would refuse on its own and this proves nothing"
+        )
+
+        # An unrelated project B completes and clears its own marker.
+        assert registry._require_marker("project-B") is None
+        assert registry._require_marker_cleared("project-B") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's successful clear discarded the flag the "
+            "failed wipe earned; the next reingest would run over a partial graph"
+        )
+
+        # And the refusal it protects still fires.
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_deleting_an_unrelated_project_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Through the PUBLIC path, which is what the helper-level test missed.
+
+        Raised by Greptile on #1846 and confirmed. The sibling test drives
+        `_require_marker_cleared('project-B')` directly, so it never sees
+        `_delete_project_sync` RAISE the flag for its own project first --
+        overwriting the wipe's `owner=None` with `B` -- and then legitimately
+        settle what it now appears to own. Measured before the fix:
+
+            after failed wipe:  flag=True  owner=None
+            after delete of B:  flag=False owner=None
+            reingest of A: ACCEPTED over a partial graph
+
+        The rule is that an operation claims ownership only when it raises
+        the flag FROM CLEAN; an already-set flag belongs to whatever failure
+        set it. Same rule `_abandon_before_writing` already applied to the
+        attribution.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        ingestor.list_projects.return_value = [project, "B"]
+        result = await registry.delete_project("B")
+        assert result.get("success") is True, f"fixture guard: delete failed; {result}"
+
+        assert registry._graph_incomplete is True, (
+            "deleting an unrelated project settled the flag a failed wipe "
+            "earned; the next reingest would run over a partially wiped graph"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_failed_clear_cannot_claim_another_projects_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery authority follows ownership too (#1846 review, third round).
+
+        The ownership field was guarded but `_flag_from_failed_clear` was not,
+        and it is what grants the heal in `_hydrate_reingest_updater`
+        (`recoverable_here = _flag_from_failed_clear == project_name`). So:
+
+            1. A fails leaving the flag up, owner=None (a failed wipe)
+            2. B's marker clear FAILS and claims the attribution
+            3. B's marker later recovers -> B heals the latch A owns
+
+        Measured before the fix: step 3 left `flag=False`, and B's scoped
+        reingest proceeded over A's partial graph.
+
+        The rule is the same one the ownership claim uses: an already-set flag
+        belongs to whatever failure set it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._flag_from_failed_clear is None, (
+            "fixture guard: a wipe strands no marker, so nothing is attributed"
+        )
+
+        # B strands a marker of its own: its clear fails.
+        assert registry._require_marker("B", writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared("B") is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+
+        assert registry._flag_from_failed_clear is None, (
+            "B's failed clear claimed recovery authority over the flag A owns"
+        )
+
+        # B's marker recovers. The heal must not fire on A's flag.
+        ingestor._marker_store.pop("B", None)
+        registry._live_updater = None
+        ingestor.list_projects.return_value = [project, "B"]
+        with pytest.raises(ValueError, match="failed part way"):
+            registry._hydrate_reingest_updater("B")
+        assert registry._graph_incomplete is True, (
+            "B's marker recovery cleared the latch A owns"
+        )
+
+    async def test_a_clean_clear_keeps_another_projects_licence_to_heal(
+        self, temp_project_root: Path
+    ) -> None:
+        """The mirror of the attribution rule, and it fails CLOSED (#1846).
+
+        `_flag_from_failed_clear` is a project's licence to heal itself: A's
+        failed clear strands a recoverable `writing=false` marker and records
+        that the flag is A's to lift once the marker recovers. Dropping the
+        attribution unconditionally on any successful clear meant B's clean
+        clear discarded it, and A's own later reingest could no longer
+        recover -- refused forever though its graph was untouched.
+
+        Harmless compared with the other direction (a wrongly ALLOWED
+        reingest), but it wedges a project with nothing wrong with it, and
+        both directions come from the same unscoped assignment.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A's clear fails, leaving a recoverable marker attributed to A.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: A's failed clear must attribute the flag to A"
+        )
+
+        # B completes and clears its own marker.
+        assert registry._require_marker("B", writing=False) is None
+        assert registry._require_marker_cleared("B") is None
+
+        assert registry._flag_from_failed_clear == project, (
+            "B's clean clear discarded A's licence to heal itself; A's own "
+            "reingest would be refused though its graph was never touched"
+        )
+
+        # And A can still recover: its marker is `writing=false`.
+        registry._live_updater = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            registry._hydrate_reingest_updater(project)
+        assert registry._graph_incomplete is False, (
+            "A could not heal its own recoverable marker"
+        )
+
+    async def test_any_projects_clear_cannot_settle_a_failed_wipe(
+        self, temp_project_root: Path
+    ) -> None:
+        """Issue #1820's reproduction, pinned explicitly.
+
+        That issue is a third face of the same overloaded `None` this PR is
+        about, and it falls out of the ownership rule rather than needing its
+        own change -- but "falls out" is worth an assertion, or a later
+        refactor can quietly take it away again while the two tests above
+        stay green.
+
+        A failed wipe leaves the flag up with no owner (it spans every
+        project and writes no marker), so the in-process flag is the only
+        record the graph is partial. Before the rule, the next successful
+        clear for ANY project settled it and reads proceeded against a
+        half-wiped graph.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True
+        assert registry._incomplete_owner is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+
+        # A clear for a project entirely unrelated to the wipe.
+        assert registry._require_marker("any-project", writing=False) is None
+        assert registry._require_marker_cleared("any-project") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's clear settled the flag a failed wipe "
+            "earned; reads would proceed against a half-wiped graph (#1820)"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_projects_own_clear_still_settles_its_own_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control, and the one that constrains the fix.
+
+        Making the flag harder to clear must not break the operations that
+        legitimately clear the flag they raised: delete, index and update
+        each set it before their first write and settle it on success. A fix
+        that simply refused every clear would satisfy the test above while
+        wedging all three.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await registry.update_repository()
+
+        assert registry._graph_incomplete is False, (
+            "a completed update must clear the flag it raised for its own project"
+        )
+        assert registry._incomplete_owner is None
+
+    async def test_a_delete_still_settles_the_flag_it_raised(
+        self, temp_project_root: Path
+    ) -> None:
+        """Second control, on a different owner-setting path.
+
+        `_delete_project_sync` raises the flag for its own project and
+        settles it via its own `_require_marker_cleared`. Pinning only the
+        update path would leave the delete and index paths free to regress.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor.list_projects.return_value = [project, "other"]
+
+        result = await registry.delete_project(project)
+        assert result.get("success") is True, result
+        assert registry._graph_incomplete is False, (
+            "a completed delete must settle the flag it raised"
+        )
+
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
         self, temp_project_root: Path
     ) -> None:
