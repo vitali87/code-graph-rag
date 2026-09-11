@@ -2449,9 +2449,15 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
 
     Said plainly because mutation testing shows it: widening the exemption
     to every aggregated alias leaves the whole file green, since each query
-    it would wrongly admit is already refused upstream. The cases below that
-    DO redden are the ones this change is answerable for -- the property
-    read, and the exemption being dropped entirely.
+    it would wrongly admit is already refused upstream.
+
+    So only three of the eight tests below reach the changed line, and each
+    of the other five says which earlier gate decides it. The three that do:
+    the accepted grouped count, the property-read refusal, and the `collect`
+    refusal. Dropping the exemption reddens the first; dropping the
+    `not reads[entity]` guard reddens the other two. The remaining five are
+    boundary tests of the accepted shape -- worth keeping, but not evidence
+    for this change.
     """
 
     def test_a_grouped_count_over_a_restricted_alias_is_accepted(self) -> None:
@@ -2491,7 +2497,11 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
         assert not requires_project_evidence(cypher, ALPHA)
 
     def test_a_foreign_project_restriction_is_still_refused(self) -> None:
-        """Restricted to *a* project is not restricted to *yours*."""
+        """Restricted to *a* project is not restricted to *yours*.
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
+        """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         cypher = (
@@ -2522,7 +2532,11 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
         assert not requires_project_evidence(cypher, ALPHA)
 
     def test_a_wildcard_aggregate_is_still_refused(self) -> None:
-        """`count(*)` binds no alias, so nothing can be shown restricted."""
+        """`count(*)` binds no alias, so nothing can be shown restricted.
+
+        Decided upstream of the exemption, by
+        `_every_aggregate_operand_is_bindable` -- see the class docstring.
+        """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         cypher = (
@@ -2540,6 +2554,9 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
         Its confinement would have to be inferred from its endpoints, which
         this module does not do. Recorded here so the gap is deliberate
         rather than accidental (issue #1843).
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
         """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
@@ -2553,7 +2570,11 @@ class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
         assert not requires_project_evidence(cypher, ALPHA)
 
     def test_a_regex_restriction_does_not_vouch_for_an_alias(self) -> None:
-        """A pattern can start with the project and still match everything."""
+        """A pattern can start with the project and still match everything.
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
+        """
         from codebase_rag.tools.codebase_query import requires_project_evidence
 
         cypher = (
