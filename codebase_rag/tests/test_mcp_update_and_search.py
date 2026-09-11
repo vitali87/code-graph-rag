@@ -1233,6 +1233,57 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"a fresh registry inherited a marker from a no-write abort; {after}"
         )
 
+    async def test_a_delta_advances_the_phase_before_mutating(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (a), second half, on the delta path (#1845 review).
+
+        Both delta branches mark with `writing=False`, and `reingest` starts
+        deleting after its read-only prologue. Without advancing the phase
+        there, a crash mid-delete left a partial graph that a fresh registry
+        reads as recoverable, CLEARS, and hydrates as complete -- worse than
+        no marker, because the recovery path actively removes the protection.
+
+        Asserts the phase as seen from `before_write`, i.e. at the moment the
+        updater is about to issue its first delete.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        phase_at_write: list[bool] = []
+
+        def _reingest(*_a: object, before_write: object = None, **_k: object) -> object:
+            # PRODUCTION must supply the callback. An earlier version of this
+            # test called it unconditionally when present, which passes
+            # whether or not the delta path passes one -- it observed the stub
+            # rather than the code, and stayed green with `before_write`
+            # removed from the call site.
+            assert callable(before_write), (
+                "the delta path did not pass a before_write callback, so the "
+                "marker stays writing=False through the deletes"
+            )
+            before_write()
+            phase_at_write.append(ingestor._writing_store.get(project) is True)
+            return MagicMock(reparsed=(), affected=(), removed=(), elapsed_ms=0.1)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            updater_cls.return_value.reingest.side_effect = _reingest
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=lambda *a, **k: (
+                    (a[3]() if len(a) > 3 else k["run"]()) and ""
+                ),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert phase_at_write == [True], (
+            "the delta began deleting with its marker still saying "
+            f"writing=False; a crash there is recoverable-looking: {result!r}"
+        )
+
     async def test_a_failed_structural_delta_keeps_its_marker(
         self, temp_project_root: Path
     ) -> None:

@@ -1663,7 +1663,18 @@ class MCPToolsRegistry:
                 self.ingestor.fetch_all,
                 updater.project_name,
                 relative,
-                lambda: updater.reingest(changed, deleted=deleted),
+                # Invariant (a), second half: the marks above say
+                # `writing=False`, and `reingest` starts deleting after its
+                # read-only prologue. Without advancing the phase there, a
+                # crash mid-delete left a partial graph that a fresh registry
+                # reads as recoverable, CLEARS, and hydrates as complete
+                # (raised by CodeRabbit on #1845). Same callback
+                # `_reingest_sync` passes for the same reason.
+                lambda: updater.reingest(
+                    changed,
+                    deleted=deleted,
+                    before_write=lambda: self._begin_writing_or_refuse(project_name),
+                ),
                 repo_root=root,
             )
         except (ValueError, ReingestAborted) as e:
