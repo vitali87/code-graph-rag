@@ -1116,7 +1116,7 @@ class MCPToolsRegistry:
                     cq.CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE,
                     {cs.KEY_PROJECT_NAME: project_name},
                 )
-            except Exception as error:  # noqa: BLE001 -- best effort, see above
+            except Exception as error:  # noqa: BLE001 -- best effort; see above
                 logger.warning(
                     lg.MCP_INCOMPLETE_MARKER_FAILED.format(
                         project=project_name, incomplete=False, error=error
