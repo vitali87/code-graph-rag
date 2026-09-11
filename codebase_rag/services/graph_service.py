@@ -68,6 +68,7 @@ from ..types_defs import (
     ResultRow,
 )
 from ..utils.path_utils import project_roots_from_rows
+from .gloss_cleanup import prune_orphaned_glosses
 from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
@@ -363,6 +364,12 @@ class MemgraphIngestor:
         # Shared prefix-less nodes (Resources, ExternalModules) only lose
         # their edges above; drop the ones this project alone anchored.
         prune_unanchored_resources(self)
+        # A Gloss is unreachable from the traversal above by design -- that is
+        # what lets it survive a rebuild, which deletes and recreates the very
+        # symbols it annotates. It must still die with a real project delete,
+        # so it gets its own sweep keyed on whether the subject still exists
+        # (issue #1828).
+        prune_orphaned_glosses(self)
         self._execute_query(CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
