@@ -1090,6 +1090,17 @@ class MCPToolsRegistry:
             query = cq.CYPHER_CLEAR_PROJECT_INCOMPLETE
         try:
             self.ingestor.execute_write(query, params)
+            if not incomplete:
+                # A marker written before run ids existed has no `run_id`, so
+                # the run-scoped clear above cannot match it while the read
+                # still sees it -- the project would stay blocked forever
+                # after an upgrade (#1850 review). A run completing for this
+                # project has established the graph is whole, so clearing the
+                # legacy marker here is the same statement its own clear makes.
+                self.ingestor.execute_write(
+                    cq.CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_FAILED.format(

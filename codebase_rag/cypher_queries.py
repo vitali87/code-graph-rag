@@ -96,8 +96,27 @@ CYPHER_CLEAR_PROJECT_INCOMPLETE = (
 # runs a full update. Guarded by the caller on `writing=false` for EVERY
 # outstanding marker, so no run that has begun writing can be cleared this
 # way (issue #1709).
+# Deletes only markers that are STILL read-only at delete time. The caller
+# reads the phase and then acts on it, and between those a concurrent run can
+# promote its own marker to `writing=true` -- an unconditional delete would
+# then remove a marker protecting a graph that IS being written (raised in
+# review of #1850). Re-checking the phase inside the delete closes that
+# window: the predicate is evaluated against the row as it is now, not as the
+# caller last saw it. A legacy marker with no `writing` property reads as
+# writing, exactly as `CYPHER_PROJECT_IS_INCOMPLETE` coalesces it, so it stays
+# fail-closed here too.
 CYPHER_RECOVER_PROJECT_INCOMPLETE = (
-    "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE coalesce(m.writing, true) = false DELETE m"
+)
+# A marker written before run ids existed has no `run_id` property, so the
+# run-scoped clear can never match it while the read -- which matches on
+# project alone -- still sees it. Without this the project would stay blocked
+# forever after an upgrade (raised in review of #1850). Cleared alongside this
+# run's own marker on a successful completion, since a run that completes for
+# the project has established the graph is whole.
+CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name}) WHERE m.run_id IS NULL DELETE m"
 )
 # "Is ANY run outstanding": the read was already a boolean question, so it
 # generalises without changing its callers' meaning. `writing` is true if ANY

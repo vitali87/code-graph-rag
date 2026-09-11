@@ -922,16 +922,30 @@ class TestIncompleteMarkerSurvivesTheProcess:
                         (params or {}).get(cs.KEY_WRITING, True)
                     )
             elif "DELETE m" in query:
-                if "run_id" in query:
+                if "m.run_id IS NULL" in query:
+                    # The LEGACY clear: markers written before run ids
+                    # existed. The fake models those as the sentinel run id
+                    # "" (see the mark branch, which records whatever the
+                    # params carry).
+                    remaining = runs.get(name, set())
+                    remaining.discard("")
+                    if remaining:
+                        return
+                elif "run_id" in query:
                     # The ordinary clear: only THIS run's marker. The project
                     # reads clear once every outstanding run's marker is gone.
                     remaining = runs.get(name, set())
                     remaining.discard(run_id)
                     if remaining:
                         return
-                # RECOVERY (no run_id in the query): clears every outstanding
-                # marker, which is the point of that path -- it exists to
-                # clear a marker some other run stranded.
+                elif "coalesce(m.writing, true) = false" in query:
+                    # RECOVERY, and it deletes only markers that are STILL
+                    # read-only. The phase is per project in this fake, so a
+                    # promoted phase blocks the whole delete -- which is the
+                    # property under test: a concurrent run that began
+                    # writing must not have its marker recovered away.
+                    if writing.get(name, True):
+                        return
                 runs.pop(name, None)
                 store.pop(name, None)
                 writing.pop(name, None)
@@ -1058,6 +1072,96 @@ class TestIncompleteMarkerSurvivesTheProcess:
         refused = await fresh.reingest(["a.py"])
         assert "failed part way" in refused.get("error", ""), (
             f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_legacy_marker_is_cleared_by_a_completing_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """Markers written before run ids must not wedge the project (#1850).
+
+        A marker from before this change has no `run_id` property. The read
+        matches on project alone and still sees it; the run-scoped clear
+        matches on `run_id` and can never delete it. Recovery reaches only
+        `writing=false` markers, so a legacy marker with `writing=true` (or
+        absent, which coalesces to true) was unreachable by every path and
+        the project stayed blocked forever after an upgrade.
+        """
+        from codebase_rag import cypher_queries as cq
+
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A legacy marker: modelled as the sentinel empty run id, and left in
+        # the writing phase so neither recovery nor a run-scoped clear can
+        # touch it.
+        ingestor.execute_write(
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: True},
+        )
+        assert registry._persisted_incomplete(project) is True, (
+            "fixture guard: the legacy marker must read as incomplete"
+        )
+
+        # A run completes for this project: its clear lifts its own marker
+        # and the legacy one with it.
+        assert registry._require_marker(project) is None
+        assert registry._require_marker_cleared(project) is None
+
+        assert registry._persisted_incomplete(project) is False, (
+            "a legacy marker survived a completed run, so the project stays "
+            "blocked with no path that can clear it"
+        )
+
+    async def test_recovery_leaves_a_marker_that_began_writing(
+        self, temp_project_root: Path
+    ) -> None:
+        """A promoted phase must stop the marker being recovered away.
+
+        MEASURED LIMIT, stated so the greenness is not read as coverage: this
+        test passes through the PHASE READ in `_persisted_incomplete`, which
+        returns before recovery is called at all (instrumented: recovery runs
+        0 times here). So it does NOT exercise the re-check inside
+        `CYPHER_RECOVER_PROJECT_INCOMPLETE`, and removing that re-check leaves
+        this test green.
+
+        The re-check is still right, and it is defence in depth against a real
+        TOCTOU window: `_persisted_incomplete` reads the phase and then
+        deletes, and a concurrent run can promote its own marker in between --
+        an unconditional delete would then remove a marker protecting a graph
+        that IS being written. That window needs two markers with DIFFERENT
+        phases, which this fake cannot express: its phase is per project, not
+        per marker. Widening the fake to per-marker phases would make it
+        testable and is the right follow-up if this line is ever load-bearing.
+
+        What this test does cover is the outer property, which is worth having
+        on its own: a project whose marker has been promoted to writing still
+        reads incomplete to a fresh process.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # A read-only run strands its marker.
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+
+        # A concurrent run promotes the phase to writing before recovery acts.
+        assert writer._require_writing(project) is None
+        assert ingestor._writing_store.get(project) is True, (
+            "fixture guard: the phase must be promoted, or recovery is "
+            "entitled to clear and this test proves nothing"
+        )
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        assert fresh._persisted_incomplete(project) is True, (
+            "recovery cleared a marker belonging to a run that had begun "
+            "writing; a scoped reingest would trust a partial graph"
         )
 
     async def test_a_runs_own_clear_still_lifts_its_own_marker(
