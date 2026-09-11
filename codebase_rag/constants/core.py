@@ -5,6 +5,15 @@ from enum import StrEnum
 INIT_PY = "__init__.py"
 
 ENCODING_UTF8 = "utf-8"
+# Longest UTF-8 sequence, so a window this size either side of a name spans
+# any single character that could legitimately sit next to it.
+UTF8_MAX_SEQUENCE_BYTES = 4
+# Sigils an ingestor prepends to a synthesized symbol name (a C# destructor
+# is stored as `~Greeter` while the source leaf is `Greeter`).
+SYNTHETIC_NAME_PREFIXES = "~"
+# What `errors="replace"` substitutes for an undecodable byte. Its presence
+# in an extracted symbol name means the name is damaged.
+UNICODE_REPLACEMENT_CHAR = "\ufffd"
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"

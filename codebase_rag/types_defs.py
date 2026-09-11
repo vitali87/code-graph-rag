@@ -12,7 +12,13 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    NamedTuple,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 from prompt_toolkit.styles import Style
 
@@ -175,6 +181,7 @@ class LoadableProtocol(Protocol):
     def _ensure_loaded(self) -> None: ...
 
 
+@runtime_checkable
 class CursorProtocol(Protocol):
     def execute(
         self,
@@ -188,6 +195,19 @@ class CursorProtocol(Protocol):
     @property
     def description(self) -> Sequence[ColumnDescriptor] | None: ...
     def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+
+
+@runtime_checkable
+class ConnectionProtocol(Protocol):
+    """The connection surface the graph ingestor relies on.
+
+    Deliberately DB-API-shaped: `MemgraphIngestor` was written against
+    `mgclient` connections, and `services.neo4j_driver` adapts the Neo4j
+    driver to the same shape so one ingestor serves both engines.
+    """
+
+    def cursor(self) -> CursorProtocol: ...
+    def close(self) -> None: ...
 
 
 class PathValidatorProtocol(Protocol):
@@ -871,6 +891,32 @@ _FINDING_NODE_PROPS = (
     "start_line: int, end_line: int, path: string, snippet: string?}"
 )
 
+# A gloss is written by an agent and read back later (issue #1808), so unlike
+# every other node here its truth lives only in the graph. `anchor_state` grades
+# how well it is still attached to its subject: EXACT|MOVED|STALE|AMBIGUOUS|LOST.
+# An anchor that cannot be re-established becomes visibly LOST rather than being
+# silently re-bound to the wrong symbol.
+# The labels a gloss can attach to. Deliberately the same set `graph_query`
+# resolves a name or a path:line to (`_DEFINITION_LABELS`), so every anchor an
+# agent can name is one an ANNOTATES edge can point at.
+_GLOSS_TARGET_LABELS = (
+    NodeLabel.MODULE,
+    NodeLabel.CLASS,
+    NodeLabel.FUNCTION,
+    NodeLabel.METHOD,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+
+_GLOSS_NODE_PROPS = (
+    "{qualified_name: string, kind: string, status: string, body: string, "
+    "created_by: string, created_at: string, commit_sha: string?, "
+    "target_qn: string, target_hash: string?, anchor_quote: string?, "
+    "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string}"
+)
+
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PROJECT, "{name: string, root_path: string?}"),
     NodeSchema(
@@ -884,7 +930,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
@@ -939,6 +985,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PATTERN, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
+    NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
 )
 
 
@@ -1157,5 +1204,19 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE,),
         RelationshipType.HAS_VULNERABILITY,
         (NodeLabel.SECURITY_ISSUE,),
+    ),
+    # A gloss's subject: exactly one per gloss (issue #1808).
+    RelationshipSchema(
+        (NodeLabel.GLOSS,),
+        RelationshipType.ANNOTATES,
+        _GLOSS_TARGET_LABELS,
+    ),
+    # Symbols the gloss's text refers to, distinct from its subject, so a
+    # traversal can find glosses that discuss a symbol without being filed
+    # under it.
+    RelationshipSchema(
+        (NodeLabel.GLOSS,),
+        RelationshipType.MENTIONS,
+        _GLOSS_TARGET_LABELS,
     ),
 )

@@ -13,13 +13,19 @@ HEALTH_CHECK_DOCKER_TIMEOUT_ERROR = (
 HEALTH_CHECK_DOCKER_FAILED_MSG = "Check failed"
 HEALTH_CHECK_DOCKER_EXIT_CODE = "Non-zero exit code"
 
-HEALTH_CHECK_MEMGRAPH_SUCCESSFUL = "Memgraph connection successful"
-HEALTH_CHECK_MEMGRAPH_FAILED = "Memgraph connection failed"
-HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {host}:{port}"
+# Named per engine so `cgr doctor` identifies the service it actually
+# probed: a Neo4j deployment shown a failing "Memgraph connection" check
+# is sent looking for the wrong server (issue #1590).
+HEALTH_CHECK_GRAPH_SUCCESSFUL = "{engine} connection successful"
+HEALTH_CHECK_GRAPH_FAILED = "{engine} connection failed"
+HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {endpoint}"
 HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
 HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
-HEALTH_CHECK_MEMGRAPH_ERROR = "Memgraph error: {error}"
+HEALTH_CHECK_GRAPH_ERROR = "{engine} error: {error}"
 HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
+
+# Display names for the engines the ingestor can talk to.
+HEALTH_ENGINE_NAMES = {"memgraph": "Memgraph", "neo4j": "Neo4j"}
 
 HEALTH_CHECK_GRAPH_INTEGRITY_OK = "Graph structural integrity verified"
 HEALTH_CHECK_GRAPH_INTEGRITY_FAILED = "Graph structural integrity violations"

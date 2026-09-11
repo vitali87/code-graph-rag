@@ -1,0 +1,5 @@
+# Fuzz corpora are binary. A seed's trailing byte is the atheris selector
+# (ConsumeIntInRange reads from the back of the buffer) and its leading byte
+# is the string_spec, so any line-ending normalisation re-points the seed at
+# a different grammar or edit plan without changing anything a diff shows.
+fuzz/corpus/** binary

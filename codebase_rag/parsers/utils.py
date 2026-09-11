@@ -10,6 +10,7 @@ from tree_sitter import Language, Node, Query, QueryCursor
 
 from .. import constants as cs
 from .. import logs
+from ..language_spec import decode_node_text
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -242,7 +243,11 @@ def extract_modifiers_and_decorators(
 
 @lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
-    return text_bytes.decode(cs.ENCODING_UTF8)
+    # Replacement decode, not strict. `safe_decode_text` feeds decorators,
+    # modifiers and import paths, and a strict decode here raised
+    # UnicodeDecodeError and abandoned the whole file -- one bad byte in a
+    # Python decorator dropped every definition in it (issue #1797).
+    return decode_node_text(text_bytes)
 
 
 def node_site_properties(node: Node) -> PropertyDict:
@@ -261,6 +266,29 @@ def node_site_properties(node: Node) -> PropertyDict:
 
 
 def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
+    """A node's text as `str`, or `None` when there is no text to decode.
+
+    "safe" covers BOTH failure modes, and both guarantees are real:
+
+    * a null node, or a node whose `text` is null, yields `None` rather than
+      raising `AttributeError`;
+    * undecodable bytes are replaced, never raised. The decode routes through
+      `language_spec.decode_node_text` (`errors="replace"`), so a single bad
+      byte cannot raise `UnicodeDecodeError` here.
+
+    The second half is worth stating rather than leaving to be re-derived.
+    Until #1797 the decode underneath was strict, so "safe" named only the
+    None handling -- and the name read as "this is the decode that handles
+    bad input", which is exactly the assumption that stops people looking.
+    It cost real time on #1797: a bad byte in a Python decorator dropped
+    every definition in the file through this function, in the repo's primary
+    language, because the per-file handler in `graph_updater` catches
+    `UnicodeDecodeError` and abandons the file. With ~550 call sites, a name
+    asserting a guarantee needs to be checkable against the implementation
+    (issue #1811).
+
+    Returns the value as-is via `str()` when `node.text` is not `bytes`.
+    """
     if node is None or (text_bytes := node.text) is None:
         return None
     if isinstance(text_bytes, bytes):
@@ -1278,6 +1306,11 @@ def ingest_method(
         method_start_line = method_node.start_point[0] + 1
         method_start_col = method_node.start_point[1]
 
+    # Every language's method branch converges here, so this is the one place
+    # that sees a method name whatever route produced it (issue #1810). The
+    # function and class sites are guarded at their own extraction points.
+    warn_if_name_truncated(method_node, method_name, file_path)
+
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
     if language != cs.SupportedLanguage.CPP:
         method_qn = function_registry.register_unique_qn(
@@ -1598,3 +1631,167 @@ def module_qn_for_entity(
         if candidate in module_paths:
             return candidate
     return None
+
+
+def warn_if_name_truncated(
+    node: Node, name: str | None, file_path: Path | None = None
+) -> None:
+    """Log when a symbol name was truncated by an invalid byte.
+
+    An invalid byte inside an identifier is a token boundary to tree-sitter,
+    so the `name` node covers only the bytes on one side of it. The extractor
+    then decodes that shortened node without error: `calculate_total` is
+    indexed as `calculate_t`, with nothing raised and nothing logged. A wrong
+    name is worse than a missing one -- callers in untouched files stop
+    resolving to it, so it reads as dead code while a symbol nobody calls
+    appears beside it.
+
+    The discriminator is the byte IMMEDIATELY ADJACENT to the name's span:
+    the one the grammar split on. Two narrower-sounding shapes are both wrong:
+
+    * The name node's own bytes never contain the bad byte -- tree-sitter
+      excludes it -- so they decode cleanly in the corrupt and the clean case
+      alike. A check on them detects nothing at all.
+    * The enclosing DEFINITION's span does contain it, but also spans the
+      whole body, so it fires on a bad byte in any body comment, docstring or
+      string literal while the symbol is indexed under its correct name, and
+      once per enclosing definition -- one bad byte in a nested class yields a
+      warning per level.
+
+    Measured across 105,352 real source files (Rust crates, Go modules, the
+    macOS SDK, Homebrew, site-packages): 165 are not valid UTF-8 and NONE
+    corrupts a symbol -- every one is latin-1 punctuation in a copyright
+    header or an author's name. All 165 are exactly the shape the second
+    bullet misfires on, which is why the adjacency test earns its place.
+    """
+    if not name:
+        return
+    # The replacement character can only be in a NAME because a decode put it
+    # there: #1797's fix decodes with errors="replace", so a bad byte the
+    # grammar keeps INSIDE the name expression (Lua's `Greeter.gr\ufffdeet`,
+    # where the byte lands in an ERROR node between two identifiers) survives
+    # as U+FFFD rather than truncating the token. No legitimate identifier
+    # contains it, in any language, so this needs no adjacency test.
+    if cs.UNICODE_REPLACEMENT_CHAR in name:
+        logger.warning(
+            logs.TRUNCATED_SYMBOL_NAME.format(
+                path=file_path if file_path is not None else "<unknown>",
+                name=name,
+            )
+        )
+        return
+    source = _node_source_bytes(node)
+    if source is None:
+        return
+    # Callers pass the DEFINITION node, which is what they have. Narrow to the
+    # span the extracted name actually came from: `child_by_field_name` alone
+    # is not enough, because grammars nest the identifier differently (C puts
+    # it under `function_declarator`, so the definition has no `name` field at
+    # all and the search below is what finds it).
+    span = _name_span(node, name)
+    if span is None:
+        return
+    start, end = span
+    # A WINDOW either side, not a single byte. A legitimate multi-byte
+    # character next to the name (`def alpha\u00a9()` under error recovery, where
+    # `\u00a9` is the two bytes c2 a9) has neither half decodable ALONE, so a
+    # one-byte probe calls valid source corrupt. Four bytes is the longest
+    # UTF-8 sequence, so a window that size decodes cleanly whenever the
+    # neighbouring text is well-formed.
+    before = source[max(0, start - cs.UTF8_MAX_SEQUENCE_BYTES) : start]
+    after = source[end : end + cs.UTF8_MAX_SEQUENCE_BYTES]
+    for probe, at_end in ((before, False), (after, True)):
+        if not probe:
+            continue
+        if _has_invalid_byte(probe, at_end=at_end):
+            logger.warning(
+                logs.TRUNCATED_SYMBOL_NAME.format(
+                    path=file_path if file_path is not None else "<unknown>",
+                    name=name,
+                )
+            )
+            return
+
+
+# A definition's own name is at most a step or two above it (the JS/TS
+# field-definition wrapper is one). Bounded so a deeply nested node cannot walk
+# to the root and match an unrelated enclosing definition of the same name.
+_NAME_SPAN_ANCESTOR_LIMIT = 3
+
+
+def _name_span(node: Node, name: str) -> tuple[int, int] | None:
+    """Byte span of the identifier `name` was decoded from, or None.
+
+    Prefers the `name` field, then the shallowest descendant whose own text
+    equals the extracted name. The search is bounded to identifier-ish leaves
+    and stops at the first match, so it stays cheap on large definitions.
+    """
+    # A synthesized name need not appear in the source at all: C# destructor
+    # ingestion builds `~Greeter` while the source leaf is just `Greeter`, and
+    # a leading sigil is the general shape of that. Strip non-identifier
+    # prefixes so the span lookup matches what the grammar actually holds.
+    name = name.lstrip(cs.SYNTHETIC_NAME_PREFIXES)
+    if not name:
+        return None
+    encoded = name.encode(cs.ENCODING_UTF8)
+    direct = node.child_by_field_name(cs.FIELD_NAME)
+    if direct is not None and direct.text == encoded:
+        return direct.start_byte, direct.end_byte
+
+    stack = [node]
+    while stack:
+        current = stack.pop(0)
+        if current is not node and current.text == encoded and not current.children:
+            return current.start_byte, current.end_byte
+        stack.extend(current.children)
+
+    # Not below the node: a JS/TS class-field arrow or function expression is
+    # named by its ENCLOSING field definition (`greet = (n) => n`), and
+    # `_js_ts_field_member_name` reads the binding from there, so the
+    # identifier sits above the node the caller passed. Walk out a bounded
+    # distance rather than threading a node through every extraction branch --
+    # a name that belongs to this definition is always within a step or two.
+    ancestor = node.parent
+    for _ in range(_NAME_SPAN_ANCESTOR_LIMIT):
+        if ancestor is None:
+            break
+        field = ancestor.child_by_field_name(cs.FIELD_NAME)
+        if field is not None and field.text == encoded:
+            return field.start_byte, field.end_byte
+        ancestor = ancestor.parent
+    return None
+
+
+def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
+    """Whether `window` contains a byte that no valid UTF-8 sequence explains.
+
+    The window is sliced at an arbitrary offset, so it can begin or end
+    mid-character even when the source is well-formed: `\u00a9` is the two bytes
+    c2 a9, and either half alone fails to decode. Only a genuinely invalid
+    byte should count, so the partial sequence at the cut edge is trimmed
+    before decoding -- `at_end` says which edge is the cut one (the window
+    BEFORE the name is cut at its start, the one AFTER at its end).
+    """
+    for trim in range(len(window)):
+        candidate = window[trim:] if not at_end else window[: len(window) - trim]
+        if not candidate:
+            return False
+        try:
+            candidate.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
+            continue
+        return False
+    return True
+
+
+def _node_source_bytes(node: Node) -> bytes | None:
+    """The whole source buffer the node's byte offsets index into.
+
+    `start_byte`/`end_byte` are offsets into the FILE, so the adjacency probe
+    needs the file's bytes rather than the node's own slice.
+    """
+    root = node
+    while (parent := getattr(root, "parent", None)) is not None:
+        root = parent
+    raw = getattr(root, "text", None)
+    return raw if isinstance(raw, bytes) else None

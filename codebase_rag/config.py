@@ -9,12 +9,13 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
+from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 # Load only the configuration file in the invocation directory.  The default
@@ -159,11 +160,24 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
+    # Which graph engine the ingestor talks to. Memgraph stays the default,
+    # so an existing install keeps its behaviour without touching config;
+    # see `graph_dialects` for what actually differs between engines.
+    GRAPH_BACKEND: str = DIALECT_MEMGRAPH
+
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     MEMGRAPH_USERNAME: str | None = None
     MEMGRAPH_PASSWORD: str | None = None
+
+    # Neo4j connects by URI rather than host/port: the scheme carries the
+    # routing mode (`neo4j://` for a cluster, `bolt://` for one instance)
+    # and TLS (`+s`/`+ssc`), none of which a host/port pair can express.
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USERNAME: str | None = None
+    NEO4J_PASSWORD: str | None = None
+    NEO4J_DATABASE: str = "neo4j"
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
     AGENT_RETRIES: int = 3
@@ -363,6 +377,25 @@ class AppConfig(BaseSettings):
     QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
     QUERY_MEMORY_LIMIT_MB: int = Field(default=4096, gt=0)
     QUERY_TIMEOUT_S: float = Field(default=60.0, gt=0)
+
+    @field_validator("GRAPH_BACKEND")
+    @classmethod
+    def _known_backend(cls, value: str) -> str:
+        """Reject an unknown engine name at startup.
+
+        Defaulting an unrecognised value to Memgraph would send Memgraph
+        DDL to whatever server is actually configured, and
+        `MemgraphIngestor.ensure_constraints` swallows DDL failures -- so
+        a typo would surface much later as a graph built with no
+        constraints rather than as a startup error.
+        """
+        normalised = value.strip().lower()
+        if normalised not in available_dialects():
+            raise ValueError(
+                f"GRAPH_BACKEND must be one of {', '.join(available_dialects())}; "
+                f"got {value!r}"
+            )
+        return normalised
 
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
     LITELLM_HEALTH_TIMEOUT: float = 5.0

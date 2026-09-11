@@ -109,11 +109,16 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `GRAPH_BACKEND` | `memgraph` | Graph engine: `memgraph` or `neo4j`. Neo4j needs the `neo4j` extra (`uv pip install 'code-graph-rag[neo4j]'`) and is configured with the `NEO4J_*` variables below; the bundled `cgr stack` only launches Memgraph, so a Neo4j server is yours to run. |
 | `MEMGRAPH_HOST` | `localhost` | Memgraph hostname |
 | `MEMGRAPH_PORT` | `7687` | Memgraph port |
 | `MEMGRAPH_HTTP_PORT` | `7444` | Memgraph HTTP port |
 | `LAB_PORT` | `3000` | Memgraph Lab port |
 | `MEMGRAPH_BATCH_SIZE` | `1000` | Batch size for Memgraph operations |
+| `NEO4J_URI` | `bolt://localhost:7687` | Neo4j connection URI. The scheme selects routing (`neo4j://` for a cluster, `bolt://` for a single instance) and TLS (`+s`/`+ssc`). |
+| `NEO4J_USERNAME` | _(unset)_ | Neo4j username; leave unset for an unauthenticated server |
+| `NEO4J_PASSWORD` | _(unset)_ | Neo4j password |
+| `NEO4J_DATABASE` | `neo4j` | Neo4j database name |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 | `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |

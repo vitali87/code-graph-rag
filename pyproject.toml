@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.887"
+version = "0.0.911"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -110,6 +110,12 @@ cpp = [
     "libclang>=18.1.1",
 ]
 
+# Neo4j is an optional backend (issue #1590): Memgraph remains the default,
+# so a default install must not pay for a driver it will never load.
+neo4j = [
+    "neo4j>=5.28.1",
+]
+
 treesitter-full = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1",
@@ -170,6 +176,8 @@ ignore = [
 "**/tests/**" = ["T201"]
 "benchmarks/**" = ["T201"]
 "evals/flows_corpus/**" = ["T201"]
+# The corpus builder is a CLI script; its output is the point.
+"fuzz/build_corpus.py" = ["T201"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -1,0 +1,116 @@
+name: Require CI At Head
+
+# A required status check that is ABSENT does not block a merge -- GitHub
+# cannot fail a check nobody reported. `All Checks Pass` is a job inside
+# ci.yml, so whenever ci.yml does not run at a PR's head that job simply
+# does not exist, the ruleset's only requirement is vacuously satisfied,
+# and the PR reports CLEAN with no tests having run (issue #1582).
+#
+# Measured on #1551: mergeStateStatus CLEAN, mergeable MERGEABLE, 7 checks
+# present, `All Checks Pass` among them: no. Zero unit tests had ever run
+# on that branch.
+#
+# This workflow exists to be PRESENT where ci.yml is not. It has no
+# `branches` filter, so it reports on every pull request, and it fails
+# unless a CI run exists at the exact head SHA. That is the base-agnostic
+# formulation issue #1582 settled on: it does not depend on why any given
+# run fired, only on whether one covers the commit being merged.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  require-ci-at-head:
+    name: CI Ran At Head
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assert a CI run exists at this PR's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # A missing head SHA must NOT be a pass. `workflow_dispatch`
+          # carries no pull_request payload, so an earlier `exit 0` here
+          # let anyone manufacture a green `CI Ran At Head` by dispatching
+          # this workflow by hand -- a gate that reports success without
+          # asserting anything, which is the exact defect it exists to
+          # prevent.
+          if [ -z "${HEAD_SHA:-}" ]; then
+            echo "::error::No pull_request head SHA in the event payload."
+            echo "This check asserts a property of a pull request head and"
+            echo "cannot do so outside a pull_request event. Dispatching it"
+            echo "manually proves nothing and must not report success."
+            exit 1
+          fi
+
+          echo "Head SHA: $HEAD_SHA"
+
+          # Query by head_sha rather than by branch. After a stack rebase
+          # several branches share a head, so `gh run list --branch` returns
+          # runs belonging to OTHER PRs (issue #1582 records this trap).
+          # --paginate: without it only the first 100 runs come back, and a
+          # matching run on a later page reads as "no run at this head".
+          # NOT --slurp: gh rejects it alongside --jq. With --jq, gh applies
+          # the filter per page and concatenates, so `.workflow_runs[]`
+          # yields every run across all pages.
+          runs=$(gh api --paginate \
+            "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq '.workflow_runs[]
+                  | {name, path, conclusion, status, event,
+                     prs: [.pull_requests[].number]}' \
+            | jq -s '.')
+
+          echo "Runs at this head:"
+          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)] PRs=\(.prs|tostring): \(.status)/\(.conclusion // "pending") (\(.event))"' || true
+
+          # Match the workflow's PATH, not its display `name`. A display
+          # name is just a string any workflow may declare, so a second
+          # file named `CI` would satisfy a name-only check without
+          # running a single test. The path identifies the file itself.
+          #
+          # `| length == 0` is also indistinguishable from "nothing
+          # matched the filter", so every run found is printed above
+          # whether the assertion passes or fails.
+          # A head SHA identifies a COMMIT, not a pull request. After a
+          # stack rebase several branches share a head (issue #1582 records
+          # this), so a run at this SHA may belong to a different PR
+          # entirely. Require the run to name THIS pull request, which is
+          # what scripts/check_pr_gated.py already enforces.
+          ci_count=$(echo "$runs" | jq --argjson pr "$PR_NUMBER" \
+            '[.[] | select(.path == ".github/workflows/ci.yml")
+                  | select(.prs | index($pr))] | length')
+
+          if [ "$ci_count" -eq 0 ]; then
+            echo
+            echo "::error::No 'CI' workflow run exists at head $HEAD_SHA."
+            echo "This PR has not been verified by the test suite at the commit"
+            echo "being merged. A superseded run drops off the PR, leaving"
+            echo "whatever happened to run at the current head -- often CodeQL"
+            echo "alone -- which reads as a clean result (issue #1582)."
+            echo
+            echo "Trigger one with:"
+            echo "  gh workflow run ci.yml --ref <branch>"
+            echo
+            echo "Note: pushing an empty commit is NOT sufficient on a branch"
+            echo "whose base is not main -- it creates a new head, CodeQL"
+            echo "re-runs green, and the page looks freshly validated while no"
+            echo "test has run."
+            exit 1
+          fi
+
+          echo
+          echo "Found $ci_count 'CI' run(s) at this head."
+
+          # Existence is the assertion; whether they PASSED is `All Checks
+          # Pass`'s job. Reporting the conclusion here would duplicate that
+          # gate and disagree with it while a run is still in flight.
+          exit 0
