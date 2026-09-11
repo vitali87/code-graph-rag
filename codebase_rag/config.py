@@ -178,6 +178,7 @@ class AppConfig(BaseSettings):
     NEO4J_USERNAME: str | None = None
     NEO4J_PASSWORD: str | None = None
     NEO4J_DATABASE: str = "neo4j"
+    GRAPH_BACKEND: str = "memgraph"
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
     AGENT_RETRIES: int = 3
