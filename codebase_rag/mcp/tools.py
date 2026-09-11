@@ -1670,6 +1670,14 @@ class MCPToolsRegistry:
             # Raised before any graph change (validation, an abort while the
             # paths are split): the graph is whole and the updater reusable.
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            # ...so the marker this call took must come off, or a graph that
+            # was never touched goes on refusing every later scoped reingest
+            # (raised by CodeRabbit on #1845). `_abandon_before_writing` is
+            # the same helper `_reingest_sync` uses for its own no-write
+            # aborts: it lifts the marker and leaves the attribution to
+            # whichever failure owns it.
+            if marked_here is not None:
+                self._abandon_before_writing(marked_here)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         except Exception as e:
             # The re-ingest may have deleted a subtree it never rebuilt: the

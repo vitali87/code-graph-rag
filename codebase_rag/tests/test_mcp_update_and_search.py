@@ -1186,6 +1186,53 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "the retained-branch delta left its own marker behind"
         )
 
+    async def test_a_delta_aborted_before_writing_lifts_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A no-write abort must not leave the project blocked (#1845 review).
+
+        `reingest` can raise `ReingestAborted` during its READ-ONLY prologue.
+        The graph is whole then -- the handler's own comment says so -- but
+        the marker this call took stayed, so every later scoped reingest
+        refused a graph that was never touched, in this process and in any
+        fresh one.
+
+        Pairs with `test_a_failed_structural_delta_keeps_its_marker`: that one
+        requires the marker to SURVIVE a failure that may have mutated. The
+        distinction is exactly whether the graph was touched, which is what
+        `_abandon_before_writing` exists to express.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=ReingestAborted("aborted in the prologue"),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" in result, f"fixture guard: expected the abort; {result!r}"
+        assert ingestor._marker_store.get(project) is not True, (
+            "a delta aborted BEFORE any graph change left its marker behind; "
+            "the project refuses every later reingest though nothing was written"
+        )
+
+        # End to end: a fresh process must not inherit the refusal.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            after = await fresh.reingest(["a.py"])
+        assert "failed part way" not in after.get("error", ""), (
+            f"a fresh registry inherited a marker from a no-write abort; {after}"
+        )
+
     async def test_a_failed_structural_delta_keeps_its_marker(
         self, temp_project_root: Path
     ) -> None:
