@@ -19,6 +19,8 @@ from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services import QueryProtocol
+from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools import tool_descriptions as td
@@ -828,6 +830,16 @@ class MCPToolsRegistry:
             return DeleteProjectErrorResult(success=False, error=refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
         self.ingestor.delete_project(project_name)
+        # A Gloss is unreachable from the project-delete traversal by design:
+        # that is what lets it survive an index's delete-then-rebuild, which
+        # deletes and recreates the very symbols it annotates. So the orphan
+        # sweep belongs HERE, on the deliberate delete, and not inside
+        # `delete_project` itself -- `_index_repository_sync` calls that too,
+        # and a sweep there would destroy every gloss on each reindex
+        # (issue #1828; caught in review of #1856). Exactly the rule the
+        # incomplete-run marker follows two lines below.
+        if isinstance(self.ingestor, QueryProtocol):
+            prune_orphaned_glosses(self.ingestor)
         # Invariant (b). The marker sits on its own node so `delete_project`
         # cannot reach it -- which is what lets it survive an index's
         # delete-then-rebuild -- so a deliberate delete must remove it. The

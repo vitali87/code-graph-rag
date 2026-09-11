@@ -97,7 +97,7 @@ def test_prune_issues_exactly_one_write() -> None:
     assert store.writes == [CYPHER_DELETE_ORPHANED_GLOSSES]
 
 
-def test_delete_project_runs_the_sweep() -> None:
+def test_the_deliberate_delete_runs_the_sweep() -> None:
     """Wiring, not just existence.
 
     A correct sweep that nothing calls fixes nothing -- the same shape as a
@@ -105,9 +105,53 @@ def test_delete_project_runs_the_sweep() -> None:
     """
     import inspect
 
+    from codebase_rag.mcp import tools
+
+    source = inspect.getsource(tools.MCPToolsRegistry._delete_project_sync)
+    assert "prune_orphaned_glosses" in source, (
+        "the deliberate project delete does not run the gloss sweep, so the "
+        "orphan survives the deletion it should die with"
+    )
+
+
+def test_the_shared_ingestor_delete_does_NOT_run_the_sweep() -> None:
+    """The half that matters more, and the one my first attempt got wrong.
+
+    `MemgraphIngestor.delete_project` is called by BOTH the deliberate delete
+    and `_index_repository_sync`, which deletes and rebuilds. A sweep there
+    runs on every reindex, and since the rebuild recreates the symbols AFTER
+    the delete, every gloss is an orphan at that moment -- so the sweep would
+    destroy all of them, permanently, on a routine reindex.
+
+    That is the exact requirement #1828 names: a gloss must survive
+    index/update/reingest because its truth lives only in the graph. Caught
+    in review of #1856, where I had wired it into the shared method.
+    """
+    import inspect
+
     from codebase_rag.services import graph_service
 
     source = inspect.getsource(graph_service.MemgraphIngestor.delete_project)
-    assert "prune_orphaned_glosses" in source, (
-        "delete_project does not run the gloss sweep, so the orphan survives"
+    assert "prune_orphaned_glosses" not in source, (
+        "the gloss sweep is wired into the SHARED ingestor delete, which "
+        "index_repository also calls -- every reindex would permanently "
+        "destroy every saved gloss"
+    )
+
+
+def test_the_index_path_does_not_sweep_glosses() -> None:
+    """Stated against the index path directly, not inferred from the above.
+
+    The previous test pins where the sweep is NOT; this pins that the
+    rebuild path never reaches it by some other route.
+    """
+    import inspect
+
+    from codebase_rag.mcp import tools
+
+    source = inspect.getsource(tools.MCPToolsRegistry._index_repository_sync)
+    assert "prune_orphaned_glosses" not in source, (
+        "the reindex path sweeps glosses; the rebuild recreates symbols "
+        "after the delete, so every gloss is momentarily an orphan and "
+        "would be destroyed"
     )
