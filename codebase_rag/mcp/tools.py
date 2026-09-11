@@ -1277,6 +1277,29 @@ class MCPToolsRegistry:
             return None
         return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
+    def _marker_rows(self, project_name: str) -> list[dict] | None:
+        """Outstanding marker rows for the project, or None if unreadable.
+
+        Split out so the post-recovery re-check reads the same way the first
+        read does; `None` means the store could not answer, which every
+        caller must treat as "refuse" rather than "nothing outstanding".
+        """
+        try:
+            return list(
+                self.ingestor.fetch_all(
+                    cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
+                or []
+            )
+        except Exception as error:  # noqa: BLE001 -- same contract as the caller
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                    project=project_name, error=error
+                )
+            )
+            return None
+
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
 
@@ -1324,6 +1347,17 @@ class MCPToolsRegistry:
                 # Could not clear it. The store refused a write, so the run
                 # that would follow could not mark itself either; refuse now
                 # and let the next attempt retry.
+                return True
+            # The recovery is CONDITIONAL (it deletes only markers still
+            # read-only), and a write reports no affected-row count, so
+            # "the write succeeded" does not mean "the marker is gone". A run
+            # that promoted its own marker between this method's read and
+            # that delete leaves a row the delete skipped, and returning
+            # False here would let a scoped reingest proceed over a graph
+            # being written (raised by CodeRabbit on #1850). Re-read and
+            # refuse if anything is still outstanding.
+            remaining = self._marker_rows(project_name)
+            if remaining is None or remaining:
                 return True
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)

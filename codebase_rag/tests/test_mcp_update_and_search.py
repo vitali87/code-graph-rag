@@ -1253,6 +1253,54 @@ class TestIncompleteMarkerSurvivesTheProcess:
             "a scoped reingest would trust a graph being written"
         )
 
+    async def test_recovery_rechecks_before_reporting_the_project_clear(
+        self, temp_project_root: Path
+    ) -> None:
+        """A conditional delete plus a write with no row count (#1850 review).
+
+        Recovery deletes only markers still read-only, and `execute_write`
+        reports no affected-row count, so "the write succeeded" does not mean
+        "the marker is gone". A run that promotes its own marker between this
+        method's READ and that DELETE leaves a row the delete skipped, and
+        reporting the project clear then lets a scoped reingest proceed over a
+        graph being written.
+
+        The interleaving is forced rather than hoped for: the concurrent mark
+        is issued from inside the recovery call, which is the only way to land
+        it in that window deterministically.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # Only a read-only marker exists when the read happens.
+        assert stranding._require_marker(project, writing=False) is None
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+
+        real = fresh._recover_stranded_markers
+
+        def _racing(name: str) -> bool:
+            # The concurrent writer promotes its marker inside the window.
+            writer._require_marker(project, writing=True)
+            return real(name)
+
+        fresh._recover_stranded_markers = _racing  # type: ignore[method-assign]
+        verdict = fresh._persisted_incomplete(project)
+        fresh._recover_stranded_markers = real  # type: ignore[method-assign]
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the writing marker must survive the conditional "
+            "delete, or the race under test did not occur"
+        )
+        assert verdict is True, (
+            "the project was reported clear while a writing marker remained; "
+            "a scoped reingest would hydrate from a graph being written"
+        )
+
     async def test_recovery_leaves_a_marker_that_began_writing(
         self, temp_project_root: Path
     ) -> None:
