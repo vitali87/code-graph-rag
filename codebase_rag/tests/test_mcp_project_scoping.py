@@ -2421,3 +2421,159 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
 
         ingestor.fetch_all.assert_called_once()
         assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
+
+
+class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
+    """A proven-confined aggregated alias need not also project its name.
+
+    `RETURN f.qualified_name, count(c)` -- "how many callers does each of my
+    functions have" -- was refused even when the query restricted BOTH `c`
+    and `f` to the requested project. `_restricts_to_project` returned True
+    for `{'C'}`; `_every_projected_entity_is_attributable` then refused
+    anyway, because `c` contributes no property read of its own.
+
+    The two checks answer different questions. Attributability asks "does
+    this row say who it is about", and guards the row filter. The leak an
+    aggregate poses is a MAGNITUDE spanning projects the caller never asked
+    for -- and restriction has already established that magnitude is
+    bounded. Refusing a second time costs a common shape and prevents no
+    leak (issue #1843).
+
+    The exemption covers ONLY aliases `_restricts_to_project` vouched for.
+    What actually enforces that is the caller: `aggregated_only` is the set
+    the restriction gate above has just passed, and it is the same set
+    handed to the exemption, so an unvouched alias cannot reach here at all.
+    The `restricted` parameter is therefore a narrowing the caller cannot
+    currently violate -- defence in depth against a future caller passing a
+    wider set, not the thing keeping today's unrestricted queries out.
+
+    Said plainly because mutation testing shows it: widening the exemption
+    to every aggregated alias leaves the whole file green, since each query
+    it would wrongly admit is already refused upstream. The cases below that
+    DO redden are the ones this change is answerable for -- the property
+    read, and the exemption being dropped entirely.
+    """
+
+    def test_a_grouped_count_over_a_restricted_alias_is_accepted(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers "
+            "ORDER BY callers DESC LIMIT 10"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_an_unrestricted_aggregated_alias_is_still_refused(self) -> None:
+        """The alias must be restricted, not merely aggregated.
+
+        Only `f` is bounded here, so the count ranges over every project's
+        callers while the row wears an in-project label.
+
+        This one is guarded by `_restricts_to_project` UPSTREAM of the
+        exemption, not by the exemption itself: widening the exemption to
+        every aggregated alias leaves it green, because the query is already
+        refused before attributability runs. Kept as a boundary test of the
+        accepted shape, not as evidence for the `restricted` filter -- see
+        the class docstring for what actually covers that.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_foreign_project_restriction_is_still_refused(self) -> None:
+        """Restricted to *a* project is not restricted to *yours*."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{BETA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_an_alias_that_also_reads_a_property_is_still_refused(self) -> None:
+        """The exemption is for aliases exposing NO name of their own.
+
+        `c.name` puts an entity's name in the row, so that entity must carry
+        its own qualified name however well restricted it is -- otherwise
+        the row filter judges it on `f`'s label.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, c.name AS caller, count(c) AS n"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_wildcard_aggregate_is_still_refused(self) -> None:
+        """`count(*)` binds no alias, so nothing can be shown restricted."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(*) AS n"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_relationship_alias_is_still_refused(self) -> None:
+        """A relationship has no qualified name, so it cannot be vouched for.
+
+        Its confinement would have to be inferred from its endpoints, which
+        this module does not do. Recorded here so the gap is deliberate
+        rather than accidental (issue #1843).
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[r:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(r) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_regex_restriction_does_not_vouch_for_an_alias(self) -> None:
+        """A pattern can start with the project and still match everything."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name =~ '{ALPHA}.*|.*' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_collect_over_a_restricted_alias_is_still_refused(self) -> None:
+        """`collect` returns the names themselves, not only a magnitude."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, collect(c.name) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
