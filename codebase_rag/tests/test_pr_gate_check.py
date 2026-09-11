@@ -31,17 +31,18 @@ import pytest
 from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
+    BLOCKED_VALIDATION_MARKERS,
     context_name,
     is_concluded,
     is_real_review,
     missing_aggregated_jobs,
     required_contexts_present,
+    review_execution_caveats,
     unit_test_contexts,
     unresolved_in_page,
+    validation_was_blocked,
 )
 
-# Captured from PR #1611's statusCheckRollup. The CodeRabbit entry is a
-# StatusContext with NO `name` key; every other entry is a CheckRun.
 REAL_STATUS_CONTEXT = {
     "__typename": "StatusContext",
     "context": "CodeRabbit",
@@ -49,6 +50,7 @@ REAL_STATUS_CONTEXT = {
     "state": "SUCCESS",
     "targetUrl": "",
 }
+
 
 REAL_CHECK_RUN = {
     "__typename": "CheckRun",
@@ -61,7 +63,7 @@ REAL_CHECK_RUN = {
     "workflowName": "OSV-Scanner",
 }
 
-# A queued CheckRun: conclusion is the empty string, not null.
+
 REAL_QUEUED_CHECK_RUN = {
     "__typename": "CheckRun",
     "completedAt": "",
@@ -72,15 +74,14 @@ REAL_QUEUED_CHECK_RUN = {
     "workflowName": "CI",
 }
 
-# Captured from PR #1576, live at the time of writing. A THIRD skip shape,
-# beyond the two named in the issue: neither "auto reviews are disabled"
-# nor "already reviewed".
+
 REAL_RATE_LIMIT_NOTICE = (
     "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
     "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
     "\n> [!WARNING]\n> ## Review limit reached\n> \n"
     "> **Next included review available in 31 minutes.**\n"
 )
+
 
 REAL_AUTO_REVIEW_DISABLED_NOTICE = (
     "> [!IMPORTANT]\n> ## Review skipped\n>\n"
@@ -91,9 +92,7 @@ REAL_AUTO_REVIEW_DISABLED_NOTICE = (
     "> Configuration used: **defaults**\n"
 )
 
-# Captured from PR #1596: a completed review that found nothing. This is a
-# REAL review and must count, which is what makes "empty means skipped"
-# wrong.
+
 REAL_EMPTY_BUT_COMPLETED_REVIEW = (
     "**Actionable comments posted: 0**\n\n"
     "<details>\n<summary>♻️ Duplicate comments (1)</summary>\n"
@@ -767,3 +766,327 @@ class TestTheTrueNegativeSurvivesTheFix:
         )
 
         assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+
+REAL_REVIEW_WITH_BLOCKED_VALIDATION = (
+    "## Confidence score: 3/5\n\n"
+    "Last reviewed commit: 7d3c49e5\n\n"
+    "- A standalone rollback harness was attempted, but production imports "
+    "could not start because prompt_toolkit was absent in the incomplete "
+    "environment.\n"
+    "- The test suite remains blocked in this environment and historic paths "
+    "could not be behaviorally disproved; no precise present bug can be "
+    "claimed without a runnable import/test environment.\n"
+)
+
+
+REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR = (
+    "## Confidence score: 4/5\n\n"
+    "Both commands failed during import with ModuleNotFoundError: No module "
+    "named 'loguru' before _updater_for_reingest() could run; dependency "
+    "installation is blocked because building pymgclient requires CMake.\n"
+)
+
+
+class TestValidationWasBlocked:
+    """A review that could not RUN reads identically to one that verified.
+
+    #1824: the blocked-validation note lands in a collapsed log section
+    that a merge gate never opens and a human skims past. Detecting it is
+    the difference between "the bot checked this" and "the bot reasoned
+    about this and said so".
+    """
+
+    def test_the_real_blocked_review_is_detected(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+
+    def test_the_import_error_wording_is_deliberately_NOT_detected(self) -> None:
+        """A KNOWN MISS, accepted on purpose.
+
+        This artifact's phrasings ("failed during import with
+        ModuleNotFoundError", "dependency installation is blocked") are
+        exactly as plausible in a finding about the reviewed code: a
+        plugin that fails to import, an installer that blocks. Detecting
+        it would flag executed reviews as unexecuted, which discredits
+        work that was done -- a worse error than staying silent.
+
+        The blocklist fails permissive by design, so a miss degrades to
+        today's behaviour. If this artifact needs catching, the fix is a
+        reviewer-validation SECTION to parse, not a broader substring.
+        """
+        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is False
+
+    def test_a_review_that_ran_is_not_flagged(self) -> None:
+        """The negative case. Without this the detector could return True
+        for everything and every test above would still pass."""
+        assert validation_was_blocked(REAL_EMPTY_BUT_COMPLETED_REVIEW) is False
+
+    def test_an_empty_body_is_not_flagged(self) -> None:
+        assert validation_was_blocked("") is False
+        assert validation_was_blocked("   \n ") is False
+
+    def test_a_blocked_review_is_still_a_real_review(self) -> None:
+        """Blocked validation must NOT disqualify the artifact.
+
+        The finding in #1547's blocked review turned out to be correct and
+        was fixed. Unverified is not wrong, so this is a caveat on the
+        evidence, never a reason to refuse the PR -- and non-execution is
+        legitimate anyway when a PR has no Python surface to exercise.
+        """
+        assert (
+            is_real_review(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps") is True
+        )
+
+
+class TestReviewExecutionCaveats:
+    """The WIRING, not the detector.
+
+    Without these, deleting the caveat call from `check` leaves every
+    other test in this file green -- coverage that cannot fail for the
+    reason it exists (found by mutating the call site, not by reading).
+    """
+
+    def test_a_blocked_review_produces_a_caveat(self) -> None:
+        caveats = review_execution_caveats(
+            [(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps")]
+        )
+
+        assert len(caveats) == 1
+        assert "could not execute" in caveats[0]
+
+    def test_a_review_that_ran_produces_none(self) -> None:
+        assert (
+            review_execution_caveats(
+                [(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai")]
+            )
+            == []
+        )
+
+    def test_no_reviews_produces_none(self) -> None:
+        assert review_execution_caveats([]) == []
+
+    def test_all_reviewers_blocked_says_so(self) -> None:
+        """Distinct wording from the partial case: if EVERY review was
+        blocked there is no executed second opinion to fall back on."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (
+                    "Confidence score: 3/5. The findings could not be "
+                    "behaviorally disproved in this environment.",
+                    "coderabbitai",
+                ),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("every review artifact present")
+
+    def test_one_blocked_among_several_is_the_partial_case(self) -> None:
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+
+class TestCheckSurfacesTheCaveat:
+    """`check` itself must consult the caveat, not merely be able to.
+
+    The class above tests the helper in isolation and stays green when
+    the call site is deleted -- the exact "two guards, remove either and
+    it is still green" shape. This one stubs the only I/O seam
+    (`_gh_stdout_or_empty`) and asserts on `check`'s own return value, so
+    removing the call from `check` reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, review_body: str) -> None:
+        view = {
+            "headRefOid": "d" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [{"body": review_body, "author": {"login": "greptile-apps"}}],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_reports_the_caveat_for_a_blocked_review(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert any("could not execute" in c for c in caveats)
+
+    def test_check_reports_no_caveat_for_a_review_that_ran(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_EMPTY_BUT_COMPLETED_REVIEW)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert caveats == []
+
+    def test_a_blocked_review_is_never_a_blocking_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The core contract: unverified is not wrong, so it must not
+        appear among the reasons that refuse a PR."""
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert not any("could not execute" in r for r in reasons)
+
+
+REAL_REVIEW_DESCRIBING_A_CRASH = (
+    "## Confidence score: 4/5\n\n"
+    "Last reviewed commit: abc1234\n\n"
+    "- The server could not start when the config key is absent; it raises "
+    "KeyError before binding.\n"
+    "- The worker could not run the queued task, and users get a raw "
+    "ModuleNotFoundError traceback.\n"
+    "- The plugin failed during import when the entry point is misspelled.\n"
+)
+
+
+class TestMarkersDoNotMatchBugDescriptions:
+    """The false-positive direction, which nothing else covers.
+
+    Bare substrings like "could not start" match a finding DESCRIBING a
+    crash just as readily as a reviewer describing its own broken
+    environment. Flagging an executed review as unexecuted is worse than
+    staying silent, so every marker must name the reviewer's environment.
+    """
+
+    def test_a_review_describing_a_crash_is_not_flagged(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_DESCRIBING_A_CRASH) is False
+
+    def test_the_motivating_artifact_is_still_caught(self) -> None:
+        """Narrowing must not cost detection on the artifact #1824 was
+        filed against, whose note names the environment explicitly."""
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+
+    def test_no_marker_subsumes_another(self) -> None:
+        """A marker that is a superstring of another can never be the one
+        that matches, so it is dead configuration that reads as coverage."""
+        dead = [
+            longer
+            for longer in BLOCKED_VALIDATION_MARKERS
+            for shorter in BLOCKED_VALIDATION_MARKERS
+            if longer != shorter and shorter in longer
+        ]
+
+        assert dead == []
+
+    def test_one_blocked_artifact_among_an_authors_own_is_partial(self) -> None:
+        """Greptile re-scores in place and posts repeatedly, so the same
+        author routinely has both a blocked and an executed artifact.
+        Counting distinct AUTHORS called that "every review blocked"."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_REVIEW_DESCRIBING_A_CRASH, "greptile-apps"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+    def test_every_marker_is_load_bearing(self) -> None:
+        """Each marker must be the SOLE reason some real phrasing is
+        caught. Without this, any one could be deleted with the suite
+        green -- the fixtures match several markers each, so they cannot
+        distinguish a marker that works from one nobody needs.
+        """
+        sole_evidence = {
+            "blocked in this environment": (
+                "The test suite remains blocked in this environment."
+            ),
+            "could not be behaviorally disproved": (
+                "Historic paths could not be behaviorally disproved."
+            ),
+            "without a runnable import/test environment": (
+                "No bug can be claimed without a runnable import/test environment."
+            ),
+        }
+
+        assert set(sole_evidence) == set(BLOCKED_VALIDATION_MARKERS)
+        for marker, phrasing in sole_evidence.items():
+            assert validation_was_blocked(phrasing) is True, marker
+            others = tuple(m for m in BLOCKED_VALIDATION_MARKERS if m != marker)
+            assert not any(m in phrasing.lower() for m in others), marker
+
+    def test_an_executed_review_describing_these_defects_is_not_flagged(
+        self,
+    ) -> None:
+        """The false positives that forced the third narrowing.
+
+        Each of these is an EXECUTED review reporting a defect in the
+        reviewed application, using wording an earlier marker matched.
+        """
+        executed_findings = (
+            "I ran the full suite. The plugin failed during import with "
+            "ModuleNotFoundError when the entry point is misspelled.",
+            "Ran the installer end to end. When the lockfile is stale, "
+            "dependency installation is blocked and the CLI exits 0 anyway.",
+            "Executed the test suite. When the schema key is absent, "
+            "validation blocked the request but the error message is empty.",
+        )
+
+        for finding in executed_findings:
+            assert validation_was_blocked(finding) is False, finding
+
+
+class TestEveryCheckReturnPathIsATuple:
+    """`check` returns `tuple[list[str], list[str]]`, and one path did not.
+
+    Found by CodeRabbit on the PR that widened the signature: the
+    unreadable-PR early return still handed back a bare list, so `main`
+    raised `ValueError: not enough values to unpack` at exactly the
+    moment the tool exists to report -- `gh` being unusable. The
+    annotation does not catch it because nothing type-checks this script
+    in CI, and no test reached that branch.
+    """
+
+    @staticmethod
+    def _gh_is_broken(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every `gh` call returns empty, as it does when auth fails."""
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *args: "")
+
+    def test_an_unreadable_pr_returns_the_two_lists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._gh_is_broken(monkeypatch)
+
+        result = check_pr_gated.check("9999")
+
+        assert isinstance(result, tuple)
+        reasons, caveats = result
+        assert any("could not read PR #9999" in r for r in reasons)
+        assert caveats == []
+
+    def test_main_reports_the_failure_instead_of_crashing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The user-visible symptom: a traceback rather than a verdict.
+
+        Asserting on `main` and not just on `check` is the point -- the
+        bare list only becomes a crash at the unpacking call site, so a
+        test that stops at `check`'s return value cannot see it.
+        """
+        self._gh_is_broken(monkeypatch)
+
+        assert check_pr_gated.main(["check_pr_gated.py", "9999"]) == 1
