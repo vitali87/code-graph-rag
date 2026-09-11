@@ -1137,6 +1137,55 @@ class TestIncompleteMarkerSurvivesTheProcess:
             f"a fresh registry refused after a SUCCESSFUL delta; got {after}"
         )
 
+    async def test_a_delta_through_a_retained_updater_is_marked_too(
+        self, temp_project_root: Path
+    ) -> None:
+        """BOTH delta branches mark, not only the hydrating one (#1845 review).
+
+        The retained-updater branch reaches the same mutating `reingest`, so
+        leaving it unmarked meant a crash mid-delta left a partially rebuilt
+        graph that a fresh process could not tell from a complete one. Same
+        fifth-path gap `_reingest_sync` closed in the #1705 review, round 6.
+
+        Observed through the marker store DURING the delta -- after it, a
+        successful run has cleared its own marker, so the end state looks
+        identical whether or not one was ever taken.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        retained = MagicMock()
+        retained.project_name = project
+        retained.reingest.return_value = MagicMock(
+            reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+        )
+        registry._live_updater = retained
+        assert registry._live_updater is not None, "fixture guard: retained branch"
+
+        marked_during: list[bool] = []
+
+        def _observe(*_args: object, **_kwargs: object) -> str:
+            # Called inside `sd.observe`, i.e. while the delta is running.
+            marked_during.append(ingestor._marker_store.get(project) is True)
+            return ""
+
+        with patch("codebase_rag.mcp.tools.sd.observe", side_effect=_observe):
+            result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" not in result, (
+            f"fixture guard: the delta must succeed; got {result!r}"
+        )
+        assert marked_during == [True], (
+            "a delta through the RETAINED updater mutated the graph with no "
+            "durable marker; a crash mid-delta would leave a partial graph "
+            "indistinguishable from a complete one"
+        )
+        assert ingestor._marker_store.get(project) is not True, (
+            "the retained-branch delta left its own marker behind"
+        )
+
     async def test_a_failed_structural_delta_keeps_its_marker(
         self, temp_project_root: Path
     ) -> None:

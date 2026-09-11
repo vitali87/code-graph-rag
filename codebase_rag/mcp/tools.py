@@ -1637,10 +1637,25 @@ class MCPToolsRegistry:
             # would durably wedge the project (caught in review of #1845).
             # `_reingest_sync` pairs the same mark with a clear via
             # `marked_here`; this tracks it the same way.
+            #
+            # BOTH branches mark. The retained-updater branch reaches the same
+            # mutating `reingest` below, so leaving it unmarked meant a crash
+            # mid-delta left a partially rebuilt graph that a fresh process
+            # could not tell from a complete one (raised in review of #1845).
+            # That is the fifth-path gap `_reingest_sync` closed in the #1705
+            # review, round 6, arriving on this path too. `writing=False`
+            # because the updater's prologue is read-only; the phase advances
+            # at its first delete.
+            project_name = derive_project_name(root)
             if self._live_updater is not None:
                 updater = self._live_updater
+                if (
+                    refusal := self._require_marker(project_name, writing=False)
+                ) is not None:
+                    raise RuntimeError(refusal)
+                marked_here = project_name
             else:
-                marked_here = derive_project_name(root)
+                marked_here = project_name
                 updater = self._hydrate_reingest_updater(marked_here)
             deleted = [p for p in relative if not (root / p).exists()]
             changed = [p for p in relative if p not in deleted]
