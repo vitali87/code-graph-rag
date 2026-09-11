@@ -61,6 +61,27 @@ def test_it_offers_a_route_that_actually_rebuilds() -> None:
     assert "NEW" in _WARNING or "new project" in _WARNING
 
 
+def test_the_new_project_route_is_actionable() -> None:
+    """A route the reader cannot follow is not a route (#1853 review).
+
+    Naming "index it as a new project" without the flag that does it leaves
+    the reader to guess, and the obvious guess -- re-running the same command
+    -- reproduces the problem. The command and the flag are asserted against
+    the CLI so the advice cannot drift from what `start` actually accepts.
+    """
+    assert "--project-name" in _WARNING
+    assert "cgr start --repo-path" in _WARNING
+
+    # The flag has to exist on the command the warning tells them to run.
+    import inspect
+
+    from codebase_rag import cli
+
+    assert "--project-name" in inspect.getsource(cli.start), (
+        "the warning names --project-name but `cgr start` does not accept it"
+    )
+
+
 def test_it_still_warns_that_clean_deletes_every_project() -> None:
     """The pre-existing caveat must survive the rewrite.
 

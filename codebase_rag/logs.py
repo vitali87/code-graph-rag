@@ -993,7 +993,10 @@ PARSER_FINGERPRINT_MISMATCH = (
     "result looks exactly like the remedy working. When names or node kinds "
     "changed, or when superseded EDGES must go rather than new ones merely "
     "being added, the only reliable rebuild is to index the source as a NEW "
-    "project, or to run 'cgr start --clean --update-graph'. Note '--clean' "
+    "project -- 'cgr start --repo-path <path> --project-name <a-fresh-name> "
+    "--update-graph', which deletes nothing and leaves the old project in "
+    "place to compare against -- or to run 'cgr start --clean "
+    "--update-graph'. Note '--clean' "
     "deletes EVERY project in a shared database, not just this one; on its "
     "own it deletes the graph without rebuilding it."
 )
