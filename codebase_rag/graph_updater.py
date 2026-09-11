@@ -5029,6 +5029,15 @@ class GraphUpdater:
         # (raised in review of #1852).
         self._reingest_rebuild_findings(reparse)
         self._link_endpoint_resources()
+        # Unconditionally, because neither post-pass guarantees one:
+        # `_reingest_rebuild_findings` only QUEUES its nodes and edges, and
+        # `_link_endpoint_resources` returns early when RESOLVES_TO is
+        # disabled or the ingestor cannot query, so on those paths nothing
+        # flushes what the rebuild queued. The hash cache below records these
+        # files as current, and a later run would take the in-sync path and
+        # skip the post-passes entirely -- so an unflushed queue here is lost
+        # for good rather than retried (raised by CodeRabbit on #1852).
+        self.ingestor.flush_all()
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(

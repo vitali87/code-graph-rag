@@ -22,8 +22,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from codebase_rag import constants as cs
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
@@ -174,6 +172,7 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     real_findings = type(updater)._reingest_rebuild_findings
     real_link = type(updater)._link_endpoint_resources
     real_hashes = type(updater)._reingest_update_hashes
+    real_flush = updater.ingestor.flush_all
 
     def _findings(self: object, *a: object, **k: object) -> object:
         order.append("findings")
@@ -186,6 +185,12 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     def _hashes(self: object, *a: object, **k: object) -> object:
         order.append("hashes")
         return real_hashes(self, *a, **k)
+
+    def _flush(*a: object, **k: object) -> object:
+        order.append("flush")
+        return real_flush(*a, **k)
+
+    updater.ingestor.flush_all = _flush  # type: ignore[method-assign]
 
     target = tmp_path / "risky.py"
     target.write_text(_RISKY.replace("eval(data)", "eval(data)  # edited"), "utf-8")
@@ -204,17 +209,59 @@ def test_the_rebuild_runs_before_the_hash_commit(tmp_path: Path) -> None:
     assert order.index("link") < order.index("hashes"), (
         f"the endpoint link pass ran AFTER the hash commit: {order}"
     )
+    # And the queued writes must actually reach the store before the cache
+    # records these files as current. `_reingest_rebuild_findings` only
+    # QUEUES, and `_link_endpoint_resources` returns early when RESOLVES_TO
+    # is disabled, so neither post-pass guarantees a flush of its own.
+    # A flush must fall BETWEEN the rebuild and the hash commit. `.index`
+    # alone is not enough: an earlier flush already runs inside the re-ingest
+    # (before the rebuild), so "a flush happened before the hash commit" is
+    # true even with the new one removed -- the first version of this
+    # assertion passed against exactly that mutation.
+    first = order.index("findings")
+    last = order.index("hashes")
+    assert "flush" in order[first:last], (
+        f"the writes the rebuild QUEUED were never flushed before the hash "
+        f"commit, so an interruption loses them for good: {order}"
+    )
 
 
-@pytest.mark.parametrize("rel", ["risky.py", "other.py"])
-def test_a_full_run_still_analyses_everything(tmp_path: Path, rel: str) -> None:
+def test_a_full_run_still_analyses_everything(tmp_path: Path) -> None:
     """The control: scoping the re-ingest must not scope the full run.
 
     A fix that narrowed both would satisfy the tests above while quietly
     stopping `update_repository` from analysing the repository.
+
+    Asserts what the analyser RECEIVED, not what the module map contains
+    (raised by CodeRabbit on #1852). The earlier version checked the map was
+    populated, which is true even if analysis is skipped entirely or handed a
+    single module -- it could not see the regression it exists to catch.
     """
-    updater, _ = _build(tmp_path, {"risky.py": _RISKY, "other.py": _PLAIN})
-    module_map = updater.factory.definition_processor.module_qn_to_file_path
-    assert any(path == tmp_path / rel for path in module_map.values()), (
-        f"{rel} is missing from the full run's module map"
+    for rel, content in {"risky.py": _RISKY, "other.py": _PLAIN}.items():
+        (tmp_path / rel).write_text(content, encoding="utf-8")
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture([cs.CaptureGroup.FINDINGS.value]),
     )
+
+    received: list[set[Path]] = []
+    real = type(updater.finding_analyzer).analyze
+
+    def _spy(self: object, module_map: dict[str, Path]) -> None:
+        received.append(set(module_map.values()))
+        return real(self, module_map)
+
+    with patch.object(type(updater.finding_analyzer), "analyze", _spy):
+        updater.run()
+
+    assert received, "the full run never analysed anything"
+    analysed = set().union(*received)
+    for rel in ("risky.py", "other.py"):
+        assert tmp_path / rel in analysed, (
+            f"the full run did not hand {rel} to the finding analyser; "
+            f"it saw {sorted(p.name for p in analysed)}"
+        )
