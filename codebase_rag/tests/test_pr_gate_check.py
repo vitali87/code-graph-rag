@@ -1109,7 +1109,27 @@ REAL_ROLLUP_MID_RUN = [
 ]
 
 # The #1582 shape: everything concluded, the aggregate never appeared.
+# Every entry here must be a real `AGGREGATED_JOBS` member, or the fixture
+# cannot express "all of the aggregate's dependencies concluded" -- which is
+# the state these tests are about. The original pair (`CodeQL`,
+# `Analyze (actions)`) are NOT dependencies of `All Checks Pass`, so the tests
+# using it were asserting that every dependency had concluded while the rollup
+# contained none: green on an input the production path never produces. Found
+# when the no-dependency-reported guard was added (#1848).
 REAL_ROLLUP_ALL_CONCLUDED = [
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.12)",
+        "conclusion": "SUCCESS",
+    },
+    {
+        "__typename": "CheckRun",
+        "name": "Integration Tests (ubuntu-latest)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Binary Smoke Test", "conclusion": "SUCCESS"},
     {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
     {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
 ]
@@ -1476,3 +1496,129 @@ class TestTheAbsentMessageClaimsOnlyWhatItExamined:
         reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
 
         assert "every check at the head" not in reason
+
+
+class TestAQueuedRunIsNotAMissingOne:
+    """A `queued` CI run contributes no rollup entry, so it read as absent.
+
+    The pending filter finds nothing (there are no dependency entries yet),
+    so the all-concluded fallback fired and reported "not going to appear"
+    about a run that had not started. Worse, with zero dependency entries it
+    asserted they had all concluded -- a claim about an empty set.
+
+    This is the window right after a push, where the tool is most consulted
+    and where the remedy the old message implies -- an empty commit to
+    re-trigger -- moves the head and discards any review anchored to the old
+    SHA. Measured live: a real PR had `ci.yml` at `queued` with only unrelated
+    contexts reported (#1848).
+    """
+
+    UNRELATED = [
+        {
+            "__typename": "CheckRun",
+            "name": "CodeRabbit",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+        }
+    ]
+
+    def test_a_queued_run_reports_as_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+        )
+
+        assert "not yet started" in reason
+
+    def test_a_queued_run_does_not_claim_it_will_never_appear(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+        )
+
+        assert "not going to appear" not in reason
+
+    def test_a_queued_run_warns_against_the_empty_commit(self) -> None:
+        """The destructive remedy is what makes this worth more than tidiness."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+        )
+
+        assert "empty commit" in reason
+
+    def test_no_dependency_reported_does_not_claim_all_concluded(self) -> None:
+        """With no CI run either, the old message asserted an empty set."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [], "MERGEABLE"
+        )
+
+        assert "every check it aggregates has concluded" not in reason
+
+    def test_a_concluded_run_still_reports_it_will_not_appear(self) -> None:
+        """The control: the #1582 case must keep saying "investigate"."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", rollup, [{"status": "completed"}], "MERGEABLE"
+        )
+
+        assert "not going to appear" in reason
+
+
+class TestAConflictingBranchNeverRunsAnything:
+    """A conflicting branch runs no PR workflows, so "wait" never terminates.
+
+    GitHub skips PR workflows entirely on a conflicting branch. The rollup
+    then looks exactly like a queued run's -- empty of dependencies -- but the
+    correct advice is the opposite: merge the base in, because nothing will
+    ever run. Measured tonight: a peer chased a "broken workflow" for an hour
+    on a branch whose only problem was a conflict (#1848).
+
+    Checked BEFORE the not-yet-started arm, since a conflicting branch may
+    also carry a stale queued run from before the conflict appeared.
+    """
+
+    UNRELATED = [
+        {
+            "__typename": "CheckRun",
+            "name": "CodeRabbit",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+        }
+    ]
+
+    def test_a_conflicting_branch_is_named_as_the_cause(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [], "CONFLICTING"
+        )
+
+        assert "CONFLICTS" in reason
+
+    def test_a_conflicting_branch_advises_merging_the_base(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [], "CONFLICTING"
+        )
+
+        assert "Merge the base in" in reason
+
+    def test_a_conflict_outranks_a_stale_queued_run(self) -> None:
+        """Both present an empty rollup; only one has terminating advice."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "CONFLICTING"
+        )
+
+        assert "CONFLICTS" in reason
+        assert "not yet started" not in reason
+
+    def test_a_mergeable_branch_is_not_blamed_on_a_conflict(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+        )
+
+        assert "CONFLICTS" not in reason

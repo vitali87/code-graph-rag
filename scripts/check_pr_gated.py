@@ -45,6 +45,14 @@ from typing import Any
 REPO = "vitali87/code-graph-rag"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
+# A CI run in one of these states has not finished, so its check contexts are
+# still coming. `queued` is the one that matters: it contributes no rollup
+# entry at all, which is indistinguishable from "never ran" without this
+# (#1848).
+CI_RUN_UNFINISHED_STATUSES = frozenset(
+    {"queued", "in_progress", "waiting", "pending", "requested"}
+)
+
 # The one context the active ruleset requires on the default branch. It
 # aggregates the jobs below and asserts each result == "success", so a
 # skipped or cancelled job fails it rather than passing silently.
@@ -219,7 +227,12 @@ def aggregated_job_for(name: str) -> str | None:
     return None
 
 
-def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
+def absent_context_reason(
+    context: str,
+    rollup: list[dict[str, object]],
+    ci_runs: list[dict[str, Any]] | None = None,
+    mergeable: str | None = None,
+) -> str:
     """Why `context` is missing: still coming, never arriving, or no run.
 
     "Absent" collapses two states needing opposite responses. `All Checks
@@ -254,6 +267,53 @@ def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
             f"'{context}' has not reported YET: {len(pending)} check(s) at the "
             f"head are still running{named}. This is CI in flight, not a "
             "missing run -- re-check rather than investigate"
+        )
+    # A QUEUED run contributes NO rollup entry at all, so the filter above
+    # finds nothing pending and the fallback below would report "not going to
+    # appear" about a run that has not started. Worse, with zero dependency
+    # entries it asserts they all concluded -- a claim about an empty set.
+    #
+    # The run list already fetched settles it without another API call: a
+    # `queued` or `in_progress` CI run at this head means the contexts are
+    # coming. This is the window right after a push, where the tool is most
+    # consulted and where the remedy it implies -- an empty commit to
+    # re-trigger -- moves the head and discards any review anchored to the
+    # old SHA (#1848).
+    # CHECKED BEFORE "not yet started", because a conflicting branch runs no
+    # PR workflows AT ALL. GitHub skips them entirely, so the contexts are not
+    # "coming" -- waiting for them never terminates. A queued run and a
+    # conflicting branch both present an empty rollup and need OPPOSITE advice,
+    # which is the pair a single "not gated" verdict flattens (#1848).
+    if mergeable == "CONFLICTING":
+        return (
+            f"'{context}' is absent because the branch CONFLICTS with its base: "
+            "GitHub runs no PR workflows on a conflicting branch, so the "
+            "contexts will never arrive. Merge the base in -- waiting will not "
+            "help, and re-triggering cannot run anything"
+        )
+    unstarted = [
+        run
+        for run in ci_runs or ()
+        if str(run.get("status", "")) in CI_RUN_UNFINISHED_STATUSES
+    ]
+    if unstarted:
+        statuses = sorted({str(run.get("status", "")) for run in unstarted})
+        return (
+            f"'{context}' has not reported YET: the CI run at the head is "
+            f"{', '.join(statuses)} and has produced no check entries so far. "
+            "This is CI not yet started, not a missing run -- re-check rather "
+            "than investigate, and do NOT push an empty commit (it moves the "
+            "head and discards any review anchored to it)"
+        )
+    # Only reachable with at least one CONCLUDED dependency entry, or with no
+    # CI run at all -- and the caller reports the latter separately. Without
+    # this guard the sentence below claims every dependency concluded when
+    # none was ever seen.
+    if not any(aggregated_job_for(context_name(entry)) for entry in rollup):
+        return (
+            f"'{context}' is absent and NO check it aggregates reported at the "
+            "head at all, so whether it is coming cannot be told from the "
+            "rollup -- check whether CI ran for this head"
         )
     # "every check" would overclaim: `pending` above counts only the entries
     # this aggregate DEPENDS on, so an unrelated pending check (CodeRabbit,
@@ -548,7 +608,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "--repo",
             REPO,
             "--json",
-            "headRefOid,baseRefName,statusCheckRollup,comments,reviews",
+            "headRefOid,baseRefName,statusCheckRollup,comments,reviews,mergeable",
         )
     )
     if not view:
@@ -598,7 +658,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     if missing:
         reasons.append(
             f"required context absent at the head: {missing}; "
-            + absent_context_reason(REQUIRED_CONTEXT, rollup)
+            + absent_context_reason(
+                REQUIRED_CONTEXT, rollup, at_head, str(view.get("mergeable", ""))
+            )
         )
     else:
         for entry in rollup:
