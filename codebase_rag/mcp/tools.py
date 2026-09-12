@@ -1569,39 +1569,6 @@ class MCPToolsRegistry:
         self._live_updater = updater
         return updater
 
-    def _updater_for_reingest(self) -> GraphUpdater:
-        updater = self._live_updater
-        if updater is None:
-            # A scoped re-ingest completes a graph; it cannot stand in for
-            # the first index. After delete_project or wipe_database the
-            # project is gone, and hydrating from nothing would leave every
-            # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
-            if self._graph_incomplete:
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            if project_name not in self.ingestor.list_projects():
-                raise ValueError(
-                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
-                )
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
-        return updater
-
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
@@ -1851,25 +1818,86 @@ class MCPToolsRegistry:
         """
         root = Path(self.project_root)
         relative = sd.normalise_paths(paths, root)
+        # Set when the hydration below marks the run, so the success path can
+        # lift that marker (invariant b) -- see the comment at the call.
+        marked_here: str | None = None
         try:
             if self._live_updater is None and (
                 derive_project_name(root) not in self.ingestor.list_projects()
             ):
                 return ""
-            updater = self._updater_for_reingest()
+            # The marker-reading hydration, not `_updater_for_reingest`
+            # (issue #1783). That helper guards on `_graph_incomplete` alone,
+            # which lives on the registry and dies with the process: after a
+            # crash or an MCP restart it is False because nothing in THIS
+            # process failed, so the guard passes and hydrates from a graph a
+            # previous run left partial. `_hydrate_reingest_updater` reads the
+            # persisted marker as well, which is what survives the process
+            # that earned it (#1679).
+            #
+            # #1705 rebuilt the scoped-reingest call site onto this helper but
+            # not this one, which the #1546 stack added after that branch was
+            # written -- so the two paths refused and proceeded in the same
+            # registry state, and neither call site showed it.
+            #
+            # Invariant (b) comes with it: that helper MARKS before its
+            # destructive migration, so a completed delta has to lift the
+            # marker or every later run refuses on it -- a successful delta
+            # would durably wedge the project (caught in review of #1845).
+            # `_reingest_sync` pairs the same mark with a clear via
+            # `marked_here`; this tracks it the same way.
+            #
+            # BOTH branches mark. The retained-updater branch reaches the same
+            # mutating `reingest` below, so leaving it unmarked meant a crash
+            # mid-delta left a partially rebuilt graph that a fresh process
+            # could not tell from a complete one (raised in review of #1845).
+            # That is the fifth-path gap `_reingest_sync` closed in the #1705
+            # review, round 6, arriving on this path too. `writing=False`
+            # because the updater's prologue is read-only; the phase advances
+            # at its first delete.
+            project_name = derive_project_name(root)
+            if self._live_updater is not None:
+                updater = self._live_updater
+                if (
+                    refusal := self._require_marker(project_name, writing=False)
+                ) is not None:
+                    raise RuntimeError(refusal)
+                marked_here = project_name
+            else:
+                marked_here = project_name
+                updater = self._hydrate_reingest_updater(marked_here)
             deleted = [p for p in relative if not (root / p).exists()]
             changed = [p for p in relative if p not in deleted]
             delta = sd.observe(
                 self.ingestor.fetch_all,
                 updater.project_name,
                 relative,
-                lambda: updater.reingest(changed, deleted=deleted),
+                # Invariant (a), second half: the marks above say
+                # `writing=False`, and `reingest` starts deleting after its
+                # read-only prologue. Without advancing the phase there, a
+                # crash mid-delete left a partial graph that a fresh registry
+                # reads as recoverable, CLEARS, and hydrates as complete
+                # (raised by CodeRabbit on #1845). Same callback
+                # `_reingest_sync` passes for the same reason.
+                lambda: updater.reingest(
+                    changed,
+                    deleted=deleted,
+                    before_write=lambda: self._begin_writing_or_refuse(project_name),
+                ),
                 repo_root=root,
             )
         except (ValueError, ReingestAborted) as e:
             # Raised before any graph change (validation, an abort while the
             # paths are split): the graph is whole and the updater reusable.
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            # ...so the marker this call took must come off, or a graph that
+            # was never touched goes on refusing every later scoped reingest
+            # (raised by CodeRabbit on #1845). `_abandon_before_writing` is
+            # the same helper `_reingest_sync` uses for its own no-write
+            # aborts: it lifts the marker and leaves the attribution to
+            # whichever failure owns it.
+            if marked_here is not None:
+                self._abandon_before_writing(marked_here)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         except Exception as e:
             # The re-ingest may have deleted a subtree it never rebuilt: the
@@ -1895,6 +1923,14 @@ class MCPToolsRegistry:
             if not flag_before_delta:
                 self._incomplete_owner = derive_project_name(root)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        if marked_here is not None:
+            # Invariant (b): the hydration marked before its constraint
+            # migration, so a completed delta must lift it. A failed clear is
+            # reported in place of the delta rather than silently retained --
+            # this method never raises, so the message is the only channel.
+            if (stuck := self._require_marker_cleared(marked_here)) is not None:
+                logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
+                return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
         return (
             "\n\n"
             + cs.MCP_DELTA_HEADER
