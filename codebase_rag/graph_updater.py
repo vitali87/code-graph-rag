@@ -749,20 +749,29 @@ def _project_root_for_single_file(target: Path) -> Path:
     misses the existing node and a duplicate set is written under the wrong
     key, and `Project.root_path` is overwritten with the subdirectory (#1775).
 
-    Two markers, tried nearest-first, because they answer slightly different
-    questions and the cache alone leaves a real gap:
+    Two markers, and they are NOT interchangeable -- the cache outranks `.git`
+    at any depth, which is the whole subtlety here:
 
     * the hash cache (`repo_path / HASH_CACHE_FILENAME`) is written by every
-      directory run, so the nearest ancestor holding one is the root previous
-      runs of this project actually used -- the strongest evidence available,
-      since agreeing with it is the whole point;
-    * `.git` marks a project root before anything has ever indexed it. Without
-      it the FIRST single-file run on a fresh clone finds no cache and
-      reproduces #1775 exactly, which is a reachable state rather than a
-      theoretical one.
+      directory run, so an ancestor holding one is EVIDENCE of the root that
+      actually indexed this file. Agreeing with it is the entire point, since
+      disagreeing is what writes a second identity for the same file;
+    * `.git` is only a GUESS at a root. It earns its place because the cache
+      alone leaves a reachable gap -- the first single-file run on a fresh
+      clone finds no cache and reproduces #1775 exactly -- but it says nothing
+      about what has been indexed.
 
-    Both are checked at each level on the way up, so the nearer marker wins
-    and a nested project is never keyed against its parent.
+    Ranking them, rather than taking the nearest of either, is required. A
+    submodule or linked worktree puts a `.git` INSIDE a project that owns the
+    cache, so a nearest-of-either walk picks the nested marker and keys the
+    file as `pkg/module_a.py` where the outer build keyed it as
+    `components/inner/pkg/module_a.py` -- reintroducing this very issue one
+    level down, and overwriting `Project.root_path` with the nested directory.
+    Measured on a nested worktree-style marker during review of this change.
+
+    So: the nearest CACHED ancestor wins outright; only if there is none does
+    the nearest `.git` apply. Two nested caches still resolve to the nearer,
+    which is the project that genuinely indexed the target.
 
     The final fallback is the old behaviour: a target under neither marker is
     not identifiably part of a project here, so there is no root to agree with
@@ -770,12 +779,13 @@ def _project_root_for_single_file(target: Path) -> Path:
     nobody asked to index. That case still keys divergently from a later full
     build of an enclosing directory -- it is a narrowed gap, not a closed one.
     """
+    git_root: Path | None = None
     for ancestor in target.parents:
-        if (ancestor / cs.HASH_CACHE_FILENAME).is_file() or (
-            ancestor / cs.GIT_DIR_NAME
-        ).exists():
+        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
             return ancestor
-    return target.parent
+        if git_root is None and (ancestor / cs.GIT_DIR_NAME).exists():
+            git_root = ancestor
+    return git_root if git_root is not None else target.parent
 
 
 class GraphUpdater:
@@ -1864,9 +1874,29 @@ class GraphUpdater:
         hash_cache_published = True
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
-            hash_cache_published = _publish_hash_cache(
-                cache_path, new_hashes, observed_at
-            )
+            # A single-file run may UPDATE an existing cache but must never
+            # CREATE one, for the same reason it does not record the
+            # exclusion state below: it walked one file and cannot describe
+            # a directory's contents.
+            #
+            # Creating one is actively harmful since #1775, because the
+            # cache is what marks a project root. A cache created under
+            # `pkg/` by a run targeting `pkg/module_a.py` makes every later
+            # single-file run below `pkg/` root THERE, which preserves
+            # exactly the misrooting #1775 removes. Measured in review: the
+            # stray held all three sibling files, so it is indistinguishable
+            # by content from a genuine project's cache and cannot be
+            # filtered out after the fact -- it has to not be written.
+            #
+            # Updating an existing one stays correct: such a run is rooted
+            # at the ancestor that owns that cache, so the entries it writes
+            # are keyed against the same root every other run uses.
+            if self._single_file is not None and not cache_path.is_file():
+                logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            else:
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, new_hashes, observed_at
+                )
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None and hash_cache_published:
             _save_dir_mtimes(*self._pending_dir_mtimes)
@@ -3892,8 +3922,19 @@ class GraphUpdater:
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
 
-        _touch_empty_json(cache_path)
-        _touch_empty_json(dir_mtimes_path)
+        # Same rule as the publish site in `run`: a single-file run may
+        # UPDATE an existing cache but must never CREATE one. These two
+        # calls are what actually bring a stray into existence -- they run
+        # before any publishing -- so the guard has to be here as well.
+        #
+        # No `or cache_path.is_file()` arm: `_touch_empty_json` already
+        # returns early when the file exists, so the update case is
+        # unaffected either way and the extra arm could never fail. Its
+        # absence is checked by the "still updates an existing cache" test,
+        # which reddens on the publish-site guard rather than this one.
+        if self._single_file is None:
+            _touch_empty_json(cache_path)
+            _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
 

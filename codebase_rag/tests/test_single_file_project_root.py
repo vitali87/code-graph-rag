@@ -330,3 +330,103 @@ def test_the_derived_project_name_follows_the_project_root(tmp_path: Path) -> No
         f"the derived project name is {updater.project_name!r}; a single-file "
         "run would prefix every qualified name with the subdirectory"
     )
+
+
+def test_a_cached_root_outranks_a_nearer_git_marker(tmp_path: Path) -> None:
+    """The markers are ranked, not merely tried nearest-first (#1860 review).
+
+    A submodule or linked worktree puts a `.git` INSIDE a project that owns
+    the cache. Taking the nearest of either marker then picks the nested one
+    and keys the file as `pkg/module_a.py` where the outer build keyed it
+    `components/inner/pkg/module_a.py` -- reintroducing #1775 one level down
+    and overwriting `Project.root_path` with the nested directory.
+
+    The cache is EVIDENCE of what actually indexed the file; `.git` is only a
+    guess at a root. So a cached ancestor wins at any depth.
+    """
+    outer = tmp_path / "outer"
+    inner = outer / "components" / "inner"
+    (inner / "pkg").mkdir(parents=True)
+    (outer / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    (inner / cs.GIT_DIR_NAME).write_text("gitdir: /elsewhere\n", encoding="utf-8")
+    target = inner / "pkg" / "module_a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == outer, (
+        "a nested .git outranked the cached root that actually indexed the "
+        "file; the update would write a second identity for it"
+    )
+
+
+def test_the_nearest_git_still_wins_when_no_cache_exists(tmp_path: Path) -> None:
+    """Ranking must not flatten `.git` into always-outermost.
+
+    With no cache anywhere, nested repositories still resolve to the nearer
+    one -- otherwise a submodule's files would key against its superproject.
+    """
+    outer = tmp_path / "outer"
+    inner = outer / "sub"
+    (inner / "pkg").mkdir(parents=True)
+    (outer / cs.GIT_DIR_NAME).mkdir()
+    (inner / cs.GIT_DIR_NAME).mkdir()
+    target = inner / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == inner
+
+
+def test_a_single_file_run_creates_no_hash_cache(
+    tmp_path: Path, parsers_and_queries: tuple[dict, dict]
+) -> None:
+    """A stray cache is what made the nearest-cache rule unsafe (#1860 review).
+
+    Before this change a single-file run wrote a cache in whatever directory
+    it was rooted at. Since #1775 made the cache mark a project root, a
+    stray one under `pkg/` makes every later single-file run below `pkg/`
+    root THERE -- preserving exactly the misrooting #1775 removes.
+
+    It cannot be filtered out afterwards: the stray held all three sibling
+    files, so it is indistinguishable by content from a genuine nested
+    project's cache. It has to not be written.
+    """
+    root = tmp_path / "nested"
+    _tree(root)
+
+    _run(root / "pkg" / "module_a.py", parsers_and_queries)
+
+    assert not (root / "pkg" / cs.HASH_CACHE_FILENAME).exists(), (
+        "a single-file run created a hash cache in its target's directory; "
+        "that directory now poses as a project root for every later run"
+    )
+
+
+def test_a_single_file_run_still_updates_an_existing_cache(
+    tmp_path: Path, parsers_and_queries: tuple[dict, dict]
+) -> None:
+    """Creating is the harmful half, not writing.
+
+    A run rooted at the ancestor that owns the cache keys its entries
+    against the same root every other run uses, so that bookkeeping is
+    correct and must keep happening -- otherwise the next update re-parses
+    what this one already applied. Pinned because the obvious over-fix
+    (never touch a cache on a single-file run) would silently break it.
+    """
+    import json
+
+    root = tmp_path / "nested"
+    _tree(root)
+    _run(root, parsers_and_queries)
+
+    cache = root / cs.HASH_CACHE_FILENAME
+    before = json.loads(cache.read_text(encoding="utf-8"))
+    (root / "pkg" / "module_a.py").write_text(
+        "class Alpha:\n    def added(self):\n        pass\n", encoding="utf-8"
+    )
+    _run(root / "pkg" / "module_a.py", parsers_and_queries)
+    after = json.loads(cache.read_text(encoding="utf-8"))
+
+    assert before.get("pkg/module_a.py") != after.get("pkg/module_a.py"), (
+        "the edited file's hash was not refreshed in the project's cache; "
+        "the next update would re-parse what this run already applied"
+    )
+    assert set(after) == set(before), "the run dropped a sibling's cache entry"

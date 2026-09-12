@@ -1043,6 +1043,13 @@ PRUNE_SKIPPED_SINGLE_FILE = (
     "Single-file run: skipping the orphan prune, which can only speak "
     "for a full project walk."
 )
+# A single-file run updates an existing hash cache but never creates one:
+# the cache marks a project root (#1775), so one created in a subdirectory
+# would root every later single-file run below it there.
+HASH_CACHE_SKIPPED_SINGLE_FILE = (
+    "Single-file run: not creating a hash cache at {path}, which would "
+    "mark that directory as a project root."
+)
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"
