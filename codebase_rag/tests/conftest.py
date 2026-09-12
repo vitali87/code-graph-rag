@@ -9,7 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -891,7 +891,7 @@ def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
         pytest.skip(str(excinfo[1]))
 
 
-def _assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -> None:
+def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -> None:
     """Fail unless a fixture supplies every input the predicate under test reads.
 
     The defect this exists for (#1859): a test asserting that a filter
@@ -925,10 +925,3 @@ def _assert_fixture_covers(covered: set[str], required: set[str], *, what: str) 
         "fixture supplies none of its inputs (#1859). Add the missing "
         "values, or the test passes whatever the code does."
     )
-
-
-@pytest.fixture
-def assert_fixture_covers() -> Callable[..., None]:
-    """`_assert_fixture_covers` as a fixture, which is how this suite shares
-    helpers -- no test file imports from `conftest` directly."""
-    return _assert_fixture_covers

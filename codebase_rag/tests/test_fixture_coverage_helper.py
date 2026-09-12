@@ -15,18 +15,16 @@ unfinished left all 105 tests green.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 
-Covers = Callable[..., None]
+from codebase_rag.tests.conftest import assert_fixture_covers
 
 
-def test_a_complete_fixture_passes(assert_fixture_covers: Covers) -> None:
+def test_a_complete_fixture_passes() -> None:
     assert_fixture_covers({"a", "b"}, {"a", "b"}, what="the rollup")
 
 
-def test_a_superset_passes(assert_fixture_covers: Covers) -> None:
+def test_a_superset_passes() -> None:
     """Extra values are not a defect.
 
     A fixture may legitimately hold non-inputs alongside the real ones --
@@ -36,7 +34,7 @@ def test_a_superset_passes(assert_fixture_covers: Covers) -> None:
     assert_fixture_covers({"a", "b", "unrelated"}, {"a", "b"}, what="the rollup")
 
 
-def test_a_missing_input_fails_and_names_it(assert_fixture_covers: Covers) -> None:
+def test_a_missing_input_fails_and_names_it() -> None:
     """The helper must be able to fail, and say which value is absent.
 
     A guard that cannot produce a failure is the same defect one level up,
@@ -50,13 +48,13 @@ def test_a_missing_input_fails_and_names_it(assert_fixture_covers: Covers) -> No
     assert "the rollup" in message, "the failure must name the fixture"
 
 
-def test_an_empty_fixture_fails(assert_fixture_covers: Covers) -> None:
+def test_an_empty_fixture_fails() -> None:
     """The exact measured shape: a fixture supplying none of the inputs."""
     with pytest.raises(AssertionError):
         assert_fixture_covers(set(), {"a", "b"}, what="the all-concluded rollup")
 
 
-def test_requiring_nothing_passes(assert_fixture_covers: Covers) -> None:
+def test_requiring_nothing_passes() -> None:
     """A predicate that reads no named inputs cannot be under-covered.
 
     Pinned so the helper is not mistaken for a general vacuity detector: it
@@ -66,9 +64,7 @@ def test_requiring_nothing_passes(assert_fixture_covers: Covers) -> None:
     assert_fixture_covers(set(), set(), what="the rollup")
 
 
-def test_the_measured_instance_would_have_been_caught(
-    assert_fixture_covers: Covers,
-) -> None:
+def test_the_measured_instance_would_have_been_caught() -> None:
     """The helper against the real defect that motivated it (#1859).
 
     `REAL_ROLLUP_ALL_CONCLUDED` held `CodeQL` and `Analyze (actions)`. Neither
@@ -91,15 +87,22 @@ def test_the_measured_instance_would_have_been_caught(
         "the historical fixture is expected to cover NO aggregated job; if "
         "it now covers one, this example no longer shows the defect"
     )
-    with pytest.raises(AssertionError, match="#1859"):
+    with pytest.raises(AssertionError, match="does not cover") as excinfo:
         assert_fixture_covers(
             covered, set(AGGREGATED_JOBS), what="the all-concluded rollup"
         )
 
+    # Matched on the behavioural phrase rather than the issue number: an
+    # issue reference in a message is documentation, so pinning it reddens
+    # this test on a pure rewording that changes nothing.
+    for job in AGGREGATED_JOBS:
+        assert job in str(excinfo.value), (
+            f"the failure must name every uncovered dependency; {job!r} is "
+            "missing, so a reader cannot fix the fixture from the message"
+        )
 
-def test_a_corrected_fixture_passes_the_same_check(
-    assert_fixture_covers: Covers,
-) -> None:
+
+def test_a_corrected_fixture_passes_the_same_check() -> None:
     """The other direction, so the test above is not satisfied by a helper
     that simply always raises."""
     from scripts.check_pr_gated import AGGREGATED_JOBS, aggregated_job_for
