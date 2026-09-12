@@ -469,6 +469,20 @@ def test_a_single_file_run_still_sees_every_directory(
             queries=queries,
             project_name="nested",
         )
+        # The comparison below is only the one this test NAMES if the
+        # single-file leg is rooted at the project root. Nothing in `_tree`
+        # writes a `.git` or a cache, so that rooting holds solely because
+        # the full-build leg runs first and writes the cache as a side
+        # effect. Run the legs in the other order and the single-file leg
+        # roots at `pkg` and sees `{'.'}`, and the assertion fails for a
+        # reason that has nothing to do with parse scoping.
+        #
+        # An ordering dependency no assertion states is exactly the shape
+        # that makes a test stop measuring what it claims, so state it.
+        assert up.repo_path.resolve() == root.resolve(), (
+            "fixture guard: this leg must be rooted at the project root, or "
+            f"the directory sets are not comparable: {up.repo_path}"
+        )
         up.run()
         return {
             rel.as_posix()
