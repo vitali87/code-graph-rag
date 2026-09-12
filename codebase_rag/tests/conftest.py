@@ -889,3 +889,49 @@ def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
     excinfo = getattr(outcome, "excinfo", None)
     if excinfo is not None and isinstance(excinfo[1], NodeOracleUnavailable):
         pytest.skip(str(excinfo[1]))
+
+
+def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -> None:
+    """Fail unless a fixture supplies every input the predicate under test reads.
+
+    The defect this exists for (#1859): a test asserting that a filter
+    returned NOTHING passes vacuously when the fixture contains none of the
+    values that filter inspects. Measured on `REAL_ROLLUP_ALL_CONCLUDED`,
+    which held two checks that were not members of `AGGREGATED_JOBS` -- so
+    "the aggregate is absent although every dependency concluded" was reached
+    because the rollup held no dependency at all. Flipping every conclusion
+    to unfinished left all 105 tests green.
+
+    An empty result and an empty INPUT read identically from the assertion's
+    side, and only one of them is evidence. This makes the fixture's adequacy
+    a checked precondition rather than a property nobody states.
+
+    Deliberately narrow. It cannot detect the sibling case where the fixture
+    is well-formed but every row is pinned at the one value that drives the
+    branch -- there the inputs are present and only varying them shows the
+    problem. That half stays a review convention (assert the verdict
+    CHANGES), because no assertion inside one test can observe what another
+    test failed to vary.
+
+    Args:
+        covered: the required values the fixture actually supplies.
+        required: every value the predicate under test reads.
+        what: named in the failure, e.g. "the all-concluded rollup".
+    """
+    missing = required - covered
+    # Two diagnoses, because they are different bugs. A fixture supplying
+    # NONE of the inputs makes the empty result vacuous outright; one
+    # supplying some makes it merely unreliable -- the filter may be
+    # examining the present values correctly and simply never seeing the
+    # absent ones. Saying "none" for the partial case is a false diagnosis
+    # that sends the reader looking for the wrong thing (#1862 review).
+    reason = (
+        "the fixture supplies none of its inputs"
+        if not covered & required
+        else "the fixture does not supply all of them"
+    )
+    assert not missing, (
+        f"{what} does not cover {sorted(missing)}, so an assertion that the "
+        f"filter returned nothing proves little: {reason} (#1859). Add the "
+        "missing values, or the test passes whatever the code does."
+    )
