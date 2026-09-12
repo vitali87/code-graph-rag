@@ -739,6 +739,32 @@ def _natural_qn(qualified_name: str) -> str:
     return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
 
 
+def _project_root_for_single_file(target: Path) -> Path:
+    """The project root owning `target`, or its parent when none is found.
+
+    A single-file run used to treat the target's PARENT as the repo root, so a
+    file in a subdirectory was keyed relative to that subdirectory: the same
+    file indexed as `pkg/module_a.py` by a full build became `module_a.py`,
+    with a qualified name to match. The keys differ, so delete-before-reingest
+    misses the existing node and a duplicate set is written under the wrong
+    key, and `Project.root_path` is overwritten with the subdirectory (#1775).
+
+    The hash cache is written at `repo_path / HASH_CACHE_FILENAME` by every
+    directory run, so the nearest ancestor holding one is the root that
+    previous runs of this project used. Walking to it keys the target exactly
+    as a full build does.
+
+    The fallback is the old behaviour, deliberately: a target with no cached
+    ancestor has never been indexed as part of a project here, so there is no
+    root to agree with and inventing one (the filesystem root, say) would key
+    it against a tree nobody asked to index.
+    """
+    for ancestor in target.parents:
+        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
+            return ancestor
+    return target.parent
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -775,7 +801,7 @@ class GraphUpdater:
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
-            repo_path = resolved.parent
+            repo_path = _project_root_for_single_file(resolved)
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries

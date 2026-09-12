@@ -610,8 +610,11 @@ class TestSingleFileRunScope:
     ) -> None:
         """The orphan prune must not act on a run that walked one file (#1756).
 
-        `GraphUpdater(repo_path=<file>)` sets `repo_path` to the file's
-        PARENT, so for `pkg/module_a.py` that is `pkg/`. `_prune_orphan_nodes`
+        `GraphUpdater(repo_path=<file>)` USED TO set `repo_path` to the
+        file's PARENT, so for `pkg/module_a.py` that was `pkg/`. #1775 fixed
+        that and the run is now rooted at the project root; the guard below
+        pins the new behaviour. The history is kept because it is what this
+        prune guard was built against. `_prune_orphan_nodes`
         then resolves every Module's relative path against `pkg/` and deletes
         the ones that do not exist there -- which is every module outside
         `pkg/`, and, because Module rows carry no `absolute_path`, the
@@ -623,10 +626,12 @@ class TestSingleFileRunScope:
         `deleted_keys` and the exclusion stamp are both guarded on
         `self._single_file is None`. The prune is guarded for that reason too.
 
-        The target is deliberately NOT at the repo root: with a root-level
-        target the derived `repo_path` equals the project root and the whole
-        defect is invisible, which is why every test above passes on the
-        broken code.
+        The target is deliberately NOT at the repo root. Before #1775 that
+        was because a root-level target made the derived `repo_path` equal
+        the project root and hid the defect entirely. It still matters now:
+        a subdirectory target is the case where the prune has the most
+        modules it could wrongly reach, so it remains the strongest shape
+        for asserting that it reaches none.
         """
         repo = self._nested_project(tmp_path)
         parsers, queries = load_parsers()
@@ -659,9 +664,23 @@ class TestSingleFileRunScope:
             queries=queries,
             project_name="nested",
         )
-        assert single.repo_path == repo / "pkg", (
-            "fixture guard: the constructor must derive the TARGET'S PARENT "
-            f"as repo_path, or the defect cannot fire: {single.repo_path}"
+        # Fixture guard, updated by #1775. This used to require `repo_path`
+        # to be the TARGET'S PARENT, because that misrooting was what made
+        # the #1756 prune defect fire. #1775 fixed the misrooting itself:
+        # the constructor now walks to the project root that owns the hash
+        # cache, so the parent is no longer derived and the old guard
+        # asserted a state that can no longer exist.
+        #
+        # The guard still earns its place, for the opposite reason. The
+        # prune resolves Module paths against `repo_path`, so a run rooted
+        # at the PROJECT root could legitimately reach every module in the
+        # fixture -- which makes the `swept == set()` assertion below a
+        # stronger statement than before, not a weaker one, and only if the
+        # run really is rooted there.
+        assert single.repo_path == repo, (
+            "fixture guard: the constructor must resolve the project root "
+            f"(#1775), or the assertion below is not the one named: "
+            f"{single.repo_path}"
         )
         single.run()
 
