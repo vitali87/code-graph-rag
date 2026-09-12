@@ -64,10 +64,11 @@ def test_partial_and_total_gaps_are_diagnosed_differently() -> None:
     is a false diagnosis on the partial case and sends the reader looking for
     the wrong thing.
     """
+    required = {"a", "b"}
     with pytest.raises(AssertionError) as total:
-        assert_fixture_covers(set(), {"a", "b"}, what="the rollup")
+        assert_fixture_covers(set(), required, what="the rollup")
     with pytest.raises(AssertionError) as partial:
-        assert_fixture_covers({"a"}, {"a", "b"}, what="the rollup")
+        assert_fixture_covers({"a"}, required, what="the rollup")
 
     assert "supplies none of its inputs" in str(total.value)
     assert "supplies none of its inputs" not in str(partial.value), (
@@ -109,10 +110,12 @@ def test_the_measured_instance_would_have_been_caught() -> None:
         "the historical fixture is expected to cover NO aggregated job; if "
         "it now covers one, this example no longer shows the defect"
     )
+    # `set(...)` is built outside the block so only ONE call inside it can
+    # raise; otherwise a failure in the argument construction would be
+    # indistinguishable from the assertion under test (Sonar S5778).
+    required = set(AGGREGATED_JOBS)
     with pytest.raises(AssertionError, match="does not cover") as excinfo:
-        assert_fixture_covers(
-            covered, set(AGGREGATED_JOBS), what="the all-concluded rollup"
-        )
+        assert_fixture_covers(covered, required, what="the all-concluded rollup")
 
     # Matched on the behavioural phrase rather than the issue number: an
     # issue reference in a message is documentation, so pinning it reddens
