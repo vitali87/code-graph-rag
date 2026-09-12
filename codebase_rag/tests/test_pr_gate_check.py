@@ -1624,3 +1624,54 @@ class TestAConflictIsNotWhyAContextIsAbsent:
             )
 
             assert "CONFLICT" not in reason.upper()
+
+
+class TestTheAllConcludedFixtureCoversEveryDependency:
+    """The fixture must be able to EXPRESS "all dependencies concluded".
+
+    It previously held `CodeQL` and `Analyze (actions)`, neither an
+    `AGGREGATED_JOBS` member, so four tests asserting that every dependency
+    had concluded were measuring the emptiness of a filter over a rollup
+    containing no dependency at all -- vacuously true. A peer session mutated
+    both entries' `conclusion` to `""` and the whole file stayed green.
+
+    These two guards are the reverse-direction checks the old fixture was
+    structurally incapable of carrying: one fails with the missing names
+    printed if the fixture is ever trimmed, the other requires the verdict to
+    FLIP when a dependency is unfinished (#1848).
+    """
+
+    def test_the_fixture_covers_every_aggregated_job(self) -> None:
+        covered = {
+            check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+            for entry in REAL_ROLLUP_ALL_CONCLUDED
+        } - {None}
+
+        assert covered == set(AGGREGATED_JOBS), (
+            f"fixture no longer covers: {sorted(set(AGGREGATED_JOBS) - covered)}"
+        )
+
+    def test_one_unfinished_dependency_flips_the_verdict(self) -> None:
+        """The assertion the vacuous fixture could not make.
+
+        If the fixture holds real dependencies, marking one unfinished must
+        move the verdict from "not going to appear" to "has not reported YET".
+        A rollup with no dependencies cannot produce that difference.
+        """
+        concluded = check_pr_gated.absent_context_reason(
+            "All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED, [{"status": "completed"}]
+        )
+        one_running = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            [
+                {**entry, "status": "IN_PROGRESS", "conclusion": None}
+                if check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+                == "Type Check"
+                else entry
+                for entry in REAL_ROLLUP_ALL_CONCLUDED
+            ],
+            [{"status": "completed"}],
+        )
+
+        assert "not going to appear" in concluded
+        assert "has not reported YET" in one_running
