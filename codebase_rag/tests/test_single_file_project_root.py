@@ -196,13 +196,70 @@ def test_the_root_is_the_nearest_cached_ancestor(tmp_path: Path) -> None:
     assert _project_root_for_single_file(target) == inner
 
 
-def test_an_uncached_target_falls_back_to_its_parent(tmp_path: Path) -> None:
-    """The deliberate fallback, pinned so it is not mistaken for an oversight.
+def test_a_first_ever_run_uses_the_git_root(tmp_path: Path) -> None:
+    """The gap the cache marker alone leaves open.
 
-    A target with no cached ancestor has never been indexed as part of a
-    project here, so there is no root to agree with. Returning the parent
-    keeps the previous behaviour; walking to the filesystem root instead
-    would key the file against an arbitrary tree.
+    The hash cache only exists once something has indexed the project, so on
+    a FRESH CLONE the first single-file run finds none and would reproduce
+    #1775 exactly. `.git` is present before any indexing, which is what makes
+    this case reachable rather than theoretical.
+
+    `exists()` rather than `is_file()` here, deliberately and unlike the
+    cache: `.git` is a directory in an ordinary clone and a FILE in a
+    worktree or submodule, so requiring either shape alone would miss half
+    the real layouts.
+    """
+    root = tmp_path / "proj"
+    (root / "pkg").mkdir(parents=True)
+    (root / cs.GIT_DIR_NAME).mkdir()
+    target = root / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == root
+
+
+def test_a_worktree_style_git_file_also_marks_the_root(tmp_path: Path) -> None:
+    """A linked worktree's `.git` is a file, not a directory."""
+    root = tmp_path / "proj"
+    (root / "pkg").mkdir(parents=True)
+    (root / cs.GIT_DIR_NAME).write_text("gitdir: /elsewhere\n", encoding="utf-8")
+    target = root / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == root
+
+
+def test_the_nearest_marker_wins_whichever_kind_it_is(tmp_path: Path) -> None:
+    """A cache below a git root roots at the cache, and vice versa.
+
+    Mixing the two markers is the case a nearest-first walk has to get
+    right: a subproject that has been indexed sits inside a repository that
+    has not, and keying its files against the outer repository would put
+    them under a tree nobody asked to index.
+    """
+    outer = tmp_path / "outer"
+    inner = outer / "inner"
+    (inner / "pkg").mkdir(parents=True)
+    (outer / cs.GIT_DIR_NAME).mkdir()
+    (inner / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    target = inner / "pkg" / "mod.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    assert _project_root_for_single_file(target) == inner
+
+
+def test_a_target_under_no_marker_falls_back_to_its_parent(tmp_path: Path) -> None:
+    """The remaining fallback, pinned as a NARROWED gap, not a closed one.
+
+    A target under neither a hash cache nor a `.git` is not identifiably
+    part of a project here, so there is no root to agree with and inventing
+    one would key it against an arbitrary tree. Returning the parent keeps
+    the previous behaviour.
+
+    Stated plainly because the honest description matters: this case still
+    keys divergently from a later full build of an enclosing directory. It
+    is the #1775 shape, surviving in a corner the markers do not reach --
+    recorded as a known limit rather than pinned as correct behaviour.
     """
     target = tmp_path / "loose" / "mod.py"
     target.parent.mkdir()

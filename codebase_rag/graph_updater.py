@@ -749,18 +749,31 @@ def _project_root_for_single_file(target: Path) -> Path:
     misses the existing node and a duplicate set is written under the wrong
     key, and `Project.root_path` is overwritten with the subdirectory (#1775).
 
-    The hash cache is written at `repo_path / HASH_CACHE_FILENAME` by every
-    directory run, so the nearest ancestor holding one is the root that
-    previous runs of this project used. Walking to it keys the target exactly
-    as a full build does.
+    Two markers, tried nearest-first, because they answer slightly different
+    questions and the cache alone leaves a real gap:
 
-    The fallback is the old behaviour, deliberately: a target with no cached
-    ancestor has never been indexed as part of a project here, so there is no
-    root to agree with and inventing one (the filesystem root, say) would key
-    it against a tree nobody asked to index.
+    * the hash cache (`repo_path / HASH_CACHE_FILENAME`) is written by every
+      directory run, so the nearest ancestor holding one is the root previous
+      runs of this project actually used -- the strongest evidence available,
+      since agreeing with it is the whole point;
+    * `.git` marks a project root before anything has ever indexed it. Without
+      it the FIRST single-file run on a fresh clone finds no cache and
+      reproduces #1775 exactly, which is a reachable state rather than a
+      theoretical one.
+
+    Both are checked at each level on the way up, so the nearer marker wins
+    and a nested project is never keyed against its parent.
+
+    The final fallback is the old behaviour: a target under neither marker is
+    not identifiably part of a project here, so there is no root to agree with
+    and inventing one (the filesystem root, say) would key it against a tree
+    nobody asked to index. That case still keys divergently from a later full
+    build of an enclosing directory -- it is a narrowed gap, not a closed one.
     """
     for ancestor in target.parents:
-        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
+        if (ancestor / cs.HASH_CACHE_FILENAME).is_file() or (
+            ancestor / cs.GIT_DIR_NAME
+        ).exists():
             return ancestor
     return target.parent
 
@@ -5129,14 +5142,23 @@ class GraphUpdater:
             # a full walk established which paths those are.
             #
             # Left unguarded it did not merely over-reach, it emptied the
-            # graph (issue #1756). `repo_path` is the TARGET'S PARENT here,
-            # so `pkg/module_a.py` makes it `pkg/` and every module's
-            # relative path is resolved against the wrong root:
-            # `root_module.py` is tested as `pkg/root_module.py`, is absent,
-            # and is deleted. Modules are the worst case because
+            # graph (issue #1756). At the time `repo_path` was the TARGET'S
+            # PARENT, so `pkg/module_a.py` made it `pkg/` and every module's
+            # relative path resolved against the wrong root: `root_module.py`
+            # was tested as `pkg/root_module.py`, found absent, and deleted.
+            # Modules are the worst case because
             # CYPHER_ALL_MODULE_PATHS_INTERNAL returns no `absolute_path`, so
             # the containment gate that spares out-of-repo File and Folder
             # rows never runs for them.
+            #
+            # #1775 fixed that misrooting: `repo_path` is now the project
+            # root whenever an ancestor holds the hash cache. THE GUARD IS
+            # STILL REQUIRED, and for a reason the misrooting only obscured
+            # -- a run that walked one file cannot distinguish "this module
+            # was deleted" from "this module was not visited", whatever it
+            # is rooted at. Correct rooting makes the over-deletion rarer,
+            # not impossible, and a genuinely deleted sibling is swept on a
+            # run that never looked at it.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
             # The two sweeps below still run. Unlike the path-keyed loop they
             # take no path and no project: each deletes only nodes with zero

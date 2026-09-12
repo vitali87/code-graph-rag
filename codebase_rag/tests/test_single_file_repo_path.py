@@ -586,10 +586,15 @@ class TestSingleFileRunScope:
     def _nested_project(tmp_path: Path) -> Path:
         """A project whose modules live in a SUBDIRECTORY and at the root.
 
-        The existing fixture puts every module at the repo root, so
-        `repo_path` derived from the target's parent IS the project root and
-        the defect cannot fire. Only a target inside a subdirectory separates
-        the two.
+        The existing fixture puts every module at the repo root, so before
+        #1775 the `repo_path` derived from the target's parent WAS the
+        project root and the defect could not fire; only a target inside a
+        subdirectory separated the two.
+
+        Since #1775 the run is rooted correctly either way, so this fixture
+        no longer exists to expose a misrooting. It stays because a
+        subdirectory layout is where a partial walk has the most siblings it
+        could wrongly sweep, which is the claim the guard actually rests on.
         """
         repo = tmp_path / "nested"
         pkg = repo / "pkg"
@@ -651,6 +656,22 @@ class TestSingleFileRunScope:
             {cs.KEY_PATH: "root_module.py", "qualified_name": "nested.root_module"},
             {cs.KEY_PATH: "pkg/module_a.py", "qualified_name": "nested.pkg.module_a"},
             {cs.KEY_PATH: "pkg/module_b.py", "qualified_name": "nested.pkg.module_b"},
+            # A module in the graph with NO file behind it, so the prune has
+            # something it would legitimately sweep on a full run. Without it
+            # this test cannot fail: since #1775 rooted the run correctly,
+            # every other row resolves to a file that exists, so the prune
+            # deletes nothing whether the guard is present or not. Verified
+            # by mutation -- with the guard replaced by `if False:` the test
+            # passed, which is the regression it exists to catch going
+            # undetected.
+            #
+            # The guard is what must decide the outcome here: a single-file
+            # run has not walked the project, so it cannot know this module
+            # was genuinely deleted rather than simply not visited.
+            {
+                cs.KEY_PATH: "pkg/deleted_module.py",
+                "qualified_name": "nested.pkg.deleted_module",
+            },
         ]
         # The SAME project name as the project run, which is what the issue
         # measured. Without it the derived name is `pkg`, every row fails the
@@ -666,17 +687,17 @@ class TestSingleFileRunScope:
         )
         # Fixture guard, updated by #1775. This used to require `repo_path`
         # to be the TARGET'S PARENT, because that misrooting was what made
-        # the #1756 prune defect fire. #1775 fixed the misrooting itself:
-        # the constructor now walks to the project root that owns the hash
-        # cache, so the parent is no longer derived and the old guard
+        # the #1756 prune defect fire. #1775 fixed the misrooting itself, so
+        # the constructor now resolves the project root and the old guard
         # asserted a state that can no longer exist.
         #
-        # The guard still earns its place, for the opposite reason. The
-        # prune resolves Module paths against `repo_path`, so a run rooted
-        # at the PROJECT root could legitimately reach every module in the
-        # fixture -- which makes the `swept == set()` assertion below a
-        # stronger statement than before, not a weaker one, and only if the
-        # run really is rooted there.
+        # Correct rooting REMOVED this test's teeth rather than sharpening
+        # them, which is why the deleted-module row above was added: with
+        # every path resolving to a real file, the prune had nothing to
+        # sweep and the assertion below held whether or not the guard
+        # existed. Do not read a correctly-rooted run as evidence that the
+        # guard is unnecessary -- the guard is about what a partial walk can
+        # CLAIM, not about where it is rooted.
         assert single.repo_path == repo, (
             "fixture guard: the constructor must resolve the project root "
             f"(#1775), or the assertion below is not the one named: "
