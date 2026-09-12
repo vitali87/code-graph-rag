@@ -1109,7 +1109,38 @@ REAL_ROLLUP_MID_RUN = [
 ]
 
 # The #1582 shape: everything concluded, the aggregate never appeared.
+# Every entry here must be a real `AGGREGATED_JOBS` member, or the fixture
+# cannot express "all of the aggregate's dependencies concluded" -- which is
+# the state these tests are about. The original pair (`CodeQL`,
+# `Analyze (actions)`) are NOT dependencies of `All Checks Pass`, so the tests
+# using it were asserting that every dependency had concluded while the rollup
+# contained none: green on an input the production path never produces. Found
+# when the no-dependency-reported guard was added (#1848).
 REAL_ROLLUP_ALL_CONCLUDED = [
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.12)",
+        "conclusion": "SUCCESS",
+    },
+    {
+        "__typename": "CheckRun",
+        "name": "Integration Tests (ubuntu-latest)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Binary Smoke Test", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Wheel Smoke (unlocked resolution)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Go Frontend", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Sonar Zero Issues Gate",
+        "conclusion": "SUCCESS",
+    },
     {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
     {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
 ]
@@ -1476,3 +1507,397 @@ class TestTheAbsentMessageClaimsOnlyWhatItExamined:
         reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
 
         assert "every check at the head" not in reason
+
+
+class TestAQueuedRunIsNotAMissingOne:
+    """A `queued` CI run contributes no rollup entry, so it read as absent.
+
+    The pending filter finds nothing (there are no dependency entries yet),
+    so the all-concluded fallback fired and reported "not going to appear"
+    about a run that had not started. Worse, with zero dependency entries it
+    asserted they had all concluded -- a claim about an empty set.
+
+    This is the window right after a push, where the tool is most consulted
+    and where the remedy the old message implies -- an empty commit to
+    re-trigger -- moves the head and discards any review anchored to the old
+    SHA. Measured live: a real PR had `ci.yml` at `queued` with only unrelated
+    contexts reported (#1848).
+    """
+
+    UNRELATED = [
+        {
+            "__typename": "CheckRun",
+            "name": "CodeRabbit",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+        }
+    ]
+
+    def test_a_queued_run_reports_as_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_a_queued_run_does_not_claim_it_will_never_appear(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "not going to appear" not in reason
+
+    def test_a_queued_run_warns_against_the_empty_commit(self) -> None:
+        """The destructive remedy is what makes this worth more than tidiness."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "empty commit" in reason
+
+    def test_no_dependency_reported_does_not_claim_all_concluded(self) -> None:
+        """With no CI run either, the old message asserted an empty set."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, []
+        )
+
+        assert "every check it aggregates has concluded" not in reason
+
+    def test_a_concluded_run_still_reports_it_will_not_appear(self) -> None:
+        """The control: the #1582 case must keep saying "investigate"."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", rollup, [{"status": "completed"}]
+        )
+
+        assert "not going to appear" in reason
+
+
+class TestAConflictIsNotWhyAContextIsAbsent:
+    """A conflicting branch DOES run PR workflows -- measured, not assumed.
+
+    An earlier version of this change claimed the opposite and returned "the
+    branch CONFLICTS, so the contexts will never arrive". That premise is
+    false: `ci.yml` triggers on plain `pull_request`, which fires on
+    opened/synchronize regardless of mergeability. Verified on two live
+    CONFLICTING PRs of this repo, each carrying a completed successful
+    `ci.yml` run at its head.
+
+    The arm was also checked FIRST, so on any conflicting branch it swallowed
+    the #1582 verdict this function exists to preserve -- "every dependency
+    concluded and the aggregate never appeared", which must say investigate.
+
+    These tests pin the corrected behaviour: mergeability is not consulted at
+    all, so no conflicting-branch input can suppress a real verdict (#1848).
+    """
+
+    def test_all_concluded_still_says_investigate(self) -> None:
+        """The verdict the removed arm masked, at the state that matters."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", rollup, [{"status": "completed"}]
+        )
+
+        assert "not going to appear" in reason
+
+    def test_no_arm_mentions_a_conflict(self) -> None:
+        """Mergeability explains a blocked MERGE, never an absent context."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "CodeRabbit",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+        ]
+
+        for runs in ([], [{"status": "queued"}], [{"status": "completed"}]):
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
+
+            assert "CONFLICT" not in reason.upper()
+
+
+class TestTheAllConcludedFixtureCoversEveryDependency:
+    """The fixture must be able to EXPRESS "all dependencies concluded".
+
+    It previously held `CodeQL` and `Analyze (actions)`, neither an
+    `AGGREGATED_JOBS` member, so four tests asserting that every dependency
+    had concluded were measuring the emptiness of a filter over a rollup
+    containing no dependency at all -- vacuously true. A peer session mutated
+    both entries' `conclusion` to `""` and the whole file stayed green.
+
+    These two guards are the reverse-direction checks the old fixture was
+    structurally incapable of carrying: one fails with the missing names
+    printed if the fixture is ever trimmed, the other requires the verdict to
+    FLIP when a dependency is unfinished (#1848).
+    """
+
+    def test_the_fixture_covers_every_aggregated_job(self) -> None:
+        covered = {
+            check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+            for entry in REAL_ROLLUP_ALL_CONCLUDED
+        } - {None}
+
+        assert covered == set(AGGREGATED_JOBS), (
+            f"fixture no longer covers: {sorted(set(AGGREGATED_JOBS) - covered)}"
+        )
+
+    def test_one_unfinished_dependency_flips_the_verdict(self) -> None:
+        """The assertion the vacuous fixture could not make.
+
+        If the fixture holds real dependencies, marking one unfinished must
+        move the verdict from "not going to appear" to "has not reported YET".
+        A rollup with no dependencies cannot produce that difference.
+        """
+        concluded = check_pr_gated.absent_context_reason(
+            "All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED, [{"status": "completed"}]
+        )
+        one_running = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            [
+                {**entry, "status": "IN_PROGRESS", "conclusion": None}
+                if check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+                == "Type Check"
+                else entry
+                for entry in REAL_ROLLUP_ALL_CONCLUDED
+            ],
+            [{"status": "completed"}],
+        )
+
+        assert "not going to appear" in concluded
+        assert "has not reported YET" in one_running
+
+
+class TestAnUnstartedRunOutranksTheEmptyRollupArm:
+    """An empty rollup is exactly what a queued run looks like.
+
+    The empty-rollup arm ran first and returned "no check reported at the head
+    at all", sending the reader to investigate a workflow that had simply not
+    started -- reintroducing, for the emptiest case of all, the defect this
+    change exists to fix. Found on review; the same arm-ordering mistake as the
+    conflict arm removed earlier in this branch (#1848).
+    """
+
+    def test_a_queued_run_with_an_empty_rollup_says_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_an_empty_rollup_with_no_run_still_says_nothing_reported(self) -> None:
+        """The control: with no run at all, the empty-rollup arm is right."""
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", [], [])
+
+        assert "no check reported at the head at all" in reason
+
+
+class TestOnlyAPullRequestRunCreatesThisPrsContexts:
+    """A dispatched run at the same SHA is evidence about itself.
+
+    `workflow_dispatch` and `push` runs report under their own event and
+    contribute no PR check context, so counting one as "the contexts are
+    coming" says wait forever while the pull-request run has already finished.
+    That suppresses the #1582 verdict via an unrelated run (#1848).
+    """
+
+    def test_a_queued_dispatch_run_is_not_evidence_of_pending_contexts(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "workflow_dispatch"}]
+        )
+
+        assert "not yet started" not in reason
+
+    def test_a_dispatch_run_does_not_suppress_the_investigate_verdict(self) -> None:
+        """The case that matters: every dependency concluded, so investigate."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            rollup,
+            [{"status": "queued", "event": "workflow_dispatch"}],
+        )
+
+        assert "not going to appear" in reason
+
+    def test_a_run_without_an_event_field_is_treated_as_a_pr_run(self) -> None:
+        """Fail in the direction that preserves the old behaviour."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued"}]
+        )
+
+        assert "not yet started" in reason
+
+
+class TestAggregatedJobsCoversEveryDeclaredDependency:
+    """The list must match `all-checks-pass`'s `needs:` block in ci.yml.
+
+    Five of the nine were listed. A head where only a missing one had reported
+    looked like "no dependency reported at all", and a missing one still
+    running was not counted as pending. Found on review (#1848).
+
+    The coupling cannot be removed: the rollup carries display names while
+    `needs:` carries job ids, with no mapping available without parsing the
+    workflow. So it is asserted here instead, against the names the workflow
+    declares.
+    """
+
+    DECLARED_DISPLAY_NAMES = (
+        "Lint & Format",
+        "Type Check",
+        "Unit Tests",
+        "Integration Tests",
+        "Binary Smoke Test",
+        "Wheel Smoke (unlocked resolution)",
+        "Go Frontend",
+        "Sonar Zero Issues Gate",
+    )
+
+    def test_every_declared_dependency_is_aggregated(self) -> None:
+        missing = [
+            name
+            for name in self.DECLARED_DISPLAY_NAMES
+            if check_pr_gated.aggregated_job_for(name) is None
+        ]
+
+        assert not missing, f"not recognised as dependencies: {missing}"
+
+    def test_the_base_install_matrix_cell_resolves_to_unit_tests(self) -> None:
+        """`test-unit-base` needs no entry: the matrix rule covers it."""
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (base install)")
+            == "Unit Tests"
+        )
+
+    def test_a_missing_dependency_still_running_counts_as_pending(self) -> None:
+        """The consequence of the omission, not just the omission."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "Go Frontend",
+                "status": "IN_PROGRESS",
+            }
+        ]
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup, [])
+
+        assert "still running" in reason
+
+
+class TestTheArmsAreOrderedMostSpecificFirst:
+    """Three review findings on this function were all the same defect.
+
+    A new early-return arm silently steals cases from the arms after it,
+    because the conditions OVERLAP -- a running dependency and an unfinished
+    run are both true at once, and whichever is tested first wins regardless
+    of which is more informative. The three, in the order they were found:
+
+    1. the conflict arm (removed; its premise was false too) swallowed the
+       "every dependency concluded" verdict;
+    2. the empty-rollup arm swallowed the queued-run case;
+    3. the unstarted-run arm then swallowed the running-dependency case --
+       introduced by the fix for (2).
+
+    So this pins the PRECEDENCE rather than any single arm, over inputs where
+    more than one condition holds. A reordering that still satisfies every
+    other test in this file reddens here (#1848).
+    """
+
+    DEP_RUNNING = [
+        {
+            "__typename": "CheckRun",
+            "name": "Unit Tests (ubuntu-latest, py3.12)",
+            "status": "IN_PROGRESS",
+        }
+    ]
+    PR_RUN = {"status": "in_progress", "event": "pull_request"}
+
+    def test_a_running_dependency_outranks_an_unfinished_run(self) -> None:
+        """Both conditions hold; the named dependency is more informative.
+
+        Saying "produced no check entries so far" while a dependency is
+        visibly running is not merely less useful -- it is false.
+        """
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "still running" in reason
+        assert "no check entries" not in reason
+
+    def test_the_running_dependency_is_named(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "Unit Tests (ubuntu-latest, py3.12)" in reason
+
+    def test_an_unfinished_run_outranks_the_empty_rollup_arm(self) -> None:
+        """Finding 2: an empty rollup is what a queued run looks like."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_every_overlapping_combination_picks_one_verdict(self) -> None:
+        """The precedence table, as a single assertion over the overlaps.
+
+        Each row has at least two conditions true. Pinning the whole table
+        means a reordering cannot pass by satisfying the rows individually.
+        """
+        concluded = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        queued_pr = {"status": "queued", "event": "pull_request"}
+        dispatch = {"status": "queued", "event": "workflow_dispatch"}
+
+        expected = [
+            (self.DEP_RUNNING, [self.PR_RUN], "still running"),
+            (self.DEP_RUNNING, [], "still running"),
+            ([], [queued_pr], "not yet started"),
+            ([], [dispatch], "no check reported at the head at all"),
+            (concluded, [dispatch], "has concluded"),
+            ([], [], "no check reported at the head at all"),
+        ]
+
+        for rollup, runs, marker in expected:
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
+
+            assert marker in reason, f"{marker!r} not in {reason!r}"
