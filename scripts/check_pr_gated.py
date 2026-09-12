@@ -231,7 +231,6 @@ def absent_context_reason(
     context: str,
     rollup: list[dict[str, object]],
     ci_runs: list[dict[str, Any]] | None = None,
-    mergeable: str | None = None,
 ) -> str:
     """Why `context` is missing: still coming, never arriving, or no run.
 
@@ -279,18 +278,6 @@ def absent_context_reason(
     # consulted and where the remedy it implies -- an empty commit to
     # re-trigger -- moves the head and discards any review anchored to the
     # old SHA (#1848).
-    # CHECKED BEFORE "not yet started", because a conflicting branch runs no
-    # PR workflows AT ALL. GitHub skips them entirely, so the contexts are not
-    # "coming" -- waiting for them never terminates. A queued run and a
-    # conflicting branch both present an empty rollup and need OPPOSITE advice,
-    # which is the pair a single "not gated" verdict flattens (#1848).
-    if mergeable == "CONFLICTING":
-        return (
-            f"'{context}' is absent because the branch CONFLICTS with its base: "
-            "GitHub runs no PR workflows on a conflicting branch, so the "
-            "contexts will never arrive. Merge the base in -- waiting will not "
-            "help, and re-triggering cannot run anything"
-        )
     unstarted = [
         run
         for run in ci_runs or ()
@@ -608,7 +595,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "--repo",
             REPO,
             "--json",
-            "headRefOid,baseRefName,statusCheckRollup,comments,reviews,mergeable",
+            "headRefOid,baseRefName,statusCheckRollup,comments,reviews",
         )
     )
     if not view:
@@ -658,9 +645,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     if missing:
         reasons.append(
             f"required context absent at the head: {missing}; "
-            + absent_context_reason(
-                REQUIRED_CONTEXT, rollup, at_head, str(view.get("mergeable", ""))
-            )
+            + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
         )
     else:
         for entry in rollup:

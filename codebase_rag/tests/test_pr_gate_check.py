@@ -1524,14 +1524,14 @@ class TestAQueuedRunIsNotAMissingOne:
 
     def test_a_queued_run_reports_as_not_yet_started(self) -> None:
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
         )
 
         assert "not yet started" in reason
 
     def test_a_queued_run_does_not_claim_it_will_never_appear(self) -> None:
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
         )
 
         assert "not going to appear" not in reason
@@ -1539,7 +1539,7 @@ class TestAQueuedRunIsNotAMissingOne:
     def test_a_queued_run_warns_against_the_empty_commit(self) -> None:
         """The destructive remedy is what makes this worth more than tidiness."""
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
         )
 
         assert "empty commit" in reason
@@ -1547,7 +1547,7 @@ class TestAQueuedRunIsNotAMissingOne:
     def test_no_dependency_reported_does_not_claim_all_concluded(self) -> None:
         """With no CI run either, the old message asserted an empty set."""
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [], "MERGEABLE"
+            "All Checks Pass", self.UNRELATED, []
         )
 
         assert "every check it aggregates has concluded" not in reason
@@ -1565,60 +1565,62 @@ class TestAQueuedRunIsNotAMissingOne:
         ]
 
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", rollup, [{"status": "completed"}], "MERGEABLE"
+            "All Checks Pass", rollup, [{"status": "completed"}]
         )
 
         assert "not going to appear" in reason
 
 
-class TestAConflictingBranchNeverRunsAnything:
-    """A conflicting branch runs no PR workflows, so "wait" never terminates.
+class TestAConflictIsNotWhyAContextIsAbsent:
+    """A conflicting branch DOES run PR workflows -- measured, not assumed.
 
-    GitHub skips PR workflows entirely on a conflicting branch. The rollup
-    then looks exactly like a queued run's -- empty of dependencies -- but the
-    correct advice is the opposite: merge the base in, because nothing will
-    ever run. Measured tonight: a peer chased a "broken workflow" for an hour
-    on a branch whose only problem was a conflict (#1848).
+    An earlier version of this change claimed the opposite and returned "the
+    branch CONFLICTS, so the contexts will never arrive". That premise is
+    false: `ci.yml` triggers on plain `pull_request`, which fires on
+    opened/synchronize regardless of mergeability. Verified on two live
+    CONFLICTING PRs of this repo, each carrying a completed successful
+    `ci.yml` run at its head.
 
-    Checked BEFORE the not-yet-started arm, since a conflicting branch may
-    also carry a stale queued run from before the conflict appeared.
+    The arm was also checked FIRST, so on any conflicting branch it swallowed
+    the #1582 verdict this function exists to preserve -- "every dependency
+    concluded and the aggregate never appeared", which must say investigate.
+
+    These tests pin the corrected behaviour: mergeability is not consulted at
+    all, so no conflicting-branch input can suppress a real verdict (#1848).
     """
 
-    UNRELATED = [
-        {
-            "__typename": "CheckRun",
-            "name": "CodeRabbit",
-            "status": "COMPLETED",
-            "conclusion": "SUCCESS",
-        }
-    ]
+    def test_all_concluded_still_says_investigate(self) -> None:
+        """The verdict the removed arm masked, at the state that matters."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
 
-    def test_a_conflicting_branch_is_named_as_the_cause(self) -> None:
         reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [], "CONFLICTING"
+            "All Checks Pass", rollup, [{"status": "completed"}]
         )
 
-        assert "CONFLICTS" in reason
+        assert "not going to appear" in reason
 
-    def test_a_conflicting_branch_advises_merging_the_base(self) -> None:
-        reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [], "CONFLICTING"
-        )
+    def test_no_arm_mentions_a_conflict(self) -> None:
+        """Mergeability explains a blocked MERGE, never an absent context."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "CodeRabbit",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+        ]
 
-        assert "Merge the base in" in reason
+        for runs in ([], [{"status": "queued"}], [{"status": "completed"}]):
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
 
-    def test_a_conflict_outranks_a_stale_queued_run(self) -> None:
-        """Both present an empty rollup; only one has terminating advice."""
-        reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "CONFLICTING"
-        )
-
-        assert "CONFLICTS" in reason
-        assert "not yet started" not in reason
-
-    def test_a_mergeable_branch_is_not_blamed_on_a_conflict(self) -> None:
-        reason = check_pr_gated.absent_context_reason(
-            "All Checks Pass", self.UNRELATED, [{"status": "queued"}], "MERGEABLE"
-        )
-
-        assert "CONFLICTS" not in reason
+            assert "CONFLICT" not in reason.upper()
