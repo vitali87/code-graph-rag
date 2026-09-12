@@ -201,6 +201,71 @@ def context_name(entry: dict[str, object]) -> str:
     return ""
 
 
+def aggregated_job_for(name: str) -> str | None:
+    """The `AGGREGATED_JOBS` entry `name` belongs to, or None.
+
+    A bare prefix match is too loose. The matrix jobs carry their platform in
+    a PARENTHESISED suffix (`Unit Tests (ubuntu-latest, py3.12)`), so an exact
+    comparison matches none of them -- but `startswith` alone also claims
+    `Unit Tests Coverage` and `Unit Testsimposter`, and an unrelated pending
+    check misread as a dependency flips the verdict from "investigate" to
+    "wait", which is the defect this function was added to fix (#1827).
+
+    So: the exact name, or the name followed by ` (`. Nothing else.
+    """
+    for job in AGGREGATED_JOBS:
+        if name == job or name.startswith(f"{job} ("):
+            return job
+    return None
+
+
+def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
+    """Why `context` is missing: still coming, never arriving, or no run.
+
+    "Absent" collapses two states needing opposite responses. `All Checks
+    Pass` is an aggregate that reports only once its dependencies finish,
+    so it is legitimately missing for the whole run -- yet the same
+    sentence covers the #1582 case, where every job concluded and the
+    aggregate never appeared. One says wait, the other says investigate,
+    and the reassuring reading is the one a reader defaults to (#1827).
+
+    The three are separable from the rollup already fetched, so this costs
+    no extra API call. Measured on #1547: 20 unconcluded entries alongside
+    a passing `CI Ran At Head`, reported as though nothing had run.
+    """
+    if not rollup:
+        return f"no check reported at the head at all, so '{context}' cannot appear"
+    # Only the jobs the aggregate WAITS ON can explain its absence. Any
+    # unfinished entry used to count, so a single unrelated pending check --
+    # CodeRabbit is pending on nearly every PR here -- flipped the verdict
+    # from "investigate" to "wait" while every dependency had concluded.
+    # That is the #1582 case reported as its opposite, which is the exact
+    # confusion this function exists to remove.
+    pending = [
+        entry
+        for entry in rollup
+        if not entry_finished(entry) and aggregated_job_for(context_name(entry))
+    ]
+    if pending:
+        names = sorted(name for name in map(context_name, pending) if name)
+        shown = ", ".join(names[:3]) + ("..." if len(names) > 3 else "")
+        named = f" ({shown})" if names else ""
+        return (
+            f"'{context}' has not reported YET: {len(pending)} check(s) at the "
+            f"head are still running{named}. This is CI in flight, not a "
+            "missing run -- re-check rather than investigate"
+        )
+    # "every check" would overclaim: `pending` above counts only the entries
+    # this aggregate DEPENDS on, so an unrelated pending check (CodeRabbit,
+    # say) is deliberately excluded and may still be running. Say what was
+    # actually examined, or the message asserts something the filter never
+    # looked at (#1827).
+    return (
+        f"'{context}' is absent although every check it aggregates has "
+        "concluded, so it is not going to appear"
+    )
+
+
 def is_concluded(entry: dict[str, object]) -> bool:
     """Whether a check has finished.
 
@@ -210,6 +275,25 @@ def is_concluded(entry: dict[str, object]) -> bool:
     """
     conclusion = entry.get("conclusion")
     return isinstance(conclusion, str) and conclusion != ""
+
+
+def entry_finished(entry: dict[str, object]) -> bool:
+    """Whether a rollup entry has finished, whichever shape it is.
+
+    `is_concluded` reads `conclusion`, which a `StatusContext` does not
+    have -- it carries `state`. Judged by that predicate every third-party
+    status is unfinished forever, so a rollup containing one can never
+    reach the all-concluded branch and #1582 reports as "still running":
+    the reassuring reading, in the one case that needs investigating.
+
+    The older call site is guarded by a name test that only ever matches a
+    `CheckRun`, so the gap was latent until `absent_context_reason` began
+    judging EVERY entry (Greptile-local, PR for #1827).
+    """
+    if "conclusion" in entry or entry.get("__typename") == "CheckRun":
+        return is_concluded(entry)
+    state = entry.get("state")
+    return isinstance(state, str) and state not in ("", "PENDING", "EXPECTED")
 
 
 def unit_test_contexts(rollup: list[dict[str, object]]) -> list[str]:
@@ -512,7 +596,10 @@ def check(pr: str) -> tuple[list[str], list[str]]:
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
-        reasons.append(f"required context absent at the head: {missing}")
+        reasons.append(
+            f"required context absent at the head: {missing}; "
+            + absent_context_reason(REQUIRED_CONTEXT, rollup)
+        )
     else:
         for entry in rollup:
             if context_name(entry) != REQUIRED_CONTEXT:

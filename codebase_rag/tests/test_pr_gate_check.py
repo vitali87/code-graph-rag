@@ -32,6 +32,7 @@ from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
     BLOCKED_VALIDATION_MARKERS,
+    absent_context_reason,
     context_name,
     is_concluded,
     is_real_review,
@@ -1090,3 +1091,388 @@ class TestEveryCheckReturnPathIsATuple:
         self._gh_is_broken(monkeypatch)
 
         assert check_pr_gated.main(["check_pr_gated.py", "9999"]) == 1
+
+
+# Captured from #1547 at 41ad9750 on 2026-09-10, the run that motivated
+# #1827: `CI Ran At Head` had passed and twenty jobs were mid-flight, and
+# the tool reported the same sentence it prints when nothing ran at all.
+REAL_ROLLUP_MID_RUN = [
+    {"__typename": "CheckRun", "name": "CI Ran At Head", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Analyze (python)", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": ""},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": ""},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.13)",
+        "conclusion": "",
+    },
+]
+
+# The #1582 shape: everything concluded, the aggregate never appeared.
+REAL_ROLLUP_ALL_CONCLUDED = [
+    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
+    {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
+]
+
+
+class TestAbsentContextReason:
+    """ "Absent" hides three states, two of which need opposite action.
+
+    `All Checks Pass` is an aggregate that reports only once its
+    dependencies finish, so it is legitimately missing for a whole run.
+    The same sentence also covers #1582, where every job concluded and it
+    never arrived. One means wait; the other means investigate.
+    """
+
+    def test_mid_run_says_the_checks_are_still_coming(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "has not reported YET" in reason
+        assert "3 check(s)" in reason
+
+    def test_mid_run_names_the_checks_still_running(self) -> None:
+        """A count alone leaves the reader to go and look anyway."""
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "Lint & Format" in reason
+
+    def test_mid_run_does_not_name_a_finished_check_as_pending(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "CI Ran At Head" not in reason
+
+    def test_all_concluded_says_it_is_never_arriving(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+    def test_an_empty_rollup_says_nothing_ran(self) -> None:
+        reason = absent_context_reason("All Checks Pass", [])
+
+        assert "no check reported at the head at all" in reason
+
+    def test_the_three_states_are_mutually_distinguishable(self) -> None:
+        """The whole point is that a reader can tell them apart.
+
+        Asserting each in isolation would pass if two returned the same
+        sentence, which is precisely the defect being fixed.
+        """
+        said = {
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN),
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED),
+            absent_context_reason("All Checks Pass", []),
+        }
+
+        assert len(said) == 3
+
+    def test_a_queued_check_counts_as_pending(self) -> None:
+        """A queued check reports `conclusion: ""`, an empty STRING.
+
+        Read as concluded, a fully-queued run reports as "not going to
+        appear" -- the alarming wording, for the most ordinary state.
+        """
+        queued = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "has not reported YET" in absent_context_reason("X", queued)
+
+
+class TestCheckDistinguishesPendingFromNeverRan:
+    """`check` must consult the helper, not merely be able to.
+
+    The class above stays green when the call site is deleted. This one
+    stubs the I/O seam and asserts on `check`'s own return, so removing
+    the call reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, rollup: list[dict[str, object]]) -> None:
+        view = {
+            "headRefOid": "e" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": rollup,
+            "comments": [],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_says_in_flight_for_a_mid_run_pr(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert any("has not reported YET" in r for r in reasons)
+
+    def test_check_does_not_say_in_flight_once_everything_concluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_ALL_CONCLUDED)
+
+        reasons, _ = check_pr_gated.check("1582")
+
+        assert not any("has not reported YET" in r for r in reasons)
+        assert any("not going to appear" in r for r in reasons)
+
+    def test_a_mid_run_pr_is_still_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wording only. A PR mid-run is not verifiably gated, and the
+        tool is right to refuse it -- the defect was that it could not say
+        why, not that it refused.
+        """
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert any("required context absent at the head" in r for r in reasons)
+
+
+class TestEntryFinishedHandlesBothRollupShapes:
+    """A `StatusContext` carries `state`, never `conclusion`.
+
+    Judged by `is_concluded` alone, every third-party status is unfinished
+    forever, so a rollup containing one can never reach the all-concluded
+    branch: #1582 then reports as "still running, re-check" -- the
+    reassuring reading, in the one case that needs investigating. The
+    older `is_concluded` call site filters to a name only a `CheckRun`
+    ever has, which is why the gap stayed latent.
+    """
+
+    def test_a_finished_status_context_is_finished(self) -> None:
+        assert check_pr_gated.entry_finished(REAL_STATUS_CONTEXT) is True
+
+    def test_a_pending_status_context_is_not_finished(self) -> None:
+        pending = {"__typename": "StatusContext", "context": "X", "state": "PENDING"}
+
+        assert check_pr_gated.entry_finished(pending) is False
+
+    def test_a_queued_check_run_is_not_finished(self) -> None:
+        """The empty-STRING conclusion trap, still handled."""
+        queued = {"__typename": "CheckRun", "name": "X", "conclusion": ""}
+
+        assert check_pr_gated.entry_finished(queued) is False
+
+    def test_a_finished_status_context_does_not_block_the_verdict(self) -> None:
+        """The bug this predicate exists for, at the level that matters.
+
+        With the real captured fixture in an otherwise-concluded rollup,
+        the all-concluded branch must still be reachable.
+        """
+        rollup = [*REAL_ROLLUP_ALL_CONCLUDED, REAL_STATUS_CONTEXT]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+
+class TestOnlyDependenciesExplainAnAbsentAggregate:
+    """An unrelated pending check must not suppress "investigate".
+
+    `All Checks Pass` waits on AGGREGATED_JOBS and nothing else, so only
+    those being unfinished can explain its absence. Counting every
+    unfinished entry meant one unrelated pending check flipped the verdict
+    from "investigate" to "wait" -- and CodeRabbit is pending on nearly
+    every PR here, so the wrong branch was the common case. Reported by
+    Greptile on #1831.
+    """
+
+    @staticmethod
+    def _concluded() -> list[dict[str, object]]:
+        return [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+    @staticmethod
+    def _pending(name: str) -> dict[str, object]:
+        return {
+            "__typename": "CheckRun",
+            "name": name,
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+        }
+
+    def test_an_unrelated_pending_check_does_not_say_wait(self) -> None:
+        rollup = [*self._concluded(), self._pending("CodeRabbit")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" not in reason
+        assert "not going to appear" in reason
+
+    def test_a_pending_dependency_still_says_wait(self) -> None:
+        rollup = [*self._concluded()[:-1], self._pending("Binary Smoke Test")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_matrix_dependency_is_matched_by_prefix(self) -> None:
+        """Matrix jobs carry a platform suffix, so exact matching finds none."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Unit Tests (ubuntu-latest, py3.12)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_dependency_wins_over_unrelated_noise(self) -> None:
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+        assert "Binary Smoke Test" in reason
+
+    def test_the_count_names_only_dependencies(self) -> None:
+        """The number must not include checks the aggregate does not await."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+            self._pending("Fuzz (address)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "1 check(s)" in reason
+
+
+class TestPendingNamesReadHonestly:
+    """The parenthetical must not claim names it does not have."""
+
+    def test_no_ellipsis_when_every_pending_check_is_named(self) -> None:
+        one = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "(Type Check)" in absent_context_reason("X", one)
+
+    def test_ellipsis_only_once_names_are_omitted(self) -> None:
+        """Names must be jobs the aggregate waits on, or they are filtered.
+
+        Synthetic names (`Check 0`) no longer reach the parenthetical:
+        only unfinished AGGREGATED_JOBS entries can explain the
+        aggregate's absence, so the fixture uses four real ones.
+        """
+        four = [
+            {"__typename": "CheckRun", "name": name, "conclusion": ""}
+            for name in AGGREGATED_JOBS[:4]
+        ]
+
+        assert "..." in absent_context_reason("X", four)
+
+    def test_no_empty_parentheses_when_no_name_is_known(self) -> None:
+        """A dependency-shaped entry whose name cannot be read.
+
+        `context_name` returns "" for a shape carrying neither `name` nor
+        `context`, so such an entry is filtered out with the unrelated
+        ones and cannot produce an empty parenthetical.
+        """
+        nameless = [{"conclusion": ""}, {"conclusion": ""}]
+
+        reason = absent_context_reason("X", nameless)
+
+        assert "()" not in reason
+        assert "still running" not in reason
+
+
+class TestADependencyIsMatchedExactlyOrByItsMatrixSuffix:
+    """`startswith` alone claims names that are not dependencies at all.
+
+    The matrix jobs carry a PARENTHESISED suffix (`Unit Tests (ubuntu-latest,
+    py3.12)`), which is why an exact comparison cannot be used. But a bare
+    prefix test also claims `Unit Tests Coverage` and `Unit Testsimposter`,
+    and an unrelated pending check misread as a dependency flips the verdict
+    from "investigate" back to "wait" -- the exact defect
+    `aggregated_job_for` exists to prevent (#1827).
+
+    Found on review of this branch, after the first version shipped the loose
+    match.
+    """
+
+    def test_the_exact_name_matches(self) -> None:
+        assert check_pr_gated.aggregated_job_for("Unit Tests") == "Unit Tests"
+
+    def test_a_matrix_suffix_matches(self) -> None:
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (ubuntu-latest, py3.12)")
+            == "Unit Tests"
+        )
+
+    def test_a_longer_unrelated_name_does_not_match(self) -> None:
+        """`Unit Tests Coverage` is a different check, not a matrix cell."""
+        assert check_pr_gated.aggregated_job_for("Unit Tests Coverage") is None
+
+    def test_a_name_glued_onto_the_job_does_not_match(self) -> None:
+        """No separator at all: the prefix test's worst case."""
+        assert check_pr_gated.aggregated_job_for("Unit Testsimposter") is None
+
+    def test_an_unrelated_check_does_not_match(self) -> None:
+        assert check_pr_gated.aggregated_job_for("CodeRabbit") is None
+
+
+class TestTheAbsentMessageClaimsOnlyWhatItExamined:
+    """The fallback must not say "every check" when it filtered to some.
+
+    `absent_context_reason` counts only the entries the aggregate DEPENDS on,
+    so an unrelated pending check is deliberately excluded and may still be
+    running. Saying "every check at the head has concluded" asserts something
+    the filter never looked at. Both reviewers raised this independently
+    (#1827).
+    """
+
+    def test_the_message_scopes_its_claim_to_the_aggregate(self) -> None:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check it aggregates has concluded" in reason
+
+    def test_the_message_does_not_claim_every_check_at_the_head(self) -> None:
+        """The unrelated pending check above is proof the claim would be false."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check at the head" not in reason
