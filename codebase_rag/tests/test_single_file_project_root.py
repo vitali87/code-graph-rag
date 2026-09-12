@@ -430,3 +430,75 @@ def test_a_single_file_run_still_updates_an_existing_cache(
         "the next update would re-parse what this run already applied"
     )
     assert set(after) == set(before), "the run dropped a sibling's cache entry"
+
+
+def test_a_single_file_run_still_sees_every_directory(
+    tmp_path: Path, parsers_and_queries: tuple[dict, dict]
+) -> None:
+    """`packages_now` is NOT a partial-walk artefact (#1776).
+
+    Written expecting the opposite, and it failed -- recorded here because
+    the refuted version is the load-bearing part.
+
+    `_prune_orphan_nodes` consults `packages_now` for Folder and Package,
+    deleting a `Package` whose path is `not in` that set. The obvious worry
+    is that a single-file run populates it from its target's chain only, so
+    every other directory would look like it had stopped being a package.
+
+    It does not. `identify_structure` `rglob`s the whole of `repo_path`
+    independently of which FILES are parsed, so the directory set is
+    complete on a single-file run too -- which, since #1775, means complete
+    relative to the real project root.
+
+    So the kind test is not an obstacle to narrowing the prune guard, and
+    #1776's "recoverable with a narrower condition" reading holds for
+    Package as well as for File and Module.
+    """
+    root = tmp_path / "nested"
+    _tree(root)
+    (root / "other").mkdir()
+    (root / "other" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "other" / "mod.py").write_text("z = 3\n", encoding="utf-8")
+    parsers, queries = parsers_and_queries
+
+    def discovered_package_paths(repo_path: Path) -> set[str]:
+        up = GraphUpdater(
+            ingestor=MagicMock(),
+            repo_path=repo_path,
+            parsers=parsers,
+            queries=queries,
+            project_name="nested",
+        )
+        # The comparison below is only the one this test NAMES if the
+        # single-file leg is rooted at the project root. Nothing in `_tree`
+        # writes a `.git` or a cache, so that rooting holds solely because
+        # the full-build leg runs first and writes the cache as a side
+        # effect. Run the legs in the other order and the single-file leg
+        # roots at `pkg` and sees `{'.'}`, and the assertion fails for a
+        # reason that has nothing to do with parse scoping.
+        #
+        # An ordering dependency no assertion states is exactly the shape
+        # that makes a test stop measuring what it claims, so state it.
+        assert up.repo_path.resolve() == root.resolve(), (
+            "fixture guard: this leg must be rooted at the project root, or "
+            f"the directory sets are not comparable: {up.repo_path}"
+        )
+        up.run()
+        return {
+            rel.as_posix()
+            for rel, qn in up.factory.structure_processor.structural_elements.items()
+            if qn
+        }
+
+    by_full = discovered_package_paths(root)
+    by_single = discovered_package_paths(root / "pkg" / "module_a.py")
+
+    assert "other" in by_full, (
+        "fixture guard: the full build must see the unrelated package, or "
+        "the comparison below measures nothing"
+    )
+    assert by_single == by_full, (
+        "a single-file run's directory set diverged from a full build's "
+        f"({by_single} vs {by_full}); the prune's Folder/Package kind test "
+        "would then delete directories the run merely did not visit"
+    )

@@ -5193,13 +5193,26 @@ class GraphUpdater:
             # rows never runs for them.
             #
             # #1775 fixed that misrooting: `repo_path` is now the project
-            # root whenever an ancestor holds the hash cache. THE GUARD IS
-            # STILL REQUIRED, and for a reason the misrooting only obscured
-            # -- a run that walked one file cannot distinguish "this module
-            # was deleted" from "this module was not visited", whatever it
-            # is rooted at. Correct rooting makes the over-deletion rarer,
-            # not impossible, and a genuinely deleted sibling is swept on a
-            # run that never looked at it.
+            # root whenever an ancestor holds the hash cache or a `.git`.
+            #
+            # That removes the MEASURED cause of #1756 rather than the guard's
+            # justification. Two things were checked while looking at #1776:
+            #
+            # * the path test now agrees with disk truth -- on a correctly
+            #   rooted single-file run, surviving siblings survive and only a
+            #   genuinely absent path is selected;
+            # * `packages_now` is NOT a partial-walk artefact either, because
+            #   `identify_structure` rglobs the whole of `repo_path`
+            #   independently of which FILES are parsed. An earlier version of
+            #   this comment claimed the opposite; a test written to pin that
+            #   claim failed, which is how the error was found.
+            #
+            # So the guard is now conservative rather than load-bearing, and
+            # narrowing it is #1776. It is kept because "conservative" is the
+            # right default for a whole-project delete, and because the
+            # premise above is worth re-measuring against a live database
+            # before acting on it -- these observations come from the
+            # emulated store, which models fewer node kinds than production.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
             # The two sweeps below still run. Unlike the path-keyed loop they
             # take no path and no project: each deletes only nodes with zero
