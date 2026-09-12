@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import json
 import sys
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -113,6 +114,14 @@ class MCPToolsRegistry:
         # an unrelated marker-less failure earned, whenever some recoverable
         # marker happens to be pending at guard time (#1705 review).
         self._flag_from_failed_clear: str | None = None
+        # This registry's identity in the durable marker. The ingestor lock is
+        # per INSTANCE, so two registries can index the same project at once;
+        # a marker keyed only by project meant the second run's clear deleted
+        # the first run's marker, and a partial graph then looked complete to
+        # a fresh process (issue #1709). Per registry rather than per call
+        # because the instance lock already serialises this registry's own
+        # runs, so its own marker can never overlap itself.
+        self._run_id: str = uuid.uuid4().hex
         # WHICH project's damage `_graph_incomplete` records, when a marker
         # does not say. The flag is registry-wide but every writer of it is
         # project-scoped, so a successful clear for project B discarded a
@@ -1129,7 +1138,14 @@ class MCPToolsRegistry:
         degrades this guard back to the old in-process behaviour and only the
         log would show it.
         """
-        params: dict[str, PropertyValue] = {cs.KEY_PROJECT_NAME: project_name}
+        # Both the mark and the clear carry this registry's run id, so a
+        # clear removes only the marker this registry wrote (issue #1709).
+        # The READ deliberately does not: it asks whether ANY run is
+        # outstanding, which is the same boolean question it always asked.
+        params: dict[str, PropertyValue] = {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_RUN_ID: self._run_id,
+        }
         if incomplete:
             query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
             params[cs.KEY_WRITING] = writing
@@ -1141,6 +1157,57 @@ class MCPToolsRegistry:
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_FAILED.format(
                     project=project_name, incomplete=incomplete, error=error
+                )
+            )
+            return False
+        if not incomplete:
+            # A marker written before run ids existed has no `run_id`, so the
+            # run-scoped clear above cannot match it while the read still sees
+            # it -- the project would stay blocked forever after an upgrade
+            # (#1850 review). A run completing for this project has
+            # established the graph is whole, so clearing the legacy marker is
+            # the same statement its own clear makes.
+            #
+            # BEST EFFORT, and deliberately outside the try above: this run's
+            # own clear has already succeeded by here, so the run IS complete.
+            # Letting a failure in optional compatibility cleanup return False
+            # reported a completed operation as incomplete and raised the flag
+            # for a graph that is whole (#1850 review, second finding). The
+            # legacy marker simply stays for the next run to clear.
+            try:
+                self.ingestor.execute_write(
+                    cq.CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
+            except Exception as error:  # noqa: BLE001 -- best effort; see above
+                logger.warning(
+                    lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                        project=project_name, incomplete=False, error=error
+                    )
+                )
+        return True
+
+    def _recover_stranded_markers(self, project_name: str) -> bool:
+        """Clear EVERY outstanding marker for the project, not just this run's.
+
+        The ordinary clear is run-scoped so a concurrent run's marker outlives
+        it (issue #1709). Recovery is the opposite case by definition: it
+        clears a marker some OTHER run stranded, so a run-scoped delete would
+        match nothing and leave the project blocked until a full update.
+
+        Safe only because the caller has already established that EVERY
+        outstanding marker says `writing=false` -- the graph is as those runs
+        found it. Returns whether the write reached the store.
+        """
+        try:
+            self.ingestor.execute_write(
+                cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as error:  # noqa: BLE001 -- same contract as _persist_incomplete
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                    project=project_name, incomplete=False, error=error
                 )
             )
             return False
@@ -1309,6 +1376,29 @@ class MCPToolsRegistry:
             self._flag_from_failed_clear = None
         return None
 
+    def _marker_rows(self, project_name: str) -> list[dict] | None:
+        """Outstanding marker rows for the project, or None if unreadable.
+
+        Split out so the post-recovery re-check reads the same way the first
+        read does; `None` means the store could not answer, which every
+        caller must treat as "refuse" rather than "nothing outstanding".
+        """
+        try:
+            return list(
+                self.ingestor.fetch_all(
+                    cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
+                or []
+            )
+        except Exception as error:  # noqa: BLE001 -- same contract as the caller
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                    project=project_name, error=error
+                )
+            )
+            return None
+
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
 
@@ -1352,10 +1442,21 @@ class MCPToolsRegistry:
             # a marker from before the phase existed stays fail-closed.
             if row.get("writing", True):
                 return True
-            if not self._persist_incomplete(project_name, False):
+            if not self._recover_stranded_markers(project_name):
                 # Could not clear it. The store refused a write, so the run
                 # that would follow could not mark itself either; refuse now
                 # and let the next attempt retry.
+                return True
+            # The recovery is CONDITIONAL (it deletes only markers still
+            # read-only), and a write reports no affected-row count, so
+            # "the write succeeded" does not mean "the marker is gone". A run
+            # that promoted its own marker between this method's read and
+            # that delete leaves a row the delete skipped, and returning
+            # False here would let a scoped reingest proceed over a graph
+            # being written (raised by CodeRabbit on #1850). Re-read and
+            # refuse if anything is still outstanding.
+            remaining = self._marker_rows(project_name)
+            if remaining is None or remaining:
                 return True
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)

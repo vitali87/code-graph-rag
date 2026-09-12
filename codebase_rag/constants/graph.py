@@ -134,6 +134,11 @@ KEY_PROJECT_NAME = "project_name"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
+# Identifies ONE run's incomplete-run marker. Two registries can index the
+# same project concurrently (the ingestor lock is per instance), and a marker
+# keyed only by project let the second run's clear delete the first run's
+# marker (issue #1709).
+KEY_RUN_ID = "run_id"
 # ast-grep finding node properties (issue #413)
 KEY_MESSAGE = "message"
 KEY_SNIPPET = "snippet"
