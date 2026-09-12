@@ -461,7 +461,7 @@ def test_a_single_file_run_still_sees_every_directory(
     (root / "other" / "mod.py").write_text("z = 3\n", encoding="utf-8")
     parsers, queries = parsers_and_queries
 
-    def walked(repo_path: Path) -> set[str]:
+    def discovered_package_paths(repo_path: Path) -> set[str]:
         up = GraphUpdater(
             ingestor=MagicMock(),
             repo_path=repo_path,
@@ -490,8 +490,8 @@ def test_a_single_file_run_still_sees_every_directory(
             if qn
         }
 
-    by_full = walked(root)
-    by_single = walked(root / "pkg" / "module_a.py")
+    by_full = discovered_package_paths(root)
+    by_single = discovered_package_paths(root / "pkg" / "module_a.py")
 
     assert "other" in by_full, (
         "fixture guard: the full build must see the unrelated package, or "
