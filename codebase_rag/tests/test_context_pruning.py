@@ -622,27 +622,26 @@ def test_the_call_site_prunes_the_callers_list_and_precedes_the_counter() -> Non
         "rebinding the name prunes a copy and leaves the caller's list intact"
     )
 
+    # Matches `_spawn_context_refresh(list(...))`, which superseded
+    # `_spawn_background(_refresh_context_tokens(list(...)))` when refreshes
+    # were serialised so several turns cannot tokenise concurrently (#1832).
+    # The property under test is unchanged: the prune must precede the call
+    # that snapshots the history for the counter.
     spawn_lines = [
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id == "_spawn_background"
+        and node.func.id == "_spawn_context_refresh"
         and any(
             isinstance(a, ast.Call)
             and isinstance(a.func, ast.Name)
-            and a.func.id == "_refresh_context_tokens"
-            and any(
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Name)
-                and inner.func.id == "list"
-                for inner in ast.walk(a)
-            )
+            and a.func.id == "list"
             for a in node.args
         )
     ]
     assert spawn_lines, (
-        "found no _spawn_background(_refresh_context_tokens(list(...))); the "
+        "found no _spawn_context_refresh(list(...)); the "
         "counter's snapshot call changed shape and this guard has drifted"
     )
     assert min(assign.lineno for assign in slice_assignments) < max(spawn_lines), (
