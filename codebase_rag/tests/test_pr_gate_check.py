@@ -1130,6 +1130,17 @@ REAL_ROLLUP_ALL_CONCLUDED = [
         "conclusion": "SUCCESS",
     },
     {"__typename": "CheckRun", "name": "Binary Smoke Test", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Wheel Smoke (unlocked resolution)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Go Frontend", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Sonar Zero Issues Gate",
+        "conclusion": "SUCCESS",
+    },
     {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
     {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
 ]
@@ -1675,3 +1686,127 @@ class TestTheAllConcludedFixtureCoversEveryDependency:
 
         assert "not going to appear" in concluded
         assert "has not reported YET" in one_running
+
+
+class TestAnUnstartedRunOutranksTheEmptyRollupArm:
+    """An empty rollup is exactly what a queued run looks like.
+
+    The empty-rollup arm ran first and returned "no check reported at the head
+    at all", sending the reader to investigate a workflow that had simply not
+    started -- reintroducing, for the emptiest case of all, the defect this
+    change exists to fix. Found on review; the same arm-ordering mistake as the
+    conflict arm removed earlier in this branch (#1848).
+    """
+
+    def test_a_queued_run_with_an_empty_rollup_says_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_an_empty_rollup_with_no_run_still_says_nothing_reported(self) -> None:
+        """The control: with no run at all, the empty-rollup arm is right."""
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", [], [])
+
+        assert "no check reported at the head at all" in reason
+
+
+class TestOnlyAPullRequestRunCreatesThisPrsContexts:
+    """A dispatched run at the same SHA is evidence about itself.
+
+    `workflow_dispatch` and `push` runs report under their own event and
+    contribute no PR check context, so counting one as "the contexts are
+    coming" says wait forever while the pull-request run has already finished.
+    That suppresses the #1582 verdict via an unrelated run (#1848).
+    """
+
+    def test_a_queued_dispatch_run_is_not_evidence_of_pending_contexts(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "workflow_dispatch"}]
+        )
+
+        assert "not yet started" not in reason
+
+    def test_a_dispatch_run_does_not_suppress_the_investigate_verdict(self) -> None:
+        """The case that matters: every dependency concluded, so investigate."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            rollup,
+            [{"status": "queued", "event": "workflow_dispatch"}],
+        )
+
+        assert "not going to appear" in reason
+
+    def test_a_run_without_an_event_field_is_treated_as_a_pr_run(self) -> None:
+        """Fail in the direction that preserves the old behaviour."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued"}]
+        )
+
+        assert "not yet started" in reason
+
+
+class TestAggregatedJobsCoversEveryDeclaredDependency:
+    """The list must match `all-checks-pass`'s `needs:` block in ci.yml.
+
+    Five of the nine were listed. A head where only a missing one had reported
+    looked like "no dependency reported at all", and a missing one still
+    running was not counted as pending. Found on review (#1848).
+
+    The coupling cannot be removed: the rollup carries display names while
+    `needs:` carries job ids, with no mapping available without parsing the
+    workflow. So it is asserted here instead, against the names the workflow
+    declares.
+    """
+
+    DECLARED_DISPLAY_NAMES = (
+        "Lint & Format",
+        "Type Check",
+        "Unit Tests",
+        "Integration Tests",
+        "Binary Smoke Test",
+        "Wheel Smoke (unlocked resolution)",
+        "Go Frontend",
+        "Sonar Zero Issues Gate",
+    )
+
+    def test_every_declared_dependency_is_aggregated(self) -> None:
+        missing = [
+            name
+            for name in self.DECLARED_DISPLAY_NAMES
+            if check_pr_gated.aggregated_job_for(name) is None
+        ]
+
+        assert not missing, f"not recognised as dependencies: {missing}"
+
+    def test_the_base_install_matrix_cell_resolves_to_unit_tests(self) -> None:
+        """`test-unit-base` needs no entry: the matrix rule covers it."""
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (base install)")
+            == "Unit Tests"
+        )
+
+    def test_a_missing_dependency_still_running_counts_as_pending(self) -> None:
+        """The consequence of the omission, not just the omission."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "Go Frontend",
+                "status": "IN_PROGRESS",
+            }
+        ]
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup, [])
+
+        assert "still running" in reason

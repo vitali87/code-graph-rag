@@ -53,17 +53,37 @@ CI_RUN_UNFINISHED_STATUSES = frozenset(
     {"queued", "in_progress", "waiting", "pending", "requested"}
 )
 
+# The events whose runs create a PR's check contexts. `workflow_dispatch` and
+# `push` runs can sit at the same head SHA and report under their own event,
+# so they are evidence about themselves, not about this PR (#1848). Defaulted
+# to `pull_request` when absent, so a response without the field behaves as
+# before rather than silently dropping every run.
+CI_RUN_PR_EVENTS = frozenset({"pull_request", "pull_request_target"})
+
 # The one context the active ruleset requires on the default branch. It
 # aggregates the jobs below and asserts each result == "success", so a
 # skipped or cancelled job fails it rather than passing silently.
 REQUIRED_CONTEXT = "All Checks Pass"
 
+# Every job `all-checks-pass` declares in `needs:`, by DISPLAY name -- the
+# rollup carries names, not job ids. Five were listed and four were missing,
+# so a head where only a missing one had reported looked like "no dependency
+# reported at all" (#1848). `Unit Tests (base install)` needs no entry of its
+# own: the matrix rule matches it under `Unit Tests`.
+#
+# This list must stay in step with ci.yml's `needs:` block. It cannot be
+# derived at runtime -- the rollup gives display names and `needs:` gives job
+# ids, with no mapping available without parsing the workflow -- so the
+# coupling is real and worth stating rather than hiding.
 AGGREGATED_JOBS = (
     "Lint & Format",
     "Type Check",
     "Unit Tests",
     "Integration Tests",
     "Binary Smoke Test",
+    "Wheel Smoke (unlocked resolution)",
+    "Go Frontend",
+    "Sonar Zero Issues Gate",
 )
 
 # A review artifact must POSITIVELY carry a verdict. The alternative --
@@ -245,6 +265,32 @@ def absent_context_reason(
     no extra API call. Measured on #1547: 20 unconcluded entries alongside
     a passing `CI Ran At Head`, reported as though nothing had run.
     """
+    # An unfinished run is checked FIRST, because an empty rollup is exactly
+    # what a queued run looks like -- the contexts have not been created yet.
+    # Returning "no check reported at all" here sent the reader to investigate
+    # a workflow that simply had not started, which is the defect this change
+    # exists to fix; putting the empty-rollup arm first reintroduced it for the
+    # emptiest case of all (#1848).
+    # Only a PULL_REQUEST run creates this PR's check contexts. A
+    # `workflow_dispatch` or `push` run at the same SHA reports under its own
+    # event and contributes no PR context, so counting it as "the contexts are
+    # coming" says wait forever while the pull-request run has already
+    # finished -- the #1582 verdict suppressed by an unrelated run (#1848).
+    unstarted = [
+        run
+        for run in ci_runs or ()
+        if str(run.get("status", "")) in CI_RUN_UNFINISHED_STATUSES
+        and str(run.get("event", "pull_request")) in CI_RUN_PR_EVENTS
+    ]
+    if unstarted:
+        statuses = sorted({str(run.get("status", "")) for run in unstarted})
+        return (
+            f"'{context}' has not reported YET: the CI run at the head is "
+            f"{', '.join(statuses)} and has produced no check entries so far. "
+            "This is CI not yet started, not a missing run -- re-check rather "
+            "than investigate, and do NOT push an empty commit (it moves the "
+            "head and discards any review anchored to it)"
+        )
     if not rollup:
         return f"no check reported at the head at all, so '{context}' cannot appear"
     # Only the jobs the aggregate WAITS ON can explain its absence. Any
@@ -266,31 +312,6 @@ def absent_context_reason(
             f"'{context}' has not reported YET: {len(pending)} check(s) at the "
             f"head are still running{named}. This is CI in flight, not a "
             "missing run -- re-check rather than investigate"
-        )
-    # A QUEUED run contributes NO rollup entry at all, so the filter above
-    # finds nothing pending and the fallback below would report "not going to
-    # appear" about a run that has not started. Worse, with zero dependency
-    # entries it asserts they all concluded -- a claim about an empty set.
-    #
-    # The run list already fetched settles it without another API call: a
-    # `queued` or `in_progress` CI run at this head means the contexts are
-    # coming. This is the window right after a push, where the tool is most
-    # consulted and where the remedy it implies -- an empty commit to
-    # re-trigger -- moves the head and discards any review anchored to the
-    # old SHA (#1848).
-    unstarted = [
-        run
-        for run in ci_runs or ()
-        if str(run.get("status", "")) in CI_RUN_UNFINISHED_STATUSES
-    ]
-    if unstarted:
-        statuses = sorted({str(run.get("status", "")) for run in unstarted})
-        return (
-            f"'{context}' has not reported YET: the CI run at the head is "
-            f"{', '.join(statuses)} and has produced no check entries so far. "
-            "This is CI not yet started, not a missing run -- re-check rather "
-            "than investigate, and do NOT push an empty commit (it moves the "
-            "head and discards any review anchored to it)"
         )
     # Only reachable with at least one CONCLUDED dependency entry, or with no
     # CI run at all -- and the caller reports the latter separately. Without
