@@ -9,7 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -889,3 +889,46 @@ def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
     excinfo = getattr(outcome, "excinfo", None)
     if excinfo is not None and isinstance(excinfo[1], NodeOracleUnavailable):
         pytest.skip(str(excinfo[1]))
+
+
+def _assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -> None:
+    """Fail unless a fixture supplies every input the predicate under test reads.
+
+    The defect this exists for (#1859): a test asserting that a filter
+    returned NOTHING passes vacuously when the fixture contains none of the
+    values that filter inspects. Measured on `REAL_ROLLUP_ALL_CONCLUDED`,
+    which held two checks that were not members of `AGGREGATED_JOBS` -- so
+    "the aggregate is absent although every dependency concluded" was reached
+    because the rollup held no dependency at all. Flipping every conclusion
+    to unfinished left all 105 tests green.
+
+    An empty result and an empty INPUT read identically from the assertion's
+    side, and only one of them is evidence. This makes the fixture's adequacy
+    a checked precondition rather than a property nobody states.
+
+    Deliberately narrow. It cannot detect the sibling case where the fixture
+    is well-formed but every row is pinned at the one value that drives the
+    branch -- there the inputs are present and only varying them shows the
+    problem. That half stays a review convention (assert the verdict
+    CHANGES), because no assertion inside one test can observe what another
+    test failed to vary.
+
+    Args:
+        covered: the required values the fixture actually supplies.
+        required: every value the predicate under test reads.
+        what: named in the failure, e.g. "the all-concluded rollup".
+    """
+    missing = required - covered
+    assert not missing, (
+        f"{what} does not cover {sorted(missing)}, so any assertion that the "
+        "filter returned nothing holds for the trivial reason that the "
+        "fixture supplies none of its inputs (#1859). Add the missing "
+        "values, or the test passes whatever the code does."
+    )
+
+
+@pytest.fixture
+def assert_fixture_covers() -> Callable[..., None]:
+    """`_assert_fixture_covers` as a fixture, which is how this suite shares
+    helpers -- no test file imports from `conftest` directly."""
+    return _assert_fixture_covers
