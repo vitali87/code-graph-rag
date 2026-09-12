@@ -54,6 +54,28 @@ def test_an_empty_fixture_fails() -> None:
         assert_fixture_covers(set(), {"a", "b"}, what="the all-concluded rollup")
 
 
+def test_partial_and_total_gaps_are_diagnosed_differently() -> None:
+    """They are different bugs and need different messages (#1862 review).
+
+    A fixture supplying NONE of the inputs makes the empty result vacuous
+    outright. One supplying some makes it merely unreliable -- the filter may
+    be examining the present values correctly and simply never seeing the
+    absent ones. An earlier version said "none of its inputs" for both, which
+    is a false diagnosis on the partial case and sends the reader looking for
+    the wrong thing.
+    """
+    with pytest.raises(AssertionError) as total:
+        assert_fixture_covers(set(), {"a", "b"}, what="the rollup")
+    with pytest.raises(AssertionError) as partial:
+        assert_fixture_covers({"a"}, {"a", "b"}, what="the rollup")
+
+    assert "supplies none of its inputs" in str(total.value)
+    assert "supplies none of its inputs" not in str(partial.value), (
+        "a fixture covering SOME inputs was reported as covering none"
+    )
+    assert "does not supply all of them" in str(partial.value)
+
+
 def test_requiring_nothing_passes() -> None:
     """A predicate that reads no named inputs cannot be under-covered.
 

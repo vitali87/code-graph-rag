@@ -919,9 +919,19 @@ def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -
         what: named in the failure, e.g. "the all-concluded rollup".
     """
     missing = required - covered
+    # Two diagnoses, because they are different bugs. A fixture supplying
+    # NONE of the inputs makes the empty result vacuous outright; one
+    # supplying some makes it merely unreliable -- the filter may be
+    # examining the present values correctly and simply never seeing the
+    # absent ones. Saying "none" for the partial case is a false diagnosis
+    # that sends the reader looking for the wrong thing (#1862 review).
+    reason = (
+        "the fixture supplies none of its inputs"
+        if not covered & required
+        else "the fixture does not supply all of them"
+    )
     assert not missing, (
-        f"{what} does not cover {sorted(missing)}, so any assertion that the "
-        "filter returned nothing holds for the trivial reason that the "
-        "fixture supplies none of its inputs (#1859). Add the missing "
-        "values, or the test passes whatever the code does."
+        f"{what} does not cover {sorted(missing)}, so an assertion that the "
+        f"filter returned nothing proves little: {reason} (#1859). Add the "
+        "missing values, or the test passes whatever the code does."
     )
