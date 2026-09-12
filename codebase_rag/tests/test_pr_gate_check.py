@@ -1810,3 +1810,94 @@ class TestAggregatedJobsCoversEveryDeclaredDependency:
         reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup, [])
 
         assert "still running" in reason
+
+
+class TestTheArmsAreOrderedMostSpecificFirst:
+    """Three review findings on this function were all the same defect.
+
+    A new early-return arm silently steals cases from the arms after it,
+    because the conditions OVERLAP -- a running dependency and an unfinished
+    run are both true at once, and whichever is tested first wins regardless
+    of which is more informative. The three, in the order they were found:
+
+    1. the conflict arm (removed; its premise was false too) swallowed the
+       "every dependency concluded" verdict;
+    2. the empty-rollup arm swallowed the queued-run case;
+    3. the unstarted-run arm then swallowed the running-dependency case --
+       introduced by the fix for (2).
+
+    So this pins the PRECEDENCE rather than any single arm, over inputs where
+    more than one condition holds. A reordering that still satisfies every
+    other test in this file reddens here (#1848).
+    """
+
+    DEP_RUNNING = [
+        {
+            "__typename": "CheckRun",
+            "name": "Unit Tests (ubuntu-latest, py3.12)",
+            "status": "IN_PROGRESS",
+        }
+    ]
+    PR_RUN = {"status": "in_progress", "event": "pull_request"}
+
+    def test_a_running_dependency_outranks_an_unfinished_run(self) -> None:
+        """Both conditions hold; the named dependency is more informative.
+
+        Saying "produced no check entries so far" while a dependency is
+        visibly running is not merely less useful -- it is false.
+        """
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "still running" in reason
+        assert "no check entries" not in reason
+
+    def test_the_running_dependency_is_named(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "Unit Tests (ubuntu-latest, py3.12)" in reason
+
+    def test_an_unfinished_run_outranks_the_empty_rollup_arm(self) -> None:
+        """Finding 2: an empty rollup is what a queued run looks like."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_every_overlapping_combination_picks_one_verdict(self) -> None:
+        """The precedence table, as a single assertion over the overlaps.
+
+        Each row has at least two conditions true. Pinning the whole table
+        means a reordering cannot pass by satisfying the rows individually.
+        """
+        concluded = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        queued_pr = {"status": "queued", "event": "pull_request"}
+        dispatch = {"status": "queued", "event": "workflow_dispatch"}
+
+        expected = [
+            (self.DEP_RUNNING, [self.PR_RUN], "still running"),
+            (self.DEP_RUNNING, [], "still running"),
+            ([], [queued_pr], "not yet started"),
+            ([], [dispatch], "no check reported at the head at all"),
+            (concluded, [dispatch], "has concluded"),
+            ([], [], "no check reported at the head at all"),
+        ]
+
+        for rollup, runs, marker in expected:
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
+
+            assert marker in reason, f"{marker!r} not in {reason!r}"
