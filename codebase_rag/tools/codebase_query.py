@@ -58,6 +58,14 @@ _AGGREGATED_READ_RE = re.compile(
     r"([A-Z_][A-Z0-9_]*)(?:\.[A-Z_][A-Z0-9_]*)?\s*\)"
 )
 
+# An entity aggregated into a MAGNITUDE -- a number that names nobody.
+# `COLLECT` is deliberately absent: it returns the matched entities
+# themselves, so the restriction that bounds a count does not make a
+# collect safe to exempt (issue #1843).
+_MAGNITUDE_AGGREGATED_ENTITY_RE = re.compile(
+    r"\b(?:COUNT|SUM|AVG|MIN|MAX)\(\s*(?:DISTINCT\s+)?([A-Z_][A-Z0-9_]*)\s*\)"
+)
+
 # Every aggregate and whatever it is applied to, so the operand can be
 # judged rather than pattern-matched against known-bad spellings. Listing the
 # constant forms was the wrong shape: it caught `*` and digits and missed a
@@ -252,7 +260,9 @@ def requires_project_evidence(
     # belong to an entity nothing attributes. One entity's qualified name
     # does not vouch for another's properties.
     if _PROJECTED_QUALIFIED_NAME_RE.search(projection):
-        return _every_projected_entity_is_attributable(projection)
+        # `aggregated_only` reaches here only when `_restricts_to_project`
+        # above returned True for it, so these aliases are proven confined.
+        return _every_projected_entity_is_attributable(projection, aggregated_only)
     # An aggregate exposes no NAMES but does expose a MAGNITUDE: a scoped
     # caller receiving `count(n)` over every indexed project learns the
     # size of projects they did not ask about. So it counts as evidence
@@ -415,7 +425,9 @@ def _entities_only_ever_aggregated(projection: str) -> set[str]:
     return aggregated - plain
 
 
-def _every_projected_entity_is_attributable(projection: str) -> bool:
+def _every_projected_entity_is_attributable(
+    projection: str, restricted: set[str] | None = None
+) -> bool:
     """Whether every entity read in `projection` also projects its own qn.
 
     Cypher property reads are `<entity>.<property>`, so grouping the
@@ -433,13 +445,47 @@ def _every_projected_entity_is_attributable(projection: str) -> bool:
     aggregate and never as a property read -- so it never entered this
     map, while the count reported how many `b` exist across every project.
     An aggregate names nobody but it still MEASURES someone.
+
+    `restricted` names the aggregated-only aliases the CALLER has already
+    proven confined to this project via `_restricts_to_project`. They are
+    exempt, and only they. Attributability asks "does this row say who it
+    is about"; the leak it defends against is a MAGNITUDE spanning projects
+    the caller never asked for. Once restriction has established that an
+    alias cannot range outside the requested project, that magnitude is
+    bounded, and refusing anyway costs `RETURN f.qualified_name,
+    count(c)` -- "how many callers does this function have" -- for no leak
+    prevented (issue #1843).
+
+    The exemption is narrow on purpose. It covers only aliases the caller
+    passes in, which are only ever `_entities_only_ever_aggregated` that
+    `_restricts_to_project` returned True for; an alias whose properties
+    are READ still needs its own qualified name, because that row names an
+    entity and the row filter must be able to judge it.
     """
     reads: dict[str, set[str]] = {}
     for entity, prop in _PROPERTY_READ_RE.findall(projection):
         reads.setdefault(entity, set()).add(prop)
     for entity in _AGGREGATED_ENTITY_RE.findall(projection):
         reads.setdefault(entity, set())
-    return all(cs.CYPHER_QUALIFIED_NAME_TOKEN in props for props in reads.values())
+    # Only an alias that reads NO properties may be exempted: one appearing
+    # both as `c.name` and inside `count(c)` exposes a name that still has to
+    # be attributable, so restriction alone does not settle it.
+    # Only an alias aggregated into a MAGNITUDE may be exempted. `collect(c)`
+    # returns the entities themselves, so restriction does not make it
+    # attributable -- and the row filter, which cannot inspect a driver Node,
+    # drops the whole row, turning a valid query into an empty result rather
+    # than a refusal (issue #1843).
+    measured = set(_MAGNITUDE_AGGREGATED_ENTITY_RE.findall(projection))
+    vouched = {
+        entity
+        for entity in restricted or ()
+        if entity in reads and not reads[entity] and entity in measured
+    }
+    return all(
+        cs.CYPHER_QUALIFIED_NAME_TOKEN in props
+        for entity, props in reads.items()
+        if entity not in vouched
+    )
 
 
 def _where_is_a_plain_conjunction(body: str) -> bool:
