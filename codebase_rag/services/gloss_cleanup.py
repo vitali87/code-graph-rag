@@ -30,7 +30,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from .. import constants as cs
+from .. import logs as lg
 
 if TYPE_CHECKING:
     from . import QueryProtocol
@@ -50,6 +53,25 @@ CYPHER_DELETE_ORPHANED_GLOSSES = (
 )
 
 
-def prune_orphaned_glosses(ingestor: QueryProtocol) -> None:
-    """Delete glosses whose subject is gone, leaving anchored ones intact."""
-    ingestor.execute_write(CYPHER_DELETE_ORPHANED_GLOSSES)
+def prune_orphaned_glosses(ingestor: QueryProtocol) -> bool:
+    """Delete glosses whose subject is gone, leaving anchored ones intact.
+
+    Never raises. The caller runs this AFTER the project delete has already
+    succeeded, and the delete is not undoable: letting a cleanup failure
+    propagate would report a completed deletion as failed, and a retry then
+    short-circuits on `project not found` before reaching this sweep at all,
+    so the orphans would survive indefinitely (raised by CodeRabbit on
+    #1856).
+
+    Returns whether the sweep reached the store, so a caller that can
+    schedule a retry may, and the log records it either way. Leaving the
+    orphans is the mild outcome: they are unreachable rather than wrong, and
+    the next deliberate delete of any project sweeps them -- the predicate is
+    "this gloss has no subject", not "this gloss belonged to that project".
+    """
+    try:
+        ingestor.execute_write(CYPHER_DELETE_ORPHANED_GLOSSES)
+    except Exception as error:  # noqa: BLE001 -- see docstring
+        logger.warning(lg.GLOSS_PRUNE_FAILED.format(error=error))
+        return False
+    return True

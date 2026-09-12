@@ -93,8 +93,43 @@ def test_the_sweep_follows_the_edge_in_its_real_direction() -> None:
 
 def test_prune_issues_exactly_one_write() -> None:
     store = _FakeStore()
-    prune_orphaned_glosses(store)  # type: ignore[arg-type]
+    assert prune_orphaned_glosses(store) is True  # type: ignore[arg-type]
     assert store.writes == [CYPHER_DELETE_ORPHANED_GLOSSES]
+
+
+def test_a_failing_sweep_does_not_raise() -> None:
+    """The delete has already succeeded by the time this runs (#1856 review).
+
+    Letting a cleanup failure propagate would report a completed, unundoable
+    deletion as failed -- and a retry then short-circuits on `project not
+    found` BEFORE reaching the sweep, so the orphans would survive
+    indefinitely. The mild outcome is the right one: leave them, say so in
+    the log, and let the next deliberate delete sweep them.
+    """
+
+    class _Refusing:
+        def execute_write(self, query: str, params: object = None) -> None:
+            raise RuntimeError("store refused the sweep")
+
+    assert prune_orphaned_glosses(_Refusing()) is False, (  # type: ignore[arg-type]
+        "a refused sweep must report failure rather than raise, so the "
+        "caller can log it without failing a delete that already happened"
+    )
+
+
+def test_the_sweep_is_not_scoped_to_one_project() -> None:
+    """Why leaving orphans behind is recoverable rather than permanent.
+
+    The predicate is 'this gloss has no subject', not 'this gloss belonged to
+    the project just deleted'. So a sweep that fails once is retried by the
+    next deliberate delete of ANY project -- which is what makes the
+    non-raising behaviour above safe rather than merely convenient.
+    """
+    assert "$project_name" not in CYPHER_DELETE_ORPHANED_GLOSSES
+    assert "project" not in CYPHER_DELETE_ORPHANED_GLOSSES.lower(), (
+        "the sweep became project-scoped; a failed sweep would then only be "
+        "retried by deleting that same project, which no longer exists"
+    )
 
 
 def test_the_deliberate_delete_runs_the_sweep() -> None:

@@ -991,6 +991,12 @@ PARSER_FINGERPRINT_MISMATCH = (
     "every project in a shared database, not just this one."
 )
 
+GLOSS_PRUNE_FAILED = (
+    "Could not sweep orphaned glosses: {error}. The project delete itself "
+    "succeeded; the orphans are unreachable rather than wrong, and the next "
+    "deliberate project delete sweeps them."
+)
+
 REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
