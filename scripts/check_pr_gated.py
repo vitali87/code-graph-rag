@@ -45,17 +45,45 @@ from typing import Any
 REPO = "vitali87/code-graph-rag"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
+# A CI run in one of these states has not finished, so its check contexts are
+# still coming. `queued` is the one that matters: it contributes no rollup
+# entry at all, which is indistinguishable from "never ran" without this
+# (#1848).
+CI_RUN_UNFINISHED_STATUSES = frozenset(
+    {"queued", "in_progress", "waiting", "pending", "requested"}
+)
+
+# The events whose runs create a PR's check contexts. `workflow_dispatch` and
+# `push` runs can sit at the same head SHA and report under their own event,
+# so they are evidence about themselves, not about this PR (#1848). Defaulted
+# to `pull_request` when absent, so a response without the field behaves as
+# before rather than silently dropping every run.
+CI_RUN_PR_EVENTS = frozenset({"pull_request", "pull_request_target"})
+
 # The one context the active ruleset requires on the default branch. It
 # aggregates the jobs below and asserts each result == "success", so a
 # skipped or cancelled job fails it rather than passing silently.
 REQUIRED_CONTEXT = "All Checks Pass"
 
+# Every job `all-checks-pass` declares in `needs:`, by DISPLAY name -- the
+# rollup carries names, not job ids. Five were listed and four were missing,
+# so a head where only a missing one had reported looked like "no dependency
+# reported at all" (#1848). `Unit Tests (base install)` needs no entry of its
+# own: the matrix rule matches it under `Unit Tests`.
+#
+# This list must stay in step with ci.yml's `needs:` block. It cannot be
+# derived at runtime -- the rollup gives display names and `needs:` gives job
+# ids, with no mapping available without parsing the workflow -- so the
+# coupling is real and worth stating rather than hiding.
 AGGREGATED_JOBS = (
     "Lint & Format",
     "Type Check",
     "Unit Tests",
     "Integration Tests",
     "Binary Smoke Test",
+    "Wheel Smoke (unlocked resolution)",
+    "Go Frontend",
+    "Sonar Zero Issues Gate",
 )
 
 # A review artifact must POSITIVELY carry a verdict. The alternative --
@@ -219,33 +247,61 @@ def aggregated_job_for(name: str) -> str | None:
     return None
 
 
-def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
-    """Why `context` is missing: still coming, never arriving, or no run.
+def absent_context_reason(
+    context: str,
+    rollup: list[dict[str, object]],
+    ci_runs: list[dict[str, Any]] | None = None,
+) -> str:
+    """Why `context` is missing: still running, not yet started, or absent.
 
-    "Absent" collapses two states needing opposite responses. `All Checks
-    Pass` is an aggregate that reports only once its dependencies finish,
-    so it is legitimately missing for the whole run -- yet the same
-    sentence covers the #1582 case, where every job concluded and the
-    aggregate never appeared. One says wait, the other says investigate,
-    and the reassuring reading is the one a reader defaults to (#1827).
+    "Absent" collapses states that need opposite responses. `All Checks Pass`
+    is an aggregate that reports only once its dependencies finish, so it is
+    legitimately missing for a whole run -- yet the same sentence covered the
+    #1582 case, where every job concluded and the aggregate never appeared.
+    One says wait, the other says investigate, and the reassuring reading is
+    the one a reader defaults to (#1827).
 
-    The three are separable from the rollup already fetched, so this costs
-    no extra API call. Measured on #1547: 20 unconcluded entries alongside
-    a passing `CI Ran At Head`, reported as though nothing had run.
+    EVERY FACT IS GATHERED BEFORE ANY ARM RUNS, and the arms are ordered
+    most-specific first. Three separate review findings on this function were
+    all the same defect -- a new early-return arm silently stealing cases from
+    the arms after it -- because the conditions OVERLAP: a running dependency
+    and an unfinished run are both true at once, and whichever was tested
+    first won regardless of which was more informative. Computing the facts
+    up front makes the overlap visible instead of implicit in the order
+    (#1848).
+
+    The three facts, and why each is ordered where it is:
+
+    * `pending` -- a dependency of the aggregate is unfinished. The MOST
+      specific, because it names the job the reader is waiting for.
+    * `unstarted` -- a `pull_request` CI run exists but has produced no
+      contexts. Less specific: it says the run is coming without saying what.
+      Only a pull-request run counts; a `workflow_dispatch` or `push` run at
+      the same SHA reports under its own event and creates none of this PR's
+      contexts, so it is evidence about itself.
+    * neither -- then either no dependency ever reported, or all of them
+      concluded and the aggregate genuinely never arrived (#1582).
     """
-    if not rollup:
-        return f"no check reported at the head at all, so '{context}' cannot appear"
     # Only the jobs the aggregate WAITS ON can explain its absence. Any
     # unfinished entry used to count, so a single unrelated pending check --
     # CodeRabbit is pending on nearly every PR here -- flipped the verdict
     # from "investigate" to "wait" while every dependency had concluded.
-    # That is the #1582 case reported as its opposite, which is the exact
-    # confusion this function exists to remove.
     pending = [
         entry
         for entry in rollup
         if not entry_finished(entry) and aggregated_job_for(context_name(entry))
     ]
+    unstarted = [
+        run
+        for run in ci_runs or ()
+        if str(run.get("status", "")) in CI_RUN_UNFINISHED_STATUSES
+        and str(run.get("event", "pull_request")) in CI_RUN_PR_EVENTS
+    ]
+    any_dependency_reported = any(
+        aggregated_job_for(context_name(entry)) for entry in rollup
+    )
+
+    # MOST SPECIFIC: a named dependency is still running.
     if pending:
         names = sorted(name for name in map(context_name, pending) if name)
         shown = ", ".join(names[:3]) + ("..." if len(names) > 3 else "")
@@ -255,11 +311,30 @@ def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
             f"head are still running{named}. This is CI in flight, not a "
             "missing run -- re-check rather than investigate"
         )
-    # "every check" would overclaim: `pending` above counts only the entries
-    # this aggregate DEPENDS on, so an unrelated pending check (CodeRabbit,
-    # say) is deliberately excluded and may still be running. Say what was
-    # actually examined, or the message asserts something the filter never
-    # looked at (#1827).
+    # The run exists but has created no contexts yet. Checked after `pending`
+    # so a running dependency is named rather than described as "no entries".
+    if unstarted:
+        statuses = sorted({str(run.get("status", "")) for run in unstarted})
+        return (
+            f"'{context}' has not reported YET: the CI run at the head is "
+            f"{', '.join(statuses)} and has produced no check entries so far. "
+            "This is CI not yet started, not a missing run -- re-check rather "
+            "than investigate, and do NOT push an empty commit (it moves the "
+            "head and discards any review anchored to it)"
+        )
+    if not rollup:
+        return f"no check reported at the head at all, so '{context}' cannot appear"
+    # Without this guard the sentence below claims every dependency concluded
+    # when none was ever seen -- a claim about an empty set.
+    if not any_dependency_reported:
+        return (
+            f"'{context}' is absent and NO check it aggregates reported at the "
+            "head at all, so whether it is coming cannot be told from the "
+            "rollup -- check whether CI ran for this head"
+        )
+    # "every check" would overclaim: `pending` counts only the entries this
+    # aggregate DEPENDS on, so an unrelated pending check is deliberately
+    # excluded and may still be running. Say what was actually examined.
     return (
         f"'{context}' is absent although every check it aggregates has "
         "concluded, so it is not going to appear"
@@ -598,7 +673,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     if missing:
         reasons.append(
             f"required context absent at the head: {missing}; "
-            + absent_context_reason(REQUIRED_CONTEXT, rollup)
+            + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
         )
     else:
         for entry in rollup:
