@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from codebase_rag.types_defs import ResultRow
 from codebase_rag.utils.token_utils import count_tokens, truncate_results_by_tokens
 
@@ -17,8 +19,32 @@ class TestCountTokens:
         long = count_tokens("hello world this is a longer string with more tokens")
         assert long > short
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "<|endoftext|>",
+            "<|fim_prefix|>",
+            "<|fim_middle|>",
+            "<|fim_suffix|>",
+            "<|endofprompt|>",
+        ],
+    )
+    def test_special_token_spellings_are_ordinary_text(self, text: str) -> None:
+        assert count_tokens(text) > 1
+
 
 class TestTruncateResultsByTokens:
+    def test_special_token_spellings_in_query_results(self) -> None:
+        rows: list[ResultRow] = [
+            {"content": "A source comment mentioning <|endoftext|>"},
+            {"content": "another result"},
+        ]
+        results, tokens, truncated = truncate_results_by_tokens(rows, max_tokens=1)
+
+        assert results == rows[:1]
+        assert tokens > 1
+        assert truncated is True
+
     def test_empty_results(self) -> None:
         results, tokens, truncated = truncate_results_by_tokens([], max_tokens=1000)
         assert results == []

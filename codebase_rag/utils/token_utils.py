@@ -17,7 +17,7 @@ def _get_encoding() -> tiktoken.Encoding:
 
 
 def count_tokens(text: str) -> int:
-    return len(_get_encoding().encode(text))
+    return len(_get_encoding().encode_ordinary(text))
 
 
 def truncate_results_by_tokens(
