@@ -126,22 +126,39 @@ def test_the_measured_instance_would_have_been_caught() -> None:
 
 def test_a_corrected_fixture_passes_the_same_check() -> None:
     """The other direction, so the test above is not satisfied by a helper
-    that simply always raises."""
+    that simply always raises.
+
+    The corrected rollup is DERIVED from `AGGREGATED_JOBS` rather than typed
+    out. A hardcoded list is a second fixture with the same defect as the
+    first: it silently stops covering the predicate the moment the tuple
+    grows, and this one grows -- it went from five entries to eight while
+    this PR was open, because `all-checks-pass` declares more dependencies in
+    `needs:` than were listed.
+
+    The matrix suffix is appended to one entry so the derived rollup also
+    exercises `aggregated_job_for`'s `name (` matching rather than only its
+    exact-match arm.
+    """
     from scripts.check_pr_gated import AGGREGATED_JOBS, aggregated_job_for
 
     corrected = [
+        # Non-dependencies, kept so the fixture exercises the filter's
+        # discrimination rather than only its positive path.
         "CodeQL",
         "Analyze (actions)",
-        "Lint & Format",
-        "Type Check",
-        "Unit Tests (ubuntu-latest, py3.13)",
-        "Integration Tests (ubuntu-latest)",
-        "Binary Smoke Test",
+        *(
+            f"{job} (ubuntu-latest)" if job == "Integration Tests" else job
+            for job in AGGREGATED_JOBS
+        ),
     ]
     covered = {
         job for name in corrected if (job := aggregated_job_for(name)) is not None
     }
 
+    assert covered == set(AGGREGATED_JOBS), (
+        "fixture guard: the derived rollup must cover every aggregated job, "
+        f"or this test asserts nothing; missing {set(AGGREGATED_JOBS) - covered}"
+    )
     assert_fixture_covers(
         covered, set(AGGREGATED_JOBS), what="the all-concluded rollup"
     )
