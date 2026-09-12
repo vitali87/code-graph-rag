@@ -1001,6 +1001,12 @@ PARSER_FINGERPRINT_MISMATCH = (
     "own it deletes the graph without rebuilding it."
 )
 
+GLOSS_PRUNE_FAILED = (
+    "Could not sweep orphaned glosses: {error}. The project delete itself "
+    "succeeded; the orphans are unreachable rather than wrong, and the next "
+    "deliberate project delete sweeps them."
+)
+
 REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
