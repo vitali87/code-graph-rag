@@ -176,9 +176,13 @@ class TestModuleDocSpecCoverage:
         assert not undecided, f"languages with no module-doc decision: {undecided}"
 
 
-@pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
 class TestModuleDocstringPerLanguage:
-    """Each language's own module-doc convention, and what must NOT match."""
+    """Each language's own module-doc convention, and what must NOT match.
+
+    Deliberately not gated on ``tree-sitter-python``: ``load_parsers`` loads
+    each grammar independently, and none of the languages below is Python, so
+    a missing Python grammar must not silently skip all of them (#1817).
+    """
 
     def _extract(self, lang_name: str, source: bytes) -> str | None:
         from codebase_rag.constants import SupportedLanguage
@@ -590,3 +594,43 @@ class TestModuleDocstringPerLanguage:
         of it. Left there, that slash became the file's documentation.
         """
         assert self._extract("java", source) is None
+
+
+class TestModuleDocstringPerLanguageIsExercised:
+    """Guard against ``TestModuleDocstringPerLanguage`` going green by collecting nothing (#1817)."""
+
+    # (language, prefix of the test methods that exercise it)
+    LANGUAGES = (
+        ("rust", "rust"),
+        ("go", "go"),
+        ("java", "java"),
+        ("javascript", "javascript"),
+        ("typescript", "typescript"),
+        ("c", "c"),
+        ("cpp", "cpp"),
+        ("c_sharp", "csharp"),
+        ("scala", "scala"),
+        ("dart", "dart"),
+        ("lua", "lua"),
+        ("php", "php"),
+        ("sql", "sql"),
+    )
+
+    def test_per_language_class_is_not_gated_on_the_python_grammar(self) -> None:
+        marks = getattr(TestModuleDocstringPerLanguage, "pytestmark", [])
+        assert not [m for m in marks if m.name in {"skip", "skipif"}], (
+            "the per-language module-doc tests must not be skipped as a block; "
+            "each language loads its own grammar"
+        )
+
+    @pytest.mark.parametrize(("lang_name", "prefix"), LANGUAGES)
+    def test_each_language_is_exercised(self, lang_name: str, prefix: str) -> None:
+        from codebase_rag.constants import SupportedLanguage
+
+        SupportedLanguage(lang_name)  # the language exists
+        names = [
+            n
+            for n in dir(TestModuleDocstringPerLanguage)
+            if n.startswith(f"test_{prefix}_")
+        ]
+        assert names, f"no per-language module-doc test exercises {lang_name}"
