@@ -1393,3 +1393,86 @@ class TestPendingNamesReadHonestly:
 
         assert "()" not in reason
         assert "still running" not in reason
+
+
+class TestADependencyIsMatchedExactlyOrByItsMatrixSuffix:
+    """`startswith` alone claims names that are not dependencies at all.
+
+    The matrix jobs carry a PARENTHESISED suffix (`Unit Tests (ubuntu-latest,
+    py3.12)`), which is why an exact comparison cannot be used. But a bare
+    prefix test also claims `Unit Tests Coverage` and `Unit Testsimposter`,
+    and an unrelated pending check misread as a dependency flips the verdict
+    from "investigate" back to "wait" -- the exact defect
+    `aggregated_job_for` exists to prevent (#1827).
+
+    Found on review of this branch, after the first version shipped the loose
+    match.
+    """
+
+    def test_the_exact_name_matches(self) -> None:
+        assert check_pr_gated.aggregated_job_for("Unit Tests") == "Unit Tests"
+
+    def test_a_matrix_suffix_matches(self) -> None:
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (ubuntu-latest, py3.12)")
+            == "Unit Tests"
+        )
+
+    def test_a_longer_unrelated_name_does_not_match(self) -> None:
+        """`Unit Tests Coverage` is a different check, not a matrix cell."""
+        assert check_pr_gated.aggregated_job_for("Unit Tests Coverage") is None
+
+    def test_a_name_glued_onto_the_job_does_not_match(self) -> None:
+        """No separator at all: the prefix test's worst case."""
+        assert check_pr_gated.aggregated_job_for("Unit Testsimposter") is None
+
+    def test_an_unrelated_check_does_not_match(self) -> None:
+        assert check_pr_gated.aggregated_job_for("CodeRabbit") is None
+
+
+class TestTheAbsentMessageClaimsOnlyWhatItExamined:
+    """The fallback must not say "every check" when it filtered to some.
+
+    `absent_context_reason` counts only the entries the aggregate DEPENDS on,
+    so an unrelated pending check is deliberately excluded and may still be
+    running. Saying "every check at the head has concluded" asserts something
+    the filter never looked at. Both reviewers raised this independently
+    (#1827).
+    """
+
+    def test_the_message_scopes_its_claim_to_the_aggregate(self) -> None:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check it aggregates has concluded" in reason
+
+    def test_the_message_does_not_claim_every_check_at_the_head(self) -> None:
+        """The unrelated pending check above is proof the claim would be false."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check at the head" not in reason

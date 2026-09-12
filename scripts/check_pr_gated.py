@@ -204,11 +204,19 @@ def context_name(entry: dict[str, object]) -> str:
 def aggregated_job_for(name: str) -> str | None:
     """The `AGGREGATED_JOBS` entry `name` belongs to, or None.
 
-    Prefix-matched for the same reason `missing_aggregated_jobs` is: the
-    matrix jobs carry their platform in the name (`Unit Tests
-    (ubuntu-latest, py3.12)`), so an exact comparison matches none of them.
+    A bare prefix match is too loose. The matrix jobs carry their platform in
+    a PARENTHESISED suffix (`Unit Tests (ubuntu-latest, py3.12)`), so an exact
+    comparison matches none of them -- but `startswith` alone also claims
+    `Unit Tests Coverage` and `Unit Testsimposter`, and an unrelated pending
+    check misread as a dependency flips the verdict from "investigate" to
+    "wait", which is the defect this function was added to fix (#1827).
+
+    So: the exact name, or the name followed by ` (`. Nothing else.
     """
-    return next((job for job in AGGREGATED_JOBS if name.startswith(job)), None)
+    for job in AGGREGATED_JOBS:
+        if name == job or name.startswith(f"{job} ("):
+            return job
+    return None
 
 
 def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
@@ -247,8 +255,13 @@ def absent_context_reason(context: str, rollup: list[dict[str, object]]) -> str:
             f"head are still running{named}. This is CI in flight, not a "
             "missing run -- re-check rather than investigate"
         )
+    # "every check" would overclaim: `pending` above counts only the entries
+    # this aggregate DEPENDS on, so an unrelated pending check (CodeRabbit,
+    # say) is deliberately excluded and may still be running. Say what was
+    # actually examined, or the message asserts something the filter never
+    # looked at (#1827).
     return (
-        f"'{context}' is absent although every check at the head has "
+        f"'{context}' is absent although every check it aggregates has "
         "concluded, so it is not going to appear"
     )
 
