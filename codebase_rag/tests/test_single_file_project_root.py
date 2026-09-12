@@ -235,3 +235,41 @@ def test_the_cache_must_be_a_file_not_a_directory(tmp_path: Path) -> None:
         "a DIRECTORY named like the hash cache was accepted as a project "
         "root; every single-file run below it would then be misrooted"
     )
+
+
+def test_the_derived_project_name_follows_the_project_root(tmp_path: Path) -> None:
+    """A caller that omits `project_name` gets the PROJECT's name.
+
+    `project_name` falls back to `repo_path.resolve().name`, so moving the
+    root also moves the derived name: before #1775 a single-file run on
+    `nested/pkg/module_a.py` derived `pkg`, and every qualified name it wrote
+    was prefixed with that instead of `nested`.
+
+    Worth a test of its own rather than left implicit in the keying tests
+    above, because it is the mechanism BEHIND them and it fails in the quiet
+    direction: a wrong prefix is still a well-formed qualified name, so
+    nothing downstream reports an error -- the rows simply never match.
+
+    Latent in production today (every caller in `cli.py` and `mcp/tools.py`
+    passes an explicit name), which is exactly why it needs pinning: nothing
+    else would catch it regressing.
+    """
+    from unittest.mock import MagicMock
+
+    root = tmp_path / "nested"
+    (root / "pkg").mkdir(parents=True)
+    (root / cs.HASH_CACHE_FILENAME).write_text("{}", encoding="utf-8")
+    target = root / "pkg" / "module_a.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    updater = GraphUpdater(
+        ingestor=MagicMock(),
+        repo_path=target,
+        parsers={},
+        queries={},
+    )
+
+    assert updater.project_name == "nested", (
+        f"the derived project name is {updater.project_name!r}; a single-file "
+        "run would prefix every qualified name with the subdirectory"
+    )
