@@ -7,7 +7,8 @@ Issue #1893. #1870 typed a variable from the expression it was assigned
 string, matched nothing, and fell back to the bare method name, emitting a
 CALLS edge to every class defining `resolve`. Every shape here is one from
 `codebase_rag/trace/sourcemap.py`, where five unrelated frame resolvers
-define `resolve`.
+define `resolve` -- except two, pinned below as strict expected failures with
+their real causes, which this change does not reach.
 
 Every defect test is paired with a control whose decoy method is renamed, so
 a green result means the edge was suppressed rather than the harness seeing
@@ -45,7 +46,6 @@ _BODIES = {
         "    def at(self, i: int) -> str:\n"
         "        return (self.base / self.sources[i]).resolve().as_posix()\n"
     ),
-    # sourcemap.py:225
     "paren_div_name": (
         "    def joined(self, source: str) -> str:\n"
         "        return (self.base / source).resolve().as_posix()\n"
@@ -56,6 +56,35 @@ _BODIES = {
     ),
 }
 
+
+# sourcemap.py:225, as a whole module: `inner` is a TUPLE-UNPACKED local
+# (`_ol, _oc, inner = parsed`, from a call annotated
+# `-> tuple[int, int, SourceMap] | None`). Tuple unpacking from an annotated
+# return is never typed, so `inner.base_dir` has no type and the fallback
+# still fires (#1896). Pinned strict so it flips when unpacking is typed.
+_TUPLE_UNPACKED_SRC = (
+    "from dataclasses import dataclass\n"
+    "from pathlib import Path\n"
+    "\n"
+    "@dataclass\n"
+    "class SourceMap:\n"
+    "    sources: list[str]\n"
+    "    base_dir: Path\n"
+    "\n"
+    "def _parse_section(raw: object) -> tuple[int, int, SourceMap] | None:\n"
+    "    return None\n"
+    "\n"
+    "def from_sections(sections: list[object]) -> list[str]:\n"
+    "    out: list[str] = []\n"
+    "    for raw in sections:\n"
+    "        parsed = _parse_section(raw)\n"
+    "        if parsed is None:\n"
+    "            return out\n"
+    "        _ol, _oc, inner = parsed\n"
+    "        for source in inner.sources:\n"
+    "            out.append((inner.base_dir / source).resolve().as_posix())\n"
+    "    return out\n"
+)
 
 # sourcemap.py:285. The left operand is an ATTRIBUTE of an external class
 # (`js_path.parent` on a `Path`), and nothing in the graph knows what a Path's
@@ -124,17 +153,37 @@ def test_an_attribute_of_an_external_receiver_is_still_matched_by_name(
     assert not _decoy_resolve_edges(repo)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="a tuple-unpacked local is never typed, so the receiver has no type "
+    "and the bare-name fallback still fires -- see _TUPLE_UNPACKED_SRC (#1896)",
+)
+def test_a_tuple_unpacked_receiver_is_still_matched_by_name(tmp_path: Path) -> None:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_DECOY_COLLIDES)
+    (repo / "app.py").write_text(_TUPLE_UNPACKED_SRC)
+
+    assert not _decoy_resolve_edges(repo)
+
+
 def test_an_inline_operator_on_a_project_class_reaches_its_dunder(
     tmp_path: Path,
 ) -> None:
     """The positive side: `(factory / config).run()` with
-    `Factory.__truediv__ -> Product` calls `Product.run`, not `Factory.run`."""
+    `Factory.__truediv__ -> Product` calls `run` as Product inherits it from
+    `Base` -- not `Factory.run`. Inheritance is deliberate: a direct registry
+    lookup on `Product.run` would find nothing, so this pins that the inline
+    path dispatches through the same inherited-method resolution a variable
+    receiver gets (local review P2)."""
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / "__init__.py").touch()
     (repo / "engine.py").write_text(
         "class Config:\n    pass\n\n"
-        "class Product:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Base:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Product(Base):\n    pass\n\n"
         "class Factory:\n"
         "    def run(self) -> int:\n        return 0\n"
         "    def __truediv__(self, config: Config) -> Product:\n"
@@ -155,7 +204,7 @@ def test_an_inline_operator_on_a_project_class_reaches_its_dunder(
         for _sl, src, rel, _tl, tgt in store.edges
         if rel == cs.RelationshipType.CALLS.value and str(src).endswith("app.exercise")
     }
-    assert any(t.endswith("engine.Product.run") for t in calls), calls
+    assert any(t.endswith("engine.Base.run") for t in calls), calls
     assert not any(t.endswith("engine.Factory.run") for t in calls), calls
 
 
