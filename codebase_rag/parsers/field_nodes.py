@@ -616,12 +616,12 @@ _SCALA_KEYWORDS = frozenset({"val", "var", "lazy", "final", "override", "implici
 
 
 def scala_declared_fields(class_node: Node) -> list[DeclaredField]:
+    out: list[DeclaredField] = _scala_constructor_fields(class_node)
     body = next(
         (c for c in class_node.children if c.type == cs.TS_SCALA_TEMPLATE_BODY), None
     )
     if body is None:
-        return []
-    out: list[DeclaredField] = []
+        return out
     for member in body.children:
         if member.type not in (cs.TS_SCALA_VAL_DEFINITION, cs.TS_SCALA_VAR_DEFINITION):
             continue
@@ -652,6 +652,51 @@ def scala_declared_fields(class_node: Node) -> list[DeclaredField]:
         out.append(
             DeclaredField(
                 name, line, col, type_name or None, tuple(modifiers), False, member
+            )
+        )
+    return out
+
+
+def _scala_constructor_fields(class_node: Node) -> list[DeclaredField]:
+    """Primary-constructor parameters that are fields.
+
+    `class C(val id: Int, plain: Int)` makes `id` a field and `plain` a mere
+    parameter; the `val`/`var` token is a child of the `class_parameter`. A
+    case class (a `case` child on the definition) makes EVERY parameter a
+    public immutable field, so those are recorded with `val` as if written.
+    """
+    params = class_node.child_by_field_name("class_parameters")
+    if params is None:
+        return []
+    is_case = any(c.type == "case" for c in class_node.children)
+    out: list[DeclaredField] = []
+    for param in params.children:
+        if param.type != "class_parameter":
+            continue
+        keyword = next(
+            (c.type for c in param.children if c.type in ("val", "var")), None
+        )
+        if keyword is None and not is_case:
+            continue
+        name_node = param.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not (name := safe_decode_text(name_node)):
+            continue
+        type_node = param.child_by_field_name(cs.FIELD_TYPE)
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        modifiers: list[str] = []
+        for child in param.children:
+            if child.type == cs.TS_MODIFIERS:
+                modifiers.extend(
+                    t
+                    for m in child.children
+                    if m.type == cs.TS_SCALA_ACCESS_MODIFIER
+                    and (t := safe_decode_text(m))
+                )
+        modifiers.append(keyword or "val")
+        line, col = _at(name_node)
+        out.append(
+            DeclaredField(
+                name, line, col, type_name or None, tuple(modifiers), False, param
             )
         )
     return out

@@ -289,6 +289,32 @@ class TestScala:
             ("cache", None, ("lazy", "val"), False),
         ]
 
+    def test_constructor_val_var_and_case_class_parameters_are_fields(
+        self, parsers
+    ) -> None:
+        plain = _fields(
+            parsers,
+            Lang.SCALA,
+            "class C(val id: Int, private var name: String, plain: Int) {\n  val z = 1\n}\n",
+            "class_definition",
+        )
+        assert _rows(plain) == [
+            ("id", "Int", ("val",), False),
+            ("name", "String", ("private", "var"), False),
+            ("z", None, ("val",), False),
+        ]
+        case = _fields(
+            parsers,
+            Lang.SCALA,
+            "case class P(x: Int, var y: Int)\n",
+            "class_definition",
+        )
+        # Every case-class parameter is a public immutable field, recorded as `val`.
+        assert _rows(case) == [
+            ("x", "Int", ("val",), False),
+            ("y", "Int", ("var",), False),
+        ]
+
     def test_a_destructuring_pattern_is_not_a_named_field(self, parsers) -> None:
         got = _fields(
             parsers,
