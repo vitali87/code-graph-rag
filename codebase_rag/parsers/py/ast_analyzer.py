@@ -21,6 +21,27 @@ _PY_TRAVERSE_QUERY = (
 )
 
 
+def _split_top_level(inner: str) -> list[str]:
+    """Split `A, dict[str, B], C` on the commas outside any brackets."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == cs.CHAR_COMMA and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
 def _homogeneous_element(name: str, inner: str) -> str | None:
     """The single element type a container annotation guarantees, else ``None``.
 
@@ -154,6 +175,7 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        self._process_assignment_unpacking(assignments, local_var_types, module_qn)
 
         for comp in comprehensions:
             self._analyze_comprehension(comp, local_var_types, module_qn)
@@ -206,6 +228,136 @@ class PythonAstAnalyzerMixin(_AstBase):
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
+
+    def _process_assignment_unpacking(
+        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """`_ol, _oc, inner = parsed`: bind each target to its element type.
+
+        The single-name processors above ignore a `pattern_list` /
+        `tuple_pattern` target, so an unpacked local had no type and a call on
+        it fell to the bare-name fallback (issue #1896, the real shape of
+        trace/sourcemap.py:225). The right-hand side is a call annotated
+        `tuple[A, B, C]`, or a local that was assigned such a call earlier in
+        the same body; the annotation is read RAW here because
+        `_annotated_return_type` deliberately refuses a heterogeneous tuple,
+        which is exactly what unpacking consumes position by position.
+        """
+        for assignment in assignments:
+            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if left is None or right is None:
+                continue
+            if left.type not in cs.PY_UNPACKING_TARGET_TYPES:
+                continue
+            call = self._defining_call(right, assignments)
+            if call is None:
+                continue
+            elements = self._tuple_return_elements(call, module_qn, local_var_types)
+            if not elements:
+                continue
+            targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
+            if len(elements) == 1 and elements[0][1]:
+                elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
+            if len(elements) != len(targets):
+                continue
+            for target, (element, _homogeneous) in zip(targets, elements, strict=True):
+                if target.type != cs.TS_PY_IDENTIFIER:
+                    continue  # a nested pattern or a starred target binds no one type
+                name = safe_decode_text(target)
+                if name and name not in local_var_types:
+                    local_var_types[name] = element
+
+    def _defining_call(self, right: Node, assignments: list[Node]) -> Node | None:
+        """The call an unpacking's right-hand side comes from, or None.
+
+        Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
+        call that an earlier single-name assignment in the same walk bound
+        the name to.
+        """
+        if right.type == cs.TS_PY_CALL:
+            return right
+        if right.type != cs.TS_PY_IDENTIFIER:
+            return None
+        name = safe_decode_text(right)
+        # Captures are not guaranteed to come back in document order, and the
+        # walk stops at the first assignment past the use, so sort first.
+        for earlier in sorted(assignments, key=lambda node: node.start_byte):
+            if earlier.end_byte > right.start_byte:
+                break
+            target = earlier.child_by_field_name(cs.TS_FIELD_LEFT)
+            value = earlier.child_by_field_name(cs.TS_FIELD_RIGHT)
+            if (
+                target is not None
+                and value is not None
+                and target.type == cs.TS_PY_IDENTIFIER
+                and safe_decode_text(target) == name
+                and value.type == cs.TS_PY_CALL
+            ):
+                return value
+        return None
+
+    def _tuple_return_elements(
+        self, call: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> list[tuple[str, bool]]:
+        """(element type, is `...`-homogeneous) per position of the callee's
+        `tuple[...]` return annotation, Optional stripped; empty if the callee
+        cannot be found or does not return a tuple."""
+        callee = self._callee_definition(call, module_qn, local_var_types)
+        if callee is None:
+            return []
+        callee_node, callee_qn = callee
+        type_node = callee_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if type_node is None:
+            return []
+        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        members = [
+            member
+            for part in text.split(cs.PY_UNION_SEPARATOR)
+            if (member := part.strip()) and member != cs.PY_NONE
+        ]
+        if len(members) != 1:
+            return []
+        candidate = members[0]
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
+            candidate = optional.group("inner").strip()
+        container = re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate)
+        if container is None or container.group("name") not in cs.PY_TUPLE_CONTAINERS:
+            return []
+        parts = _split_top_level(container.group("inner"))
+        if len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS:
+            return [(self._element_type(parts[0], callee_qn, module_qn), True)]
+        return [
+            (self._element_type(part, callee_qn, module_qn), False) for part in parts
+        ]
+
+    def _element_type(self, element: str, callee_qn: str, module_qn: str) -> str:
+        # A name the scope resolves to a project class becomes that class;
+        # anything else (`int`, `list[str]`) keeps its annotation text, which
+        # is what a typed parameter stores too.
+        element = element.strip().strip("\"'")
+        return self._trusted_annotation_name(element, callee_qn, module_qn) or element
+
+    def _callee_definition(
+        self, call: Node, module_qn: str, local_var_types: dict[str, str]
+    ) -> tuple[Node, str] | None:
+        """(definition node, qualified name) of what a call invokes, or None."""
+        func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        if func.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(func)):
+            import_map = self.import_processor.import_mapping.get(module_qn, {})
+            for qn in (import_map.get(name), f"{module_qn}{cs.SEPARATOR_DOT}{name}"):
+                if qn and (node := self._find_function_ast_node(qn)) is not None:
+                    return node, qn
+            return None
+        if func.type == cs.TS_PY_ATTRIBUTE and (
+            text := self._extract_full_method_call(func)
+        ):
+            qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
+            if qn and (node := self._find_method_ast_node(qn)) is not None:
+                return node, qn
+        return None
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
