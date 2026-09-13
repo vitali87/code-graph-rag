@@ -84,6 +84,7 @@ TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
+TS_PY_BINARY_OPERATOR = "binary_operator"
 TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
@@ -92,6 +93,25 @@ TS_FIELD_ARGUMENT = "argument"
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
+PY_OP_AND = "and"
+# `left <op> right` dispatches to `left.__dunder__`, so the expression's type is
+# whatever that method returns -- which an overloaded operator can make a
+# different class from either operand (`Factory / Config -> Product`).
+PY_BINARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "+": "__add__",
+    "-": "__sub__",
+    "*": "__mul__",
+    "/": "__truediv__",
+    "//": "__floordiv__",
+    "%": "__mod__",
+    "@": "__matmul__",
+    "**": "__pow__",
+    "|": "__or__",
+    "&": "__and__",
+    "^": "__xor__",
+    "<<": "__lshift__",
+    ">>": "__rshift__",
+}
 PY_BUILTIN_LEN = "len"
 PY_BUILTIN_GETATTR = "getattr"
 TS_PY_STRING_CONTENT = "string_content"
