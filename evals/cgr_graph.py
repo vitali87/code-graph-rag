@@ -126,6 +126,9 @@ _INBOUND_DEPENDENT_RELS = frozenset(
         cs.RelationshipType.OVERRIDES.value,
         cs.RelationshipType.RETURNS.value,
         cs.RelationshipType.ACCEPTS.value,
+        # A gloss's edges are restored, never re-derived (issue #1808).
+        cs.RelationshipType.ANNOTATES.value,
+        cs.RelationshipType.MENTIONS.value,
     }
 )
 # The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding

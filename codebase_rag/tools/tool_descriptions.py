@@ -229,6 +229,35 @@ MCP_PARAM_TARGET = (
     "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
+MCP_ANNOTATE = (
+    "Attach a durable note (a Gloss) to one definition in the graph, never to "
+    "the source file. `target` names the definition the way `resolve` does; "
+    "a name matching several definitions is refused with the candidates, so "
+    "pass a qualified name to disambiguate. `kind` types the claim "
+    "(invariant, mirrors, platform-conditional, safety-precondition); "
+    "`mentions` lists other definitions the note refers to, each becoming a "
+    'MENTIONS edge. Write the WHY that is not in the code ("safe because '
+    'validate() runs first"), not a restatement of what the code does. '
+    "Returns the stored gloss, or an error and nothing written."
+)
+MCP_GLOSSES = (
+    "Notes (Glosses) about one definition: `annotating` are filed on it, "
+    "`mentioning` are filed on other definitions and refer to it. `target` "
+    "is resolved as `annotate` resolves it. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_PARAM_GLOSS_BODY = (
+    "The note itself: the reasoning a reader cannot recover from the code."
+)
+MCP_PARAM_GLOSS_KIND = (
+    "One of `invariant`, `mirrors`, `platform-conditional`, `safety-precondition`."
+)
+MCP_PARAM_GLOSS_MENTIONS = (
+    "Optional. Comma-separated definitions the note refers to, each a name "
+    "`resolve` accepts; every one must resolve to exactly one definition."
+)
+MCP_PARAM_GLOSS_AUTHOR = (
+    "Optional. Who is writing the note (an agent or session name); default `agent`."
+)
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
 MCP_RENAME = (
     "Rename a function, method, class or other definition everywhere the graph "
@@ -432,6 +461,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.OVERRIDES: MCP_OVERRIDES,
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
+    MCPToolName.ANNOTATE: MCP_ANNOTATE,
+    MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,

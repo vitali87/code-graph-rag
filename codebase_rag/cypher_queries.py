@@ -490,6 +490,90 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
 LIMIT 1"""
+# Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
+# edge are ONE statement, so a write is all or nothing: the subject and every
+# mentioned definition are matched first, the `WHERE size(...)` gate drops the
+# row when any of them is missing, and nothing after it runs. A gloss can thus
+# never exist unattached or with a partial set of mentions, and a failed
+# request leaves the graph exactly as it was. The caller reads the node back to
+# learn whether the write landed rather than trusting a silent statement.
+# `ON CREATE SET` keeps the original author and creation time on a repeat write
+# of the same deterministic key; the other properties are SET by name (a null
+# unsets one): the ingestor's parameter type carries scalars and string lists,
+# not a nested map, so `SET g += $props` is not expressible on the wire.
+# `write_id` is a per-call nonce: the statement returns nothing through the
+# write API, and on a repeat write the node's mere presence cannot tell a
+# gated-out request from the earlier note, so the caller reads it back and
+# checks the nonce. A repeat write REPLACES the note's MENTIONS edges (collect
+# then FOREACH DELETE, so an empty set is a no-op), because the edges belong to
+# the note's current text and a stale one would say something the note no
+# longer does. `UNWIND` of an empty list yields no rows; the MERGEs above it
+# have already run.
+_GLOSS = NodeLabel.GLOSS.value
+_ANNOTATES = RelationshipType.ANNOTATES.value
+_MENTIONS = RelationshipType.MENTIONS.value
+CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+RETURN n.ast_fingerprint AS target_hash
+LIMIT 1"""
+CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
+WHERE m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
+WITH t, collect(DISTINCT m) AS mentioned
+WHERE size(mentioned) = size($mention_qns)
+MERGE (g:{_GLOSS} {{qualified_name: $qn}})
+ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
+SET g.kind = $kind, g.status = $status, g.body = $body,
+    g.commit_sha = $commit_sha, g.target_qn = $target_qn,
+    g.target_hash = $target_hash, g.anchor_state = $anchor_state,
+    g.write_id = $write_id, g.mention_qns = $mention_qns
+MERGE (g)-[:{_ANNOTATES}]->(t)
+WITH g, mentioned
+OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
+WITH g, mentioned, collect(stale) AS stale_edges
+FOREACH (edge IN stale_edges | DELETE edge)
+WITH g, mentioned
+UNWIND mentioned AS m
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+# Re-anchoring by qualified name, the EXACT tier of the repair chain the issue
+# describes. A gloss records its subject (`target_qn`) and mentions
+# (`mention_qns`) as properties, so when a rebuild has deleted and recreated
+# the definitions, or an inbound-edge capture could not be read, the edges are
+# rebuilt from the note's own record rather than lost. A subject whose name is
+# gone stays unattached (a later stage grades it MOVED / LOST); nothing is
+# re-bound to a different name.
+# "Unattached" is asked with OPTIONAL MATCH plus a count, not a pattern
+# predicate in WHERE, which Memgraph 3 rejects (test_memgraph3_cypher_compat).
+CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
+MERGE (g)-[:{_ANNOTATES}]->(t)"""
+CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
+WHERE g.mention_qns IS NOT NULL
+UNWIND g.mention_qns AS mention_qn
+MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+_GLOSS_ROW = (
+    "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
+    "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "
+    "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
+    "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
+    "g.write_id AS write_id, collect(m.qualified_name) AS mentions"
+)
+CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_ANNOTATING = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_MENTIONING = f"""MATCH (g:{_GLOSS})-[:{_MENTIONS}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix

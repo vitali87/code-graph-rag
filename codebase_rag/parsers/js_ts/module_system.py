@@ -47,7 +47,9 @@ class JsTsModuleSystemMixin:
     _processed_imports: set[str]
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _is_export_inside_function(self, node: ASTNode) -> bool: ...
@@ -226,6 +228,7 @@ class JsTsModuleSystemMixin:
         function_name: str,
         module_qn: str,
         export_type: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         if self._span_claimed_for_qn(
             module_qn,
@@ -242,6 +245,7 @@ class JsTsModuleSystemMixin:
             self.function_registry,
             self.simple_name_lookup,
             self._get_docstring,
+            language,
             self._is_export_inside_function,
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
@@ -260,6 +264,7 @@ class JsTsModuleSystemMixin:
         export_names: list[ASTNode],
         export_functions: list[ASTNode],
         module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         for exports_obj, export_name, export_function in zip(
             exports_objs, export_names, export_functions
@@ -274,6 +279,7 @@ class JsTsModuleSystemMixin:
                     function_name,
                     module_qn,
                     cs.JS_EXPORT_TYPE_COMMONJS,
+                    language,
                 )
 
     def _process_module_exports_pattern(
@@ -283,6 +289,7 @@ class JsTsModuleSystemMixin:
         export_names: list[ASTNode],
         export_functions: list[ASTNode],
         module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> None:
         for module_obj, exports_prop, export_name, export_function in zip(
             module_objs, exports_props, export_names, export_functions
@@ -299,6 +306,7 @@ class JsTsModuleSystemMixin:
                     function_name,
                     module_qn,
                     cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+                    language,
                 )
 
     def _ingest_direct_module_export(
@@ -306,6 +314,7 @@ class JsTsModuleSystemMixin:
         root_node: ASTNode,
         module_qn: str,
         language_obj: Language,
+        language: cs.SupportedLanguage,
     ) -> list[tuple[ASTNode, bool]]:
         # `module.exports = function (...) {...}` makes the WHOLE module one
         # function; `module.exports = function (...) {...}(args)` (with or
@@ -337,13 +346,18 @@ class JsTsModuleSystemMixin:
                 # Assigned when the enclosing function runs, not at module
                 # load: neither a load-time call nor the module's export.
                 continue
-            entry = self._pending_direct_export_entry(export_function, module_qn)
+            entry = self._pending_direct_export_entry(
+                export_function, module_qn, language
+            )
             if entry is not None:
                 pending.append(entry)
         return pending
 
     def _pending_direct_export_entry(
-        self, export_function: ASTNode, module_qn: str
+        self,
+        export_function: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
     ) -> tuple[ASTNode, bool] | None:
         if export_function.type == cs.TS_CALL_EXPRESSION:
             callee: ASTNode | None = export_function.child_by_field_name(
@@ -372,6 +386,7 @@ class JsTsModuleSystemMixin:
             function_name,
             module_qn,
             cs.JS_EXPORT_TYPE_COMMONJS_MODULE,
+            language,
         )
         return export_function, False
 
@@ -432,7 +447,7 @@ class JsTsModuleSystemMixin:
             cs.JS_COMMONJS_MODULE_EXPORTS_QUERY,
         ]
         self._pending_direct_module_exports = self._ingest_direct_module_export(
-            root_node, module_qn, language_obj
+            root_node, module_qn, language_obj, language
         )
 
         for query_text in query_texts:
@@ -445,6 +460,7 @@ class JsTsModuleSystemMixin:
                     captures.get(cs.CAPTURE_EXPORT_NAME, []),
                     captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
                     module_qn,
+                    language,
                 )
 
                 self._process_module_exports_pattern(
@@ -453,6 +469,7 @@ class JsTsModuleSystemMixin:
                     captures.get(cs.CAPTURE_EXPORT_NAME, []),
                     captures.get(cs.CAPTURE_EXPORT_FUNCTION, []),
                     module_qn,
+                    language,
                 )
 
             except Exception as e:
@@ -491,6 +508,7 @@ class JsTsModuleSystemMixin:
                                     function_name,
                                     module_qn,
                                     cs.JS_EXPORT_TYPE_ES6_FUNCTION,
+                                    language,
                                 )
 
                     if not export_names:
@@ -506,6 +524,7 @@ class JsTsModuleSystemMixin:
                                                 function_name,
                                                 module_qn,
                                                 cs.JS_EXPORT_TYPE_ES6_FUNCTION_DECL,
+                                                language,
                                             )
 
                 except Exception as e:

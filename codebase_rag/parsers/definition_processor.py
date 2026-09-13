@@ -34,6 +34,7 @@ from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
+from .definition_docstring import extract_definition_docstring
 from .dependency_parser import parse_dependencies
 from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
@@ -700,10 +701,25 @@ class DefinitionProcessor(
         comment and an ordinary one as the same node type.
         """
         if language == cs.SupportedLanguage.PYTHON:
-            return self._get_docstring(root_node)
+            return self._get_docstring(root_node, language)
         return extract_module_docstring(root_node, language)
 
-    def _get_docstring(self, node: ASTNode) -> str | None:
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation of one definition, in its language's own form.
+
+        Python's is a string literal inside the body; every other language
+        marks it with a comment convention above the declaration, which needs
+        the per-language markers in `definition_docstring` because the
+        grammars report a doc comment and an ordinary one as the same node
+        type (issue #1809). `language` is required rather than defaulted: a
+        default would silently route every call site that forgot it back to
+        the Python path, and the property would stay empty for that language
+        with nothing failing.
+        """
+        if language != cs.SupportedLanguage.PYTHON:
+            return extract_definition_docstring(node, language)
         if node.type == cs.TS_PY_MODULE:
             # A module node has no `body` field: its statements are direct
             # children, one level shallower than a class or function body.

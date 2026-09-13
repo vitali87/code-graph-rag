@@ -38,6 +38,12 @@ from codec import schema_pb2 as pb
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Project": frozenset({"root_path"}),
+    # `write_id` is the per-call nonce the write tool reads back to prove its
+    # statement ran; it means nothing outside that call. `mention_qns` is the
+    # note's own record of what it mentions, from which the MENTIONS edges are
+    # rebuilt after a sync; the edges themselves are exported, so the list is
+    # redundant on the wire (issue #1808).
+    "Gloss": frozenset({"write_id", "mention_qns"}),
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),
