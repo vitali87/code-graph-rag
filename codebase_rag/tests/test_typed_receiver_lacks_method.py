@@ -245,6 +245,85 @@ def test_a_same_named_class_in_a_child_module_does_not_rescue_the_call(
     assert edges == set()
 
 
+def test_a_nested_function_named_like_the_type_does_not_rescue_the_call(
+    tmp_path: Path,
+) -> None:
+    # `factory.Product.go` is a function nested in a function named `Product`,
+    # not a class method; the rescue requires the owner to be a class.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "app.py").write_text(
+        "class Product:\n    def size(self) -> int:\n        return 1\n\n\n"
+        "def factory() -> int:\n"
+        "    def Product() -> int:\n"
+        "        def go() -> int:\n"
+        "            return 9\n"
+        "        return go()\n"
+        "    return Product()\n\n\n"
+        "def run(p: Product) -> int:\n    return p.go()\n",
+        encoding="utf-8",
+    )
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    edges = {
+        str(tgt)
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and str(src) == "proj.app.run"
+        and str(tgt).endswith(".go")
+    }
+    assert edges == set()
+
+
+def test_a_child_modules_class_does_not_rescue_the_call_on_a_scoped_reingest(
+    tmp_path: Path,
+) -> None:
+    # During a scoped re-ingest the module map holds only the re-parsed
+    # files, so `proj.app.util` is absent from it; ownership must come from
+    # the registry, which is rehydrated for every file (found by the bot's
+    # execution of the previous cut).
+    repo = tmp_path / "proj"
+    (repo / "app").mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "app" / "__init__.py").write_text(
+        "class Product:\n    def size(self) -> int:\n        return 1\n\n\n"
+        "def run(p: Product) -> int:\n    return p.go()\n",
+        encoding="utf-8",
+    )
+    (repo / "app" / "util.py").write_text(
+        "class Product:\n    def go(self) -> int:\n        return 9\n", encoding="utf-8"
+    )
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    (repo / "app" / "__init__.py").write_text(
+        "class Product:\n    def size(self) -> int:\n        return 2\n\n\n"
+        "def run(p: Product) -> int:\n    return p.go()\n",
+        encoding="utf-8",
+    )
+    GraphUpdater(
+        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
+    ).reingest([repo / "app" / "__init__.py"])
+    edges = {
+        (str(src), str(tgt))
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and str(src).endswith(".run")
+        and str(tgt).endswith(".go")
+    }
+    assert edges == set()
+
+
 def test_a_same_module_function_of_that_name_is_not_bound_either(
     tmp_path: Path,
 ) -> None:

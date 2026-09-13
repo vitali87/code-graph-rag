@@ -1697,29 +1697,37 @@ class CallResolver:
         # is reduced first: `Product | None` names `Product`.
         simple_type = self._strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return not any(
-            self._defined_in_module(qn, module_qn)
+            self._is_class_method_defined_in(qn, module_qn)
             for qn in self.function_registry.find_ending_with(
                 f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
             )
         )
 
-    def _defined_in_module(self, qn: str, module_qn: str) -> bool:
-        """Whether `qn` is defined in `module_qn` itself (any scope depth).
+    def _is_class_method_defined_in(self, qn: str, module_qn: str) -> bool:
+        """Whether `qn` is a method of a CLASS that `module_qn` itself defines.
 
-        `qn` must extend `module_qn`, and no longer prefix of it may be a
-        module of its own: `proj.app.second.Analyzer.go` is in `proj.app`
-        (`second` is a function), `proj.app.util.Product.go` is not
-        (`proj.app.util` is a module, a child of the `proj.app` package).
+        The owner must be a registered class (a nested function named like
+        the type, `factory.Product.go`, does not count), and it must live in
+        `module_qn` at any scope depth: every scope between the module and the
+        class (`second` in `proj.app.second.Analyzer`) must be a definition
+        this module registered. An unregistered scope is a module boundary,
+        `proj.app.util` under the `proj.app` package, or unknown; either way
+        not this module. Modules are not registry entries, and the module map
+        holds only re-parsed files during an incremental run, so the registry
+        (rehydrated for every file) is what decides, with the map as a second
+        check where it does know the scope.
         """
+        owner, _sep, _method = qn.rpartition(cs.SEPARATOR_DOT)
+        if self.function_registry.get(owner) != cs.NodeLabel.CLASS.value:
+            return False
         prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
-        if not qn.startswith(prefix):
+        if not owner.startswith(prefix):
             return False
         modules = self.type_inference.module_qn_to_file_path
-        segments = qn[len(prefix) :].split(cs.SEPARATOR_DOT)
         scope = module_qn
-        for segment in segments[:-1]:
+        for segment in owner[len(prefix) :].split(cs.SEPARATOR_DOT)[:-1]:
             scope = f"{scope}{cs.SEPARATOR_DOT}{segment}"
-            if scope in modules:
+            if scope in modules or scope not in self.function_registry:
                 return False
         return True
 
