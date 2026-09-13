@@ -580,6 +580,15 @@ class _StatefulIngestor:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:
                 return self._path_rows(_PACKAGE_LABEL)
+            case cq.CYPHER_PROJECT_IS_INCOMPLETE:
+                # Outstanding incomplete-run markers for a project. This
+                # double never writes one, so the honest answer is "none".
+                # Modelled rather than left to the not-emulated assertion
+                # because `_persisted_incomplete` treats an unreadable store
+                # as "cannot tell -> refuse", so an unmodelled query makes
+                # every marker-consulting path refuse and looks exactly like
+                # a production guard firing (PR #1547).
+                return []
             case cs.CYPHER_INBOUND_EDGES:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 changed: set[str] = (

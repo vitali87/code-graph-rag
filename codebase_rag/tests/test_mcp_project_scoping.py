@@ -4162,6 +4162,79 @@ def _guarded_failure(exc: BaseException) -> tuple[object, list[str]]:
     return handler, cleared
 
 
+def test_a_retained_updater_still_refuses_on_a_durable_marker() -> None:
+    """A warm updater must not bypass the marker another PROCESS left.
+
+    `_guarded_rename_reingest` reuses a retained same-project updater instead
+    of hydrating, because it is warm and `guarded()` does its own marking.
+    But `_require_marker` WRITES a marker; it never reads one, and
+    `_hydrate_reingest_updater` is the only place `_persisted_incomplete` is
+    consulted. So the shortcut skipped the one guard that survives a process
+    death, and identical incomplete state gave opposite outcomes purely on
+    whether an updater happened to be warm.
+
+    That is the #1679/#1783 defect on a new path: a guard reading
+    `_graph_incomplete` alone is process-local, and the durable marker is
+    what a peer registry's half-written graph leaves behind. Two registries
+    per project is a real configuration (#1709), and RENAME is deliberately
+    outside `_READS_THE_GRAPH`, so `_incomplete_refusal` does not cover it
+    either (greptile-local, PR #1547).
+
+    The self-inflicted case self-heals -- a mutating failure drops
+    `_live_updater`, so the next rename hydrates and refuses -- which is
+    exactly why this needs its own test: the reachable case is cross-process
+    and no existing test creates one.
+    """
+    from unittest.mock import MagicMock
+
+    handler = _registry_for_marker_clear(cleared=True)
+    retained = MagicMock()
+    retained.project_name = ALPHA
+    handler._live_updater = retained
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    # Nothing in THIS process failed: the flag is down and the durable marker
+    # is the only evidence, which is the whole point.
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._persisted_incomplete = MagicMock(return_value=True)
+
+    with pytest.raises(ValueError) as refused:
+        handler._guarded_rename_reingest(ALPHA)
+
+    assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(
+        refused.value
+    ), "a warm updater re-ingested over a graph a previous process left partial"
+
+
+def test_a_retained_updater_is_still_reused_on_a_clean_durable_state() -> None:
+    """The control: the refusal above must not cost the warm path.
+
+    Without this, "always consult the marker and always refuse" satisfies the
+    test above while making every legitimate rename hydrate a fresh updater.
+    """
+    from unittest.mock import MagicMock
+
+    handler = _registry_for_marker_clear(cleared=True)
+    retained = MagicMock()
+    retained.project_name = ALPHA
+    handler._live_updater = retained
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler._graph_incomplete = False
+    handler._incomplete_project = None
+    handler._persisted_incomplete = MagicMock(return_value=False)
+    handler._require_marker = MagicMock(return_value=None)
+    handler._require_marker_cleared = MagicMock(return_value=None)
+    handler._begin_writing_or_refuse = MagicMock()
+    retained.reingest = MagicMock(return_value="REPORT")
+
+    callback = handler._guarded_rename_reingest(ALPHA)
+    assert callback is not None, "fixture guard: expected a callback"
+    assert callback(["a.py"]) == "REPORT", (
+        "a clean durable state must still reuse the warm updater"
+    )
+    assert retained.reingest.called, "the retained updater was not the one used"
+
+
 def test_a_mutating_rename_reingest_failure_KEEPS_the_marker() -> None:
     """The P1: a failure that had already written must stay marked.
 

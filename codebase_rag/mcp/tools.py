@@ -2525,13 +2525,32 @@ class MCPToolsRegistry:
             return None
         # A retained updater for THIS project is reused as-is: it is warm and
         # `guarded()` below does its own marking. Otherwise hydrate through
-        # the marker-reading helper, never a flag-only one -- `-updater_for_
+        # the marker-reading helper, never a flag-only one -- `_updater_for_
         # reingest` was deleted under #1783 precisely because its guard reads
         # `_graph_incomplete` alone, which dies with the process, so a fresh
         # registry after a crash hydrates from a graph a previous run left
         # partial (#1679).
+        #
+        # The reuse therefore has to carry the same refusal itself. Skipping
+        # it re-created that very defect on this path: `_require_marker`
+        # below WRITES a marker and never reads one, and
+        # `_hydrate_reingest_updater` is the only place `_persisted_incomplete`
+        # is consulted, so a warm updater re-ingested over a graph a PEER
+        # REGISTRY left partial -- identical incomplete state giving opposite
+        # outcomes purely on whether an updater happened to be warm. Two
+        # registries per project is a real configuration (#1709), and RENAME
+        # sits outside `_READS_THE_GRAPH`, so the read guard does not cover it
+        # either (greptile-local, PR #1547).
         retained = self._live_updater
         if retained is not None and retained.project_name == project_name:
+            latched_here = self._graph_incomplete and self._incomplete_project in (
+                None,
+                project_name,
+            )
+            if latched_here or self._persisted_incomplete(project_name):
+                raise ValueError(
+                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+                )
             updater = retained
         else:
             updater = self._hydrate_reingest_updater(project_name)
