@@ -84,6 +84,44 @@ class PythonTypeInferenceEngine(
         self._self_assignment_cache: dict[tuple[Node, str], dict[str, str] | None] = {}
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
+    @staticmethod
+    def _receiver_parameter_names(caller_node: Node) -> list[str]:
+        """`self` / `cls` when one is the first parameter of `caller_node` or
+        of a def enclosing it below the class (a closure inside a method sees
+        the method's `self`). A staticmethod, or a def whose first parameter
+        is anything else, yields nothing."""
+        names: list[str] = []
+        node: Node | None = caller_node
+        while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
+            if node.type == cs.TS_PY_FUNCTION_DEFINITION:
+                params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+                first = (
+                    params.named_children[0]
+                    if params and params.named_children
+                    else None
+                )
+                if first is not None and first.type != cs.TS_PY_IDENTIFIER:
+                    first = next(
+                        (
+                            c
+                            for c in first.named_children
+                            if c.type == cs.TS_PY_IDENTIFIER
+                        ),
+                        None,
+                    )
+                text = (
+                    first.text.decode(cs.ENCODING_UTF8)
+                    if first and first.text
+                    else None
+                )
+                if (
+                    text in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
+                    and text not in names
+                ):
+                    names.append(text)
+            node = node.parent
+        return names
+
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, class_context: str | None = None
     ) -> dict[str, str]:
@@ -91,19 +129,24 @@ class PythonTypeInferenceEngine(
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
-            # A method's `self` (and a classmethod's `cls`) IS the enclosing
+            # A method's `self` (a classmethod's `cls`) IS the enclosing
             # class. Seeded HERE, before the assignment walk, because that
             # walk types `w = self.parse()` through the receiver's entry:
             # without one the local stayed untyped and a later `w.render()`
-            # fell to the bare-name fallback (issue #1901). The seed is an aid
-            # to that walk only and is removed again below: `self.m()` CALLS
-            # keep their own resolution (the concrete-sibling-over-abstract-
-            # stub policy the resolver applies to self calls), which a typed
-            # `self` in the returned map would override. An annotated
-            # parameter or a body binding of that name is kept as it is.
+            # fell to the bare-name fallback (issue #1901). Only a name that
+            # is the FIRST PARAMETER of this def or of an enclosing def under
+            # the class is seeded: a staticmethod has neither, and a body
+            # binding `cls = pick()` in any def must keep the type the alias
+            # pass gives it, which it could not with a seed already present
+            # (that pass yields to an existing entry). The seed is an aid to
+            # the walk only and is removed again below: `self.m()` CALLS keep
+            # their own resolution (the concrete-sibling-over-abstract-stub
+            # policy the resolver applies to self calls), which a typed `self`
+            # in the returned map would override. An annotated parameter of
+            # that name is kept as it is.
             seeded: list[str] = []
             if class_context:
-                for name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+                for name in self._receiver_parameter_names(caller_node):
                     if name not in local_var_types:
                         local_var_types[name] = class_context
                         seeded.append(name)
@@ -125,9 +168,16 @@ class PythonTypeInferenceEngine(
                 self._analyze_for_loop(for_stmt, local_var_types, module_qn)
             aliases = self._collect_local_aliases(caller_node)
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
-            for name in seeded:
-                if local_var_types.get(name) == class_context:
-                    del local_var_types[name]
+            # The seed itself and anything expanded FROM it (`cls.<field>`
+            # entries the chained-attribute pass derives) go; a body binding
+            # that replaced the seed stays.
+            for key in [
+                k
+                for k in local_var_types
+                if k.split(cs.SEPARATOR_DOT, 1)[0] in seeded
+                and (cs.SEPARATOR_DOT in k or local_var_types[k] == class_context)
+            ]:
+                del local_var_types[key]
 
         except Exception as e:
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)

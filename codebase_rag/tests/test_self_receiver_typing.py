@@ -48,6 +48,57 @@ _CLS_ASSIGN = (
     "        w = cls.make()\n"
     "        return w.render()\n"
 )
+_OTHER = (
+    "from proj.banner import Banner\n\n\n"
+    "class Other:\n    def parse(self) -> Banner:\n        return Banner()\n\n\n"
+    "def pick() -> Other:\n    return Other()\n"
+)
+_CLS_ALIAS_IN_STATIC = (
+    "from proj.widget import Widget\n"
+    "from proj.other import pick\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    @staticmethod\n"
+    "    def st() -> str:\n"
+    "        cls = pick()\n"
+    "        w = cls.parse()\n"
+    "        return w.render()\n"
+)
+_CLS_ALIAS_IN_METHOD = (
+    "from proj.widget import Widget\n"
+    "from proj.other import pick\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    def run(self) -> str:\n"
+    "        cls = pick()\n"
+    "        w = cls.parse()\n"
+    "        return w.render()\n"
+)
+_CLOSURE = (
+    "from proj.widget import Widget\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    def run(self) -> str:\n"
+    "        def inner() -> str:\n"
+    "            w = self.parse()\n"
+    "            return w.render()\n"
+    "        return inner()\n"
+)
+_RETURNS_LOCAL = (
+    "from proj.widget import Widget\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    def run_ret(self):\n"
+    "        w = self.parse()\n"
+    "        return w\n\n\n"
+    "def use(p: Parser) -> str:\n"
+    "    r = p.run_ret()\n"
+    "    return r.render()\n"
+)
 _SELF_SHADOWED = (
     "from proj.widget import Widget\n\n\n"
     "class Parser:\n"
@@ -82,6 +133,7 @@ def _build(tmp_path: Path, app: str, decoy: str) -> Path:
     (repo / "__init__.py").touch()
     (repo / "widget.py").write_text(_WIDGET, encoding="utf-8")
     (repo / "banner.py").write_text(decoy, encoding="utf-8")
+    (repo / "other.py").write_text(_OTHER, encoding="utf-8")
     (repo / "app.py").write_text(app, encoding="utf-8")
     return repo
 
@@ -121,12 +173,44 @@ def test_a_local_named_self_keeps_its_own_type(tmp_path: Path) -> None:
     assert _render_targets(repo, ".Parser.run") == {"proj.widget.Widget.render"}
 
 
+@pytest.mark.parametrize(
+    ("app", "caller"),
+    [(_CLS_ALIAS_IN_STATIC, ".Parser.st"), (_CLS_ALIAS_IN_METHOD, ".Parser.run")],
+    ids=["staticmethod", "instance-method"],
+)
+def test_a_body_binding_named_cls_keeps_the_type_the_alias_pass_gives_it(
+    tmp_path: Path, app: str, caller: str
+) -> None:
+    # `cls = pick()` is an alias to an `Other`, whose `parse()` returns a
+    # Banner. A seed present during the walk would have made the alias pass
+    # yield to it and typed `w` as a Widget (found by the local review).
+    repo = _build(tmp_path, app, _DECOY_COLLIDES)
+    assert _render_targets(repo, caller) == {"proj.banner.Banner.render"}
+
+
+def test_a_closure_inside_a_method_sees_the_methods_self(tmp_path: Path) -> None:
+    # `inner` has no `self` parameter of its own; the enclosing method's is
+    # what types `w`. Asserted with `in`, not `==`: a function nested in a
+    # method is ingested twice today, once by the module-function pass with
+    # no class context, and that pass still emits the bare-name edge. That
+    # double ingestion is pre-existing and filed separately.
+    repo = _build(tmp_path, _CLOSURE, _DECOY_COLLIDES)
+    assert "proj.widget.Widget.render" in _render_targets(repo, ".inner")
+
+
+def test_a_returned_local_typed_from_self_types_the_caller(tmp_path: Path) -> None:
+    # Return-statement analysis builds the same map; with the class passed
+    # there too, `return w` carries `Widget` to `r = p.run_ret()`.
+    repo = _build(tmp_path, _RETURNS_LOCAL, _DECOY_COLLIDES)
+    assert _render_targets(repo, ".use") == {"proj.widget.Widget.render"}
+
+
 def test_the_seed_types_the_assigned_local_and_is_not_exported(tmp_path: Path) -> None:
     # The mechanism itself: with the class context, the method's map types
     # `w` from `self.parse()`; `self` and `cls` themselves are NOT left in
-    # the map, so `self.m()` calls keep the resolver's own policy for them
-    # (concrete sibling over abstract stub). A module-level function's map
-    # has none of the three.
+    # the map, nor anything expanded from them, so `self.m()` calls keep the
+    # resolver's own policy for them (concrete sibling over abstract stub).
+    # A module-level function's map has none of it.
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
@@ -160,8 +244,7 @@ def test_the_seed_types_the_assigned_local_and_is_not_exported(tmp_path: Path) -
         run_node, "proj.app", cs.SupportedLanguage.PYTHON, "proj.app.Parser"
     )
     assert with_context.get("w") == "Widget"
-    assert "self" not in with_context
-    assert "cls" not in with_context
+    assert not [k for k in with_context if k.split(".")[0] in ("self", "cls")]
     without_context = ti.build_local_variable_type_map(
         run_node, "proj.app", cs.SupportedLanguage.PYTHON, None
     )
