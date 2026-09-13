@@ -127,6 +127,7 @@ message GraphCodeIndex {
       CodeSmell code_smell = 20;
       SecurityIssue security_issue = 21;
       Gloss gloss = 22;
+      Parameter parameter = 23;
     }
   }
 
@@ -171,6 +172,9 @@ message GraphCodeIndex {
       // Agent-written glosses (issue #1808).
       ANNOTATES = 30;
       MENTIONS = 31;
+      // Declared parameters (issue #1804).
+      HAS_PARAMETER = 32;
+      OF_TYPE = 33;
     }
 
     RelationshipType type = 1;
@@ -344,6 +348,25 @@ message GraphCodeIndex {
     string anchor_prefix = 11;
     string anchor_suffix = 12;
     string anchor_state = 13;
+  }
+
+  // A declared formal parameter of a Function or Method (issue #1804).
+  // Position is the DECLARATION index with self/cls excluded, not the
+  // call-site slot: keyword-only parameters count, variadics count once.
+  message Parameter {
+    // Primary Key: <callable qn>.<index>
+    string qualified_name = 1;
+
+    string name = 2;
+    int32 index = 3;
+    string path = 4;
+    string absolute_path = 5;
+    int32 start_line = 6;
+    int32 start_col = 7;
+    // The annotation as written, "" when there is none.
+    string type_name = 8;
+    bool is_variadic = 9;
+    bool has_default = 10;
   }
 
   // An external I/O resource a callable reads from or writes to

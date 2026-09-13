@@ -325,6 +325,10 @@ def _is_property_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
 
 
+def _is_static_decorator(decorators: list[str]) -> bool:
+    return bool(_decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
+
+
 def _is_abstract_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
 
@@ -1248,6 +1252,7 @@ def ingest_method(
     skip_cpp_artifact_check: bool = False,
     pending_endpoints: list | None = None,
     type_fact_sink: list | None = None,
+    parameter_type_sink: list | None = None,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1420,6 +1425,23 @@ def ingest_method(
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+    # AFTER the Method node is queued: a batch flush writes nodes before
+    # relationships, and a HAS_PARAMETER whose owner is still pending would
+    # match nothing and be dropped. Local import for the same reason as
+    # type_facts above.
+    from .parameter_nodes import emit_declared_parameters
+
+    emit_declared_parameters(
+        ingestor,
+        parameter_type_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        method_node,
+        language,
+        method_props,
+        has_receiver=not _is_static_decorator(decorators),
+    )
     if pending_endpoints is not None:
         # Deferred so router mount prefixes can resolve after Pass 2 (#877).
         queue_endpoints(

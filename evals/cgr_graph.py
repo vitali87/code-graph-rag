@@ -70,6 +70,10 @@ _DEFINES_RELS = frozenset(
         cs.RelationshipType.DEFINES_METHOD.value,
     }
 )
+# What CYPHER_DELETE_MODULE walks: the definitions plus what hangs off them
+# by ownership. Kept separate from _DEFINES_RELS, which the definition
+# queries use and which must not see a Parameter as a definition.
+_MODULE_SUBTREE_RELS = _DEFINES_RELS | {cs.RelationshipType.HAS_PARAMETER.value}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
@@ -689,6 +693,21 @@ class _StatefulIngestor:
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_PROJECT_PARAMETER_TYPES:
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.PARAMETER.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
             case cs.CYPHER_ALL_INHERITS:
                 inherits: list[tuple[str, int, ResultRow]] = []
                 for edge in self.edges:
@@ -1056,7 +1075,7 @@ class _StatefulIngestor:
                 continue
             doomed.add(node)
             for _fl, _fv, rel_type, to_label, to_val in self._out.get(node, ()):
-                if rel_type in _DEFINES_RELS:
+                if rel_type in _MODULE_SUBTREE_RELS:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)

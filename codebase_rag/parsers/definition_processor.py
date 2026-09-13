@@ -43,6 +43,7 @@ from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
+from .parameter_nodes import PendingParameterType
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -331,6 +332,7 @@ class DefinitionProcessor(
         ] = []
         # Return/parameter annotations awaiting the full registry (#1527).
         self.pending_type_facts: list[PendingTypeFact] = []
+        self.pending_parameter_types: list[PendingParameterType] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -391,16 +393,26 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
+        from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        if not self.pending_type_facts:
+        # Every queue, not just the first: a Parameter fact with no RETURNS/
+        # ACCEPTS fact beside it (a peer's Field pass hit exactly this) would
+        # otherwise be skipped outright, and OF_TYPE silently absent.
+        if not self.pending_type_facts and not self.pending_parameter_types:
             return 0
         resolver = TypeReferenceResolver(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
         )
-        return emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        # Parameter OF_TYPE edges resolve in the same pass, for the same
+        # reason: the annotation may name a type from a later file.
+        emitted += emit_parameter_type_edges(
+            self.pending_parameter_types, resolver, self.ingestor
+        )
+        return emitted
 
     def process_file(
         self,

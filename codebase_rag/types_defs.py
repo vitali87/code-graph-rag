@@ -910,6 +910,23 @@ _GLOSS_TARGET_LABELS = (
     NodeLabel.UNION,
 )
 
+# The labels a parameter's annotation can resolve to: what `TypeReferenceResolver`
+# returns today for ACCEPTS, minus nothing -- a parameter typed as a Function
+# is a callable annotation, which the resolver does not produce.
+_PARAMETER_TYPE_LABELS = (
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+
+_PARAMETER_NODE_PROPS = (
+    "{qualified_name: string, name: string, index: int, path: string, "
+    "absolute_path: string, start_line: int?, start_col: int?, "
+    "type_name: string?, is_variadic: boolean?, has_default: boolean?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -987,6 +1004,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
+    NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
 )
 
 
@@ -1219,5 +1237,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.GLOSS,),
         RelationshipType.MENTIONS,
         _GLOSS_TARGET_LABELS,
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.HAS_PARAMETER,
+        (NodeLabel.PARAMETER,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER,),
+        RelationshipType.OF_TYPE,
+        _PARAMETER_TYPE_LABELS,
     ),
 )

@@ -82,6 +82,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.parameter_nodes import PendingParameterType
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -2260,6 +2261,52 @@ class GraphUpdater:
             )
         )
 
+    def _requeue_parameter_types(self, project_params: PropertyDict) -> None:
+        # OF_TYPE for the Parameter nodes of files this run does not re-parse:
+        # their owners never re-emit them, so the pending list is rebuilt from
+        # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
+        # (issue #1527). Without this, re-parsing only the TYPE's file detaches
+        # every OF_TYPE into it and nothing puts them back. The key is the
+        # FILE: a Parameter whose file is being re-parsed this run is
+        # re-emitted by ingest and queues its own (a requeue here would carry
+        # the OLD annotation); one whose file is not needs rebuilding. Neither
+        # registry membership nor "what the rehydration loop restored" can
+        # tell the two apart -- a reused updater already holds every unchanged
+        # definition, a fresh one holds none -- and both were tried first.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
+        ):
+            # A full build re-parses every file: ingest queues everything.
+            return
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            return
+        pending = self.factory.definition_processor.pending_parameter_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if path in self._reparsed_file_keys:
+                continue
+            pending.append(
+                PendingParameterType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                )
+            )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2374,6 +2421,7 @@ class GraphUpdater:
             else:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
+        self._requeue_parameter_types(project_params)
 
     def _seed_module_qns_from_graph(
         self,
@@ -5229,6 +5277,17 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
+        # The same for parameter annotations: the scoped prologue rehydrates
+        # them from the graph before this delete, so a changed annotation
+        # would otherwise emit OF_TYPE to both the old and the new type. Keyed
+        # on the FILE, not the module qn: `foo.py` and `foo/__init__.py` share
+        # `proj.foo`, and a module-qn filter dropped the unchanged file's
+        # facts with the re-parsed one's, leaving its detached OF_TYPE unbuilt.
+        stale_keys = {*reparse, *gone}
+        pending_params = self.factory.definition_processor.pending_parameter_types
+        pending_params[:] = [
+            fact for fact in pending_params if fact.path not in stale_keys
+        ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
