@@ -49,6 +49,16 @@ def declared_fields(
         return js_declared_fields(class_node)
     if language in (cs.SupportedLanguage.TS, cs.SupportedLanguage.TSX):
         return ts_declared_fields(class_node)
+    if language == cs.SupportedLanguage.GO:
+        return go_declared_fields(class_node)
+    if language == cs.SupportedLanguage.RUST:
+        return rust_declared_fields(class_node)
+    if language in (cs.SupportedLanguage.C, cs.SupportedLanguage.CPP):
+        return cpp_declared_fields(class_node)
+    if language == cs.SupportedLanguage.CSHARP:
+        return csharp_declared_fields(class_node)
+    if language == cs.SupportedLanguage.DART:
+        return dart_declared_fields(class_node)
     return []
 
 
@@ -280,6 +290,313 @@ def _js_ts_fields(
                 member,
             )
         )
+    return out
+
+
+# --- Go ---------------------------------------------------------------------
+#
+# A `type_spec` whose type is a `struct_type`; each `field_declaration` names
+# one or more fields (`age, n int`) or none -- an embedded field, which Go
+# promotes under its type's name, so that name is recorded. No modifiers:
+# visibility is the capital letter, which the name already carries.
+
+
+def go_declared_fields(class_node: Node) -> list[DeclaredField]:
+    struct = next(
+        (c for c in class_node.children if c.type == cs.TS_GO_STRUCT_TYPE), None
+    )
+    if struct is None:
+        return []
+    field_list = next(
+        (c for c in struct.children if c.type == cs.TS_GO_FIELD_DECLARATION_LIST), None
+    )
+    if field_list is None:
+        return []
+    out: list[DeclaredField] = []
+    for decl in field_list.children:
+        if decl.type != cs.TS_GO_FIELD_DECLARATION:
+            continue
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        names = decl.children_by_field_name(cs.FIELD_NAME)
+        if not names and type_node is not None and type_name:
+            # Embedded: `Embedded` or `*pkg.Embedded` is promoted under the bare
+            # type name. The grammar's `type` field already excludes the `*`
+            # (measured: `*pkg.Embedded` -> type `pkg.Embedded`), so only the
+            # package qualifier is stripped from the name.
+            line, col = _at(type_node)
+            out.append(
+                DeclaredField(
+                    type_name.rsplit(".", 1)[-1],
+                    line,
+                    col,
+                    type_name,
+                    (),
+                    False,
+                    decl,
+                )
+            )
+            continue
+        for name_node in names:
+            if name := safe_decode_text(name_node):
+                line, col = _at(name_node)
+                out.append(
+                    DeclaredField(name, line, col, type_name or None, (), False, decl)
+                )
+    return out
+
+
+# --- Rust -------------------------------------------------------------------
+
+
+def rust_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None or body.type != cs.TS_RS_FIELD_DECLARATION_LIST:
+        return []
+    out: list[DeclaredField] = []
+    for decl in body.children:
+        if decl.type != cs.TS_RS_FIELD_DECLARATION:
+            continue
+        name_node = decl.child_by_field_name(cs.FIELD_NAME)
+        if name_node is None or not (name := safe_decode_text(name_node)):
+            continue
+        type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        # `pub`, `pub(crate)`, `pub(super)`: the whole visibility, as written.
+        visibility = next(
+            (c for c in decl.children if c.type == cs.TS_RS_VISIBILITY_MODIFIER), None
+        )
+        modifiers = (
+            (safe_decode_text(visibility) or "",) if visibility is not None else ()
+        )
+        line, col = _at(name_node)
+        out.append(
+            DeclaredField(
+                name,
+                line,
+                col,
+                type_name or None,
+                tuple(m for m in modifiers if m),
+                False,
+                decl,
+            )
+        )
+    return out
+
+
+# --- C and C++ -----------------------------------------------------------------
+#
+# One enumerator for both: a C `struct` body and a C++ class body are the same
+# `field_declaration_list`. C++ access is POSITIONAL -- `public:` is an
+# `access_specifier` sibling that applies to everything after it -- so the
+# current section is carried along and recorded as a modifier, defaulting to
+# private for a `class` and public for a `struct`/`union`. A member function
+# declaration is also a `field_declaration` whose declarator is a
+# `function_declarator`; only data members are fields.
+
+_CPP_MODIFIER_NODES = frozenset(
+    {cs.TS_CPP_STORAGE_CLASS_SPECIFIER, cs.TS_CPP_TYPE_QUALIFIER}
+)
+_CPP_DECLARATOR_STOP = frozenset(
+    {cs.CppNodeType.FUNCTION_DECLARATOR, cs.TS_CPP_ABSTRACT_FUNCTION_DECLARATOR}
+)
+
+
+def cpp_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    default_access = "private" if class_node.type == "class_specifier" else "public"
+    out: list[DeclaredField] = []
+    _cpp_collect(body, default_access, out)
+    return out
+
+
+def _cpp_collect(node: Node, access: str, out: list[DeclaredField]) -> None:
+    for child in node.children:
+        if child.type == cs.TS_ACCESS_SPECIFIER:
+            access = safe_decode_text(child) or access
+            continue
+        # A nested type, function or lambda opens its own member scope.
+        if child.type in cs.CPP_NESTED_SCOPE_NODE_TYPES:
+            continue
+        if child.type == cs.CppNodeType.FIELD_DECLARATION:
+            _cpp_record(child, access, out)
+            continue
+        # Preprocessor blocks are transparent, as in the type-inference engine.
+        _cpp_collect(child, access, out)
+
+
+def _cpp_record(decl: Node, access: str, out: list[DeclaredField]) -> None:
+    type_node = decl.child_by_field_name(cs.FIELD_TYPE)
+    type_name = safe_decode_text(type_node) if type_node is not None else None
+    keywords = tuple(
+        t
+        for c in decl.children
+        if c.type in _CPP_MODIFIER_NODES and (t := safe_decode_text(c))
+    )
+    modifiers = (access, *keywords)
+    is_static = cs.CPP_KEYWORD_STATIC in keywords
+    for declarator in decl.children_by_field_name(cs.FIELD_DECLARATOR):
+        name_node = _cpp_field_identifier(declarator)
+        if name_node is None or not (name := safe_decode_text(name_node)):
+            continue
+        line, col = _at(name_node)
+        out.append(
+            DeclaredField(
+                name, line, col, type_name or None, modifiers, is_static, decl
+            )
+        )
+
+
+def _cpp_field_identifier(declarator: Node) -> Node | None:
+    """The `field_identifier` under a (pointer/reference/array) declarator; None for a function."""
+    node: Node | None = declarator
+    while node is not None:
+        if node.type in _CPP_DECLARATOR_STOP:
+            return None
+        if node.type == cs.CppNodeType.FIELD_IDENTIFIER:
+            return node
+        inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is None:
+            inner = next(
+                (c for c in node.children if c.type == cs.CppNodeType.FIELD_IDENTIFIER),
+                None,
+            )
+        node = inner
+    return None
+
+
+# --- C# -----------------------------------------------------------------------
+#
+# Fields (`private int a, b;`) and auto-properties (`public string Name { get;
+# set; }`) both, as the receiver-typing map already treats them alike.
+
+
+def csharp_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.children:
+        modifiers = tuple(
+            t
+            for c in member.children
+            if c.type == cs.TS_CSHARP_MODIFIER and (t := safe_decode_text(c))
+        )
+        is_static = cs.TS_STATIC in modifiers
+        if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
+            name_node = member.child_by_field_name(cs.FIELD_NAME)
+            type_node = member.child_by_field_name(cs.FIELD_TYPE)
+            if name_node is not None and (name := safe_decode_text(name_node)):
+                line, col = _at(name_node)
+                out.append(
+                    DeclaredField(
+                        name,
+                        line,
+                        col,
+                        (safe_decode_text(type_node) or None)
+                        if type_node is not None
+                        else None,
+                        modifiers,
+                        is_static,
+                        member,
+                    )
+                )
+        elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
+            var_decl = next(
+                (
+                    c
+                    for c in member.children
+                    if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION
+                ),
+                None,
+            )
+            if var_decl is None:
+                continue
+            type_node = var_decl.child_by_field_name(cs.FIELD_TYPE)
+            type_name = safe_decode_text(type_node) if type_node is not None else None
+            for declarator in var_decl.children:
+                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+                    continue
+                name_node = declarator.child_by_field_name(cs.FIELD_NAME)
+                if name_node is None or not (name := safe_decode_text(name_node)):
+                    continue
+                line, col = _at(name_node)
+                out.append(
+                    DeclaredField(
+                        name, line, col, type_name or None, modifiers, is_static, member
+                    )
+                )
+    return out
+
+
+# --- Dart -------------------------------------------------------------------
+#
+# A class-body `declaration` carries keyword children (`static`, `const`,
+# `final`, `late`), an optional `type_identifier`, and its names in an
+# `initialized_identifier_list` (`final String name;`, `late int a, b;`) or,
+# for `static const`, a `static_final_declaration_list`. Each list entry's text
+# includes an initializer (`n = 1`), so the name is its first identifier.
+
+_DART_KEYWORDS = frozenset(
+    {cs.TS_STATIC, cs.TS_DART_CONST_BUILTIN, cs.TS_DART_FINAL_BUILTIN, cs.TS_DART_LATE}
+)
+_DART_NAME_LISTS = frozenset(
+    {cs.TS_DART_INITIALIZED_IDENTIFIER_LIST, cs.TS_DART_STATIC_FINAL_DECLARATION_LIST}
+)
+_DART_NAME_ENTRIES = frozenset(
+    {cs.TS_DART_INITIALIZED_IDENTIFIER, cs.TS_DART_STATIC_FINAL_DECLARATION}
+)
+
+
+def dart_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = next(
+        (c for c in class_node.named_children if c.type == cs.TS_DART_CLASS_BODY), None
+    )
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.named_children:
+        if member.type != cs.TS_DART_DECLARATION:
+            continue
+        modifiers = tuple(
+            t
+            for c in member.children
+            if c.type in _DART_KEYWORDS and (t := safe_decode_text(c))
+        )
+        type_node = next(
+            (c for c in member.children if c.type == cs.TS_DART_TYPE_IDENTIFIER), None
+        )
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        for name_list in member.children:
+            if name_list.type not in _DART_NAME_LISTS:
+                continue
+            for entry in name_list.children:
+                if entry.type not in _DART_NAME_ENTRIES:
+                    continue
+                name_node = next(
+                    (c for c in entry.children if c.type == cs.TS_IDENTIFIER), None
+                )
+                name_node = (
+                    name_node
+                    if name_node is not None
+                    else (entry if entry.child_count == 0 else None)
+                )
+                if name_node is None or not (name := safe_decode_text(name_node)):
+                    continue
+                line, col = _at(name_node)
+                out.append(
+                    DeclaredField(
+                        name,
+                        line,
+                        col,
+                        type_name or None,
+                        modifiers,
+                        cs.TS_STATIC in modifiers,
+                        member,
+                    )
+                )
     return out
 
 

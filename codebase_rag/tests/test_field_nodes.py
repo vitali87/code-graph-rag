@@ -167,6 +167,114 @@ class TestTypeScript:
         assert _rows(got) == [("x", "number", (), False)]
 
 
+class TestGo:
+    def test_multi_name_and_embedded_fields(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.GO,
+            "package m\n\ntype S struct {\n\tName string\n\tage, n int\n\t*pkg.Embedded\n}\n",
+            "type_spec",
+        )
+        assert _rows(got) == [
+            ("Name", "string", (), False),
+            ("age", "int", (), False),
+            ("n", "int", (), False),
+            # The grammar's `type` field excludes the pointer star.
+            ("Embedded", "pkg.Embedded", (), False),
+        ]
+
+    def test_a_non_struct_type_spec_has_no_fields(self, parsers) -> None:
+        got = _fields(
+            parsers, Lang.GO, "package m\n\ntype I interface{ M() }\n", "type_spec"
+        )
+        assert got == []
+
+
+class TestRust:
+    def test_visibility_is_recorded_as_written(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.RUST,
+            "pub struct S {\n    pub name: String,\n    pub(crate) n: u8,\n    hidden: Vec<u8>,\n}\n",
+            "struct_item",
+        )
+        assert _rows(got) == [
+            ("name", "String", ("pub",), False),
+            ("n", "u8", ("pub(crate)",), False),
+            ("hidden", "Vec<u8>", (), False),
+        ]
+        assert (got[0].start_line, got[0].start_col) == (2, 8)
+
+
+class TestCpp:
+    def test_access_sections_modifiers_and_declarators(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.CPP,
+            "class K {\npublic:\n  static const int N = 1;\n  std::string name;\nprivate:\n  int *p, q;\n  void m();\n};\n",
+            "class_specifier",
+        )
+        assert _rows(got) == [
+            ("N", "int", ("public", "static", "const"), True),
+            ("name", "std::string", ("public",), False),
+            ("p", "int", ("private",), False),
+            ("q", "int", ("private",), False),
+        ]
+
+    def test_a_class_defaults_to_private_and_a_struct_to_public(self, parsers) -> None:
+        cls = _fields(parsers, Lang.CPP, "class K {\n  int a;\n};\n", "class_specifier")
+        st = _fields(
+            parsers, Lang.CPP, "struct T {\n  int a;\n};\n", "struct_specifier"
+        )
+        assert cls[0].modifiers == ("private",)
+        assert st[0].modifiers == ("public",)
+
+    def test_c_struct_fields_including_a_bitfield(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.C,
+            "struct S {\n  unsigned int flags : 3;\n  char *name;\n};\n",
+            "struct_specifier",
+        )
+        assert _rows(got) == [
+            ("flags", "unsigned int", ("public",), False),
+            ("name", "char", ("public",), False),
+        ]
+
+
+class TestCSharp:
+    def test_fields_and_properties_with_modifiers(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.CSHARP,
+            "class C {\n  private static readonly int n = 1;\n  public string Name { get; set; }\n  protected int a, b;\n  void M() {}\n}\n",
+            "class_declaration",
+        )
+        assert _rows(got) == [
+            ("n", "int", ("private", "static", "readonly"), True),
+            ("Name", "string", ("public",), False),
+            ("a", "int", ("protected",), False),
+            ("b", "int", ("protected",), False),
+        ]
+
+
+class TestDart:
+    def test_static_const_final_late_and_var(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.DART,
+            "class C {\n  static const int n = 1;\n  final String name;\n  late int a, b;\n  var x = 1;\n  void m() {}\n}\n",
+            "class_definition",
+        )
+        assert _rows(got) == [
+            ("n", "int", ("static", "const"), True),
+            ("name", "String", ("final",), False),
+            ("a", "int", ("late",), False),
+            ("b", "int", ("late",), False),
+            ("x", None, (), False),
+        ]
+
+
 class TestNotCovered:
     def test_an_uncovered_language_declares_nothing(self, parsers) -> None:
         """Not covered, never "no fields": the caller must not read [] as an answer."""
