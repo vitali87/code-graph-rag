@@ -269,8 +269,15 @@ def test_a_removed_call_is_retracted_while_its_function_remains(
     updater.reingest(["pkg/app.py"])
     store.flush_all()
 
+    # CONTROL, not a test of the #1794 fix: this assertion passes with and
+    # without the populator change (verified by reverting it -- still green),
+    # because the retraction here never depended on the captures cache. It is
+    # here so a future change cannot break the already-correct direction
+    # silently. Do not read its greenness as evidence the fix works; the
+    # three tests above are what pin that (greptile-local, PR #1833).
     assert _calls(store) == set(), (
-        "the call was removed from the source but its edge survives: "
+        "control: a removed call must stay retracted regardless of the "
+        "#1794 populator change, but its edge survives: "
         f"{sorted(_calls(store))}"
     )
     functions = {str(uid) for (label, uid) in store.nodes if label == "Function"}

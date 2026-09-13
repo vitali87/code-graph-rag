@@ -4612,13 +4612,19 @@ class GraphUpdater:
             # evidence of work too: the Python decorator pass takes class
             # nodes as its targets.
             #
-            # Only a file recording none of call/function/class could license
-            # a skip, and no such CACHE ENTRY exists: the populator stores a
-            # key only when the query matched it and drops an all-absent
-            # entry (definition_processor.py), so every entry has a non-empty
-            # kind. A narrowed guard would be unreachable rather than merely
-            # cheap -- measured 0 hits over 105 real files, while the old
-            # guard skipped this repo's own class-only parsers/constants.py.
+            # An all-absent entry IS possible on this branch: the populator
+            # writes {} whenever the query RAN, to keep the cache honest
+            # about a file that now parses to nothing (#1794). So the
+            # narrowed guard is not unreachable-and-therefore-harmless, as
+            # the #1837 reasoning had it on a tree without that change -- it
+            # is unsound. An all-absent entry is precisely the module-level
+            # reference case: a file whose only CALLS edge lives under no
+            # capture kind. Measured by reinstating it: the guard fires on
+            # 19 files and reddens test_a_module_level_reference_survives_
+            # the_re_parse, test_class_only_file_still_emits_its_module_
+            # level_call and test_every_parsed_file_reaches_the_call_walk.
+            # Do not re-add it.
+            #
             # Uncached files were always walked, so the walk is now uniform.
             self.factory.call_processor.process_calls_in_file(
                 file_path,
