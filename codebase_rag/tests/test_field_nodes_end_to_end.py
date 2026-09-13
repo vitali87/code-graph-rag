@@ -207,10 +207,16 @@ def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
     )
     updater.run(force=True)
     (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
+    # Rename a typed field on the same updater: the OLD fact for `Box.widget`
+    # must not be re-emitted from a queue that was never emptied.
+    (repo / "app.py").write_text(
+        _SRC["app.py"].replace("widget: Widget", "gizmo: Widget")
+    )
     updater.run(force=False)
 
     of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
     assert ("proj.consumer.Holder.gadget", "proj.models.Gadget") in of_type, of_type
+    assert ("proj.app.Box.gizmo", "proj.models.Widget") in of_type, of_type
     # Every OF_TYPE source must be a live node: the field queue is emptied after
     # each run like the parameter one, or a reused updater re-emits an edge
     # from a Field that no longer exists (local review P1).
