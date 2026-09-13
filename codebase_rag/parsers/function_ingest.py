@@ -34,6 +34,7 @@ from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .parameter_nodes import PendingParameterType, emit_declared_parameters
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -249,6 +250,7 @@ class FunctionIngestMixin:
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
@@ -1178,6 +1180,7 @@ class FunctionIngestMixin:
                 defer_containment=self._deferred_parent_links,
                 module_qn=entry.module_qn,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             if method_qn is not None:
                 self._register_go_name_alias(
@@ -1326,6 +1329,16 @@ class FunctionIngestMixin:
             resolution.qualified_name,
             module_qn,
             extract_type_facts(func_node, language),
+        )
+        emit_declared_parameters(
+            self.ingestor,
+            self.pending_parameter_types,
+            cs.NodeLabel.FUNCTION,
+            resolution.qualified_name,
+            module_qn,
+            func_node,
+            language,
+            func_props,
         )
         # Deferred: emission happens after Pass 2 so router mount prefixes
         # (possibly declared in other modules) can resolve (issue #877).
@@ -1808,6 +1821,7 @@ class FunctionIngestMixin:
             defer_containment=self._deferred_parent_links,
             module_qn=module_qn,
             type_fact_sink=self.pending_type_facts,
+            parameter_type_sink=self.pending_parameter_types,
         )
         if ingested_qn is None:
             return False

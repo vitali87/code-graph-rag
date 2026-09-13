@@ -32,6 +32,11 @@ KEY_START_LINE = "start_line"
 # keys sit at the `func` keyword). Persisted so incremental runs can rehydrate
 # the col-keyed location indexes for unchanged files (issue #1240).
 KEY_START_COL = "start_col"
+# Parameter node properties (issue #1804).
+KEY_INDEX = "index"
+KEY_TYPE_NAME = "type_name"
+KEY_IS_VARIADIC = "is_variadic"
+KEY_HAS_DEFAULT = "has_default"
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
@@ -181,6 +186,7 @@ ONEOF_PATTERN = "pattern"
 ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
+ONEOF_PARAMETER = "parameter"
 
 
 class UniqueKeyType(StrEnum):
@@ -226,6 +232,8 @@ class NodeLabel(StrEnum):
     # delete comments, and no cross-language exemption for a structured
     # comment is achievable.
     GLOSS = "Gloss"
+    # A declared formal parameter of a Function or Method (issue #1804).
+    PARAMETER = "Parameter"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -259,6 +267,9 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # It reuses the `qualified_name` key so the existing constraint, index
     # and MERGE machinery apply unchanged.
     NodeLabel.GLOSS: UniqueKeyType.QUALIFIED_NAME,
+    # <callable qn>.<index>: one node per declared slot, keyed so a rename of
+    # the parameter is an update of the same node, not a new one.
+    NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -312,6 +323,10 @@ class RelationshipType(StrEnum):
     # traversing MENTIONS finds glosses that talk about a symbol without
     # being filed under it.
     MENTIONS = "MENTIONS"
+    # Function|Method -> Parameter, carrying {index} (issue #1804).
+    HAS_PARAMETER = "HAS_PARAMETER"
+    # Parameter -> the project type its annotation resolves to.
+    OF_TYPE = "OF_TYPE"
 
 
 class CaptureGroup(StrEnum):
@@ -326,6 +341,7 @@ class CaptureGroup(StrEnum):
     # label and its edges obey the same enable/disable contract as everything
     # else, rather than becoming a second, parallel mechanism.
     GLOSSES = "glosses"
+    PARAMETERS = "parameters"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -391,6 +407,14 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.MENTIONS,
         }
     ),
+    # Opt-in (issue #1804): roughly 2.6x the node count of a repo, and the
+    # per-parameter OF_TYPE resolution is measured at 1.16x today's ACCEPTS.
+    CaptureGroup.PARAMETERS: frozenset(
+        {
+            RelationshipType.HAS_PARAMETER,
+            RelationshipType.OF_TYPE,
+        }
+    ),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -402,6 +426,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
         {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
     ),
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
+    CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -560,7 +585,12 @@ CYPHER_DELETE_MODULE = (
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION*0..]->(c) "
+    # HAS_PARAMETER too: a Parameter is derived from source like everything
+    # else the module DEFINES, so it goes with its owner on re-parse. Without
+    # it a removed parameter or a deleted function left its nodes orphaned --
+    # the shape of the Gloss leak (#1828), but the opposite remedy, because a
+    # gloss is written into the graph and must survive a rebuild.
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -635,6 +665,15 @@ CYPHER_ALL_PACKAGE_PATHS = (
 # $project_prefix filter scopes it to the project being indexed; without it,
 # another project's same-named symbols pollute the resolver trie and the
 # bare-name fallback binds calls across the project boundary (issue #711).
+# Parameter nodes with an annotation, for rehydrating OF_TYPE on an
+# incremental run: the owner's file is unchanged and never re-emits them, so
+# the pending list is rebuilt from the graph the way RETURNS/ACCEPTS are.
+CYPHER_PROJECT_PARAMETER_TYPES = (
+    "MATCH (p:Parameter) WHERE p.qualified_name STARTS WITH $project_prefix "
+    "AND p.type_name IS NOT NULL "
+    "RETURN p.qualified_name AS qualified_name, p.type_name AS type_name, "
+    "p.path AS path"
+)
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
