@@ -53,6 +53,16 @@ class ModuleDocSpec(NamedTuple):
     # should (Scala `class_definition` vs Java `class_declaration`, C++
     # `class_specifier`, Dart `function_signature`).
     declaration_types: frozenset[str] = frozenset()
+    # Statement types that DEFINE a function or class without being a
+    # declaration node themselves: JavaScript's `const f = () => {}` is a
+    # `lexical_declaration`, and `module.exports.f = function () {}` an
+    # `expression_statement`. Such a statement is left out of
+    # `declaration_types` on purpose (a `const x = 1` may legally open a
+    # documented file), but when its VALUE is a function or class the adjacent
+    # doc is that definition's -- which is also what the definition-level
+    # extractor attaches it to, so leaving it here would give one comment two
+    # owners (issue #1887).
+    binding_types: frozenset[str] = frozenset()
 
 
 _C_STYLE_BLOCK = frozenset({"comment", "block_comment"})
@@ -165,6 +175,22 @@ _JS_DECLS = frozenset(
     }
 )
 
+# The statements that may bind a function or class to a name. Which ones
+# actually do is decided per node by `_binds_a_definition`, from the VALUE.
+_JS_BINDINGS = frozenset(
+    {"lexical_declaration", "variable_declaration", "expression_statement"}
+)
+# The value node types that make such a binding a definition.
+_JS_FUNCTION_VALUES = frozenset(
+    {
+        "arrow_function",
+        "function_expression",
+        "function",
+        "generator_function",
+        "class",
+    }
+)
+
 _DART_DECLS = frozenset(
     {
         "class_definition",
@@ -194,6 +220,7 @@ _JS_STYLE = ModuleDocSpec(
     block_markers=_DOC_BLOCK_MARKERS,
     skip_types=_SHEBANGS,
     declaration_types=_JS_DECLS,
+    binding_types=_JS_BINDINGS,
 )
 
 MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
@@ -500,8 +527,33 @@ def _documents_declaration(
             continue
         if candidate.start_point[0] > end_row + 1:
             return False
-        return _unwrap_export(candidate).type in spec.declaration_types
+        unwrapped = _unwrap_export(candidate)
+        if unwrapped.type in spec.declaration_types:
+            return True
+        return _binds_a_definition(unwrapped, spec)
     return False
+
+
+def _binds_a_definition(node: ASTNode, spec: ModuleDocSpec) -> bool:
+    """Whether a binding statement's value is a function or class.
+
+    `/** Arrow doc */` directly above `const arrow = () => {}` is the arrow's
+    documentation by JSDoc and TypeDoc alike, and the definition-level
+    extractor attaches it there. Before this check the module took it too,
+    because `lexical_declaration` is not a declaration type -- one comment,
+    two owners (issue #1887). A plain `const x = 1` is unchanged: its value is
+    not a definition, so an adjacent doc still describes the file, which the
+    existing tests pin.
+    """
+    if node.type not in spec.binding_types:
+        return False
+    if node.type == "expression_statement":
+        assignments = [c for c in node.children if c.type == "assignment_expression"]
+        values = [a.child_by_field_name("right") for a in assignments]
+    else:
+        declarators = [c for c in node.children if c.type == "variable_declarator"]
+        values = [d.child_by_field_name("value") for d in declarators]
+    return any(v is not None and v.type in _JS_FUNCTION_VALUES for v in values)
 
 
 def _unwrap_export(node: ASTNode) -> ASTNode:

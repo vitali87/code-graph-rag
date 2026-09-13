@@ -590,3 +590,72 @@ class TestModuleDocstringPerLanguage:
         of it. Left there, that slash became the file's documentation.
         """
         assert self._extract("java", source) is None
+
+
+class TestAFunctionValuedBindingOwnsItsDoc:
+    """Issue #1887: a doc above `const f = () => {}` is the function's, not the file's.
+
+    The definition-level extractor attaches that comment to the function, so
+    the module claiming it too gave one comment two owners. Plain constants are
+    deliberately NOT changed -- `/** File docs */ const c = 1` stays the file's,
+    as the parametrised cases above pin -- because only a function- or
+    class-valued binding has a second claimant.
+    """
+
+    @pytest.fixture(scope="class")
+    def parsers(self) -> dict:
+        loaded, _ = load_parsers()
+        return loaded
+
+    @staticmethod
+    def _module_doc(parsers: dict, lang: str, source: bytes):
+        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.parsers.module_docstring import extract_module_docstring
+
+        parser = parsers.get(lang)
+        if parser is None:
+            pytest.skip(f"{lang} parser not available")
+        return extract_module_docstring(
+            parser.parse(source).root_node, SupportedLanguage(lang)
+        )
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("javascript", b"/** Arrow doc */\nconst arrow = () => {};\n"),
+            ("typescript", b"/** Arrow doc */\nconst arrow = () => {};\n"),
+            ("javascript", b"/** Fn doc */\nconst f = function () {};\n"),
+            ("javascript", b"/** Cls doc */\nconst C = class {};\n"),
+            ("javascript", b"/** CJS doc */\nmodule.exports.f = function () {};\n"),
+            ("typescript", b"/** Exported arrow */\nexport const g = () => {};\n"),
+        ],
+        ids=[
+            "js-arrow",
+            "ts-arrow",
+            "js-function-expr",
+            "js-class-expr",
+            "cjs",
+            "ts-export-arrow",
+        ],
+    )
+    def test_an_adjacent_doc_above_a_function_binding_is_not_the_files(
+        self, parsers: dict, lang: str, source: bytes
+    ) -> None:
+        assert self._module_doc(parsers, lang, source) is None
+
+    def test_a_detached_doc_above_a_function_binding_is_still_the_files(
+        self, parsers: dict
+    ) -> None:
+        """The control: the blank line keeps deciding, exactly as for classes."""
+        src = b"/** File docs */\n\nconst arrow = () => {};\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_plain_constant_is_unchanged(self, parsers: dict) -> None:
+        """Pinned here as well as above: no second claimant, so no change."""
+        src = b"/** File docs */\nconst c = 1;\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_mixed_declaration_counts_as_a_definition(self, parsers: dict) -> None:
+        """`const a = 1, f = () => {}` binds a function, so the doc is not the file's."""
+        src = b"/** Mixed */\nconst a = 1, f = () => {};\n"
+        assert self._module_doc(parsers, "javascript", src) is None
