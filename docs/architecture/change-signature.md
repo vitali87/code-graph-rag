@@ -33,13 +33,18 @@ header: `n`, `n: int`, `n = 0` or `n: int = 0`. A bare name that matches an
 old parameter carries that parameter over with its existing annotation and
 default, so `["b", "a"]` on `def helper(a: int, b: str = 'x')` produces
 `def helper(b: str = 'x', a: int)`, which is then refused because a required
-parameter cannot follow a defaulted one.
+parameter cannot follow a defaulted one. Spelling a kept parameter out
+again re-annotates it: `["a", "b: int = 0"]` writes `b: int = 0` into the
+header, and a literal mapped to it is checked against the new annotation.
 
 The header must consist of plain positional-or-keyword parameters. A
 definition with `*args`, `**kwargs`, a positional-only `/` or a keyword-only
 `*` marker refuses: those change how call sites bind and the mapping below
 cannot express them. A method's `self` or `cls` is kept in place and never
-part of the list.
+part of the list; a `@staticmethod` has no receiver and every parameter is
+listed. A method whose first parameter is named anything else refuses,
+since the receiver could not be told from the parameters and every bound
+call would lose it.
 
 Every override in the hierarchy (`OVERRIDES` edges in both directions) must
 declare the same parameter names, or the operation refuses naming the
@@ -82,10 +87,16 @@ rename too, since it binds only its own `for` targets.
 The rename refuses, with nothing written, when the old name is used inside
 a nested function, lambda or class, or re-bound by a `global`, `nonlocal`
 or import statement, because the body walk cannot tell those uses from the
-parameter's; and when the new name is already read in the body, because
-the parameter would shadow it. Swapping two parameters (`b` from `a`, `a`
-from `b`) is a rename in each direction and is allowed. Docstrings are
-prose and are not rewritten.
+parameter's; and when the new name is already read in the body, or inside
+a nested scope in it, because the parameter would shadow it. Swapping two
+parameters (`b` from `a`, `a` from `b`) is a rename in each direction and
+is allowed. Docstrings are prose and are not rewritten.
+
+A call to the function inside its own body, or a call nested in another
+call's arguments, is rewritten inside out: the inner rewrite (a renamed
+argument, an inner site's new argument list) is folded into the enclosing
+value before the enclosing site is rendered, so `helper(helper(1))` becomes
+`helper(helper(1, 1), 1)` as one edit per site rather than two that overlap.
 
 ## What gets rewritten
 

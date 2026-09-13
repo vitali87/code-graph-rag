@@ -355,6 +355,41 @@ def test_an_unmapped_required_parameter_leaves_every_site_and_lists_it(
     assert report.verdict is not None and report.verdict.ok, report.message
 
 
+def _strip_location(store: _StatefulIngestor, caller: str) -> None:
+    edge = next(
+        e
+        for e in store.edges
+        if e[1] == caller and e[2] == cs.RelationshipType.CALLS.value and e[4] == HELPER
+    )
+    props = store.edge_props[edge]
+    props[cs.KEY_RESOLUTION] = cs.EdgeResolution.DYNAMIC.value
+    for key in (cs.KEY_LINE, cs.KEY_COL, cs.KEY_END_LINE, cs.KEY_END_COL):
+        props.pop(key, None)
+
+
+def test_every_site_without_a_location_is_listed(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, _updater = repo
+    _strip_location(store, f"{PROJECT}.pkg.app.run")
+    _strip_location(store, f"{PROJECT}.pkg.app.run_kw")
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["a", "n: int", "b"],
+        {"n": "=1"},
+        dry_run=True,
+    )
+    assert sorted(u.owner for u in report.unmapped) == [
+        f"{PROJECT}.pkg.app.run",
+        f"{PROJECT}.pkg.app.run_kw",
+    ]
+    assert all("no location" in u.reason for u in report.unmapped)
+    assert "+    return helper(3, 1, 'z')" in report.diff
+
+
 def test_a_site_passing_surplus_arguments_is_listed_not_truncated(
     temp_repo: Path,
 ) -> None:
@@ -517,6 +552,36 @@ def test_default_literal_incompatible_with_the_declared_type_is_refused(
         assert report.unmapped == ()
 
 
+def test_a_kept_parameter_spelled_anew_takes_the_new_spelling(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # `b` exists already; spelling it out again re-annotates it. Only the
+    # bare name carries the old spelling over.
+    root, store, _updater = repo
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["a", "b: int = 0"],
+        dry_run=True,
+    )
+    assert "+def helper(a: int, b: int = 0) -> str:" in report.diff
+    # Sites keep their values: the parameters did not move.
+    assert "helper(2, b='y')" not in report.diff
+    # The new annotation is the one a literal is checked against.
+    with pytest.raises(SignatureRefused, match=r"does not fit"):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            HELPER,
+            ["a", "b: int = 0"],
+            {"b": "='q'"},
+            dry_run=True,
+        )
+
+
 def test_a_required_parameter_after_a_default_is_refused(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -670,9 +735,109 @@ def test_a_parameter_used_in_a_nested_scope_refuses_the_rename(
         _rename_dry_run(temp_repo, body)
 
 
-def test_a_new_name_already_used_in_the_body_is_refused(temp_repo: Path) -> None:
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    text = 'q'\n    return b * a + text\n",
+        # A nested scope reading the new name would start reading the
+        # renamed parameter instead of whatever it read before.
+        "    def inner():\n        return text\n    return inner() * b + a\n",
+        "    return (lambda: times)() * b + a\n",
+    ],
+)
+def test_a_new_name_already_used_in_the_body_is_refused(
+    temp_repo: Path, body: str
+) -> None:
     with pytest.raises(SignatureRefused, match=r"already used"):
-        _rename_dry_run(temp_repo, "    text = 'q'\n    return b * a + text\n")
+        _rename_dry_run(temp_repo, body)
+
+
+def test_a_recursive_call_is_rewritten_with_its_renamed_arguments(
+    temp_repo: Path,
+) -> None:
+    # The site's arguments contain the body rename: one edit, not two
+    # overlapping ones.
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": (
+                "def helper(a):\n    return helper(a - 1) + 1 if a else 0\n"
+            ),
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(2)\n",
+        },
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["times", "n: int"],
+        {"times": "a", "n": "=1"},
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.unmapped == ()
+    util = _read(root, "pkg/util.py")
+    assert "def helper(times, n: int):" in util
+    assert "    return helper(times - 1, 1) + 1 if times else 0" in util
+    assert "return helper(2, 1)" in _read(root, "pkg/app.py")
+    assert report.verdict is not None and report.verdict.ok, report.message
+    _smoke(root, "from pkg.app import run\nassert run() == 2")
+
+
+def test_a_call_nested_in_another_call_is_rewritten_inside_out(
+    temp_repo: Path,
+) -> None:
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n    return a + 1\n",
+            "pkg/app.py": (
+                "from pkg.util import helper\n\n\n"
+                "def run():\n    return helper(helper(1))\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+    # The eval store keys a CALLS edge on its endpoints, so it holds one
+    # site per caller; the real store keys on (line, col) and holds both.
+    # Present both sites the way the real store would.
+    run_qn = f"{PROJECT}.pkg.app.run"
+    stored = store.fetch_all
+
+    def both_sites(query: str, params: dict[str, object] | None = None):  # type: ignore[no-untyped-def]
+        rows = stored(query, params)
+        out = []
+        for row in rows:
+            if row.get(cs.KEY_QUALIFIED_NAME) != run_qn:
+                out.append(row)
+                continue
+            for col in (11, 18):
+                site = dict(row)
+                site[cs.KEY_COL] = col
+                site[cs.KEY_END_LINE] = None
+                site[cs.KEY_END_COL] = None
+                out.append(site)
+        return out
+
+    report = change_signature(
+        root,
+        both_sites,
+        PROJECT,
+        HELPER,
+        ["a", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.unmapped == ()
+    assert sum(1 for s in report.sites if s.kind == "call") == 2
+    assert "return helper(helper(1, 1), 1)" in _read(root, "pkg/app.py")
+    # The body still adds one: helper(helper(1, 1), 1) is (1 + 1) + 1.
+    _smoke(root, "from pkg.app import run\nassert run() == 3")
 
 
 # --- hierarchies ---------------------------------------------------------------------
@@ -735,6 +900,69 @@ def test_an_override_with_different_parameters_is_refused(temp_repo: Path) -> No
             {"unit": "='m'"},
         )
     assert _read(root, "pkg/shapes.py") == files["pkg/shapes.py"]
+
+
+def test_a_method_whose_receiver_is_not_self_or_cls_is_refused(
+    temp_repo: Path,
+) -> None:
+    # `this` would be remapped as a parameter and every bound call would
+    # lose its receiver.
+    files = dict(SHAPES)
+    files["pkg/shapes.py"] = files["pkg/shapes.py"].replace(
+        "def area(self, scale):", "def area(this, scale):"
+    )
+    root = _project(temp_repo, files)
+    store, _updater = _index(root)
+    with pytest.raises(SignatureRefused, match=r"`this`.*self or cls"):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.shapes.Base.area",
+            ["scale", "unit: str"],
+            {"unit": "='m'"},
+        )
+    assert _read(root, "pkg/shapes.py") == files["pkg/shapes.py"]
+
+
+def test_a_static_method_has_no_receiver(temp_repo: Path) -> None:
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/shapes.py": (
+                "class K:\n"
+                "    @staticmethod\n"
+                "    def helper(a):\n"
+                "        return a\n\n\n"
+                "def on_class():\n"
+                "    return K.helper(2)\n\n\n"
+                "def on_instance():\n"
+                "    return K().helper(3)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.shapes.K.helper",
+        ["a", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.unmapped == ()
+    shapes = _read(root, "pkg/shapes.py")
+    assert "    def helper(a, n: int):" in shapes
+    assert "return K.helper(2, 1)" in shapes
+    assert "return K().helper(3, 1)" in shapes
+    _smoke(
+        root,
+        "from pkg.shapes import on_class, on_instance\n"
+        "assert on_class() + on_instance() == 5",
+    )
 
 
 # --- transaction and contract ---------------------------------------------------------

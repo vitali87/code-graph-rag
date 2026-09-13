@@ -143,12 +143,22 @@ class _Binding(NamedTuple):
     text: str
     keyword: bool
     position: int  # index among the site's arguments, for keyword order
+    span: tuple[int, int]  # byte span of the value, for edits nested in it
 
 
 class _Edit(NamedTuple):
     path: str
     span: tuple[int, int]
     text: str
+
+
+class _Candidate(NamedTuple):
+    """A call site the graph located and the mapping can read, not yet rendered."""
+
+    site: SignatureSite
+    span: tuple[int, int]  # byte span of the argument list
+    text: str  # the argument list as written
+    bound: dict[int, _Binding]
 
 
 class _Unmapped(Exception):
@@ -363,6 +373,24 @@ def _text(node: Node, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode(cs.ENCODING_UTF8)
 
 
+_STATIC_DECORATORS = frozenset(
+    name.encode(cs.ENCODING_UTF8) for name in cs.STATIC_DECORATORS
+)
+
+
+def _is_static(function: Node) -> bool:
+    """Decorated `@staticmethod`: every parameter is one the caller passes."""
+    parent = function.parent
+    if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+        return False
+    return any(
+        child.type == cs.TS_PY_DECORATOR
+        and bool(child.named_children)
+        and child.named_children[0].text in _STATIC_DECORATORS
+        for child in parent.children
+    )
+
+
 def _find_definition(root: Node, name: str, start: int, end: int) -> Node | None:
     """The `function_definition` named `name` starting within lines start..end."""
     wanted = name.encode(cs.ENCODING_UTF8)
@@ -489,6 +517,12 @@ def _body_references(
         if node.type in _OWN_SCOPES or node.type in _REBINDING_STATEMENTS:
             if _mentions(node, wanted):
                 raise SignatureRefused(rebinds)
+            # A nested scope reading the new name would start reading the
+            # renamed parameter instead of whatever it read before.
+            if taken is not None and _mentions(node, taken):
+                raise SignatureRefused(
+                    cs.SIGNATURE_BODY_NAME_TAKEN.format(old=old, qn=header.qn, new=new)
+                )
             continue
         if node.type in _COMPREHENSIONS and _comprehension_binds(node, wanted):
             raise SignatureRefused(rebinds)
@@ -543,11 +577,54 @@ def _bind_arguments(
             index = names.index(name)
             if index in bound:
                 raise _Unmapped(cs.SIGNATURE_SITE_DUPLICATE.format(name=name))
-            bound[index] = _Binding(_text(value, source), True, position)
+            bound[index] = _Binding(
+                _text(value, source), True, position, (value.start_byte, value.end_byte)
+            )
             continue
-        bound[positional] = _Binding(text, False, position)
+        bound[positional] = _Binding(
+            text, False, position, (child.start_byte, child.end_byte)
+        )
         positional += 1
     return bound
+
+
+def _fold(
+    candidate: _Candidate, edits: Sequence[_Edit]
+) -> tuple[dict[int, _Binding], list[_Edit]]:
+    """The site's bindings with the planned edits inside them applied.
+
+    A recursive call carries the body rename in its arguments; a call nested
+    in another call's arguments carries the inner site's rewrite. Folding
+    those into the value text lets the enclosing site be one edit, and the
+    folded edits are returned so the caller can drop them from the plan.
+    Any other edit overlapping the argument list cannot be folded, and the
+    site is left unmapped.
+    """
+    path = candidate.site.path
+    start, end = candidate.span
+    inside = [
+        edit
+        for edit in edits
+        if edit.path == path and edit.span[0] < end and start < edit.span[1]
+    ]
+    folded: dict[int, _Binding] = {}
+    consumed: list[_Edit] = []
+    for index, binding in candidate.bound.items():
+        lo, hi = binding.span
+        nested = [e for e in inside if lo <= e.span[0] and e.span[1] <= hi]
+        if not nested:
+            folded[index] = binding
+            continue
+        raw = bytearray(binding.text.encode(cs.ENCODING_UTF8))
+        for edit in sorted(nested, key=lambda e: e.span[0], reverse=True):
+            raw[edit.span[0] - lo : edit.span[1] - lo] = edit.text.encode(
+                cs.ENCODING_UTF8
+            )
+        folded[index] = binding._replace(text=raw.decode(cs.ENCODING_UTF8))
+        consumed.extend(nested)
+    if len(consumed) != len(inside):
+        raise _Unmapped(cs.SIGNATURE_SITE_OVERLAPS)
+    return folded, consumed
 
 
 def _render_arguments(
@@ -589,6 +666,26 @@ def _render_arguments(
     keywords.sort(key=lambda item: item[0])
     parts = positional + [text for _rank, text in keywords]
     return f"({cs.SEPARATOR_COMMA_SPACE.join(parts)})"
+
+
+def _render_site(
+    candidate: _Candidate,
+    new: Sequence[ParamSpec],
+    sources: Sequence[_Source | None],
+    edits: list[_Edit],
+) -> _Edit | None:
+    """The site's edit, with any edit planned inside its arguments folded in.
+
+    The folded edits leave the plan only once the site renders, so a site
+    the mapping cannot complete keeps the inner rewrites as they were.
+    """
+    bound, consumed = _fold(candidate, edits)
+    text = _render_arguments(new, sources, bound)
+    for edit in consumed:
+        edits.remove(edit)
+    if not consumed and text == candidate.text:
+        return None
+    return _Edit(candidate.site.path, candidate.span, text)
 
 
 # --- the operation ---------------------------------------------------------------
@@ -646,7 +743,11 @@ class SignatureChanger:
         for spec, source in zip(new, sources, strict=True):
             if source is not None and source.literal is not None:
                 _check_literal(spec, source.literal)
-        carried = {spec.name for spec in new if spec.name in old_names}
+        # A bare old name carries that parameter's own spelling over (each
+        # override keeps its own); spelling a kept parameter out again
+        # re-annotates it, so only an unchanged spec counts as carried.
+        by_name = {spec.name: spec for spec in old}
+        carried = {spec.name for spec in new if by_name.get(spec.name) == spec}
         # An old parameter fed to a new one of another name is renamed, and
         # the body must follow or the definition would be broken.
         renamed = [
@@ -745,12 +846,15 @@ class SignatureChanger:
                 )
             specs.append(spec)
         receiver: str | None = None
-        if (
-            definition["label"] == cs.NodeLabel.METHOD
-            and specs
-            and specs[0].name in cs.PY_RECEIVER_NAMES
-        ):
-            receiver = specs.pop(0).text
+        if definition["label"] == cs.NodeLabel.METHOD and specs:
+            if specs[0].name in cs.PY_RECEIVER_NAMES:
+                receiver = specs.pop(0).text
+            elif not _is_static(node):
+                # `this` would be remapped as a parameter and every bound
+                # call would lose its receiver.
+                raise SignatureRefused(
+                    cs.SIGNATURE_UNUSUAL_RECEIVER.format(qn=qn, name=specs[0].name)
+                )
         return _Header(
             qn,
             path,
@@ -775,41 +879,67 @@ class SignatureChanger:
         edits: list[_Edit],
     ) -> list[UnmappedSite]:
         unmapped: list[UnmappedSite] = []
-        seen: set[tuple[object, object, object]] = set()
+        candidates: list[_Candidate] = []
+        seen: set[tuple[str, int, int]] = set()
         for header in headers:
             for row in graph_query.callers(self.fetch_all, self.project, header.qn):
-                key = (row["path"], row["line"], row["col"])
-                if key in seen:
-                    continue
-                seen.add(key)
+                path, line, col = row["path"], row["line"], row["col"]
+                if path is not None and line is not None and col is not None:
+                    # One row per located site; sites without a location
+                    # are each listed, since nothing tells them apart.
+                    key = (path, line, col)
+                    if key in seen:
+                        continue
+                    seen.add(key)
                 try:
-                    site, edit = self._site(
-                        row, old, new, sources, allow_heuristic, patcher
+                    candidates.append(
+                        self._candidate(row, old, allow_heuristic, patcher)
                     )
                 except _Unmapped as skip:
                     unmapped.append(
-                        UnmappedSite(
-                            row["qualified_name"],
-                            row["path"] or "",
-                            row["line"],
-                            str(skip),
-                        )
+                        UnmappedSite(row["qualified_name"], path or "", line, str(skip))
                     )
-                    continue
-                sites.append(site)
-                if edit is not None:
-                    edits.append(edit)
+        # Innermost first, so a site nested in another's arguments (or a
+        # body rename inside a recursive call) is already planned when the
+        # enclosing site folds it into its value text.
+        order = sorted(
+            range(len(candidates)),
+            key=lambda i: (
+                candidates[i].site.path,
+                candidates[i].span[1] - candidates[i].span[0],
+                candidates[i].span[0],
+            ),
+        )
+        mapped: set[int] = set()
+        for index in order:
+            candidate = candidates[index]
+            try:
+                edit = _render_site(candidate, new, sources, edits)
+            except _Unmapped as skip:
+                unmapped.append(
+                    UnmappedSite(
+                        candidate.site.owner,
+                        candidate.site.path,
+                        candidate.site.line,
+                        str(skip),
+                    )
+                )
+                continue
+            mapped.add(index)
+            # Into the plan at once: an enclosing site folds it in.
+            if edit is not None:
+                edits.append(edit)
+        # The report lists sites in the order the graph gave them.
+        sites.extend(c.site for i, c in enumerate(candidates) if i in mapped)
         return unmapped
 
-    def _site(
+    def _candidate(
         self,
         row: graph_query.CallSiteRow,
         old: Sequence[ParamSpec],
-        new: Sequence[ParamSpec],
-        sources: Sequence[_Source | None],
         allow_heuristic: bool,
         patcher: Patcher,
-    ) -> tuple[SignatureSite, _Edit | None]:
+    ) -> _Candidate:
         path, line, col = row["path"], row["line"], row["col"]
         resolution = row["resolution"]
         if path is None or line is None or col is None:
@@ -845,11 +975,10 @@ class SignatureChanger:
                 cs.SIGNATURE_SITE_UNREADABLE.format(text=_text(args or call, source))
             )
         bound = _bind_arguments(args, source, old)
-        rendered = _render_arguments(new, sources, bound)
         site = SignatureSite(_CALL, path, line, col, row["qualified_name"], resolution)
-        if rendered == _text(args, source):
-            return site, None
-        return site, _Edit(path, (args.start_byte, args.end_byte), rendered)
+        return _Candidate(
+            site, (args.start_byte, args.end_byte), _text(args, source), bound
+        )
 
     # -- staging and applying --
 
@@ -858,10 +987,18 @@ class SignatureChanger:
     ) -> tuple[EditTransaction, dict[str, object], list[str]]:
         """Patch every edit into a transaction; nothing touches the tree."""
         patcher = Patcher(self.repo_root, parsers=self._parsers)
-        for edit in edits:
-            patcher.replace_span(edit.path, edit.span, edit.text)
         tx = EditTransaction(self.repo_root)
-        results = patcher.stage_into(tx)
+        try:
+            for edit in edits:
+                patcher.replace_span(edit.path, edit.span, edit.text)
+            results = patcher.stage_into(tx)
+        except PatcherError as error:
+            # A plan the patcher cannot apply (an overlap the folding did
+            # not foresee) is a refusal, never a traceback past the tool.
+            tx.rollback()
+            raise SignatureRefused(
+                cs.SIGNATURE_STAGE_FAILED.format(error=error)
+            ) from error
         broken = [key for key, result in results.items() if result.parses is False]
         return tx, dict(results), broken
 
