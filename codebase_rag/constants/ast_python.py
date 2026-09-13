@@ -138,6 +138,8 @@ PY_METHOD_INIT = "__init__"
 DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
+# A static method takes no receiver: a first parameter named `self` is explicit.
+STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no
