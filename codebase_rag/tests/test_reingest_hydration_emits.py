@@ -349,3 +349,60 @@ def test_a_sink_without_a_query_surface_still_reingests(tmp_path: Path) -> None:
         report = updater.reingest(["newdir/n.py"])
 
     assert report.reparsed, "a sink without a query surface could not re-ingest at all"
+
+
+def test_a_read_that_fails_on_the_SECOND_ask_still_aborts(tmp_path: Path) -> None:
+    """One guarded read, not two.
+
+    An earlier version asked twice: once to test readability, once for the
+    value. A failure BETWEEN the two turned an existing container into "no
+    container", so the directory was treated as new -- the disk-derived
+    identity was emitted WITHOUT joining `flipped_dirs`, the stale node was
+    never pruned, and both identities remained. The guard reopened the very
+    defect it was added to close (Greptile, PR #1875).
+
+    Driven by failing only the SECOND container query, which is exactly the
+    window the two-read version left open and the one-read version does not
+    have.
+    """
+    from unittest.mock import patch
+
+    root = tmp_path / "incremental"
+    (root / "outer").mkdir(parents=True)
+    (root / "outer" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "outer" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+
+    (root / "outer" / "new").mkdir()
+    (root / "outer" / "new" / "mod.py").write_text(UTIL, encoding="utf-8")
+
+    updater = _updater(root, store)
+    real_fetch = store.fetch_all
+    asks = {"n": 0}
+
+    def flaky(query: str, params: dict | None = None):
+        if query == cs.CYPHER_CONTAINER_KIND:
+            asks["n"] += 1
+            if asks["n"] >= 2:
+                raise RuntimeError("store went away mid-walk")
+        return real_fetch(query, params)
+
+    with patch.object(store, "fetch_all", side_effect=flaky):
+        with pytest.raises(ReingestAborted):
+            updater.reingest(["outer/new/mod.py"])
+
+    assert asks["n"] >= 2, (
+        "fixture guard: the container query must have been asked at least "
+        "twice, or this test does not reach the window it is about"
+    )
+    duplicated = {
+        directory: sorted(kinds)
+        for directory, kinds in _kinds_by_directory(store).items()
+        if len(kinds) > 1
+    }
+    assert not duplicated, (
+        f"a mid-walk read failure left a directory with two identities: {duplicated}"
+    )

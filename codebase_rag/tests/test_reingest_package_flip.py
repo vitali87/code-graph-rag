@@ -466,6 +466,15 @@ def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) ->
         "fixture guard: the nested directory this call named must still have "
         "been promoted, or the comparison above passes for the wrong reason"
     )
+    # The EDGES too, not only the nodes. Comparing container identities alone
+    # passes while the nested directory's containment edge still targets the
+    # pruned ancestor identity, or is absent entirely -- the node can be
+    # right and the graph still disconnected (Greptile, PR #1875).
+    assert _containment(store) == _containment(clean_store), (
+        "the incremental result disagrees with a clean index about the "
+        f"containment edges: incremental={sorted(_containment(store))} "
+        f"clean={sorted(_containment(clean_store))}"
+    )
 
 
 def test_a_demoted_package_keeps_its_child_container_edge(tmp_path: Path) -> None:

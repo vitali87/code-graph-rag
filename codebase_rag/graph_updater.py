@@ -4900,12 +4900,23 @@ class GraphUpdater:
             )
         except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
             return set()
-        # EVERY row, not the first: row order is unspecified, and a
-        # directory can already hold BOTH kinds (#1872), so "the first row
-        # wins" answers Package or Folder for the same graph depending on the
-        # driver (CodeRabbit, PR #1835).
+        return self._container_kinds_from_rows(rows)
+
+    @staticmethod
+    def _container_kinds_from_rows(rows: object) -> set[str]:
+        """Container labels out of `CYPHER_CONTAINER_KIND` rows.
+
+        Shared by both readers of that query rather than restated in each:
+        two readers of one query drift, and this one already carries two
+        non-obvious rules that would drift separately.
+
+        EVERY row, not the first: row order is unspecified, and a directory
+        can already hold BOTH kinds (#1872), so "the first row wins" answers
+        Package or Folder for the same graph depending on the driver
+        (CodeRabbit, PR #1835).
+        """
         recorded: set[str] = set()
-        for row in rows or ():
+        for row in rows or ():  # type: ignore[union-attr]
             raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
             # Narrowed to a list of str before the membership test: a result
             # scalar is a union wide enough that `in` is not defined on every
@@ -4978,16 +4989,15 @@ class GraphUpdater:
                 if rel in new_dirs or rel in diverged:
                     break
                 directory = self.repo_path if rel == "." else self.repo_path / rel
-                if self._container_query_failed(directory):
-                    # "I could not ask" is not "there is nothing there". An
-                    # empty set means both, and treating an unreadable store
-                    # as an absent container would derive every ancestor and
-                    # re-create the duplicate identity this path prevents.
-                    # Abort in the read-only prologue, as the other prologue
-                    # reads do, rather than act on an unknown (Greptile,
-                    # PR #1875).
+                recorded = self._container_kinds_or_unknown(directory)
+                if recorded is None:
+                    # "I could not ask" is not "there is nothing there".
+                    # Treating an unreadable store as an absent container
+                    # would derive every ancestor and re-create the duplicate
+                    # identity this path prevents. Abort in the read-only
+                    # prologue, as the other prologue reads do, rather than
+                    # act on an unknown (Greptile, PR #1875).
                     raise ReingestAborted(ls.REINGEST_CONTAINER_KIND_UNKNOWN)
-                recorded = self._recorded_container_kinds(directory)
                 if recorded and not self._kind_diverged(directory, recorded):
                     break
                 (diverged if recorded else new_dirs).add(rel)
@@ -5005,28 +5015,31 @@ class GraphUpdater:
                 parent = parent.parent
         return new_dirs, diverged
 
-    def _container_query_failed(self, directory: Path) -> bool:
-        """Whether the container-kind read RAISED, as opposed to found nothing.
+    def _container_kinds_or_unknown(self, directory: Path) -> set[str] | None:
+        """The recorded container kinds, or None when the read RAISED.
 
-        Separated from `_recorded_container_kinds` because that returns an
-        empty set for both "no container node" and "the read failed", and the
-        caller must act on those oppositely.
+        ONE read with three outcomes, deliberately: a set (possibly empty,
+        meaning no container node), or None meaning "could not ask".
+        Asking twice -- once to test readability and once for the value --
+        meant a failure BETWEEN the two turned an existing container into
+        "no container", which skipped the prune and left both identities in
+        the graph: the exact defect this path exists to remove, reachable
+        through its own guard (Greptile, PR #1875).
 
-        A sink with NO query surface is not a failure: it is a legitimate
+        A sink with NO query surface is not a failure. It is a legitimate
         configuration the whole scoped path already tolerates, and treating
-        it as unknown aborted every re-ingest against one. Only a read that
-        raised is the unknown.
+        it as unknown aborted every re-ingest against one.
         """
         if not isinstance(self.ingestor, QueryProtocol):
-            return False
+            return set()
         try:
-            self.ingestor.fetch_all(
+            rows = self.ingestor.fetch_all(
                 cs.CYPHER_CONTAINER_KIND,
                 {cs.KEY_PATH: cached_resolve_posix(directory)},
             )
         except Exception:  # noqa: BLE001 -- the caller decides what to do
-            return True
-        return False
+            return None
+        return self._container_kinds_from_rows(rows)
 
     def _kind_diverged(self, directory: Path, recorded: set[str]) -> bool:
         """Whether the graph's container kind disagrees with the disk's.
