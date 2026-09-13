@@ -688,8 +688,12 @@ CYPHER_INBOUND_EDGES = (
     # annotation names a type resolves it by unique suffix without importing
     # its module, so its file is not a dependent and the edge would otherwise
     # die with the recreated type node.
+    # ANNOTATES and MENTIONS join it too (issue #1808): a gloss lives only in
+    # the graph, so the edge that attaches it to a re-parsed symbol has no
+    # source to be re-derived from and would otherwise die with the subtree,
+    # leaving the note orphaned for the next sweep to delete.
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
-    "|RETURNS|ACCEPTS]->(target) "
+    "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
@@ -819,6 +823,51 @@ KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
+
+# Gloss nodes (issue #1808): the properties an agent-authored note carries and
+# the keys its read tools answer with.
+KEY_KIND = "kind"
+KEY_STATUS = "status"
+KEY_BODY = "body"
+KEY_CREATED_BY = "created_by"
+KEY_CREATED_AT = "created_at"
+KEY_COMMIT_SHA = "commit_sha"
+KEY_TARGET_HASH = "target_hash"
+KEY_ANCHOR_STATE = "anchor_state"
+KEY_MENTIONS = "mentions"
+KEY_CANDIDATES = "candidates"
+KEY_ANNOTATING = "annotating"
+KEY_MENTIONING = "mentioning"
+KEY_TARGET = "target"
+GLOSS_ID_PREFIX = "gloss:"
+GLOSS_ID_HEX_LENGTH = 24
+GLOSS_STATUS_ACCEPTED = "accepted"
+GLOSS_DEFAULT_AUTHOR = "agent"
+
+
+class GlossKind(StrEnum):
+    """What a gloss asserts. Typed so retrieval can filter by it."""
+
+    INVARIANT = "invariant"
+    MIRRORS = "mirrors"
+    PLATFORM_CONDITIONAL = "platform-conditional"
+    SAFETY_PRECONDITION = "safety-precondition"
+
+
+class GlossAnchorState(StrEnum):
+    """How well a gloss is still attached to its subject, best first.
+
+    Only EXACT is written today; the graded repair chain that produces the
+    other states is a later stage of #1808. A gloss whose subject cannot be
+    re-anchored becomes visibly LOST rather than silently re-bound.
+    """
+
+    EXACT = "EXACT"
+    MOVED = "MOVED"
+    STALE = "STALE"
+    AMBIGUOUS = "AMBIGUOUS"
+    LOST = "LOST"
+
 
 REL_TYPE_CALLS = "CALLS"
 

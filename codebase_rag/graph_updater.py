@@ -740,6 +740,11 @@ def _natural_qn(qualified_name: str) -> str:
     return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
 
 
+_GLOSS_RELS = frozenset(
+    {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
+)
+
+
 def _project_root_for_single_file(target: Path) -> Path:
     """The project root owning `target`, or its parent when none is found.
 
@@ -2956,7 +2961,14 @@ class GraphUpdater:
             # it: per-site edges are keyed by them, so a bare re-emission
             # would land beside the original instead of restoring it.
             props = row.get(cs.KEY_PROPS)
-            self._sink.ensure_relationship_batch(
+            # A gloss edge goes to the RAW ingestor. The filtering sink admits
+            # what the capture selection lets a parser EMIT, and glosses are
+            # never emitted from source: their group is off by default so
+            # indexing cannot invent them. Restoring an edge that already
+            # existed is not emitting one, and through the sink it would be
+            # dropped, orphaning the note (issue #1808).
+            writer = self.ingestor if rel in _GLOSS_RELS else self._sink
+            writer.ensure_relationship_batch(
                 (caller_label, caller_key, caller_qn),
                 rel,
                 (target_label, target_key, target_qn),

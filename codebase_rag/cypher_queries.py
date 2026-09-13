@@ -490,6 +490,50 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
 LIMIT 1"""
+# Gloss nodes (issue #1808). The node and its ANNOTATES edge are written in ONE
+# statement: a subject MATCH that finds nothing writes nothing, so a gloss can
+# never exist unattached, and the caller reads the node back to learn whether
+# the write landed rather than trusting a silent statement.
+# Every property is SET by name (a null unsets it): the ingestor's parameter
+# type carries scalars and string lists, not a nested map, so `SET g += $props`
+# would need a value the wire format cannot express.
+_GLOSS = NodeLabel.GLOSS.value
+_ANNOTATES = RelationshipType.ANNOTATES.value
+_MENTIONS = RelationshipType.MENTIONS.value
+CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+RETURN n.ast_fingerprint AS target_hash
+LIMIT 1"""
+CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+MERGE (g:{_GLOSS} {{qualified_name: $qn}})
+SET g.kind = $kind, g.status = $status, g.body = $body,
+    g.created_by = $created_by, g.created_at = $created_at,
+    g.commit_sha = $commit_sha, g.target_qn = $target_qn,
+    g.target_hash = $target_hash, g.anchor_state = $anchor_state
+MERGE (g)-[:{_ANNOTATES}]->(t)"""
+CYPHER_GLOSS_MENTION = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+MATCH (m:{_GRAPH_DEFINITION_LABELS})
+WHERE m.qualified_name = $target_qn AND m.qualified_name STARTS WITH $project_prefix
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+_GLOSS_ROW = (
+    "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
+    "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "
+    "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
+    "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
+    "collect(m.qualified_name) AS mentions"
+)
+CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_ANNOTATING = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_MENTIONING = f"""MATCH (g:{_GLOSS})-[:{_MENTIONS}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
