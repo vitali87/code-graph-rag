@@ -166,9 +166,17 @@ def test_suppressing_emission_writes_nothing_and_records_both_kinds(
         "a package was not recorded, so a re-parsed module under it would "
         "hang off a Folder"
     )
-    assert Path("plain") in elements and elements[Path("plain")] is None, (
-        "a plain directory was not recorded at all; absent and None are "
-        f"different answers to a parent lookup: {dict(elements)}"
+    # Split, because the two halves fail for different reasons and the
+    # distinction is the point: ABSENT means "not derived", None means
+    # "derived, and it is not a package". A parent lookup reads them
+    # differently.
+    assert Path("plain") in elements, (
+        "a plain directory was not recorded at all, so a parent lookup for a "
+        f"module under it would miss entirely: {dict(elements)}"
+    )
+    assert elements[Path("plain")] is None, (
+        "a plain directory was recorded as something other than None, which "
+        f"is what the map means by 'not a package': {dict(elements)}"
     )
     assert len(store.nodes) == before, (
         "emit=False wrote nodes, which is the whole thing it exists not to do"

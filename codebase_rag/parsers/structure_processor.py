@@ -115,6 +115,61 @@ class StructureProcessor:
                 directories.add(path)
         return directories
 
+    def _emit_package(
+        self,
+        root: Path,
+        relative_root: Path,
+        package_qn: str,
+        parent_rel_path: Path,
+        parent_container_qn: str | None,
+    ) -> None:
+        """Write the Package node and its parent containment edge."""
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.PACKAGE,
+            {
+                cs.KEY_QUALIFIED_NAME: package_qn,
+                cs.KEY_NAME: root.name,
+                cs.KEY_PATH: relative_root.as_posix(),
+                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
+            },
+        )
+        self.ingestor.ensure_relationship_batch(
+            self._get_parent_identifier(parent_rel_path, parent_container_qn),
+            cs.RelationshipType.CONTAINS_PACKAGE,
+            (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
+        )
+
+    def _emit_folder(
+        self,
+        root: Path,
+        relative_root: Path,
+        parent_rel_path: Path,
+        parent_container_qn: str | None,
+    ) -> None:
+        """Write the Folder node and its parent containment edge.
+
+        Folder identity is the absolute path, not the relative one: relative
+        paths collide across same-layout projects in the shared graph
+        (issue #897).
+        """
+        self.ingestor.ensure_node_batch(
+            cs.NodeLabel.FOLDER,
+            {
+                cs.KEY_PATH: relative_root.as_posix(),
+                cs.KEY_NAME: root.name,
+                cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
+            },
+        )
+        self.ingestor.ensure_relationship_batch(
+            self._get_parent_identifier(parent_rel_path, parent_container_qn),
+            cs.RelationshipType.CONTAINS_FOLDER,
+            (
+                cs.NodeLabel.FOLDER,
+                cs.KEY_ABSOLUTE_PATH,
+                cached_resolve_posix(root),
+            ),
+        )
+
     def identify_structure(
         self, only: set[str] | None = None, *, emit: bool = True
     ) -> None:
@@ -162,22 +217,12 @@ class StructureProcessor:
                     logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
                 )
                 if emit:
-                    self.ingestor.ensure_node_batch(
-                        cs.NodeLabel.PACKAGE,
-                        {
-                            cs.KEY_QUALIFIED_NAME: package_qn,
-                            cs.KEY_NAME: root.name,
-                            cs.KEY_PATH: relative_root.as_posix(),
-                            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-                        },
-                    )
-                    parent_identifier = self._get_parent_identifier(
-                        parent_rel_path, parent_container_qn
-                    )
-                    self.ingestor.ensure_relationship_batch(
-                        parent_identifier,
-                        cs.RelationshipType.CONTAINS_PACKAGE,
-                        (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
+                    self._emit_package(
+                        root,
+                        relative_root,
+                        package_qn,
+                        parent_rel_path,
+                        parent_container_qn,
                     )
             else:
                 # Recorded for the ROOT too, which the Folder emission below
@@ -193,25 +238,8 @@ class StructureProcessor:
                     logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )
                 if emit:
-                    self.ingestor.ensure_node_batch(
-                        cs.NodeLabel.FOLDER,
-                        {
-                            cs.KEY_PATH: relative_root.as_posix(),
-                            cs.KEY_NAME: root.name,
-                            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-                        },
-                    )
-                    parent_identifier = self._get_parent_identifier(
-                        parent_rel_path, parent_container_qn
-                    )
-                    self.ingestor.ensure_relationship_batch(
-                        parent_identifier,
-                        cs.RelationshipType.CONTAINS_FOLDER,
-                        (
-                            cs.NodeLabel.FOLDER,
-                            cs.KEY_ABSOLUTE_PATH,
-                            cached_resolve_posix(root),
-                        ),
+                    self._emit_folder(
+                        root, relative_root, parent_rel_path, parent_container_qn
                     )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:

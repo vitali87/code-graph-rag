@@ -4988,32 +4988,42 @@ class GraphUpdater:
                 rel = parent.as_posix()
                 if rel in new_dirs or rel in diverged:
                     break
-                directory = self.repo_path if rel == "." else self.repo_path / rel
-                recorded = self._container_kinds_or_unknown(directory)
-                if recorded is None:
-                    # "I could not ask" is not "there is nothing there".
-                    # Treating an unreadable store as an absent container
-                    # would derive every ancestor and re-create the duplicate
-                    # identity this path prevents. Abort in the read-only
-                    # prologue, as the other prologue reads do, rather than
-                    # act on an unknown (Greptile, PR #1875).
-                    raise ReingestAborted(ls.REINGEST_CONTAINER_KIND_UNKNOWN)
-                if recorded and not self._kind_diverged(directory, recorded):
+                needs = self._container_needs_deriving(rel)
+                if needs is None:
                     break
-                (diverged if recorded else new_dirs).add(rel)
-                # Either the graph holds NO container for this directory (new
-                # since the last index), or it holds the WRONG one -- its
-                # package-ness changed on disk outside this call's change set.
-                # Both need deriving, and the second for a reason easy to
-                # miss: a child's parent identity comes from
-                # `structural_elements`, which hydration filled from DISK, so
-                # the child's containment edge would name an identity the
-                # graph does not hold and the new subtree would be left
-                # disconnected (Greptile, PR #1875).
+                (diverged if needs else new_dirs).add(rel)
                 if rel == ".":
                     break
                 parent = parent.parent
         return new_dirs, diverged
+
+    def _container_needs_deriving(self, rel: str) -> bool | None:
+        """Whether this directory needs deriving, and if so which kind of need.
+
+        `True` means its recorded kind DIVERGED from disk, `False` means the
+        graph holds no container for it at all, and `None` means it is
+        already correct and the walk can stop climbing.
+
+        The two true cases differ in what the caller must then do: a new
+        directory only needs deriving, while a diverged one also needs its
+        stale node pruned. Both matter, and the second for a reason easy to
+        miss -- a child's parent identity comes from `structural_elements`,
+        which hydration fills from DISK, so a child under a diverged ancestor
+        gets a containment edge naming an identity the graph does not hold
+        and the subtree is left disconnected (Greptile, PR #1875).
+        """
+        directory = self.repo_path if rel == "." else self.repo_path / rel
+        recorded = self._container_kinds_or_unknown(directory)
+        if recorded is None:
+            # "I could not ask" is not "there is nothing there". Treating an
+            # unreadable store as an absent container would derive every
+            # ancestor and re-create the duplicate identity this path
+            # prevents. Abort in the read-only prologue, as the other
+            # prologue reads do, rather than act on an unknown.
+            raise ReingestAborted(ls.REINGEST_CONTAINER_KIND_UNKNOWN)
+        if not recorded:
+            return False
+        return True if self._kind_diverged(directory, recorded) else None
 
     def _container_kinds_or_unknown(self, directory: Path) -> set[str] | None:
         """The recorded container kinds, or None when the read RAISED.
