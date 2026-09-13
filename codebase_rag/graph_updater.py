@@ -2330,7 +2330,7 @@ class GraphUpdater:
                 continue
             pending.append(
                 PendingFieldType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
                 )
             )
 
@@ -5286,11 +5286,10 @@ class GraphUpdater:
         pending_params[:] = [
             fact for fact in pending_params if fact.path not in stale_keys
         ]
-        # Fields the same: a changed field annotation would otherwise emit
-        # OF_TYPE to both the old and the new type through reingest.
+        # Fields the same, keyed on the file for the same reason.
         pending_fields = self.factory.definition_processor.pending_field_types
         pending_fields[:] = [
-            fact for fact in pending_fields if fact.module_qn not in stale_modules
+            fact for fact in pending_fields if fact.path not in stale_keys
         ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)

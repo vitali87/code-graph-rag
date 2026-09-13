@@ -245,3 +245,55 @@ def test_scoped_reingest_drops_the_old_field_annotation(tmp_path: Path) -> None:
     assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
         ("proj.app.Box.x", "proj.app.New")
     }
+
+
+def test_scoped_reingest_keeps_a_colliding_modules_field_facts(tmp_path: Path) -> None:
+    """`foo.py` and `foo/__init__.py` both derive `proj.foo` from their paths.
+    Re-ingesting `foo.py` with the type's file detaches `foo/__init__.py`'s
+    OF_TYPE (its target is recreated); the rehydrated facts for that UNCHANGED
+    file must survive the stale filter, which keys on the file and not on the
+    module qn (#1891 round 3, #1892)."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "models.py").write_text("class Gadget:\n    pass\n")
+    (repo / "foo.py").write_text("class Holder:\n    gadget: Gadget\n")
+    (repo / "foo").mkdir()
+    (repo / "foo" / "__init__.py").write_text("class Other:\n    gadget: Gadget\n")
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    capture = resolve_capture(["+fields"])
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).run(force=True)
+
+    # Same-stem siblings get distinct module qns in the graph (one is renamed,
+    # per #1569), so match by the owner's NAME; the stale filter derives its
+    # module qn from the path, where both files give the same one.
+    def of_type_for(owner: str) -> set[str]:
+        return {
+            tgt
+            for src, tgt in _edges(store, cs.RelationshipType.OF_TYPE.value)
+            if src.endswith(f".{owner}.gadget")
+        }
+
+    assert of_type_for("Other") == {"proj.models.Gadget"}
+
+    (repo / "models.py").write_text("class Gadget:\n    pass\n# touched\n")
+    (repo / "foo.py").write_text("class Holder:\n    gadget: Gadget\n    n = 2\n")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).reingest([repo / "models.py", repo / "foo.py"])
+
+    assert of_type_for("Other") == {"proj.models.Gadget"}, (
+        "the unchanged colliding file's OF_TYPE was not rebuilt"
+    )
+    assert of_type_for("Holder") == {"proj.models.Gadget"}
