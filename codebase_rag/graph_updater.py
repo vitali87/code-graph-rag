@@ -4882,10 +4882,18 @@ class GraphUpdater:
         except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
             return None
         for row in rows or ():
-            labels = row.get("labels") if isinstance(row, dict) else None
-            if labels and cs.NodeLabel.PACKAGE in labels:
+            raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
+            # Narrowed to a list of str before the membership test: a result
+            # scalar is a union wide enough that `in` is not defined on every
+            # member of it, and the driver returns labels as plain strings.
+            labels = (
+                [item for item in raw if isinstance(item, str)]
+                if (isinstance(raw, list))
+                else []
+            )
+            if cs.NodeLabel.PACKAGE.value in labels:
                 return True
-            if labels and cs.NodeLabel.FOLDER in labels:
+            if cs.NodeLabel.FOLDER.value in labels:
                 return False
         return None
 
