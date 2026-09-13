@@ -33,6 +33,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
@@ -52,7 +54,14 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${HEAD_BRANCH:-}" ] || [ -z "${HEAD_REPO:-}" ] ||
+             [ -z "${REPO:-}" ] || ! [[ "${PR_NUMBER:-}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Incomplete pull_request source identity in the event payload."
+            exit 1
+          fi
+
           echo "Head SHA: $HEAD_SHA"
+          echo "PR #$PR_NUMBER source: $HEAD_REPO:$HEAD_BRANCH"
 
           # Query by head_sha rather than by branch. After a stack rebase
           # several branches share a head, so `gh run list --branch` returns
@@ -65,12 +74,13 @@ jobs:
           runs=$(gh api --paginate \
             "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
             --jq '.workflow_runs[]
-                  | {name, path, conclusion, status, event,
+                  | {name, path, conclusion, status, event, head_sha, head_branch,
+                     head_repo: .head_repository.full_name,
                      prs: [.pull_requests[].number]}' \
             | jq -s '.')
 
           echo "Runs at this head:"
-          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)] PRs=\(.prs|tostring): \(.status)/\(.conclusion // "pending") (\(.event))"' || true
+          echo "$runs" | jq -r '.[] | "  \(.path) [\(.name)] source=\(.head_repo):\(.head_branch) PRs=\(.prs|tostring): \(.status)/\(.conclusion // "pending") (\(.event))"' || true
 
           # Match the workflow's PATH, not its display `name`. A display
           # name is just a string any workflow may declare, so a second
@@ -83,15 +93,23 @@ jobs:
           # A head SHA identifies a COMMIT, not a pull request. After a
           # stack rebase several branches share a head (issue #1582 records
           # this), so a run at this SHA may belong to a different PR
-          # entirely. Require the run to name THIS pull request, which is
-          # what scripts/check_pr_gated.py already enforces.
+          # entirely. Match the source repository and branch as well.
+          # Fork runs permanently have pull_requests: [] (#1866), so only
+          # for forks may the exact source identity stand in for that
+          # association. A nonempty list naming only other PRs is refused,
+          # and same-repo runs still require the explicit PR association.
           ci_count=$(echo "$runs" | jq --argjson pr "$PR_NUMBER" \
+            --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
+            --arg head_repo "$HEAD_REPO" --arg repo "$REPO" \
             '[.[] | select(.path == ".github/workflows/ci.yml")
-                  | select(.prs | index($pr))] | length')
+                  | select(.head_sha == $sha and .head_branch == $branch
+                           and .head_repo == $head_repo)
+                  | select((.prs | index($pr))
+                           or ($head_repo != $repo and .prs == []))] | length')
 
           if [ "$ci_count" -eq 0 ]; then
             echo
-            echo "::error::No 'CI' workflow run exists at head $HEAD_SHA."
+            echo "::error::No 'CI' workflow run matches PR #$PR_NUMBER at head $HEAD_SHA."
             echo "This PR has not been verified by the test suite at the commit"
             echo "being merged. A superseded run drops off the PR, leaving"
             echo "whatever happened to run at the current head -- often CodeQL"
