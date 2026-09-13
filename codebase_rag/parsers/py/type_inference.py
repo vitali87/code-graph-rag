@@ -168,14 +168,18 @@ class PythonTypeInferenceEngine(
                 self._analyze_for_loop(for_stmt, local_var_types, module_qn)
             aliases = self._collect_local_aliases(caller_node)
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
-            # The seed itself and anything expanded FROM it (`cls.<field>`
-            # entries the chained-attribute pass derives) go; a body binding
-            # that replaced the seed stays.
+            # The seed itself goes (a body binding that replaced it stays), and
+            # so do the `cls.<field>` entries the chained-attribute pass
+            # derives from a seeded `cls`, which no pass produces otherwise.
+            # `self.<attr>` entries are KEPT: the instance-attribute passes
+            # produce them without any seed and the property / chained-
+            # attribute resolution reads them, so removing them broke it.
+            cls_prefix = f"{cs.PY_KEYWORD_CLS}{cs.SEPARATOR_DOT}"
             for key in [
                 k
                 for k in local_var_types
-                if k.split(cs.SEPARATOR_DOT, 1)[0] in seeded
-                and (cs.SEPARATOR_DOT in k or local_var_types[k] == class_context)
+                if (k in seeded and local_var_types[k] == class_context)
+                or (cs.PY_KEYWORD_CLS in seeded and k.startswith(cls_prefix))
             ]:
                 del local_var_types[key]
 
