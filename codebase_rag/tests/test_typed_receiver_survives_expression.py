@@ -269,6 +269,88 @@ def test_an_overloaded_operator_yields_its_return_type(tmp_path: Path) -> None:
     assert not any(t.endswith("engine.Factory.run") for t in calls), calls
 
 
+def _operator_repo(tmp_path: Path, engine_src: str, app_src: str) -> Path:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(engine_src)
+    (repo / "app.py").write_text("from .engine import *  # noqa: F403\n\n" + app_src)
+    return repo
+
+
+_PRODUCT = "class Config:\n    pass\n\nclass Product:\n    def run(self) -> int:\n        return 1\n\n"
+
+
+def test_an_inherited_operator_is_found_through_the_base_class(tmp_path: Path) -> None:
+    """`Sub / cfg` where only `Base` defines `__truediv__ -> Product`.
+
+    Looking for the dunder on `Sub` alone found nothing and kept `Sub` as the
+    result type, indexing `product.run()` as `Sub.run` (Greptile, executed;
+    CodeRabbit Major). The method is found up the bases, as the interpreter
+    finds it. `Base.run` and `Sub.run` exist so the wrong answer is visible.
+    """
+    repo = _operator_repo(
+        tmp_path,
+        _PRODUCT + "class Base:\n    def run(self) -> int:\n        return 0\n"
+        "    def __truediv__(self, config: Config) -> Product:\n        return Product()\n\n"
+        "class Sub(Base):\n    def run(self) -> int:\n        return 2\n",
+        "def exercise(sub: Sub, config: Config) -> int:\n"
+        "    product = sub / config\n    return product.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.Product.run") for t in calls), calls
+    assert not any(
+        t.endswith("engine.Sub.run") or t.endswith("engine.Base.run") for t in calls
+    ), calls
+
+
+def test_a_reflected_operator_on_the_right_operand_decides(tmp_path: Path) -> None:
+    """`left / right` where `Left` has no `__truediv__` and `Right.__rtruediv__ -> Product`.
+
+    Consulting only the left operand kept `Left` and indexed `product.run()`
+    as `Left.run`. Python tries the right operand's reflected method when the
+    left has no forward one; so does this.
+    """
+    repo = _operator_repo(
+        tmp_path,
+        _PRODUCT + "class Left:\n    def run(self) -> int:\n        return 0\n\n"
+        "class Right:\n    def run(self) -> int:\n        return 3\n"
+        "    def __rtruediv__(self, other: Left) -> Product:\n        return Product()\n",
+        "def exercise(left: Left, right: Right) -> int:\n"
+        "    product = left / right\n    return product.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.Product.run") for t in calls), calls
+    assert not any(
+        t.endswith("engine.Left.run") or t.endswith("engine.Right.run") for t in calls
+    ), calls
+
+
+def test_a_union_left_operand_resolves_each_member(tmp_path: Path) -> None:
+    """`f = fa if flag else fb; product = f / cfg`, both factories returning Product.
+
+    The union string `FactoryA | FactoryB` was handed to the class lookup as if
+    it were one name, resolved to nothing, and the receiver kept the union.
+    Each member's operator is resolved and the results merged.
+    """
+    repo = _operator_repo(
+        tmp_path,
+        _PRODUCT + "class FactoryA:\n    def run(self) -> int:\n        return 0\n"
+        "    def __truediv__(self, config: Config) -> Product:\n        return Product()\n\n"
+        "class FactoryB:\n    def run(self) -> int:\n        return 0\n"
+        "    def __truediv__(self, config: Config) -> Product:\n        return Product()\n",
+        "def exercise(flag: bool, fa: FactoryA, fb: FactoryB, config: Config) -> int:\n"
+        "    factory = fa if flag else fb\n"
+        "    product = factory / config\n    return product.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.Product.run") for t in calls), calls
+    assert not any(
+        t.endswith("engine.FactoryA.run") or t.endswith("engine.FactoryB.run")
+        for t in calls
+    ), calls
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """A known-positive: the bare-name fallback DOES fire when the type is
     genuinely unknowable, so the assertions above are not vacuously green.

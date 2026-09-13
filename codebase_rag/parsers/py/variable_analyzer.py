@@ -26,12 +26,16 @@ class _Alias(NamedTuple):
 
     `candidates` are the leaf expressions the right-hand side can take the
     value of, in preference order: names and attributes read the type map, a
-    constructor call infers its own. `dunder` is set when the value then goes
-    through an operator (`base / "sub"`), whose result type is that method's.
+    constructor call infers its own. For an operator expression they are the
+    LEFT operand's leaves, `dunder` is the forward method (`__truediv__`) and
+    `reflected` holds the right operand's leaves, consulted for the reflected
+    method (`__rtruediv__`) when no left type supplies the forward one --
+    which is Python's own dispatch order.
     """
 
     candidates: tuple[ASTNode, ...]
     dunder: str | None
+    reflected: tuple[ASTNode, ...]
 
 
 if TYPE_CHECKING:
@@ -63,13 +67,23 @@ else:
     _VarBase = object
 
 
-def _non_none_members(type_str: str) -> frozenset[str]:
-    """`Widget | None` and `Widget` name the same receiver; compare them as such."""
-    return frozenset(
+def _union_members(type_str: str) -> list[str]:
+    """The non-None members of a type as written, in order: `A | None | B` -> [A, B]."""
+    return [
         member
         for part in type_str.split(cs.PY_UNION_SEPARATOR)
         if (member := part.strip()) and member != cs.PY_NONE
-    )
+    ]
+
+
+def _non_none_members(type_str: str) -> frozenset[str]:
+    """`Widget | None` and `Widget` name the same receiver; compare them as such."""
+    return frozenset(_union_members(type_str))
+
+
+def _reflected_dunder(dunder: str) -> str:
+    """`__truediv__` -> `__rtruediv__`: the method the RIGHT operand supplies."""
+    return f"__r{dunder[2:]}"
 
 
 def _container_element_type(type_str: str | None) -> str | None:
@@ -90,6 +104,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     queries: dict[cs.SupportedLanguage, object]
     _available_classes_cache: dict[str, list[str]]
     _class_member_type_cache: dict[str, dict[str, str]]
+    class_inheritance: dict[str, list[str]]
 
     def _infer_parameter_types(
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
@@ -573,7 +588,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             added = False
             for local, alias in aliases.items():
                 if local not in local_var_types and (
-                    alias_type := self._alias_type(alias, local_var_types, module_qn)
+                    alias_type := self._get_alias_type(
+                        alias, local_var_types, module_qn
+                    )
                 ):
                     local_var_types[local] = alias_type
                     added = True
@@ -591,24 +608,34 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if not added:
                 break
 
-    def _alias_type(
+    def _get_alias_type(
         self, alias: _Alias, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        """The type an alias's candidates give the variable, after any operator.
+        """The type an alias gives the variable, after any operator.
 
-        A name or attribute reads the type map; a constructor call infers its
-        own, so `flag and Engine()` types as Engine. Candidates of different
-        types -- `widget if flag else engine` -- become the union, spelled the
-        way an annotation spells it (`Widget | Engine`), so the resolver applies
-        the one policy it already has for a genuine multi-type union
-        (`_strip_optional`: it "stays unresolved"). The alternatives are both
-        wrong: typing only the first branch drops the other's call, and leaving
-        the receiver untyped hands it to the bare-name fallback, which picks
-        one of the two arbitrarily. Only `| None` is ignored when comparing: an
-        Optional and its bare type are the same receiver.
+        Candidates of different types -- `widget if flag else engine` -- become
+        the union an annotation would spell (`Widget | Engine`), so the resolver
+        applies the one policy it already has for a genuine multi-type union
+        (`_strip_optional`: it "stays unresolved"). Typing only the first branch
+        drops the other's call, and leaving the receiver untyped hands it to the
+        bare-name fallback, which picks one of the two arbitrarily. Only `| None`
+        is ignored when comparing: an Optional and its bare type are the same
+        receiver.
         """
+        left = self._get_candidate_types(alias.candidates, local_var_types, module_qn)
+        if alias.dunder is None:
+            return left
+        right = self._get_candidate_types(alias.reflected, local_var_types, module_qn)
+        return self._get_operator_result_type(left, alias.dunder, right, module_qn)
+
+    def _get_candidate_types(
+        self,
+        candidates: tuple[ASTNode, ...],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> str | None:
         found: dict[frozenset[str], str] = {}
-        for node in alias.candidates:
+        for node in candidates:
             if node.type == cs.TS_PY_CALL:
                 inferred = self._infer_type_from_expression(node, module_qn)
             else:
@@ -617,53 +644,118 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 found.setdefault(_non_none_members(inferred), inferred)
         if not found:
             return None
-        type_name = f" {cs.PY_UNION_SEPARATOR} ".join(found.values())
-        if alias.dunder is None:
-            return type_name
-        return self._operator_result_type(type_name, alias.dunder, module_qn)
+        return f" {cs.PY_UNION_SEPARATOR} ".join(found.values())
 
-    def _operator_result_type(
-        self, type_name: str, dunder: str, module_qn: str
+    def _get_operator_result_type(
+        self, left: str | None, dunder: str, right: str | None, module_qn: str
     ) -> str | None:
-        """What `left <op> right` evaluates to, given the left operand's type.
+        """What `left <op> right` evaluates to, following Python's dispatch.
 
-        A project class that overloads the operator decides: its dunder's return
-        type is the result, and one that cannot be determined leaves the
-        receiver untyped rather than guessing (`Factory.__truediv__ -> Product`
-        must not index `product.run()` as `Factory.run`). A type that does not
-        define the dunder -- `pathlib.Path`, `str`, anything outside the
-        project -- keeps the left operand's type, which is right for the idioms
-        this exists for: `Path / "sub"` is a Path.
+        Each member of the left type is tried first: a project class answers
+        with the return type of the operator method found anywhere up its
+        bases (`Sub / cfg` where `Base.__truediv__ -> Product` is a Product);
+        a type outside the project -- `pathlib.Path`, `str` -- keeps its own
+        type, which is right for `Path / "sub"`. A project class that defines
+        the method nowhere hands the operation to the RIGHT operand's
+        reflected method, exactly as the interpreter would; if that answers
+        nothing either the receiver stays untyped rather than guessing.
+        """
+        results: dict[str, None] = {}
+        forward_missing = False
+        left_members = _union_members(left) if left else []
+        for member in left_members:
+            class_qn = self._get_project_class_qn(member, module_qn)
+            if class_qn is None:
+                results.setdefault(member, None)
+                continue
+            found, returned = self._get_dunder_return_type(class_qn, dunder)
+            if not found:
+                forward_missing = True
+            elif returned:
+                results.setdefault(returned, None)
+        if forward_missing or not left_members:
+            for member in _union_members(right) if right else []:
+                class_qn = self._get_project_class_qn(member, module_qn)
+                if class_qn is None:
+                    continue
+                found, returned = self._get_dunder_return_type(
+                    class_qn, _reflected_dunder(dunder)
+                )
+                if found and returned:
+                    results.setdefault(returned, None)
+        if not results:
+            return None
+        return f" {cs.PY_UNION_SEPARATOR} ".join(results)
+
+    def _get_project_class_qn(self, type_name: str, module_qn: str) -> str | None:
+        """The registry qn of a class THIS project defines, else None.
+
+        `_class_qn_of_type` also answers for an imported external class
+        (`pathlib.Path`), spelled as a dotted name that no AST backs. Treating
+        that as a project class whose operator is "missing" would hand
+        `Path / "sub"` to reflected dispatch and then leave it untyped; the
+        registry is what separates a class we can read from one we cannot.
         """
         class_qn = self._class_qn_of_type(type_name, module_qn)
-        if not class_qn:
-            return type_name
-        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{dunder}"
-        if self._find_method_ast_node(method_qn) is None:
-            return type_name
-        return self._get_method_return_type_from_ast(method_qn)
+        if not class_qn or self.function_registry.get(class_qn) != NodeType.CLASS:
+            return None
+        return class_qn
 
-    def _alias_of(self, right: ASTNode) -> _Alias | None:
+    def _get_dunder_return_type(
+        self, class_qn: str, dunder: str
+    ) -> tuple[bool, str | None]:
+        """(defined anywhere up the bases?, its return type if known)."""
+        for cls in self._get_mro(class_qn):
+            method_qn = f"{cls}{cs.SEPARATOR_DOT}{dunder}"
+            if self._find_method_ast_node(method_qn) is not None:
+                return True, self._get_method_return_type_from_ast(method_qn)
+        return False, None
+
+    def _get_mro(self, class_qn: str) -> list[str]:
+        # BFS over the inheritance graph, self first; guards cycles. Mirrors
+        # CallResolver._mro over the same `class_inheritance` map.
+        seen: set[str] = set()
+        order: list[str] = []
+        queue = [class_qn]
+        while queue:
+            cur = queue.pop(0)
+            if cur in seen:
+                continue
+            seen.add(cur)
+            order.append(cur)
+            queue.extend(self.class_inheritance.get(cur, []))
+        return order
+
+    def _get_assignment_alias(self, right: ASTNode) -> _Alias | None:
         """Reduce an assignment's rhs to an `_Alias`, or None if it types nothing.
 
         A bare call (`x = Engine()`) is left to `_traverse_single_pass`, which
-        already types it; aliasing it too would only duplicate that work. An
-        operator whose dunder is not in the table makes no claim at all: its
-        result type is unknown, and untyped is the safe answer.
+        already types it. An operator whose dunder is not in the table makes
+        no claim: its result type is unknown, and untyped is the safe answer.
         """
         if right.type == cs.TS_PY_CALL:
             return None
-        dunder: str | None = None
-        if right.type == cs.TS_PY_BINARY_OPERATOR:
-            operator = right.child_by_field_name(cs.FIELD_OPERATOR)
-            token = safe_decode_text(operator) if operator is not None else None
-            dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
-            if dunder is None:
-                return None
-        candidates = self._value_leaves(right, 0)
-        return _Alias(candidates, dunder) if candidates else None
+        if right.type != cs.TS_PY_BINARY_OPERATOR:
+            candidates = self._get_value_leaves(right, 0)
+            return _Alias(candidates, None, ()) if candidates else None
+        operator = right.child_by_field_name(cs.FIELD_OPERATOR)
+        token = safe_decode_text(operator) if operator is not None else None
+        dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
+        if dunder is None:
+            return None
+        left = right.child_by_field_name(cs.TS_FIELD_LEFT)
+        right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
+        candidates = self._get_value_leaves(left, 1) if left is not None else ()
+        reflected = (
+            self._get_value_leaves(right_operand, 1)
+            if right_operand is not None
+            else ()
+        )
+        if not candidates and not reflected:
+            return None
+        return _Alias(candidates, dunder, reflected)
 
-    def _value_leaves(self, node: ASTNode, depth: int) -> tuple[ASTNode, ...]:
+    def _get_value_leaves(self, node: ASTNode, depth: int) -> tuple[ASTNode, ...]:
         """The leaf expressions an rhs can evaluate to, in preference order.
 
         Without this a variable assigned from any expression got NO type, and a
@@ -683,7 +775,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL):
             return (node,)
         if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
-            picks = self._boolean_value_operands(node)
+            picks = self._get_boolean_value_operands(node)
         elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
             # `a if cond else b`: the VALUE operands are the first and last
             # named children; the middle one is the condition, whose type is
@@ -691,9 +783,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
             kids = node.named_children
             picks = (kids[0], kids[-1]) if kids else ()
         elif node.type == cs.TS_PY_BINARY_OPERATOR:
-            # `base / "sub"`: the LEFT operand's dunder decides the result, so
-            # the left is the value's origin. `"prefix" + name` is a literal on
-            # the left and correctly yields nothing.
+            # Nested under another expression (`(a / b) or c`): the left
+            # operand is the value's origin and the operator is not tracked
+            # this deep -- an approximation that is right for path idioms.
             left = node.child_by_field_name(cs.TS_FIELD_LEFT)
             picks = (left,) if left is not None else ()
         elif node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
@@ -701,10 +793,10 @@ class PythonVariableAnalyzerMixin(_VarBase):
         else:
             return ()
         return tuple(
-            leaf for pick in picks for leaf in self._value_leaves(pick, depth + 1)
+            leaf for pick in picks for leaf in self._get_value_leaves(pick, depth + 1)
         )
 
-    def _boolean_value_operands(self, node: ASTNode) -> tuple[ASTNode, ...]:
+    def _get_boolean_value_operands(self, node: ASTNode) -> tuple[ASTNode, ...]:
         """The operands `a or b` / `a and b` can evaluate to.
 
         `or` yields whichever operand is truthy first, so both are candidates,
@@ -744,7 +836,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                     and right is not None
                     and (local := safe_decode_text(left))
                     and local not in aliases
-                    and (alias := self._alias_of(right)) is not None
+                    and (alias := self._get_assignment_alias(right)) is not None
                 ):
                     aliases[local] = alias
             stack.extend(node.children)
