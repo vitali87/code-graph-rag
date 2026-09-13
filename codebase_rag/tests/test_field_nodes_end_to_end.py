@@ -88,13 +88,11 @@ def test_every_declared_field_becomes_a_node(tmp_path: Path) -> None:
     fields = _nodes(store, cs.NodeLabel.FIELD.value)
     box = {qn.rsplit(".", 1)[-1]: p for qn, p in fields.items() if ".Box." in qn}
     assert set(box) == {"size", "widget", "a", "count"}, sorted(fields)
-    assert (
-        box["size"][cs.KEY_TYPE_NAME] == "int" and box["size"][cs.KEY_IS_STATIC] is True
-    )
+    assert box["size"][cs.KEY_TYPE_NAME] == "int"
+    assert box["size"][cs.KEY_IS_STATIC] is True
     assert box["widget"][cs.KEY_TYPE_NAME] == "Widget"
-    assert (
-        cs.KEY_TYPE_NAME not in box["count"] and box["count"][cs.KEY_IS_STATIC] is False
-    )
+    assert cs.KEY_TYPE_NAME not in box["count"]
+    assert box["count"][cs.KEY_IS_STATIC] is False
     # Position is the NAME's, 1-based line: `size` on line 4, column 4.
     assert (box["size"][cs.KEY_START_LINE], box["size"][cs.KEY_START_COL]) == (4, 4)
     # Path and absolute_path come from the owner's props, as for Parameter.

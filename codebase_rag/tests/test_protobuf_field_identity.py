@@ -56,7 +56,8 @@ def test_a_repeated_ensure_of_one_node_still_merges(tmp_path: Path) -> None:
     )
     assert len(writer._nodes) == 1
     (node,) = writer._nodes.values()
-    assert node.field.name == "n" and node.field.type_name == "int"
+    assert node.field.name == "n"
+    assert node.field.type_name == "int"
 
 
 def test_field_payload_carries_no_absolute_path(tmp_path: Path) -> None:
