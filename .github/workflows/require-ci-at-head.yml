@@ -22,6 +22,7 @@ on:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 jobs:
   require-ci-at-head:
@@ -74,7 +75,7 @@ jobs:
           runs=$(gh api --paginate \
             "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" \
             --jq '.workflow_runs[]
-                  | {name, path, conclusion, status, event, head_sha, head_branch,
+                  | {name, path, conclusion, status, event, created_at, head_sha, head_branch,
                      head_repo: .head_repository.full_name,
                      prs: [.pull_requests[].number]}' \
             | jq -s '.')
@@ -94,18 +95,54 @@ jobs:
           # stack rebase several branches share a head (issue #1582 records
           # this), so a run at this SHA may belong to a different PR
           # entirely. Match the source repository and branch as well.
-          # Fork runs permanently have pull_requests: [] (#1866), so only
-          # for forks may the exact source identity stand in for that
-          # association. A nonempty list naming only other PRs is refused,
-          # and same-repo runs still require the explicit PR association.
-          ci_count=$(echo "$runs" | jq --argjson pr "$PR_NUMBER" \
+          ci_runs=$(echo "$runs" | jq \
             --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
-            --arg head_repo "$HEAD_REPO" --arg repo "$REPO" \
+            --arg head_repo "$HEAD_REPO" \
             '[.[] | select(.path == ".github/workflows/ci.yml")
                   | select(.head_sha == $sha and .head_branch == $branch
-                           and .head_repo == $head_repo)
-                  | select((.prs | index($pr))
-                           or ($head_repo != $repo and .prs == []))] | length')
+                           and .head_repo == $head_repo)]')
+          ci_count=$(echo "$ci_runs" | jq --argjson pr "$PR_NUMBER" \
+            '[.[] | select(.prs | index($pr))] | length')
+
+          # Fork runs permanently have pull_requests: [] (#1866). Source
+          # identity alone is insufficient: the same fork branch can open
+          # multiple PRs, even against different bases. Only infer the PR
+          # when that exact source branch has belonged to this PR alone
+          # across ALL history. Closed PRs and different historical SHAs
+          # still create ambiguity; branch reuse requires a fresh branch.
+          if [ "$ci_count" -eq 0 ] && [ "$HEAD_REPO" != "$REPO" ]; then
+            head_filter=$(jq -rn --arg head "${HEAD_REPO%%/*}:$HEAD_BRANCH" '$head | @uri')
+            source_prs=$(gh api --paginate \
+              "repos/$REPO/pulls?state=all&head=$head_filter&per_page=100" \
+              --jq 'if type != "array" then error("Invalid PR history page") else .[] end
+                    | {number, created_at, head_repo: .head.repo.full_name,
+                       head_branch: .head.ref, head_sha: .head.sha}' \
+              | jq -s --arg head_repo "$HEAD_REPO" --arg branch "$HEAD_BRANCH" '
+                  map(if (.number | type) != "number" or .number <= 0
+                           or .number != (.number | floor)
+                           or any(.head_repo, .head_branch, .head_sha, .created_at;
+                                  type != "string" or length == 0)
+                      then error("Incomplete PR history identity") else . end
+                      | .created_at |= (. as $date | fromdateiso8601
+                          | if todateiso8601 == $date then .
+                            else error("Invalid PR creation timestamp") end))
+                  | map(select(.head_repo == $head_repo and .head_branch == $branch))')
+            pr_created_at=$(echo "$source_prs" | jq \
+              --argjson pr "$PR_NUMBER" --arg sha "$HEAD_SHA" '
+                if length == 1 and .[0].number == $pr and .[0].head_sha == $sha
+                then .[0].created_at else empty end')
+
+            if [ -n "$pr_created_at" ]; then
+              ci_count=$(echo "$ci_runs" | jq --argjson created "$pr_created_at" '
+                [.[] | select(.prs == [] and .event == "pull_request")
+                     | select((.created_at | . as $date | fromdateiso8601
+                         | if todateiso8601 == $date then .
+                           else error("Invalid run creation timestamp") end) >= $created)]
+                | length')
+            else
+              echo "Fork PR history does not uniquely identify this PR and head."
+            fi
+          fi
 
           if [ "$ci_count" -eq 0 ]; then
             echo
@@ -115,8 +152,9 @@ jobs:
             echo "whatever happened to run at the current head -- often CodeQL"
             echo "alone -- which reads as a clean result (issue #1582)."
             echo
-            echo "Trigger one with:"
-            echo "  gh workflow run ci.yml --ref <branch>"
+            echo "Ensure ci.yml runs for this pull request's base branch."
+            echo "Fork runs without PR associations require a source branch"
+            echo "used by this PR alone; reused or shared branches are ambiguous."
             echo
             echo "Note: pushing an empty commit is NOT sufficient on a branch"
             echo "whose base is not main -- it creates a new head, CodeQL"
