@@ -1057,21 +1057,38 @@ class Renamer:
                 return False
         return True
 
-    def _enforce_contract(
-        self, report: RenameReport, new_name: str, allow_heuristic: bool
-    ) -> RenameReport:
-        assert self.reingest is not None
-        # The pairs this rename applied, computed here rather than after the
-        # measurement: the delta needs them to recognise an empty container,
-        # whose identity nothing in the two snapshots can show.
-        pairs = [
+    def _declared_renames(
+        self, report: RenameReport, new_name: str
+    ) -> list[tuple[str, str]]:
+        parents = [
             (
                 member,
                 member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
             )
             for member in report.hierarchy
         ]
+        pairs = list(parents)
+        for row in self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.CYPHER_PARAM_PATHS: list(report.files),
+            },
+        ):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str) or row.get(cs.KEY_AST_FINGERPRINT):
+                continue
+            for old, new in parents:
+                if qn.startswith(old + cs.SEPARATOR_DOT):
+                    pairs.append((qn, new + qn[len(old) :]))
+        return pairs
+
+    def _enforce_contract(
+        self, report: RenameReport, new_name: str, allow_heuristic: bool
+    ) -> RenameReport:
+        assert self.reingest is not None
         try:
+            pairs = self._declared_renames(report, new_name)
             delta = measure(
                 self.fetch_all,
                 self.project,
