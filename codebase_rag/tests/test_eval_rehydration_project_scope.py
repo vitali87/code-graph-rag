@@ -15,7 +15,7 @@ _MODELS = (
 )
 
 
-def _updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
+def _make_project_updater(root: Path, store: _StatefulIngestor) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=store,
@@ -33,14 +33,14 @@ def rehydrated_updater(tmp_path: Path) -> GraphUpdater:
         root = tmp_path / project
         root.mkdir()
         (root / "models.py").write_text(_MODELS, encoding="utf-8")
-        _updater(root, store).run(force=True)
+        _make_project_updater(root, store).run(force=True)
 
     root = tmp_path / "proj"
     (root / "caller.py").write_text(
         "from models import helper\n\ndef caller():\n    return helper()\n",
         encoding="utf-8",
     )
-    updater = _updater(root, store)
+    updater = _make_project_updater(root, store)
     updater.run()
     assert {path.name for path, _language in updater._parsed_files} == {"caller.py"}
     assert (cs.NodeLabel.FUNCTION, "proj_extra.models.helper") in store.nodes
