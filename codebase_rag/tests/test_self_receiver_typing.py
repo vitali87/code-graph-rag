@@ -379,6 +379,18 @@ _BINDING_FORMS = (
     "        from proj.other import self\n"
     "        w = self.parse()\n"
     "        return w.render()\n\n"
+    "    def import_plain(self) -> str:\n"
+    "        import self\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def import_dotted(self) -> str:\n"
+    "        import self.sub\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def import_other_dotted(self) -> str:\n"
+    "        import other.self\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
     "    def nested_scope_only(self) -> str:\n"
     "        class Inner:\n"
     "            def go(self) -> int:\n"
@@ -441,6 +453,8 @@ def test_every_binding_form_of_the_receiver_suppresses_the_seed(tmp_path: Path) 
         "with_tuple_alias",
         "import_alias",
         "import_bare",
+        "import_plain",
+        "import_dotted",
     ):
         assert maps[method].get("w") != "Widget", method
 
@@ -455,6 +469,8 @@ def test_an_attribute_or_subscript_target_is_not_a_rebinding(tmp_path: Path) -> 
     # `Widget.self`: neither names a local, so the seed must stay.
     assert maps["match_keyword_name"].get("w") == "Widget"
     assert maps["match_value_pattern"].get("w") == "Widget"
+    # `import other.self` binds `other`, not `self`.
+    assert maps["import_other_dotted"].get("w") == "Widget"
 
 
 def test_a_rebinding_in_a_nested_scope_does_not_suppress_the_seed(

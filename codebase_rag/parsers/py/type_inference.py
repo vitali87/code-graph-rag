@@ -169,7 +169,8 @@ class PythonTypeInferenceEngine(
         a `for self in ...` target, a `with ... as self` / `except ... as self`
         alias, a walrus `(self := pick())`, a `case` capture (`case self:`,
         `case Foo(x=self):`, `case [self, *rest]:`, `case Foo() as self:`)
-        and an import (`from m import f as self`). Nested def, lambda and class
+        and an import (`import self`, `from m import f as self`). Nested def,
+        lambda and class
         BODIES are not descended into (a binding there belongs to that scope);
         their parameter defaults, annotations, return annotation and
         superclass arguments are, because those evaluate in this scope. An attribute or subscript target
@@ -221,6 +222,16 @@ class PythonTypeInferenceEngine(
                 for imported in node.children_by_field_name(cs.FIELD_NAME):
                     if cls._is_bare_name(imported, name):
                         return True
+            elif node.type == cs.TS_PY_IMPORT_STATEMENT:
+                # `import self` / `import self.sub` bind the FIRST component
+                # (the bot's finding); `import a as self` is the aliased node.
+                for imported in node.children_by_field_name(cs.FIELD_NAME):
+                    if (
+                        imported.type == cs.TS_PY_DOTTED_NAME
+                        and imported.named_children
+                    ):
+                        if cls._is_bare_name(imported.named_children[0], name):
+                            return True
             if target is not None and cls._binds_name(target, name):
                 return True
             stack.extend(node.named_children)
