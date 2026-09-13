@@ -248,7 +248,14 @@ jobs:
             note 'FAILED, the API returned nothing usable; NEWS.md will not change'
             exit 1
           fi
-          note "generated $(grep -c '^\*' /tmp/highlights.md || echo 0) theme(s)"
+          # `[-*] ` and not `\*`: update_news.py's HIGHLIGHT_BULLET accepts both
+          # markers, so counting only stars reports 0 themes on a dash-bulleted
+          # response that NEWS.md then gains entries from -- this line existing
+          # to prevent exactly that kind of confident wrong number. The trailing
+          # space keeps an `*emphasis*` line from counting as a bullet, and
+          # `|| true` rather than `|| echo 0` because grep -c already prints 0
+          # when it matches nothing; echoing another splits the summary in two.
+          note "generated $(grep -c '^[-*] ' /tmp/highlights.md || true) theme(s)"
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
