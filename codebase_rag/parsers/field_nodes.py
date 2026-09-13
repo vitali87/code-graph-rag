@@ -785,6 +785,10 @@ class PendingFieldType(NamedTuple):
     field_qn: str
     module_qn: str
     type_name: str
+    # The owning file's relative path: scoped re-ingestion discards facts by
+    # FILE, because two same-stem files (`foo.py`, `foo/__init__.py`) derive
+    # one module qn from their paths (#1891 round 3, #1892).
+    path: str
 
 
 def emit_declared_fields(
@@ -829,8 +833,13 @@ def emit_declared_fields(
             cs.RelationshipType.HAS_FIELD,
             (cs.NodeLabel.FIELD.value, cs.KEY_QUALIFIED_NAME, field_qn),
         )
-        if sink is not None and module_qn is not None and field.type_name:
-            sink.append(PendingFieldType(field_qn, module_qn, field.type_name))
+        if (
+            sink is not None
+            and module_qn is not None
+            and field.type_name
+            and isinstance(path, str)
+        ):
+            sink.append(PendingFieldType(field_qn, module_qn, field.type_name, path))
     return len(declared)
 
 

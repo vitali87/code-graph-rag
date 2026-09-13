@@ -138,6 +138,11 @@ class PendingParameterType(NamedTuple):
     parameter_qn: str
     module_qn: str
     type_name: str
+    # The owning file's relative path. Scoped re-ingestion discards the facts
+    # of files it re-parses by THIS, not by module_qn: `foo.py` and
+    # `foo/__init__.py` share a module qn, and keying on it dropped the
+    # unchanged file's facts along with the re-parsed one's.
+    path: str
 
 
 def declared_parameters(
@@ -204,8 +209,15 @@ def emit_declared_parameters(
             (cs.NodeLabel.PARAMETER.value, cs.KEY_QUALIFIED_NAME, param_qn),
             properties={cs.KEY_INDEX: param.index},
         )
-        if sink is not None and module_qn is not None and param.type_name:
-            sink.append(PendingParameterType(param_qn, module_qn, param.type_name))
+        if (
+            sink is not None
+            and module_qn is not None
+            and param.type_name
+            and isinstance(path, str)
+        ):
+            sink.append(
+                PendingParameterType(param_qn, module_qn, param.type_name, path)
+            )
     return len(declared)
 
 

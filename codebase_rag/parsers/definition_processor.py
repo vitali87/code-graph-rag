@@ -398,12 +398,10 @@ class DefinitionProcessor(
         from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        # All three queues, not just RETURNS/ACCEPTS: a file whose only
-        # annotations are on fields queues no type fact, and returning here
-        # skipped the field pass entirely -- OF_TYPE silently absent for a
-        # class with `x: Old` and no annotated function (found by the Field
-        # regression test; parameters never hit it because a parameter
-        # annotation always queues an ACCEPTS fact as well).
+        # Every queue, not just the first: a Parameter or Field fact with no
+        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
+        # and OF_TYPE silently absent. A class whose only annotations are on
+        # fields is the case that reaches this (found by the Field regression).
         if not (
             self.pending_type_facts
             or self.pending_parameter_types

@@ -1371,20 +1371,6 @@ def ingest_method(
     queue_type_facts(
         type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
     )
-    # Local import for the same reason as type_facts above.
-    from .parameter_nodes import emit_declared_parameters
-
-    emit_declared_parameters(
-        ingestor,
-        parameter_type_sink,
-        cs.NodeLabel.METHOD,
-        method_qn,
-        module_qn,
-        method_node,
-        language,
-        method_props,
-        has_receiver=not _is_static_decorator(decorators),
-    )
     method_props.update(fingerprint_props(method_node))
 
     # Persist @property status on the node so an incremental rebuild can restore
@@ -1439,6 +1425,23 @@ def ingest_method(
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+    # AFTER the Method node is queued: a batch flush writes nodes before
+    # relationships, and a HAS_PARAMETER whose owner is still pending would
+    # match nothing and be dropped. Local import for the same reason as
+    # type_facts above.
+    from .parameter_nodes import emit_declared_parameters
+
+    emit_declared_parameters(
+        ingestor,
+        parameter_type_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        method_node,
+        language,
+        method_props,
+        has_receiver=not _is_static_decorator(decorators),
+    )
     if pending_endpoints is not None:
         # Deferred so router mount prefixes can resolve after Pass 2 (#877).
         queue_endpoints(
