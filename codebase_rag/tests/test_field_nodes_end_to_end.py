@@ -5,6 +5,11 @@ is that the default index emits NOTHING for it -- a Field node with no
 HAS_FIELD edge would be an orphan, and the gate has to hold both. The shape
 mirrors the Parameter tests (#1804) because the plumbing is the same, with
 the declaring type as owner.
+
+`OF_TYPE` is one relationship and lives in the `parameters` group (the capture
+contract puts every relationship in exactly one group), so the tests that
+assert a field's type edge enable both groups; `fields` alone yields the nodes
+and HAS_FIELD.
 """
 
 from __future__ import annotations
@@ -45,6 +50,9 @@ _SRC = {
     "geo.rs": "pub struct Point {\n    /// Horizontal offset.\n    pub x: i32,\n    pub y: i32,\n}\n",
     # Owners other than Class: an Interface and an Enum both declare fields.
     "shapes.ts": "interface I {\n  a: string;\n}\n",
+    # A templated C++ class: the canonical node is the template wrapper, whose
+    # members live on the inner class_specifier.
+    "tmpl.cpp": "template <typename T>\nclass Crate {\n  T value;\n  int count;\n};\n",
     "Colour.java": "enum Colour {\n  RED;\n  private final int code = 1;\n}\n",
     # A field and a method with one name share the `<owner>.<name>` key.
     "acc.py": "class Acc:\n    total = 0\n\n    def total(self):\n        return 0\n",
@@ -121,7 +129,7 @@ def test_has_field_links_the_owner_to_each_node(tmp_path: Path) -> None:
 def test_of_type_resolves_a_field_annotation_to_the_project_class(
     tmp_path: Path,
 ) -> None:
-    store = _index(tmp_path, ["+fields"])
+    store = _index(tmp_path, ["+fields", "+parameters"])
     of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
     widget_edges = {(s, t) for s, t in of_type if s.endswith(".app.Box.widget")}
     assert len(widget_edges) == 1, of_type
@@ -146,7 +154,7 @@ def _reindex(store: _StatefulIngestor, repo: Path) -> None:
         repo_path=repo,
         parsers=parsers,
         queries=queries,
-        capture=resolve_capture(["+fields"]),
+        capture=resolve_capture(["+fields", "+parameters"]),
     ).run(force=False)
 
 
@@ -175,7 +183,7 @@ def test_a_reparse_takes_stale_fields_with_their_owner(tmp_path: Path) -> None:
 def test_of_type_survives_a_reparse_of_only_the_type_file(tmp_path: Path) -> None:
     """Touch models.py alone: consumer.py is not re-parsed, so its Field node
     is not re-emitted and its OF_TYPE has to be rebuilt from the graph."""
-    store = _index(tmp_path, ["+fields"])
+    store = _index(tmp_path, ["+fields", "+parameters"])
     repo = tmp_path / "proj"
     (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
     _reindex(store, repo)
@@ -203,7 +211,7 @@ def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
         repo_path=repo,
         parsers=parsers,
         queries=queries,
-        capture=resolve_capture(["+fields"]),
+        capture=resolve_capture(["+fields", "+parameters"]),
     )
     updater.run(force=True)
     (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
@@ -239,7 +247,7 @@ def test_scoped_reingest_drops_the_old_field_annotation(tmp_path: Path) -> None:
     )
     parsers, queries = load_parsers()
     store = _StatefulIngestor()
-    capture = resolve_capture(["+fields"])
+    capture = resolve_capture(["+fields", "+parameters"])
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -282,7 +290,7 @@ def test_scoped_reingest_keeps_a_colliding_modules_field_facts(tmp_path: Path) -
     (repo / "foo" / "__init__.py").write_text("class Other:\n    gadget: Gadget\n")
     parsers, queries = load_parsers()
     store = _StatefulIngestor()
-    capture = resolve_capture(["+fields"])
+    capture = resolve_capture(["+fields", "+parameters"])
     GraphUpdater(
         ingestor=store,
         repo_path=repo,
@@ -340,6 +348,9 @@ def test_interface_and_enum_owners_declare_fields(tmp_path: Path) -> None:
     assert any(qn.endswith(".Colour.code") for qn in fields), sorted(fields)
     has = _edges(store, cs.RelationshipType.HAS_FIELD.value)
     assert any(src.endswith(".I") and tgt.endswith(".I.a") for src, tgt in has), has
+    # Templated C++ class: fields come from the inner specifier.
+    assert any(qn.endswith(".Crate.value") for qn in fields), sorted(fields)
+    assert any(qn.endswith(".Crate.count") for qn in fields), sorted(fields)
 
 
 def test_a_field_and_a_method_may_share_a_qualified_name(tmp_path: Path) -> None:

@@ -363,11 +363,10 @@ class Parameter(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., index: _Optional[int] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., is_variadic: bool = ..., has_default: bool = ...) -> None: ...
 
 class Field(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path", "start_line", "start_col", "type_name", "modifiers", "is_static", "docstring")
+    __slots__ = ("qualified_name", "name", "path", "start_line", "start_col", "type_name", "modifiers", "is_static", "docstring")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
-    ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
     START_LINE_FIELD_NUMBER: _ClassVar[int]
     START_COL_FIELD_NUMBER: _ClassVar[int]
     TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -377,14 +376,13 @@ class Field(_message.Message):
     qualified_name: str
     name: str
     path: str
-    absolute_path: str
     start_line: int
     start_col: int
     type_name: str
     modifiers: _containers.RepeatedScalarFieldContainer[str]
     is_static: bool
     docstring: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., modifiers: _Optional[_Iterable[str]] = ..., is_static: bool = ..., docstring: _Optional[str] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., modifiers: _Optional[_Iterable[str]] = ..., is_static: bool = ..., docstring: _Optional[str] = ...) -> None: ...
 
 class Resource(_message.Message):
     __slots__ = ("qualified_name", "name", "kind")

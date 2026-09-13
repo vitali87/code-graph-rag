@@ -1099,21 +1099,6 @@ class ClassIngestMixin:
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         self.ingestor.ensure_node_batch(node_type, class_props)
-        # Declared fields ride with their owner: same gate, same props source
-        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
-        emit_declared_fields(
-            self.ingestor,
-            self.pending_field_types,
-            # `determine_node_type` returns a NodeType; every member's value is a
-            # NodeLabel value (checked when this was written), so the owner
-            # label is the same name in the graph's own enum.
-            cs.NodeLabel(node_type.value),
-            class_qn,
-            module_qn,
-            class_node,
-            language,
-            class_props,
-        )
         self.function_registry[class_qn] = node_type
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)
@@ -1151,6 +1136,25 @@ class ClassIngestMixin:
         # type_spec is class_node, so this is a no-op for non-templates and for
         # Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
+        # Declared fields ride with their owner: same gate, same props source
+        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
+        # Emitted AFTER the owner node so a batch flush never writes the edge
+        # before its endpoint, and from member_node: a templated C++ class's
+        # wrapper has no body, its members live on the inner class_specifier
+        # (local review P1).
+        emit_declared_fields(
+            self.ingestor,
+            self.pending_field_types,
+            # `determine_node_type` returns a NodeType; every member's value is a
+            # NodeLabel value (checked when this was written), so the owner
+            # label is the same name in the graph's own enum.
+            cs.NodeLabel(node_type.value),
+            class_qn,
+            module_qn,
+            member_node,
+            language,
+            class_props,
+        )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent

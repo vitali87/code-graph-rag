@@ -421,15 +421,13 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.OF_TYPE,
         }
     ),
-    # Opt-in (issue #1805), like parameters. OF_TYPE is shared with that group
-    # on purpose -- one concept, one RelationshipType -- so a Field's type edge
-    # is captured whenever EITHER group is enabled.
-    CaptureGroup.FIELDS: frozenset(
-        {
-            RelationshipType.HAS_FIELD,
-            RelationshipType.OF_TYPE,
-        }
-    ),
+    # Opt-in (issue #1805), like parameters. OF_TYPE is NOT listed here: the
+    # capture contract puts every relationship in exactly one group (a
+    # relationship in two would make "enabled" ambiguous), and OF_TYPE already
+    # belongs to `parameters`. A field's type edge is therefore captured
+    # whenever the `parameters` group is on -- one relationship, one switch --
+    # and `fields` alone yields Field nodes and HAS_FIELD only.
+    CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the

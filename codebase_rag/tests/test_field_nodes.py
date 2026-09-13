@@ -445,6 +445,15 @@ class TestOwnerShapesFromReview:
         )
         assert _rows(got) == [("cb", "void", ("public",), False)]
 
+    def test_python_decorated_methods_declare_instance_fields(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.PYTHON,
+            "class C:\n    @property\n    def p(self):\n        self.seen = 1\n        return 0\n",
+            "class_definition",
+        )
+        assert _rows(got) == [("seen", None, (), False)]
+
     def test_python_attribute_tuple_targets(self, parsers) -> None:
         got = _fields(
             parsers,

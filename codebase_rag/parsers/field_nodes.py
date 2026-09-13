@@ -111,6 +111,14 @@ def python_declared_fields(class_node: Node) -> list[DeclaredField]:
         if statement.type == cs.TS_PY_FUNCTION_DEFINITION:
             methods.append(statement)
             continue
+        # `@property` / `@x.setter` / any decorated method is wrapped in a
+        # `decorated_definition`; its `self.x = ...` assignments count too
+        # (local review). A decorated nested class is not a method.
+        if statement.type == "decorated_definition":
+            inner = statement.child_by_field_name(cs.FIELD_DEFINITION)
+            if inner is not None and inner.type == cs.TS_PY_FUNCTION_DEFINITION:
+                methods.append(inner)
+            continue
         if statement.type != cs.TS_PY_EXPRESSION_STATEMENT or not statement.children:
             continue
         assignment = statement.children[0]
