@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
@@ -17,10 +18,19 @@ _PY_SCOPE_TYPES = frozenset(
     {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
 )
 
+# Statements that rebind a name WITHOUT an `assignment` node: `p += x`,
+# `for p in xs`, `with cm as p`. Each ends the provenance an earlier
+# `p = call()` gave the name (local review P2).
+_PY_REBINDING_TYPES = frozenset(
+    {cs.TS_PY_AUGMENTED_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT, cs.TS_PY_WITH_STATEMENT}
+)
+
 _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_ASSIGNMENT}) @assignment "
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
     f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
+    f"({cs.TS_PY_AUGMENTED_ASSIGNMENT}) @augmented "
+    f"({cs.TS_PY_WITH_STATEMENT}) @with_stmt "
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
 
@@ -46,6 +56,33 @@ def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
     if tail:
         parts.append(tail)
     return parts
+
+
+def _identifiers_in(target: Node) -> Iterator[Node]:
+    """The identifiers a binding target names: itself, or every one inside a
+    `a, (b, c)` pattern."""
+    if target.type == cs.TS_PY_IDENTIFIER:
+        yield target
+        return
+    for child in target.named_children:
+        yield from _identifiers_in(child)
+
+
+def _rebound_identifiers(node: Node) -> Iterator[Node]:
+    """Identifiers a for / with / augmented assignment binds, without
+    descending into the statement's body."""
+    if node.type == cs.TS_PY_WITH_STATEMENT:
+        for clause in node.named_children:
+            for item in clause.named_children:
+                value = item.child_by_field_name(cs.FIELD_VALUE)
+                if value is not None and value.type == cs.TS_PY_AS_PATTERN:
+                    alias = value.child_by_field_name(cs.FIELD_ALIAS)
+                    if alias is not None:
+                        yield from _identifiers_in(alias)
+        return
+    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+    if left is not None:
+        yield from _identifiers_in(left)
 
 
 def _scope_of(node: Node) -> int | None:
@@ -165,6 +202,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         assignments: list[Node] = []
         comprehensions: list[Node] = []
         for_statements: list[Node] = []
+        rebinds: list[Node] = []
 
         py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
         py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
@@ -176,6 +214,11 @@ class PythonAstAnalyzerMixin(_AstBase):
                 assignments = captures.get("assignment", [])
                 comprehensions = captures.get("comprehension", [])
                 for_statements = captures.get("for_stmt", [])
+                rebinds = [
+                    *for_statements,
+                    *captures.get("augmented", []),
+                    *captures.get("with_stmt", []),
+                ]
                 if return_stmts := captures.get("return_stmt"):
                     self._return_stmt_cache[node] = return_stmts
             except Exception:
@@ -193,6 +236,8 @@ class PythonAstAnalyzerMixin(_AstBase):
                     comprehensions.append(current)
                 elif node_type == cs.TS_PY_FOR_STATEMENT:
                     for_statements.append(current)
+                if node_type in _PY_REBINDING_TYPES:
+                    rebinds.append(current)
 
                 stack.extend(reversed(current.children))
 
@@ -201,7 +246,9 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
-        self._process_assignment_unpacking(assignments, local_var_types, module_qn)
+        self._process_assignment_unpacking(
+            assignments, rebinds, local_var_types, module_qn
+        )
 
         for comp in comprehensions:
             self._analyze_comprehension(comp, local_var_types, module_qn)
@@ -256,7 +303,11 @@ class PythonAstAnalyzerMixin(_AstBase):
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
     def _process_assignment_unpacking(
-        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+        self,
+        assignments: list[Node],
+        rebinds: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
     ) -> None:
         """`_ol, _oc, inner = parsed`: bind each target to its element type.
 
@@ -276,7 +327,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
             if left.type not in cs.PY_UNPACKING_TARGET_TYPES:
                 continue
-            call = self._defining_call(right, assignments)
+            call = self._defining_call(right, assignments, rebinds)
             if call is None:
                 continue
             elements = self._tuple_return_elements(call, module_qn, local_var_types)
@@ -294,15 +345,17 @@ class PythonAstAnalyzerMixin(_AstBase):
                 if name and name not in local_var_types:
                     local_var_types[name] = element
 
-    def _defining_call(self, right: Node, assignments: list[Node]) -> Node | None:
+    def _defining_call(
+        self, right: Node, assignments: list[Node], rebinds: list[Node]
+    ) -> Node | None:
         """The call an unpacking's right-hand side comes from, or None.
 
         Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
-        call that the nearest earlier single-name assignment IN THE SAME SCOPE
-        bound the name to. A nearer rebinding to anything but a call clears
-        it: after `p = fw(); p = supplied`, `p` is not fw's result. The walk
-        captures every assignment under the function, including a nested
-        def's, whose `p` is a different variable.
+        call that the nearest earlier binding of the name IN THE SAME SCOPE
+        gave it. A nearer binding to anything but a call clears it: after
+        `p = fw(); p = supplied` (or `p += x`, `for p in xs`, `with cm as p`),
+        `p` is not fw's result. The walk captures every statement under the
+        function, including a nested def's, whose `p` is a different variable.
         """
         if right.type == cs.TS_PY_CALL:
             return right
@@ -310,24 +363,36 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
         name = safe_decode_text(right)
         scope = _scope_of(right)
-        # The NEAREST binding before the use, not the first: `p = fw(); p =
-        # fb(); _n, w = p` unpacks fb's result. Captures are not guaranteed to
-        # come back in document order, so sort, and stop at the use.
-        defining: Node | None = None
-        for earlier in sorted(assignments, key=lambda node: node.start_byte):
-            if earlier.end_byte > right.start_byte:
-                break
+        # (position, the call bound, or None for any other binding), for every
+        # same-name same-scope binding before the use. The NEAREST one decides:
+        # `p = fw(); p = fb(); _n, w = p` unpacks fb's result. Captures are not
+        # guaranteed to come back in document order, so take the max position.
+        events: list[tuple[int, Node | None]] = []
+        for earlier in assignments:
             target = earlier.child_by_field_name(cs.TS_FIELD_LEFT)
             value = earlier.child_by_field_name(cs.TS_FIELD_RIGHT)
             if (
-                target is not None
+                earlier.end_byte <= right.start_byte
+                and target is not None
                 and value is not None
                 and target.type == cs.TS_PY_IDENTIFIER
                 and safe_decode_text(target) == name
                 and _scope_of(earlier) == scope
             ):
-                defining = value if value.type == cs.TS_PY_CALL else None
-        return defining
+                events.append(
+                    (earlier.start_byte, value if value.type == cs.TS_PY_CALL else None)
+                )
+        for statement in rebinds:
+            for target in _rebound_identifiers(statement):
+                if (
+                    target.end_byte <= right.start_byte
+                    and safe_decode_text(target) == name
+                    and _scope_of(target) == scope
+                ):
+                    events.append((target.start_byte, None))
+        if not events:
+            return None
+        return max(events, key=lambda event: event[0])[1]
 
     def _tuple_return_elements(
         self, call: Node, module_qn: str, local_var_types: dict[str, str]
@@ -393,6 +458,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             import_map = self.import_processor.import_mapping.get(module_qn, {})
             if (
                 cs.SEPARATOR_DOT not in receiver
+                and receiver not in local_var_types
                 and (module := import_map.get(receiver))
                 and (node := self._find_function_ast_node(f"{module}.{leaf}"))
                 is not None

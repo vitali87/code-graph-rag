@@ -374,6 +374,67 @@ def test_a_module_qualified_free_function_supplies_the_tuple(tmp_path: Path) -> 
     assert types.get("w") == "Widget", types
 
 
+_REBINDING_STATEMENTS = {
+    "augmented": "    p += supplied\n",
+    "for_loop": "    for p in supplied:\n        pass\n",
+    "with_as": "    with supplied as p:\n        pass\n",
+}
+
+
+@pytest.mark.parametrize("statement", sorted(_REBINDING_STATEMENTS))
+def test_a_rebinding_without_an_assignment_node_clears_the_call(
+    tmp_path: Path, statement: str
+) -> None:
+    """`p += x`, `for p in xs`, `with cm as p`: none is an `assignment`
+    node, each rebinds `p`, so a later `_n, w = p` is no longer fw's result
+    (local review P2)."""
+    types = _local_types(
+        tmp_path,
+        "def fw() -> tuple[int, Widget]:\n"
+        "    return (0, Widget())\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    p = fw()\n" + _REBINDING_STATEMENTS[statement] + "    _n, w = p\n"
+        "    return w.render()\n",
+        "use",
+    )
+    assert "w" not in types, types
+
+
+def test_a_local_shadowing_an_imported_module_name_is_the_local(
+    tmp_path: Path,
+) -> None:
+    """`helpers = Maker(); _n, w = helpers.make()`: the receiver is the LOCAL,
+    a Maker, not the imported module of the same name (local review P2)."""
+    types = _local_types(
+        tmp_path,
+        "from . import helpers\n"
+        "from .factory import Maker\n"
+        "\n"
+        "def use() -> int:\n"
+        "    helpers = Maker()\n"
+        "    _n, w = helpers.make()\n"
+        "    return w.render()\n",
+        "use",
+        extra={
+            "helpers.py": (
+                "from .engine import Banner\n"
+                "\n"
+                "def make() -> tuple[int, Banner]:\n"
+                "    return (0, Banner())\n"
+            ),
+            "factory.py": (
+                "from .engine import Widget\n"
+                "\n"
+                "class Maker:\n"
+                "    def make(self) -> tuple[int, Widget]:\n"
+                "        return (0, Widget())\n"
+            ),
+        },
+    )
+    assert types.get("w") == "Widget", types
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """Known-positive: unpacking from an UNANNOTATED call recovers nothing,
     so the bare-name fallback still fires and the harness observes the
