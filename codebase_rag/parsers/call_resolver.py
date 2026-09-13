@@ -1306,6 +1306,20 @@ class CallResolver:
                 self._remember(cache_key, result)
             return result
 
+        # A member call whose receiver has a known FIRST-PARTY class type that
+        # defines no such method (own or inherited) is a known non-edge, not an
+        # unknown one. The chained and inline receiver paths already drop this
+        # shape; the plain-variable path let it reach the probes below, where
+        # the same-module function fallback inside the import probe, or the
+        # bare-name trie at the end, bound `p.go()` on a `Product` without `go`
+        # to an unrelated `go` (issue #1897). Ahead of the import probe for that
+        # reason; never cached, because it can only fire with a non-empty local
+        # type map and `use_cache` is already False then.
+        if self._typed_receiver_lacks_method(
+            call_name, module_qn, local_var_types, language
+        ):
+            return None
+
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
@@ -1376,19 +1390,6 @@ class CallResolver:
         if self._receiver_type_is_external(call_name, module_qn, local_var_types):
             if use_cache:
                 self._remember(cache_key, None)
-            return None
-
-        # The first-party twin of the guard above: a member call whose receiver
-        # has a known FIRST-PARTY type that defines no such method (own or
-        # inherited) is a known non-edge, not an unknown one. The chained and
-        # inline receiver paths already drop this shape; the plain-variable path
-        # let it fall to the bare-name trie, which bound `p.go()` on a `Product`
-        # without `go` to an unrelated class's `go` (issue #1897).
-        # Never cached: the guard can only fire with a non-empty local type map,
-        # and `use_cache` is already False whenever that map is non-empty.
-        if self._typed_receiver_lacks_method(
-            call_name, module_qn, local_var_types, language
-        ):
             return None
 
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
@@ -1653,19 +1654,21 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None,
     ) -> bool:
-        # True for `obj.method` where `obj` has a known type that IS an indexed
-        # first-party class, and neither that class nor any base it inherits
-        # from defines `method`. The precise local-type path above already
-        # failed for exactly that reason, so the call cannot be this class's
-        # method; binding it by bare name to some other class's `method` is a
-        # false edge. An untyped receiver, an external type (the guard above)
-        # or a type that resolves to no indexed class stays out of this: their
-        # method is unknown rather than known-absent.
-        # Rust registers a trait's default methods under the TRAIT, so a type
-        # that gets `go` from `impl Runner for Product {}` has no `Product.go`
-        # anywhere in the registry; "not under the class qn" proves nothing
-        # there and the fallback (which finds `Runner.go`) stays.
-        if language == cs.SupportedLanguage.RUST:
+        # True for a Python `obj.method` where `obj` has a known type that IS
+        # an indexed first-party class, and neither that class, a base it
+        # inherits from, nor any same-named class in this module defines
+        # `method`. The precise local-type path already failed for exactly
+        # that reason, so the call cannot be this class's method; binding it
+        # by bare name to some other `method` is a false edge. An untyped
+        # receiver, an external type (`_receiver_type_is_external`) or a type
+        # that resolves to no indexed class stays out: unknown, not absent.
+        #
+        # Python only. Elsewhere a type's method set is not readable from its
+        # class qn: Go promotes methods from an embedded struct the inheritance
+        # walk does not model, and Rust registers `impl` methods under the
+        # impl's module and trait defaults under the trait. There the fallback
+        # stays as it was (found by the local review and CI on this change).
+        if language != cs.SupportedLanguage.PYTHON:
             return False
         var_type = self._two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
@@ -1685,15 +1688,19 @@ class CallResolver:
         # re-check matters where that path used an unprefixed class qn.
         if self._try_resolve_method(registered, method_name) is not None:
             return False
-        # Absence is judged against EVERY class of this name, not the one the
-        # bare name happened to resolve to: two functions each defining a
-        # local `Analyzer` resolve to the first, and an `impl` block registers
-        # its methods under the impl's own module. Any registered
-        # `<Type>.<method>` means the method exists for a type of this name,
-        # and the call is left to the fallback rather than dropped.
-        simple_type = var_type.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        return not self.function_registry.find_ending_with(
-            f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
+        # A bare type name that several classes in THIS module carry (two
+        # functions each defining a local `Analyzer`) resolved to one of them
+        # above, possibly the wrong one; if any same-named class here defines
+        # the method, the call is left to the fallback. A same-named class in
+        # another module is unrelated and does not rescue the call. The
+        # annotation is reduced first: `Product | None` names `Product`.
+        simple_type = self._strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        here = f"{module_qn}{cs.SEPARATOR_DOT}"
+        return not any(
+            qn.startswith(here)
+            for qn in self.function_registry.find_ending_with(
+                f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
+            )
         )
 
     def _receiver_type_is_external(

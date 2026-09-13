@@ -58,7 +58,7 @@ def _go_edges(repo: Path) -> set[str]:
 
 def _build(tmp_path: Path, product: str, decoy: str, app: str) -> Path:
     repo = tmp_path / "proj"
-    repo.mkdir()
+    repo.mkdir(parents=True)
     (repo / "__init__.py").touch()
     (repo / "models.py").write_text(product, encoding="utf-8")
     (repo / "elsewhere.py").write_text(decoy, encoding="utf-8")
@@ -146,6 +146,86 @@ def test_same_named_local_classes_are_left_to_the_fallback(tmp_path: Path) -> No
         if rel == cs.RelationshipType.CALLS.value and str(tgt).endswith(".go")
     }
     assert edges == {("proj.app.second", "proj.app.second.Analyzer.go")}
+
+
+def test_an_optional_annotation_is_reduced_before_the_same_named_lookup(
+    tmp_path: Path,
+) -> None:
+    # `a: Analyzer | None` resolves to the module-level `Analyzer` (no `go`);
+    # the same-named local class in `first` defines `go`, so the call must
+    # be left to the fallback. Searching for `Analyzer | None.go` would find
+    # nothing and drop it.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "app.py").write_text(
+        "class Analyzer:\n"
+        "    def size(self) -> int:\n"
+        "        return 1\n\n\n"
+        "def first() -> int:\n"
+        "    class Analyzer:\n"
+        "        def go(self) -> int:\n"
+        "            return 2\n"
+        "    return Analyzer().go()\n\n\n"
+        "def second(a: Analyzer | None) -> int:\n"
+        "    return a.go()\n",
+        encoding="utf-8",
+    )
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    edges = {
+        str(tgt)
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and str(src) == "proj.app.second"
+        and str(tgt).endswith(".go")
+    }
+    assert edges == {"proj.app.first.Analyzer.go"}
+
+
+def test_a_same_named_class_in_another_module_does_not_rescue_the_call(
+    tmp_path: Path,
+) -> None:
+    # `b.Product.go` is unrelated to the receiver's `a.Product`; its
+    # existence must not send the call back to the fallback, which would
+    # bind it there.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "a.py").write_text(
+        "class Product:\n    def size(self) -> int:\n        return 1\n",
+        encoding="utf-8",
+    )
+    (repo / "b.py").write_text(
+        "class Product:\n    def go(self) -> int:\n        return 9\n", encoding="utf-8"
+    )
+    (repo / "app.py").write_text(
+        "from proj.a import Product\n\n\ndef run(p: Product) -> int:\n    return p.go()\n",
+        encoding="utf-8",
+    )
+    assert _go_edges(repo) == set()
+
+
+def test_a_same_module_function_of_that_name_is_not_bound_either(
+    tmp_path: Path,
+) -> None:
+    # The import probe's same-module fallback used to bind `p.go()` to a
+    # module-level `go()` before the guard ran; the guard now runs first.
+    app = (
+        "from proj.models import Product\n\n\n"
+        "def go() -> int:\n    return 7\n\n\n"
+        "def run(p: Product) -> int:\n    return p.go()\n"
+    )
+    repo = _build(tmp_path, _PRODUCT_WITHOUT_GO, _DECOY_CONTROL, app)
+    assert _go_edges(repo) == set()
+    # Control: with `Product.go` defined the guard stays out of the way.
+    repo2 = _build(tmp_path / "second", _PRODUCT_WITH_GO, _DECOY_CONTROL, app)
+    assert _go_edges(repo2) == {"proj.models.Product.go"}
 
 
 def _rust_run_go_targets(tmp_path: Path, files: dict[str, str]) -> set[str]:
