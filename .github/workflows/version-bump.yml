@@ -215,7 +215,13 @@ jobs:
           # is the silent-green failure this issue is about, just relocated.
           # ERR fires on the aborting command; the trap clears itself so the
           # deliberate `exit 1` below reports its own message instead.
-          trap 'note "FAILED, the highlights API call did not complete"' ERR
+          # The file is REMOVED as well as reported. A pipeline that fails
+          # after its first stage emitted valid bullets leaves them on disk,
+          # and because the next step also carries continue-on-error it would
+          # then insert that half-written response into NEWS.md and the release
+          # body. Reporting the failure without deleting the evidence of it
+          # publishes output no stage vouched for.
+          trap 'rm -f /tmp/highlights.md; note "FAILED, the highlights API call did not complete"' ERR
           if [ -z "$HIGHLIGHTS_API_URL" ]; then
             note 'skipped, HIGHLIGHTS_API_URL is not configured'
             exit 0
@@ -245,15 +251,18 @@ jobs:
           # it reaches update_news.py indistinguishably from a release that
           # genuinely had none.
           trap - ERR
-          # Counted with the parser's own `[[:space:]]` class, not a literal
-          # space: HIGHLIGHT_BULLET is `^[-*]\s+`, so a tab-indented or
-          # double-spaced bullet is a theme to update_news.py and would be
-          # invisible to a narrower count here.
-          # `|| true` keeps grep's exit 1 on no-match from tripping `set -e`,
-          # and the `:-0` default covers the case where grep writes nothing at
-          # all (an unreadable file): without it `themes` is empty and the
-          # numeric test below is a syntax error rather than a failure report.
-          themes=$(grep -cE '^[-*][[:space:]]+' /tmp/highlights.md || true)
+          # Counted by ASKING THE PARSER, not by approximating it in grep. Two
+          # rounds of review found two different mismatches in a hand-rolled
+          # pattern: `^\*` missed dash bullets (undercount), then `^[-*] `
+          # missed tabs (undercount), and `^[-*][[:space:]]+` accepted
+          # `- **Theme**  text`, which BULLET_PATTERN rejects for having no
+          # colon (overcount). A count that disagrees with the inserter in
+          # either direction is a wrong number in the one line whose job is to
+          # be right, so the number now comes from extract_bullets itself.
+          # `|| true` and the `:-0` default keep a non-zero exit or empty
+          # output from making the numeric test below a syntax error instead of
+          # a failure report.
+          themes=$(python3 -c 'import sys; sys.path.insert(0, "."); from scripts.update_news import extract_bullets; print(len(extract_bullets(open(sys.argv[1], encoding="utf-8").read())))' /tmp/highlights.md 2>/dev/null || true)
           themes=${themes:-0}
           # Emptiness and bulletlessness are one failure, not two. A model that
           # answers in prose, or returns an error string, produces a non-empty
