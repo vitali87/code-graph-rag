@@ -1378,6 +1378,17 @@ class CallResolver:
                 self._remember(cache_key, None)
             return None
 
+        # The first-party twin of the guard above: a member call whose receiver
+        # has a known FIRST-PARTY type that defines no such method (own or
+        # inherited) is a known non-edge, not an unknown one. The chained and
+        # inline receiver paths already drop this shape; the plain-variable path
+        # let it fall to the bare-name trie, which bound `p.go()` on a `Product`
+        # without `go` to an unrelated class's `go` (issue #1897).
+        if self._typed_receiver_lacks_method(call_name, module_qn, local_var_types):
+            if use_cache:
+                self._remember(cache_key, None)
+            return None
+
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
         # where `view` is a param constructed in the caller) targets a MEMBER:
         # the bare-name trie would rebind it to an arbitrary same-named
@@ -1607,6 +1618,66 @@ class CallResolver:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
 
+    def _two_part_receiver_type(
+        self, call_name: str, local_var_types: dict[str, str] | None
+    ) -> str | None:
+        """The inferred local type of `obj` in a two-part `obj.method` call, or None."""
+        if not local_var_types or cs.SEPARATOR_DOT not in call_name:
+            return None
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return None
+        return local_var_types.get(parts[0])
+
+    def _registered_class_qn(self, class_qn: str, module_qn: str) -> str | None:
+        """The registry's spelling of a first-party class qn, or None if unindexed.
+
+        A first-party qn may be written without the project prefix (a bare
+        `from models.user import User` gives `models.user.User` while the
+        registry stores `proj.models.user.User`), so both spellings are tried.
+        """
+        if class_qn in self.function_registry:
+            return class_qn
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        prefixed = f"{project_root}{cs.SEPARATOR_DOT}{class_qn}"
+        if prefixed in self.function_registry:
+            return prefixed
+        return None
+
+    def _typed_receiver_lacks_method(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        # True for `obj.method` where `obj` has a known type that IS an indexed
+        # first-party class, and neither that class nor any base it inherits
+        # from defines `method`. The precise local-type path above already
+        # failed for exactly that reason, so the call cannot be this class's
+        # method; binding it by bare name to some other class's `method` is a
+        # false edge. An untyped receiver, an external type (the guard above)
+        # or a type that resolves to no indexed class stays out of this: their
+        # method is unknown rather than known-absent.
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
+        if var_type is None:
+            return False
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        if not class_qn:
+            return False
+        registered = self._registered_class_qn(class_qn, module_qn)
+        if registered is None:
+            return False
+        if self.function_registry[registered] != cs.NodeLabel.CLASS.value:
+            return False
+        method_name = call_name.split(cs.SEPARATOR_DOT)[1]
+        # Own or inherited. The precise local-type path has normally already
+        # answered both, so this re-check matters only where that path used a
+        # class qn spelling the registry does not hold (an unprefixed import):
+        # then the method is present under the registered spelling and the
+        # call is left to the fallback rather than dropped.
+        return self._try_resolve_method(registered, method_name) is None
+
     def _receiver_type_is_external(
         self,
         call_name: str,
@@ -1622,31 +1693,19 @@ class CallResolver:
         # absent from the map) or a project-rooted type is left alone: its method may
         # still be resolved by the fallback (e.g. a cross-file imported-class call the
         # precise path missed), so only a provably external type is suppressed.
-        if not local_var_types or cs.SEPARATOR_DOT not in call_name:
-            return False
-        parts = call_name.split(cs.SEPARATOR_DOT)
-        if len(parts) != 2:
-            return False
-        var_type = local_var_types.get(parts[0])
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
             return False
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
         if not class_qn:
             return True
-        # First-party class qns may be written without the project prefix (a bare
-        # `from models.user import User` resolves to `models.user.User` while the
-        # registry stores `proj.models.user.User`), so check both the qn as-is and
-        # the project-prefixed form before judging a type external, mirroring
-        # _is_external_import. A project-rooted qn is always treated as first-party.
+        # A project-rooted qn is always treated as first-party; otherwise the
+        # registry decides, under either spelling (see `_registered_class_qn`).
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
-        return (
-            class_qn not in self.function_registry
-            and f"{project_root}{cs.SEPARATOR_DOT}{class_qn}"
-            not in self.function_registry
-        )
+        return self._registered_class_qn(class_qn, module_qn) is None
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
