@@ -18,6 +18,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
+from . import cypher_queries as cq
 from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
@@ -738,6 +739,11 @@ def _natural_qn(qualified_name: str) -> str:
     """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment."""
     head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
     return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
+
+
+_GLOSS_RELS = frozenset(
+    {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
+)
 
 
 def _project_root_for_single_file(target: Path) -> Path:
@@ -1653,6 +1659,12 @@ class GraphUpdater:
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
+            # The re-anchor runs here too: a run whose re-anchor failed still
+            # published its cache, so the next unchanged run takes this path,
+            # and "re-attached by the next run" (the re-anchor's own contract)
+            # would otherwise be false for exactly the run that needs it. Two
+            # statements, no-ops when every note is attached (issue #1808).
+            self._reanchor_glosses()
             self.ingestor.flush_all()
             return
 
@@ -1785,6 +1797,7 @@ class GraphUpdater:
         self._link_endpoint_resources()
 
         self._prune_orphan_nodes()
+        self._reanchor_glosses()
         # The prune issues its own deletes and has no flush of its own, so the
         # flush above cannot cover them (issue #1645). Without this they are
         # still queued when the caches commit below, and a run that stops in
@@ -2915,51 +2928,81 @@ class GraphUpdater:
                 cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
             )
         except Exception:
-            # A FULL build re-parses every caller, so nothing is lost and the
-            # sync may continue; an incremental run cannot re-resolve edges
-            # from files it will not parse, so the outage must abort it
-            # rather than silently drop them.
+            # A FULL build re-parses every caller, so the source-derived edges
+            # are re-resolved and the sync may continue over an unreadable
+            # graph (test_fully_unreadable_graph_still_completes_the_rebuild
+            # pins this). The captured set also holds the ANNOTATES / MENTIONS
+            # edges of glosses (issue #1808), which have no source to come
+            # back from; those are rebuilt from the notes' own recorded names
+            # by `_reanchor_glosses` at the end of the run. An incremental run
+            # cannot re-resolve edges from files it will not parse, so there
+            # the outage aborts the run.
             if not self._is_full_build:
                 raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
+    def _restorable_edge(
+        self, row: ResultRow
+    ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
+        """The (caller_spec, rel, target_spec) a captured row restores, or None.
+
+        None for a malformed row, a target the re-index did not recreate (a
+        renamed or removed definition is correctly left without its stale
+        inbound edge, matching a clean re-index), or a label without a key.
+        """
+        caller_label = row.get(cs.KEY_CALLER_LABEL)
+        caller_qn = row.get(cs.KEY_CALLER_QN)
+        rel = row.get(cs.KEY_REL)
+        target_label = row.get(cs.KEY_TARGET_LABEL)
+        target_qn = row.get(cs.KEY_TARGET_QN)
+        if not (
+            isinstance(caller_label, str)
+            and isinstance(caller_qn, str)
+            and isinstance(rel, str)
+            and isinstance(target_label, str)
+            and isinstance(target_qn, str)
+        ):
+            return None
+        module_label = cs.NodeLabel.MODULE.value
+        if target_label != module_label and target_qn not in self.function_registry:
+            return None
+        caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
+        target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
+        if caller_key is None or target_key is None:
+            return None
+        return (
+            (caller_label, caller_key, caller_qn),
+            rel,
+            (target_label, target_key, target_qn),
+        )
+
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
-        # re-index. A target that was renamed or removed is correctly left
-        # without its stale inbound edge, matching a clean re-index.
+        # re-index (see `_restorable_edge` for what is dropped).
         if not captured:
             return
-        module_label = cs.NodeLabel.MODULE.value
         restored = 0
         for row in captured:
-            caller_label = row.get(cs.KEY_CALLER_LABEL)
-            caller_qn = row.get(cs.KEY_CALLER_QN)
-            rel = row.get(cs.KEY_REL)
-            target_label = row.get(cs.KEY_TARGET_LABEL)
-            target_qn = row.get(cs.KEY_TARGET_QN)
-            if not (
-                isinstance(caller_label, str)
-                and isinstance(caller_qn, str)
-                and isinstance(rel, str)
-                and isinstance(target_label, str)
-                and isinstance(target_qn, str)
-            ):
+            edge = self._restorable_edge(row)
+            if edge is None:
                 continue
-            if target_label != module_label and target_qn not in self.function_registry:
-                continue
-            caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
-            target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
-            if caller_key is None or target_key is None:
-                continue
+            caller_spec, rel, target_spec = edge
             # The edge's own properties (its site, issue #1522) come back with
             # it: per-site edges are keyed by them, so a bare re-emission
             # would land beside the original instead of restoring it.
             props = row.get(cs.KEY_PROPS)
-            self._sink.ensure_relationship_batch(
-                (caller_label, caller_key, caller_qn),
+            # A gloss edge goes to the RAW ingestor. The filtering sink admits
+            # what the capture selection lets a parser EMIT, and glosses are
+            # never emitted from source: their group is off by default so
+            # indexing cannot invent them. Restoring an edge that already
+            # existed is not emitting one, and through the sink it would be
+            # dropped, orphaning the note (issue #1808).
+            writer = self.ingestor if rel in _GLOSS_RELS else self._sink
+            writer.ensure_relationship_batch(
+                caller_spec,
                 rel,
-                (target_label, target_key, target_qn),
+                target_spec,
                 properties=cast(PropertyDict, props)
                 if isinstance(props, dict) and props
                 else None,
@@ -5282,6 +5325,7 @@ class GraphUpdater:
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self._reanchor_glosses()
         self.ingestor.flush_all()
 
     def _reingest_update_hashes(
@@ -5573,6 +5617,26 @@ class GraphUpdater:
         }
         if scoped:
             self.finding_analyzer.analyze(scoped)
+
+    def _reanchor_glosses(self) -> None:
+        """Re-attach every Gloss to the definitions its own record names.
+
+        A gloss lives only in the graph, so a rebuild that deletes and
+        recreates a definition, or an inbound-edge capture that could not be
+        read, would otherwise leave the note unattached and the next sweep
+        would delete it. The note records its subject and mentions by
+        qualified name, and this rebuilds the edges from that record after
+        every sync (issue #1808). Never raises: the sync has already landed,
+        and an unattached note is recoverable by the next run, so a failure
+        here is logged rather than reported as a failed sync.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
