@@ -58,31 +58,62 @@ def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
     return parts
 
 
+# Target shapes that bind plain names, and so are descended into for them:
+# `a, (b, c)`, `[a, b]`, `a, *rest`, and a with statement's `as` target. An
+# attribute or subscript target (`self.x = ...`, `p[0] = ...`) binds no local.
+_PY_BINDING_PATTERN_TYPES = cs.PY_UNPACKING_TARGET_TYPES | {
+    cs.TS_PY_LIST_SPLAT_PATTERN,
+    cs.TS_PY_AS_PATTERN_TARGET,
+}
+
+
 def _identifiers_in(target: Node) -> Iterator[Node]:
-    """The identifiers a binding target names: itself, or every one inside a
-    `a, (b, c)` pattern."""
+    """The local names a binding target binds: itself, or every one inside a
+    pattern; nothing for an attribute or subscript target."""
     if target.type == cs.TS_PY_IDENTIFIER:
         yield target
-        return
-    for child in target.named_children:
-        yield from _identifiers_in(child)
+    elif target.type in _PY_BINDING_PATTERN_TYPES:
+        for child in target.named_children:
+            yield from _identifiers_in(child)
+
+
+def _with_aliases(statement: Node) -> Iterator[Node]:
+    """The `as` targets of a with statement's items."""
+    for clause in statement.named_children:
+        for item in clause.named_children:
+            value = item.child_by_field_name(cs.FIELD_VALUE)
+            if value is None or value.type != cs.TS_PY_AS_PATTERN:
+                continue
+            alias = value.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None:
+                yield alias
 
 
 def _rebound_identifiers(node: Node) -> Iterator[Node]:
     """Identifiers a for / with / augmented assignment binds, without
     descending into the statement's body."""
     if node.type == cs.TS_PY_WITH_STATEMENT:
-        for clause in node.named_children:
-            for item in clause.named_children:
-                value = item.child_by_field_name(cs.FIELD_VALUE)
-                if value is not None and value.type == cs.TS_PY_AS_PATTERN:
-                    alias = value.child_by_field_name(cs.FIELD_ALIAS)
-                    if alias is not None:
-                        yield from _identifiers_in(alias)
-        return
-    left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-    if left is not None:
-        yield from _identifiers_in(left)
+        targets: Iterator[Node] = _with_aliases(node)
+    else:
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        targets = iter(()) if left is None else iter((left,))
+    for target in targets:
+        yield from _identifiers_in(target)
+
+
+def _parameter_names(function: Node) -> Iterator[str]:
+    """Every name a def's parameter list binds, annotated or not."""
+    parameters = function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    for parameter in parameters.named_children if parameters is not None else ():
+        # `x`, `x: T`, `x=1`, `x: T = 1`, `*args`, `**kw`: the identifier is
+        # the node itself or its first named child; a bare `/` or `*` has none.
+        candidates = (parameter, *parameter.named_children)
+        if (
+            first := next(
+                (c for c in candidates if c.type == cs.TS_PY_IDENTIFIER), None
+            )
+        ) is not None and (name := safe_decode_text(first)):
+            yield name
 
 
 def _scope_of(node: Node) -> int | None:
@@ -91,6 +122,68 @@ def _scope_of(node: Node) -> int | None:
     while current is not None and current.type not in _PY_SCOPE_TYPES:
         current = current.parent
     return current.id if current is not None else None
+
+
+def _locally_bound_names(
+    caller: Node, assignments: list[Node], rebinds: list[Node]
+) -> frozenset[str]:
+    """Every name bound in the caller's own scope: its parameters and the
+    targets of each same-scope assignment or rebinding statement, typed or
+    not. Python makes a name assigned ANYWHERE in a body local for the whole
+    body, so an imported module or function it shadows is unreachable there
+    even before the binding runs (Greptile P1)."""
+    identifiers: list[Node] = []
+    for assignment in assignments:
+        left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None:
+            identifiers.extend(_identifiers_in(left))
+    for statement in rebinds:
+        identifiers.extend(_rebound_identifiers(statement))
+    names = set(_parameter_names(caller))
+    names.update(
+        name
+        for identifier in identifiers
+        if _scope_of(identifier) == caller.id and (name := safe_decode_text(identifier))
+    )
+    return frozenset(names)
+
+
+def _binds(target: Node, name: str, scope: int | None, before: int) -> bool:
+    """Whether an identifier node binds `name` in `scope`, ending before byte
+    `before`."""
+    return (
+        target.end_byte <= before
+        and safe_decode_text(target) == name
+        and _scope_of(target) == scope
+    )
+
+
+def _binding_events(
+    name: str,
+    scope: int | None,
+    before: int,
+    assignments: list[Node],
+    rebinds: list[Node],
+) -> list[tuple[int, Node | None]]:
+    """(position, the call bound, or None for any other binding), for every
+    same-name same-scope binding of `name` before byte `before`."""
+    events: list[tuple[int, Node | None]] = []
+    for earlier in assignments:
+        target = earlier.child_by_field_name(cs.TS_FIELD_LEFT)
+        value = earlier.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if target is None or value is None or target.type != cs.TS_PY_IDENTIFIER:
+            continue
+        if _binds(target, name, scope, before):
+            events.append(
+                (earlier.start_byte, value if value.type == cs.TS_PY_CALL else None)
+            )
+    for statement in rebinds:
+        events.extend(
+            (target.start_byte, None)
+            for target in _rebound_identifiers(statement)
+            if _binds(target, name, scope, before)
+        )
+    return events
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -247,7 +340,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
         self._process_assignment_unpacking(
-            assignments, rebinds, local_var_types, module_qn
+            node, assignments, rebinds, local_var_types, module_qn
         )
 
         for comp in comprehensions:
@@ -304,6 +397,7 @@ class PythonAstAnalyzerMixin(_AstBase):
 
     def _process_assignment_unpacking(
         self,
+        caller: Node,
         assignments: list[Node],
         rebinds: list[Node],
         local_var_types: dict[str, str],
@@ -318,32 +412,49 @@ class PythonAstAnalyzerMixin(_AstBase):
         `tuple[A, B, C]`, or a local that was assigned such a call earlier in
         the same body; the annotation is read RAW here because
         `_annotated_return_type` deliberately refuses a heterogeneous tuple,
-        which is exactly what unpacking consumes position by position.
+        which is exactly what unpacking consumes position by position. The
+        walk captures every assignment under the caller, including a nested
+        def's, whose targets are that def's locals, not the caller's
+        (CodeRabbit).
         """
+        bound = _locally_bound_names(caller, assignments, rebinds)
         for assignment in assignments:
-            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
-            right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
-            if left is None or right is None:
-                continue
-            if left.type not in cs.PY_UNPACKING_TARGET_TYPES:
-                continue
-            call = self._defining_call(right, assignments, rebinds)
-            if call is None:
-                continue
-            elements = self._tuple_return_elements(call, module_qn, local_var_types)
-            if not elements:
-                continue
-            targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
-            if len(elements) == 1 and elements[0][1]:
-                elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
-            if len(elements) != len(targets):
-                continue
-            for target, (element, _homogeneous) in zip(targets, elements, strict=True):
-                if target.type != cs.TS_PY_IDENTIFIER:
-                    continue  # a nested pattern or a starred target binds no one type
-                name = safe_decode_text(target)
-                if name and name not in local_var_types:
-                    local_var_types[name] = element
+            if _scope_of(assignment) == caller.id:
+                self._bind_unpacked_targets(
+                    assignment, assignments, rebinds, bound, local_var_types, module_qn
+                )
+
+    def _bind_unpacked_targets(
+        self,
+        assignment: Node,
+        assignments: list[Node],
+        rebinds: list[Node],
+        bound: frozenset[str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if (
+            left is None
+            or right is None
+            or left.type not in cs.PY_UNPACKING_TARGET_TYPES
+            or (call := self._defining_call(right, assignments, rebinds)) is None
+        ):
+            return
+        elements = self._tuple_return_elements(call, module_qn, local_var_types, bound)
+        targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
+        if len(elements) == 1 and elements[0][1]:
+            elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
+        if len(elements) != len(targets):
+            return  # a count mismatch, or no tuple annotation at all
+        for target, (element, _homogeneous) in zip(targets, elements, strict=True):
+            # A nested pattern or a starred target binds no one type.
+            name = (
+                safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
+            )
+            if name and name not in local_var_types:
+                local_var_types[name] = element
 
     def _defining_call(
         self, right: Node, assignments: list[Node], rebinds: list[Node]
@@ -354,53 +465,32 @@ class PythonAstAnalyzerMixin(_AstBase):
         call that the nearest earlier binding of the name IN THE SAME SCOPE
         gave it. A nearer binding to anything but a call clears it: after
         `p = fw(); p = supplied` (or `p += x`, `for p in xs`, `with cm as p`),
-        `p` is not fw's result. The walk captures every statement under the
-        function, including a nested def's, whose `p` is a different variable.
+        `p` is not fw's result. Captures are not guaranteed to come back in
+        document order, so the nearest binding is the max position, not the
+        last seen.
         """
         if right.type == cs.TS_PY_CALL:
             return right
-        if right.type != cs.TS_PY_IDENTIFIER:
+        if right.type != cs.TS_PY_IDENTIFIER or not (name := safe_decode_text(right)):
             return None
-        name = safe_decode_text(right)
-        scope = _scope_of(right)
-        # (position, the call bound, or None for any other binding), for every
-        # same-name same-scope binding before the use. The NEAREST one decides:
-        # `p = fw(); p = fb(); _n, w = p` unpacks fb's result. Captures are not
-        # guaranteed to come back in document order, so take the max position.
-        events: list[tuple[int, Node | None]] = []
-        for earlier in assignments:
-            target = earlier.child_by_field_name(cs.TS_FIELD_LEFT)
-            value = earlier.child_by_field_name(cs.TS_FIELD_RIGHT)
-            if (
-                earlier.end_byte <= right.start_byte
-                and target is not None
-                and value is not None
-                and target.type == cs.TS_PY_IDENTIFIER
-                and safe_decode_text(target) == name
-                and _scope_of(earlier) == scope
-            ):
-                events.append(
-                    (earlier.start_byte, value if value.type == cs.TS_PY_CALL else None)
-                )
-        for statement in rebinds:
-            for target in _rebound_identifiers(statement):
-                if (
-                    target.end_byte <= right.start_byte
-                    and safe_decode_text(target) == name
-                    and _scope_of(target) == scope
-                ):
-                    events.append((target.start_byte, None))
+        events = _binding_events(
+            name, _scope_of(right), right.start_byte, assignments, rebinds
+        )
         if not events:
             return None
         return max(events, key=lambda event: event[0])[1]
 
     def _tuple_return_elements(
-        self, call: Node, module_qn: str, local_var_types: dict[str, str]
+        self,
+        call: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
     ) -> list[tuple[str, bool]]:
         """(element type, is `...`-homogeneous) per position of the callee's
         `tuple[...]` return annotation, Optional stripped; empty if the callee
         cannot be found or does not return a tuple."""
-        callee = self._callee_definition(call, module_qn, local_var_types)
+        callee = self._callee_definition(call, module_qn, local_var_types, bound)
         if callee is None:
             return []
         callee_node, callee_qn = callee
@@ -436,37 +526,72 @@ class PythonAstAnalyzerMixin(_AstBase):
         return self._trusted_annotation_name(element, callee_qn, module_qn) or element
 
     def _callee_definition(
-        self, call: Node, module_qn: str, local_var_types: dict[str, str]
+        self,
+        call: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
     ) -> tuple[Node, str] | None:
-        """(definition node, qualified name) of what a call invokes, or None."""
+        """(definition node, qualified name) of what a call invokes, or None.
+
+        A name bound in the caller's own scope -- a parameter, an assignment,
+        a loop or with target, typed or not -- is that local, never the
+        imported module or function of the same name. An earlier guard asked
+        the type map, which an untyped local never reaches (Greptile P1).
+        """
         func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if func is None:
             return None
-        if func.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(func)):
-            import_map = self.import_processor.import_mapping.get(module_qn, {})
-            for qn in (import_map.get(name), f"{module_qn}{cs.SEPARATOR_DOT}{name}"):
-                if qn and (node := self._find_function_ast_node(qn)) is not None:
-                    return node, qn
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if func.type == cs.TS_PY_IDENTIFIER:
+            return self._free_function_definition(func, module_qn, import_map, bound)
+        if func.type == cs.TS_PY_ATTRIBUTE:
+            return self._method_definition(
+                func, module_qn, import_map, local_var_types, bound
+            )
+        return None
+
+    def _free_function_definition(
+        self,
+        func: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+        bound: frozenset[str],
+    ) -> tuple[Node, str] | None:
+        name = safe_decode_text(func)
+        if not name or name in bound:
             return None
-        if func.type == cs.TS_PY_ATTRIBUTE and (
-            text := self._extract_full_method_call(func)
-        ):
-            # `helpers.make_pair()`: the receiver is an imported MODULE, which
-            # the method resolver (built for typed receivers) cannot name; the
-            # import map can, and the qn it gives is a function's.
-            receiver, _, leaf = text.rpartition(cs.SEPARATOR_DOT)
-            import_map = self.import_processor.import_mapping.get(module_qn, {})
-            if (
-                cs.SEPARATOR_DOT not in receiver
-                and receiver not in local_var_types
-                and (module := import_map.get(receiver))
-                and (node := self._find_function_ast_node(f"{module}.{leaf}"))
-                is not None
-            ):
-                return node, f"{module}.{leaf}"
-            qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
-            if qn and (node := self._find_method_ast_node(qn)) is not None:
+        for qn in (import_map.get(name), f"{module_qn}{cs.SEPARATOR_DOT}{name}"):
+            if qn and (node := self._find_function_ast_node(qn)) is not None:
                 return node, qn
+        return None
+
+    def _method_definition(
+        self,
+        func: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
+    ) -> tuple[Node, str] | None:
+        text = self._extract_full_method_call(func)
+        if not text:
+            return None
+        # `helpers.make_pair()`: the receiver is an imported MODULE, which the
+        # method resolver (built for typed receivers) cannot name; the import
+        # map can, and the qn it gives is a function's.
+        receiver, _, leaf = text.rpartition(cs.SEPARATOR_DOT)
+        if (
+            cs.SEPARATOR_DOT not in receiver
+            and receiver not in bound
+            and (module := import_map.get(receiver))
+        ):
+            qn = f"{module}{cs.SEPARATOR_DOT}{leaf}"
+            if (node := self._find_function_ast_node(qn)) is not None:
+                return node, qn
+        qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
+        if qn and (node := self._find_method_ast_node(qn)) is not None:
+            return node, qn
         return None
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:

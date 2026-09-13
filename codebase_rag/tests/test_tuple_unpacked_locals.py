@@ -254,7 +254,8 @@ def test_a_count_mismatch_binds_nothing(tmp_path: Path) -> None:
         "def mismatch() -> int:\n    a, b = three()\n    return b.render()\n",
         "mismatch",
     )
-    assert "a" not in types and "b" not in types, types
+    assert "a" not in types, types
+    assert "b" not in types, types
 
 
 def test_optional_and_nested_generics_are_read_through(tmp_path: Path) -> None:
@@ -348,7 +349,8 @@ def test_a_union_inside_an_element_is_not_a_top_level_union(tmp_path: Path) -> N
         "    return b.render()\n",
         "use",
     )
-    assert types.get("b") == "Banner" and types.get("w") == "Widget | None", types
+    assert types.get("b") == "Banner", types
+    assert types.get("w") == "Widget | None", types
 
 
 def test_a_module_qualified_free_function_supplies_the_tuple(tmp_path: Path) -> None:
@@ -433,6 +435,134 @@ def test_a_local_shadowing_an_imported_module_name_is_the_local(
         },
     )
     assert types.get("w") == "Widget", types
+
+
+_HELPERS_BANNER = (
+    "from .engine import Banner\n"
+    "\n"
+    "def make_pair() -> tuple[int, Banner]:\n"
+    "    return (0, Banner())\n"
+)
+
+# body -> the type `w` must get: None when a local binding of the callee's
+# name makes the imported module or function unreachable, whatever the
+# binding's own type is. Python makes a name assigned ANYWHERE in a body local
+# for the whole body, so the binding's position does not matter either.
+_UNTYPED_SHADOWS = {
+    "local_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    helpers = supplied\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "parameter_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(helpers) -> int:\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "later_local_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    helpers = supplied\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "loop_variable_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    for helpers in supplied:\n"
+        "        pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "local_over_imported_function": (
+        "from .helpers import make_pair\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    make_pair = supplied\n"
+        "    _n, w = make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    # A nested def's binding is that def's local; the outer `helpers` is
+    # still the module.
+    "nested_local_does_not_shadow": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    def helper() -> int:\n"
+        "        helpers = supplied\n"
+        "        return 0\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render() + helper()\n",
+        "Banner",
+    ),
+    # `obj.helpers = ...` binds an attribute, not a local named `helpers`.
+    "attribute_target_is_not_a_local": (
+        "from . import helpers\n"
+        "\n"
+        "def use(obj) -> int:\n"
+        "    obj.helpers = obj\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
+    # Known-positive for the function form: the same import, unshadowed.
+    "imported_function_unshadowed": (
+        "from .helpers import make_pair\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    _n, w = make_pair()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
+}
+
+
+@pytest.mark.parametrize("shadow", sorted(_UNTYPED_SHADOWS))
+def test_an_untyped_local_binding_shadows_an_imported_name(
+    tmp_path: Path, shadow: str
+) -> None:
+    """`helpers = supplied; _n, w = helpers.make_pair()`: `helpers` is the
+    untyped local, not the imported module, so `w` gets no type. The earlier
+    guard looked only at TYPED locals, and an untyped one was invisible to it
+    (Greptile P1). The parameter and later-binding forms are the same rule;
+    the function form is the identifier path of the same lookup."""
+    body, expected = _UNTYPED_SHADOWS[shadow]
+    types = _local_types(tmp_path, body, "use", extra={"helpers.py": _HELPERS_BANNER})
+    assert types.get("w") == expected, types
+
+
+def test_a_nested_scope_unpacking_does_not_type_the_outer_name(
+    tmp_path: Path,
+) -> None:
+    """A nested def's `_n, w = fw()` binds the nested def's `w`; the outer
+    `w`, bound to an untyped parameter, must not receive Widget from it
+    (CodeRabbit)."""
+    types = _local_types(
+        tmp_path,
+        "def fw() -> tuple[int, Widget]:\n"
+        "    return (0, Widget())\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    w = supplied\n"
+        "    def helper() -> int:\n"
+        "        _n, w = fw()\n"
+        "        return w.render()\n"
+        "    return w.render() + helper()\n",
+        "use",
+    )
+    assert "w" not in types, types
 
 
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
