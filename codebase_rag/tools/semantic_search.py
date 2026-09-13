@@ -137,17 +137,22 @@ def get_function_source_code(
 
         # The recorded absolute_path is authoritative: a same-named file in
         # the process CWD must not shadow the indexed node. The relative
-        # path covers repos moved since indexing and old graphs without the
-        # property (issue #425).
+        # path covers stale node paths and old graphs without the property
+        # (issue #425), but must satisfy the same known-project boundary.
+        qualified_name = str(result.get("qualified_name", ""))
+        project_roots = _resolve_project_roots(ingestor, roots_cache)
         absolute_path = result.get("absolute_path")
         if absolute_path and not absolute_path_within_project_root(
-            str(result.get("qualified_name", "")),
-            absolute_path,
-            _resolve_project_roots(ingestor, roots_cache),
+            qualified_name, absolute_path, project_roots
         ):
             absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
+        elif not absolute_path_within_project_root(
+            qualified_name, str(file_path_obj), project_roots
+        ):
+            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+            return None
 
         return extract_source_lines(file_path_obj, start_line, end_line)
 

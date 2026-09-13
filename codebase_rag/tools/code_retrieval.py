@@ -86,18 +86,24 @@ class CodeRetriever:
 
             # The recorded absolute_path is authoritative: a same-named file
             # in the active repo must not shadow a cross-project node. The
-            # relative join covers repos moved since indexing and old graphs
-            # without the property (issue #425).
+            # relative join covers stale node paths and old graphs without
+            # the property (issue #425), but must stay inside the node's
+            # known project root too: a missing foreign source is not local.
+            project_roots = await self._get_project_roots()
             absolute_path_str = res.get("absolute_path")
             if absolute_path_str and not absolute_path_within_project_root(
-                qualified_name, absolute_path_str, await self._get_project_roots()
+                qualified_name, absolute_path_str, project_roots
             ):
                 absolute_path_str = None
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:
                 full_path = (self.project_root / file_path_str).resolve()
-                if not full_path.is_relative_to(self.project_root):
+                if not full_path.is_relative_to(
+                    self.project_root
+                ) or not absolute_path_within_project_root(
+                    qualified_name, str(full_path), project_roots
+                ):
                     return CodeSnippet(
                         qualified_name=qualified_name,
                         source_code="",
