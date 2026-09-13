@@ -148,10 +148,8 @@ def test_same_named_local_classes_are_left_to_the_fallback(tmp_path: Path) -> No
     assert edges == {("proj.app.second", "proj.app.second.Analyzer.go")}
 
 
-def test_a_rust_method_from_another_modules_impl_still_binds(tmp_path: Path) -> None:
-    # Rust registers impl-block methods under the impl's module, not the
-    # struct's qn, so "no method under the class qn" is not absence there.
-    parsers, _queries = load_parsers()
+def _rust_run_go_targets(tmp_path: Path, files: dict[str, str]) -> set[str]:
+    parsers, queries = load_parsers()
     if "rust" not in {str(k) for k in parsers}:
         pytest.skip("rust parser not available")
     repo = tmp_path / "proj"
@@ -160,28 +158,52 @@ def test_a_rust_method_from_another_modules_impl_still_binds(tmp_path: Path) -> 
         '[package]\nname = "proj"\nversion = "0.1.0"\nedition = "2021"\n',
         encoding="utf-8",
     )
-    (repo / "src" / "lib.rs").write_text(
-        "pub mod models;\npub mod ext;\npub mod app;\n", encoding="utf-8"
-    )
-    (repo / "src" / "models.rs").write_text("pub struct Product;\n", encoding="utf-8")
-    (repo / "src" / "ext.rs").write_text(
-        "use crate::models::Product;\nimpl Product { pub fn go(&self) -> i32 { 3 } }\n",
-        encoding="utf-8",
-    )
-    (repo / "src" / "app.rs").write_text(
-        "use crate::models::Product;\n\npub fn run(p: Product) -> i32 {\n    p.go()\n}\n",
-        encoding="utf-8",
-    )
-    parsers, queries = load_parsers()
+    for name, source in files.items():
+        (repo / "src" / name).write_text(source, encoding="utf-8")
     store = _StatefulIngestor()
     GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
         force=True
     )
-    edges = {
+    return {
         str(tgt)
         for _sl, src, rel, _tl, tgt in store.edges
         if rel == cs.RelationshipType.CALLS.value
         and str(src).endswith(".app.run")
         and str(tgt).endswith(".go")
     }
-    assert edges == {"proj.src.ext.Product.go"}
+
+
+def test_a_rust_method_from_another_modules_impl_still_binds(tmp_path: Path) -> None:
+    # Rust registers impl-block methods under the impl's module, not the
+    # struct's qn: `Product.go` exists, under `ext`, and the guard's
+    # registry-wide check must find it there.
+    targets = _rust_run_go_targets(
+        tmp_path,
+        {
+            "lib.rs": "pub mod models;\npub mod ext;\npub mod app;\n",
+            "models.rs": "pub struct Product;\n",
+            "ext.rs": "use crate::models::Product;\nimpl Product { pub fn go(&self) -> i32 { 3 } }\n",
+            "app.rs": "use crate::models::Product;\n\npub fn run(p: Product) -> i32 {\n    p.go()\n}\n",
+        },
+    )
+    assert targets == {"proj.src.ext.Product.go"}
+
+
+def test_a_rust_trait_default_method_still_binds(tmp_path: Path) -> None:
+    # A trait's default method registers under the TRAIT: no `Product.go`
+    # exists anywhere, so only the Rust exemption keeps this edge.
+    targets = _rust_run_go_targets(
+        tmp_path,
+        {
+            "lib.rs": "pub mod models;\npub mod app;\n",
+            "models.rs": (
+                "pub trait Runner {\n    fn go(&self) -> i32 { 3 }\n}\n\n"
+                "pub struct Product;\n\nimpl Runner for Product {}\n"
+            ),
+            "app.rs": (
+                "use crate::models::{Product, Runner};\n\n"
+                "pub fn run(p: Product) -> i32 {\n    p.go()\n}\n"
+            ),
+        },
+    )
+    assert targets == {"proj.src.models.Runner.go"}

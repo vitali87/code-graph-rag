@@ -1661,10 +1661,10 @@ class CallResolver:
         # false edge. An untyped receiver, an external type (the guard above)
         # or a type that resolves to no indexed class stays out of this: their
         # method is unknown rather than known-absent.
-        # Rust registers an `impl` block's methods under the module the impl
-        # sits in and a trait's default methods under the trait, so a type's
-        # method set is not readable from its own qn; "not under the class qn"
-        # proves nothing there and the fallback stays.
+        # Rust registers a trait's default methods under the TRAIT, so a type
+        # that gets `go` from `impl Runner for Product {}` has no `Product.go`
+        # anywhere in the registry; "not under the class qn" proves nothing
+        # there and the fallback (which finds `Runner.go`) stays.
         if language == cs.SupportedLanguage.RUST:
             return False
         var_type = self._two_part_receiver_type(call_name, local_var_types)
@@ -1679,28 +1679,19 @@ class CallResolver:
             return False
         if self.function_registry[registered] != cs.NodeLabel.CLASS.value:
             return False
-        simple_type = var_type.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        # A bare type name that several classes in this module carry (two
-        # functions each defining a local `Analyzer`) resolved to ONE of them
-        # above, possibly the wrong one; judging absence against it would drop
-        # a real call. Ambiguous names are left to the fallback.
-        same_named_here = [
-            qn
-            for qn in self.function_registry.find_ending_with(simple_type)
-            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-            and self.function_registry[qn] == cs.NodeLabel.CLASS.value
-        ]
-        if len(same_named_here) > 1:
-            return False
         method_name = call_name.split(cs.SEPARATOR_DOT)[1]
         # Own or inherited under the registered spelling. The precise
         # local-type path has normally already answered both, so this
         # re-check matters where that path used an unprefixed class qn.
         if self._try_resolve_method(registered, method_name) is not None:
             return False
-        # Last, any registered `<Type>.<method>` anywhere (a method emitted
-        # under a different module than its type, as some frontends do) means
-        # the method exists for a type of this name; leave it to the fallback.
+        # Absence is judged against EVERY class of this name, not the one the
+        # bare name happened to resolve to: two functions each defining a
+        # local `Analyzer` resolve to the first, and an `impl` block registers
+        # its methods under the impl's own module. Any registered
+        # `<Type>.<method>` means the method exists for a type of this name,
+        # and the call is left to the fallback rather than dropped.
+        simple_type = var_type.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         return not self.function_registry.find_ending_with(
             f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
         )
