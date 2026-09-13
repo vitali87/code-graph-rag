@@ -239,13 +239,30 @@ jobs:
           # in $? because the pipeline's status is the LAST stage's, and
           # PIPESTATUS would work here but is clobbered by the next command
           # run, so a line inserted above this check would silently disable it.
-          # The emptiness test is separate and not redundant: the redirection
-          # creates the file whether or not anything is written to it, so its
-          # existence proves nothing, and an empty one reaches update_news.py
-          # indistinguishably from a release that genuinely had no themes.
+          # The theme count below is a separate check and not redundant: the
+          # redirection creates the file whether or not anything is written to
+          # it, so its existence proves nothing, and a file with no themes in
+          # it reaches update_news.py indistinguishably from a release that
+          # genuinely had none.
           trap - ERR
-          if [ ! -s /tmp/highlights.md ]; then
-            note 'FAILED, the API returned nothing usable; NEWS.md will not change'
+          # Counted with the parser's own `[[:space:]]` class, not a literal
+          # space: HIGHLIGHT_BULLET is `^[-*]\s+`, so a tab-indented or
+          # double-spaced bullet is a theme to update_news.py and would be
+          # invisible to a narrower count here.
+          # `|| true` keeps grep's exit 1 on no-match from tripping `set -e`,
+          # and the `:-0` default covers the case where grep writes nothing at
+          # all (an unreadable file): without it `themes` is empty and the
+          # numeric test below is a syntax error rather than a failure report.
+          themes=$(grep -cE '^[-*][[:space:]]+' /tmp/highlights.md || true)
+          themes=${themes:-0}
+          # Emptiness and bulletlessness are one failure, not two. A model that
+          # answers in prose, or returns an error string, produces a non-empty
+          # file containing no themes -- which passes a `-s` test and would be
+          # reported as a successful release that generated 0 themes. That is
+          # the silent green this whole change exists to remove, so the count
+          # decides, not the file size.
+          if [ "$themes" -eq 0 ]; then
+            note 'FAILED, the API returned no usable themes; NEWS.md will not change'
             exit 1
           fi
           # `[-*] ` and not `\*`: update_news.py's HIGHLIGHT_BULLET accepts both
@@ -255,7 +272,7 @@ jobs:
           # space keeps an `*emphasis*` line from counting as a bullet, and
           # `|| true` rather than `|| echo 0` because grep -c already prints 0
           # when it matches nothing; echoing another splits the summary in two.
-          note "generated $(grep -c '^[-*] ' /tmp/highlights.md || true) theme(s)"
+          note "generated $themes theme(s)"
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
