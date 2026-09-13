@@ -48,6 +48,7 @@ from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    enclosing_class_node,
     function_span_key,
     get_function_captures,
     go_parameter_names,
@@ -1999,7 +2000,15 @@ class CallProcessor:
         # _filter_calls_in_node behavior their flow-tracing relies on.
         owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
         for func_node in func_nodes:
-            if has_classes and self._is_method(func_node, lang_config):
+            # Anything scoped inside a class body -- a method, and a function
+            # nested in a method -- is walked by _process_methods_in_class
+            # with the class context set. Walking it here too emitted every
+            # call edge twice, and once the class pass could type `self`
+            # the second copy was a false bare-name edge (issue #1903).
+            # Skip only what that pass will actually walk: it drops a class
+            # it cannot name (a JS mixin's `(Base) => class extends Base`),
+            # and those nested functions would otherwise lose every edge.
+            if has_classes and self._class_pass_owns(func_node, lang_config, language):
                 continue
 
             if language in _C_FAMILY_LANGUAGES:
@@ -8320,3 +8329,18 @@ class CallProcessor:
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         return is_method_node(func_node, lang_config)
+
+    def _class_pass_owns(
+        self, func_node: Node, lang_config: LanguageSpec, language: str
+    ) -> bool:
+        # Mirrors _process_calls_in_classes: a class with a body that it can
+        # name gets a class pass; everything inside it is that pass's.
+        class_node = enclosing_class_node(func_node, lang_config)
+        if class_node is None:
+            return False
+        if class_node.child_by_field_name(cs.FIELD_BODY) is None:
+            return False
+        class_name = self._get_class_name_for_node(class_node, language)
+        if not class_name and language in _JS_TS_LANGUAGES:
+            class_name = js_ts_utils.class_binding_name(class_node)
+        return bool(class_name)
