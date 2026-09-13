@@ -181,6 +181,7 @@ ONEOF_PATTERN = "pattern"
 ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
+ONEOF_PARAMETER = "parameter"
 
 
 class UniqueKeyType(StrEnum):
@@ -226,6 +227,8 @@ class NodeLabel(StrEnum):
     # delete comments, and no cross-language exemption for a structured
     # comment is achievable.
     GLOSS = "Gloss"
+    # A declared formal parameter of a Function or Method (issue #1804).
+    PARAMETER = "Parameter"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -259,6 +262,9 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # It reuses the `qualified_name` key so the existing constraint, index
     # and MERGE machinery apply unchanged.
     NodeLabel.GLOSS: UniqueKeyType.QUALIFIED_NAME,
+    # <callable qn>.<index>: one node per declared slot, keyed so a rename of
+    # the parameter is an update of the same node, not a new one.
+    NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -312,6 +318,10 @@ class RelationshipType(StrEnum):
     # traversing MENTIONS finds glosses that talk about a symbol without
     # being filed under it.
     MENTIONS = "MENTIONS"
+    # Function|Method -> Parameter, carrying {index} (issue #1804).
+    HAS_PARAMETER = "HAS_PARAMETER"
+    # Parameter -> the project type its annotation resolves to.
+    OF_TYPE = "OF_TYPE"
 
 
 class CaptureGroup(StrEnum):
@@ -326,6 +336,7 @@ class CaptureGroup(StrEnum):
     # label and its edges obey the same enable/disable contract as everything
     # else, rather than becoming a second, parallel mechanism.
     GLOSSES = "glosses"
+    PARAMETERS = "parameters"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -391,6 +402,14 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.MENTIONS,
         }
     ),
+    # Opt-in (issue #1804): roughly 2.6x the node count of a repo, and the
+    # per-parameter OF_TYPE resolution is measured at 1.16x today's ACCEPTS.
+    CaptureGroup.PARAMETERS: frozenset(
+        {
+            RelationshipType.HAS_PARAMETER,
+            RelationshipType.OF_TYPE,
+        }
+    ),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -402,6 +421,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
         {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
     ),
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
+    CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
