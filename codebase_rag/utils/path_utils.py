@@ -473,6 +473,20 @@ def project_roots_from_rows(
     return roots
 
 
+def project_root_for_qualified_name(
+    qualified_name: str, roots: dict[str, str | None]
+) -> Path | None:
+    matches = [name for name in roots if qualified_name.startswith(name + ".")]
+    if not matches:
+        return None
+    owner = matches[0]
+    for name in matches[1:]:
+        if len(name) > len(owner):
+            owner = name
+    root = roots[owner]
+    return Path(root).resolve() if root is not None else None
+
+
 def absolute_path_within_project_root(
     qualified_name: str, absolute_path: str, roots: dict[str, str | None]
 ) -> bool:
@@ -482,14 +496,7 @@ def absolute_path_within_project_root(
     project is the longest known name prefixing the qualified name. The
     resolve() calls are load-bearing: containment is checked lexically, so
     an unresolved ``..`` segment or symlink would escape the root."""
-    matches = [name for name in roots if qualified_name.startswith(name + ".")]
-    if not matches:
-        return True
-    owner = matches[0]
-    for name in matches[1:]:
-        if len(name) > len(owner):
-            owner = name
-    root = roots[owner]
+    root = project_root_for_qualified_name(qualified_name, roots)
     if root is None:
         return True
-    return Path(absolute_path).resolve().is_relative_to(Path(root).resolve())
+    return Path(absolute_path).resolve().is_relative_to(root)

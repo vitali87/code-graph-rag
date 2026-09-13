@@ -82,6 +82,40 @@ class TestFallbackOwnership:
 
         assert result is None
 
+    @pytest.mark.parametrize("absolute_kind", ["stale", "absent", "outside-root"])
+    @pytest.mark.parametrize("local_collision", [False, True])
+    async def test_foreign_relative_source_is_resolved_from_its_indexed_root(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: Reader,
+        absolute_kind: str,
+        local_collision: bool,
+    ) -> None:
+        current_repo = tmp_path / "orders"
+        current_repo.mkdir()
+        collision = current_repo / RELATIVE_PATH
+        if local_collision:
+            collision.parent.mkdir(parents=True)
+            collision.write_text("wrong source\nwrong source\n", encoding="utf-8")
+        other_repo = tmp_path / "users"
+        source = other_repo / RELATIVE_PATH
+        source.parent.mkdir(parents=True)
+        source.write_text(SOURCE, encoding="utf-8", newline="\n")
+        monkeypatch.chdir(current_repo)
+        target = tmp_path / "old-users" / RELATIVE_PATH
+        if absolute_kind == "absent":
+            target = None
+        elif absolute_kind == "outside-root":
+            target = collision
+        roots = {"service": str(current_repo), "service.users": str(other_repo)}
+
+        result = await _read_source(
+            reader, current_repo, _make_source_ingestor(target, roots)
+        )
+
+        assert result == SOURCE.strip()
+
     async def test_stale_node_path_can_fall_back_inside_its_current_project_root(
         self,
         tmp_path: Path,

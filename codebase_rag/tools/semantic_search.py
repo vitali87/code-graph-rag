@@ -20,6 +20,7 @@ from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
 from ..utils.path_utils import (
     absolute_path_within_project_root,
+    project_root_for_qualified_name,
     project_roots_from_rows,
 )
 from . import tool_descriptions as td
@@ -148,11 +149,15 @@ def get_function_source_code(
             absolute_path = None
         if absolute_path and Path(absolute_path).is_file():
             file_path_obj = Path(absolute_path)
-        elif not absolute_path_within_project_root(
-            qualified_name, str(file_path_obj), project_roots
-        ):
-            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
-            return None
+        else:
+            owner_root = project_root_for_qualified_name(qualified_name, project_roots)
+            if owner_root is not None:
+                file_path_obj = (owner_root / file_path_obj).resolve()
+            if not absolute_path_within_project_root(
+                qualified_name, str(file_path_obj), project_roots
+            ):
+                logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+                return None
 
         return extract_source_lines(file_path_obj, start_line, end_line)
 

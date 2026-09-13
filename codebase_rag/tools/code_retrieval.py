@@ -15,6 +15,7 @@ from ..services import QueryProtocol
 from ..taint import ReadContentRecord
 from ..utils.path_utils import (
     absolute_path_within_project_root,
+    project_root_for_qualified_name,
     project_roots_from_rows,
 )
 from . import tool_descriptions as td
@@ -98,12 +99,12 @@ class CodeRetriever:
             if absolute_path_str and Path(absolute_path_str).is_file():
                 full_path = Path(absolute_path_str)
             else:
-                full_path = (self.project_root / file_path_str).resolve()
-                if not full_path.is_relative_to(
-                    self.project_root
-                ) or not absolute_path_within_project_root(
-                    qualified_name, str(full_path), project_roots
-                ):
+                fallback_root = (
+                    project_root_for_qualified_name(qualified_name, project_roots)
+                    or self.project_root
+                )
+                full_path = (fallback_root / file_path_str).resolve()
+                if not full_path.is_relative_to(fallback_root):
                     return CodeSnippet(
                         qualified_name=qualified_name,
                         source_code="",
