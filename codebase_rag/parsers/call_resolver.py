@@ -449,6 +449,45 @@ class CallResolver:
             local_var_types,
         )
 
+    def _resolve_inline_receiver_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> tuple[bool, tuple[str, str] | None]:
+        """`(a / b).m()`, `(x or y).m()`: resolve `m` on the receiver's type.
+
+        A parenthesised receiver never becomes a variable, so nothing typed
+        it, and `_is_method_chain` does not see it either (it looks for a
+        segment holding both parens); the call fell all the way to the trie,
+        which matched `m` by name against every class defining it (issue
+        #1893, the call-site half of #1868). The receiver text is handed to
+        the same rules an assignment gets. Returns (handled, result): handled
+        with a result when the method resolves on the inferred class; handled
+        with None when the receiver IS typed but its class is not one the
+        project defines (`pathlib.Path`), which is a known non-edge rather
+        than a licence to guess; not handled when nothing can be inferred.
+        """
+        parts = _split_receiver_chain(call_name)
+        if len(parts) < 2 or not parts[0].startswith(cs.CHAR_PAREN_OPEN):
+            return False, None
+        receiver = cs.SEPARATOR_DOT.join(parts[:-1])
+        method = parts[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
+        receiver_type = (
+            self.type_inference.python_type_inference._get_inline_expression_type(
+                receiver, module_qn, local_var_types
+            )
+        )
+        if not receiver_type:
+            return False, None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(
+            receiver_type, import_map, module_qn
+        )
+        if class_qn and (hit := self._try_resolve_method(class_qn, method)):
+            return True, hit
+        return True, None
+
     def _reject_class_via_value_receiver(
         self,
         result: tuple[str, str] | None,
@@ -1137,6 +1176,12 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.PYTHON:
+            handled, inline = self._resolve_inline_receiver_call(
+                call_name, module_qn, local_var_types
+            )
+            if handled:
+                return inline
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer

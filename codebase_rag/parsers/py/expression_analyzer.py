@@ -14,10 +14,29 @@ from ..import_processor import ImportProcessor
 from ..utils import follow_reexports, safe_decode_text
 from .utils import resolve_class_name
 
+# An inline receiver is handed to the expression rules only when its text can
+# be one: an operator, `or`/`and`, or a conditional. Everything else keeps the
+# cheaper string paths. The length cap keeps a generated one-liner from being
+# parsed on every call it makes.
+# Keywords are matched as tokens so a receiver split across lines
+# (`(a\n    or b)`) is seen; operators come from the dunder table itself so
+# none can be forgotten (`<<` and `>>` were).
+_INLINE_KEYWORD_RE = re.compile(r"\b(?:or|and|if)\b")
+_INLINE_OPERATOR_TOKENS = tuple(cs.PY_BINARY_OPERATOR_DUNDERS)
+_INLINE_EXPRESSION_NODE_TYPES = frozenset(
+    {
+        cs.TS_PY_BOOLEAN_OPERATOR,
+        cs.TS_PY_CONDITIONAL_EXPRESSION,
+        cs.TS_PY_BINARY_OPERATOR,
+    }
+)
+_MAX_INLINE_EXPRESSION_CHARS = 512
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     from ..factory import ASTCacheProtocol
+    from .variable_analyzer import _Alias
 
     class _ExpressionAnalyzerDeps(Protocol):
         def _analyze_self_assignments(
@@ -34,6 +53,12 @@ if TYPE_CHECKING:
 
         def _analyze_method_return_statements(
             self, method_node: Node, method_qn: str, module_qn: str | None = None
+        ) -> str | None: ...
+
+        def _get_assignment_alias(self, right: Node) -> _Alias | None: ...
+
+        def _get_alias_type(
+            self, alias: _Alias, local_var_types: dict[str, str], module_qn: str
         ) -> str | None: ...
 
     _ExprBase: type = _ExpressionAnalyzerDeps
@@ -304,9 +329,65 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
                 return resolved
             return self._resolve_class_name(var_type, module_qn)
 
+        if (
+            inline := self._get_inline_expression_type(
+                expression, module_qn, local_var_types
+            )
+        ) is not None:
+            return inline
         return self._infer_method_call_return_type(
             expression, module_qn, local_var_types
         )
+
+    def _get_inline_expression_type(
+        self,
+        expression: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+    ) -> str | None:
+        """The type of a receiver written inline: `(a / b).m()`, `(x or y).m()`.
+
+        A receiver that never becomes a variable reaches call resolution as
+        text, so the expression is parsed back and handed to the same rules a
+        variable assigned from it would get (issue #1893, the call-site half
+        of #1868): the leaf operands, Python's operator dispatch, the union
+        of a conditional's branches. Anything that is not an operator,
+        boolean or conditional expression is left to the method-call path.
+        """
+        # No local map is not a reason to skip: `(Factory() / Config()).run()`
+        # types from its constructor leaves alone.
+        if len(expression) > _MAX_INLINE_EXPRESSION_CHARS:
+            return None
+        if not (
+            _INLINE_KEYWORD_RE.search(expression)
+            or any(token in expression for token in _INLINE_OPERATOR_TOKENS)
+        ):
+            return None
+        # Local import: parser_loader pulls in the language grammars.
+        from ...parser_loader import load_parsers
+
+        parsers, _ = load_parsers()
+        try:
+            tree = parsers[cs.SupportedLanguage.PYTHON].parse(expression.encode())
+        except (KeyError, ValueError):
+            return None
+        node: Node | None = next(iter(tree.root_node.named_children), None)
+        if node is not None and node.type == cs.TS_PY_EXPRESSION_STATEMENT:
+            node = next(iter(node.named_children), None)
+        while node is not None and node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
+            node = next(iter(node.named_children), None)
+        if node is None or node.type not in _INLINE_EXPRESSION_NODE_TYPES:
+            return None
+        alias = self._get_assignment_alias(node)
+        if alias is None:
+            return None
+        inferred = self._get_alias_type(alias, local_var_types or {}, module_qn)
+        if not inferred:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if resolved := import_map.get(inferred):
+            return resolved
+        return self._resolve_class_name(inferred, module_qn) or inferred
 
     @recursion_guard(
         key_func=lambda self, method_qn: method_qn,
