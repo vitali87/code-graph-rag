@@ -12,6 +12,14 @@ from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .utils import resolve_class_name
 
+# Deepest operand chain `_alias_referent` will walk. Each term of `a or b or c`
+# or `x + y + z` is one level, so hand-written code sits far below this (47 is
+# the deepest chain in this repo) and only generated source reaches it. The cap
+# exists because a RecursionError here is SILENT: the caller runs inside a
+# broad `except Exception` that would drop the enclosing function's whole type
+# map, which is the very defect #1868 fixes.
+_MAX_ALIAS_DEPTH = 32
+
 if TYPE_CHECKING:
 
     class _VariableAnalyzerDeps(Protocol):
@@ -558,28 +566,47 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if not added:
                 break
 
-    def _alias_referent(self, right: ASTNode) -> str | None:
+    def _alias_referent(self, right: ASTNode, depth: int = 0) -> str | None:
         """The name an assignment's rhs aliases, or None if it aliases nothing.
 
         A plain name or attribute reference IS the referent. `a or b` binds one
         of its operands, so it aliases whichever one is itself a reference --
-        the left, which is the operand a truthy value comes from, falling back
-        to the right for `None or default`. Both operands are normally the same
-        type, and where they are not, the left is the one the expression is
-        written to prefer.
+        the left, falling back to the right for `None or default`. For `or`
+        that is a derivation: the left is where a truthy value comes from.
+
+        `and` shares the `boolean_operator` node type and takes the same path,
+        but there the value is the RIGHT operand when the left is truthy, so
+        left-first is a heuristic there rather than a derivation. It stays
+        uniform deliberately: the left of an `and` is usually a guard
+        (`flag and engine`), so consulting it yields None far more often than a
+        wrong name, and None is the safe answer. `flag and engine` emits no
+        edge either way -- the same on base as on this change.
 
         Without this the variable gets NO type, and a later `var.method()`
         falls back to matching the bare method name against every class that
         defines it (issue #1868): `resolved = target or Path("x")` followed by
         `resolved.resolve()` emitted a CALLS edge to every `resolve` method in
         the project.
+
+        `depth` bounds the descent. An operator chain nests one level per term,
+        and a RecursionError raised here would NOT surface: this runs inside
+        the broad `except Exception` in `type_inference.py`, which would
+        discard the whole function's type map and revert every receiver in it
+        to bare-name matching -- reintroducing #1868 from an unrelated
+        statement elsewhere in the same function. The deepest real chain in
+        this repo is 47 levels, so the cap only truncates generated code, where
+        None is the right answer anyway.
         """
+        if depth > _MAX_ALIAS_DEPTH:
+            return None
         if right.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
             return safe_decode_text(right)
         if right.type == cs.TS_PY_BOOLEAN_OPERATOR:
             for field in (cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT):
                 operand = right.child_by_field_name(field)
-                if operand is not None and (referent := self._alias_referent(operand)):
+                if operand is not None and (
+                    referent := self._alias_referent(operand, depth + 1)
+                ):
                     return referent
             return None
         if right.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
@@ -589,7 +616,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # position rather than by field matters).
             operands = right.named_children
             for operand in (operands[0], operands[-1]) if operands else ():
-                if (referent := self._alias_referent(operand)) is not None:
+                if (referent := self._alias_referent(operand, depth + 1)) is not None:
                     return referent
             return None
         if right.type == cs.TS_PY_BINARY_OPERATOR:
@@ -599,7 +626,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # `"prefix" + name` the right operand's type would be wrong.
             left_operand = right.child_by_field_name(cs.TS_FIELD_LEFT)
             if left_operand is not None:
-                return self._alias_referent(left_operand)
+                return self._alias_referent(left_operand, depth + 1)
         return None
 
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:

@@ -104,6 +104,42 @@ def test_the_control_cannot_produce_the_edge_it_is_checking_for(
     assert not _decoy_resolve_edges(repo)
 
 
+def test_a_long_operator_chain_does_not_void_the_whole_function(
+    tmp_path: Path,
+) -> None:
+    """A deep chain must not take the enclosing function's type map with it.
+
+    `_alias_referent` recurses once per operand, so a long `or` chain can
+    exhaust the stack. The RecursionError never reaches a user: the caller
+    sits inside a broad `except Exception` in `type_inference.py` that logs at
+    debug and returns, dropping EVERY alias for the function. The receiver two
+    lines away then reverts to bare-name matching -- issue #1868 reintroduced
+    by an unrelated statement.
+
+    So the chain and the receiver share a function deliberately: that is the
+    blast radius being asserted. Found by the local review of the #1868 fix,
+    which measured 495 RecursionErrors raised and swallowed on this shape.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_DECOY_COLLIDES)
+    chain = " or ".join(f"a{i}" for i in range(1200))
+    (repo / "app.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "def run(target: Path | None) -> str:\n"
+        f"    junk = {chain}\n"
+        "    resolved = target or Path('x')\n"
+        "    return resolved.resolve().as_posix() + str(junk)\n"
+    )
+
+    assert not _decoy_resolve_edges(repo), (
+        "a deep operator chain elsewhere in the function voided its type map, "
+        "so the receiver fell back to matching Engine.resolve by name"
+    )
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """A known-positive: the bare-name fallback DOES fire when the type is
     genuinely unknowable, so the assertions above are not vacuously green.
