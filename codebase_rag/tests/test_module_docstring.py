@@ -628,6 +628,12 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             ("javascript", b"/** Cls doc */\nconst C = class {};\n"),
             ("javascript", b"/** CJS doc */\nmodule.exports.f = function () {};\n"),
             ("typescript", b"/** Exported arrow */\nexport const g = () => {};\n"),
+            # Anonymous `export default` unwraps to the bare VALUE, not a
+            # declaration or a binding; missed by the first version
+            # (greptile-local on #1887). The commonest React/Express shape.
+            ("javascript", b"/** Default fn */\nexport default function () {}\n"),
+            ("javascript", b"/** Default arrow */\nexport default () => {};\n"),
+            ("typescript", b"/** Default class */\nexport default class {}\n"),
         ],
         ids=[
             "js-arrow",
@@ -636,6 +642,9 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             "js-class-expr",
             "cjs",
             "ts-export-arrow",
+            "js-default-anon-fn",
+            "js-default-arrow",
+            "ts-default-anon-class",
         ],
     )
     def test_an_adjacent_doc_above_a_function_binding_is_not_the_files(
@@ -656,6 +665,11 @@ class TestAFunctionValuedBindingOwnsItsDoc:
         assert self._module_doc(parsers, "javascript", src) == "File docs"
 
     def test_a_mixed_declaration_counts_as_a_definition(self, parsers: dict) -> None:
-        """`const a = 1, f = () => {}` binds a function, so the doc is not the file's."""
+        """`const a = 1, f = () => {}` binds a function, so the doc is not the file's.
+
+        Nor is it the function's: the definition-level extractor does not climb
+        a multi-declarator statement. No doc tool reads it as file
+        documentation, so nobody owning it is the honest result.
+        """
         src = b"/** Mixed */\nconst a = 1, f = () => {};\n"
         assert self._module_doc(parsers, "javascript", src) is None

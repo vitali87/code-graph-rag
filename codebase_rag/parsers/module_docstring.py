@@ -63,6 +63,12 @@ class ModuleDocSpec(NamedTuple):
     # extractor attaches it to, so leaving it here would give one comment two
     # owners (issue #1887).
     binding_types: frozenset[str] = frozenset()
+    # The value node types that make a binding -- or a bare `export default`
+    # -- a definition: functions and classes. `export default function () {}`
+    # unwraps to a bare `function_expression` that is neither a declaration
+    # type nor a binding statement, and was still taken as the file's doc
+    # (greptile-local on #1887).
+    definition_value_types: frozenset[str] = frozenset()
 
 
 _C_STYLE_BLOCK = frozenset({"comment", "block_comment"})
@@ -221,6 +227,7 @@ _JS_STYLE = ModuleDocSpec(
     skip_types=_SHEBANGS,
     declaration_types=_JS_DECLS,
     binding_types=_JS_BINDINGS,
+    definition_value_types=_JS_FUNCTION_VALUES,
 )
 
 MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
@@ -530,6 +537,10 @@ def _documents_declaration(
         unwrapped = _unwrap_export(candidate)
         if unwrapped.type in spec.declaration_types:
             return True
+        # An anonymous `export default function () {}` / `() => {}` / `class {}`
+        # unwraps to the bare value; it is a definition all the same.
+        if unwrapped.type in spec.definition_value_types:
+            return True
         return _binds_a_definition(unwrapped, spec)
     return False
 
@@ -544,6 +555,11 @@ def _binds_a_definition(node: ASTNode, spec: ModuleDocSpec) -> bool:
     two owners (issue #1887). A plain `const x = 1` is unchanged: its value is
     not a definition, so an adjacent doc still describes the file, which the
     existing tests pin.
+
+    A mixed `const a = 1, f = () => {}` is refused here AND not climbed by the
+    definition-level extractor (a multi-declarator statement is not a single
+    definition's wrapper), so that comment has no owner. No doc tool reads it
+    as file documentation, so none is the honest answer rather than the file.
     """
     if node.type not in spec.binding_types:
         return False
@@ -553,7 +569,7 @@ def _binds_a_definition(node: ASTNode, spec: ModuleDocSpec) -> bool:
     else:
         declarators = [c for c in node.children if c.type == "variable_declarator"]
         values = [d.child_by_field_name("value") for d in declarators]
-    return any(v is not None and v.type in _JS_FUNCTION_VALUES for v in values)
+    return any(v is not None and v.type in spec.definition_value_types for v in values)
 
 
 def _unwrap_export(node: ASTNode) -> ASTNode:
