@@ -13,6 +13,10 @@ from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeTyp
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
+_PY_SCOPE_TYPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
+)
+
 _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_ASSIGNMENT}) @assignment "
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
@@ -21,8 +25,10 @@ _PY_TRAVERSE_QUERY = (
 )
 
 
-def _split_top_level(inner: str) -> list[str]:
-    """Split `A, dict[str, B], C` on the commas outside any brackets."""
+def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
     parts: list[str] = []
     depth = 0
     current: list[str] = []
@@ -31,7 +37,7 @@ def _split_top_level(inner: str) -> list[str]:
             depth += 1
         elif char in "])":
             depth = max(0, depth - 1)
-        if char == cs.CHAR_COMMA and depth == 0:
+        if char == separator and depth == 0:
             parts.append("".join(current).strip())
             current = []
         else:
@@ -40,6 +46,14 @@ def _split_top_level(inner: str) -> list[str]:
     if tail:
         parts.append(tail)
     return parts
+
+
+def _scope_of(node: Node) -> int | None:
+    """Id of the def, class or module whose body a node sits in directly."""
+    current = node.parent
+    while current is not None and current.type not in _PY_SCOPE_TYPES:
+        current = current.parent
+    return current.id if current is not None else None
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -284,14 +298,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         """The call an unpacking's right-hand side comes from, or None.
 
         Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
-        call that an earlier single-name assignment in the same walk bound
-        the name to.
+        call that the nearest earlier single-name assignment IN THE SAME SCOPE
+        bound the name to. A nearer rebinding to anything but a call clears
+        it: after `p = fw(); p = supplied`, `p` is not fw's result. The walk
+        captures every assignment under the function, including a nested
+        def's, whose `p` is a different variable.
         """
         if right.type == cs.TS_PY_CALL:
             return right
         if right.type != cs.TS_PY_IDENTIFIER:
             return None
         name = safe_decode_text(right)
+        scope = _scope_of(right)
         # The NEAREST binding before the use, not the first: `p = fw(); p =
         # fb(); _n, w = p` unpacks fb's result. Captures are not guaranteed to
         # come back in document order, so sort, and stop at the use.
@@ -306,9 +324,9 @@ class PythonAstAnalyzerMixin(_AstBase):
                 and value is not None
                 and target.type == cs.TS_PY_IDENTIFIER
                 and safe_decode_text(target) == name
-                and value.type == cs.TS_PY_CALL
+                and _scope_of(earlier) == scope
             ):
-                defining = value
+                defining = value if value.type == cs.TS_PY_CALL else None
         return defining
 
     def _tuple_return_elements(
@@ -327,7 +345,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         text = (safe_decode_text(type_node) or "").strip().strip("\"'")
         members = [
             member
-            for part in text.split(cs.PY_UNION_SEPARATOR)
+            for part in _split_top_level(text, cs.PY_UNION_SEPARATOR)
             if (member := part.strip()) and member != cs.PY_NONE
         ]
         if len(members) != 1:
@@ -368,6 +386,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         if func.type == cs.TS_PY_ATTRIBUTE and (
             text := self._extract_full_method_call(func)
         ):
+            # `helpers.make_pair()`: the receiver is an imported MODULE, which
+            # the method resolver (built for typed receivers) cannot name; the
+            # import map can, and the qn it gives is a function's.
+            receiver, _, leaf = text.rpartition(cs.SEPARATOR_DOT)
+            import_map = self.import_processor.import_mapping.get(module_qn, {})
+            if (
+                cs.SEPARATOR_DOT not in receiver
+                and (module := import_map.get(receiver))
+                and (node := self._find_function_ast_node(f"{module}.{leaf}"))
+                is not None
+            ):
+                return node, f"{module}.{leaf}"
             qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
             if qn and (node := self._find_method_ast_node(qn)) is not None:
                 return node, qn

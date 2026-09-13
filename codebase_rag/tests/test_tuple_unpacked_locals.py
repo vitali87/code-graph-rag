@@ -213,15 +213,20 @@ def test_the_nearest_preceding_binding_wins(tmp_path: Path) -> None:
     assert got.get("later") == {"Widget"}, got
 
 
-def _local_types(tmp_path: Path, body: str, function: str) -> dict[str, str]:
+def _local_types(
+    tmp_path: Path, body: str, function: str, *, extra: dict[str, str] | None = None
+) -> dict[str, str]:
     """The engine's local type map for one function, read directly: what the
     fallback does with an UNBOUND name is its own business, so a test about
-    binding asserts on the map, not on the edge the fallback then picks."""
+    binding asserts on the map, not on the edge the fallback then picks.
+    `extra` adds sibling modules to the package."""
     repo = tmp_path / "proj"
     repo.mkdir(parents=True)
     (repo / "__init__.py").touch()
     (repo / "engine.py").write_text(_TWO_CLASSES)
     (repo / "app.py").write_text(_TWO + body)
+    for filename, source in (extra or {}).items():
+        (repo / filename).write_text(source)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
@@ -284,6 +289,89 @@ def test_an_existing_binding_is_not_overwritten(tmp_path: Path) -> None:
         "    w = Widget()\n    _n, w = fb()\n    return w.render()\n",
     )
     assert got.get("keep") == {"Widget"}, got
+
+
+def test_a_rebinding_to_a_non_call_clears_the_earlier_call(tmp_path: Path) -> None:
+    """`p = fw(); p = supplied; _n, w = p`: the unpacked value is `supplied`,
+    about which nothing is known, so `w` must stay unbound rather than keep
+    fw's element (Greptile P2)."""
+    types = _local_types(
+        tmp_path,
+        "def fw() -> tuple[int, Widget]:\n"
+        "    return (0, Widget())\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    p = fw()\n"
+        "    p = supplied\n"
+        "    _n, w = p\n"
+        "    return w.render()\n",
+        "use",
+    )
+    assert "w" not in types, types
+
+
+def test_a_nested_scope_binding_is_not_the_outer_name(tmp_path: Path) -> None:
+    """The walk captures every assignment under the function, including a
+    nested def's `p = fb()`, which is a different variable; the outer
+    unpacking must take the outer `p = fw()` (Greptile P1)."""
+    types = _local_types(
+        tmp_path,
+        "def fw() -> tuple[int, Widget]:\n"
+        "    return (0, Widget())\n"
+        "\n"
+        "def fb() -> tuple[int, Banner]:\n"
+        "    return (0, Banner())\n"
+        "\n"
+        "def use() -> int:\n"
+        "    p = fw()\n"
+        "    def helper() -> int:\n"
+        "        p = fb()\n"
+        "        return 0\n"
+        "    _n, w = p\n"
+        "    return w.render() + helper()\n",
+        "use",
+    )
+    assert types.get("w") == "Widget", types
+
+
+def test_a_union_inside_an_element_is_not_a_top_level_union(tmp_path: Path) -> None:
+    """`-> tuple[Widget | None, Banner]`: the `|` belongs to the first
+    element, not to the tuple, so the annotation is one member and `b` is
+    `Banner` (Greptile P1, CodeRabbit)."""
+    types = _local_types(
+        tmp_path,
+        "def pair() -> tuple[Widget | None, Banner]:\n"
+        "    return (None, Banner())\n"
+        "\n"
+        "def use() -> int:\n"
+        "    w, b = pair()\n"
+        "    return b.render()\n",
+        "use",
+    )
+    assert types.get("b") == "Banner" and types.get("w") == "Widget | None", types
+
+
+def test_a_module_qualified_free_function_supplies_the_tuple(tmp_path: Path) -> None:
+    """`helpers.make_pair()` resolves to a FUNCTION qn; looked up as a method
+    it read `helpers` as a class and found nothing (Greptile P1, CodeRabbit)."""
+    types = _local_types(
+        tmp_path,
+        "from . import helpers\n"
+        "\n"
+        "def use() -> int:\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        "use",
+        extra={
+            "helpers.py": (
+                "from .engine import Widget\n"
+                "\n"
+                "def make_pair() -> tuple[int, Widget]:\n"
+                "    return (0, Widget())\n"
+            )
+        },
+    )
+    assert types.get("w") == "Widget", types
 
 
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
