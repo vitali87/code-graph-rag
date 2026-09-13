@@ -79,6 +79,15 @@ _JS_WRAPPERS = frozenset(
         "variable_declarator",
         "expression_statement",
         "assignment_expression",
+        # Transparent wrappers around the value itself: `(() => {})`, and
+        # TypeScript's `expr as T`, `expr satisfies T`, `expr!`, `<T>expr`.
+        # The module side looks through the same set (#1889), so the comment
+        # has one owner rather than none.
+        "parenthesized_expression",
+        "as_expression",
+        "satisfies_expression",
+        "non_null_expression",
+        "type_assertion",
     }
 )
 _WRAPPERS: dict[SupportedLanguage, frozenset[str]] = {

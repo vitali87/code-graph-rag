@@ -396,6 +396,30 @@ class TestWrappedDeclarations:
         )
         assert extract_definition_docstring(node, Lang.JS) == "DOC"
 
+    def test_js_parenthesised_arrow(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers, Lang.JS, "/** DOC */\nconst f = (() => {});\n", "arrow_function"
+        )
+        assert extract_definition_docstring(node, Lang.JS) == "DOC"
+
+    def test_ts_cast_and_satisfies_wrapped_arrows(self, parsers: dict) -> None:
+        """The module side refuses these (#1889); without the climb here the
+        comment would have no owner at all."""
+        cast = _declaration(
+            parsers,
+            Lang.TS,
+            "/** DOC */\nexport const f = (() => {}) as Handler;\n",
+            "arrow_function",
+        )
+        assert extract_definition_docstring(cast, Lang.TS) == "DOC"
+        sat = _declaration(
+            parsers,
+            Lang.TS,
+            "/** DOC */\nconst g = (() => {}) satisfies Fn;\n",
+            "arrow_function",
+        )
+        assert extract_definition_docstring(sat, Lang.TS) == "DOC"
+
     def test_go_type_spec(self, parsers: dict) -> None:
         node = _declaration(
             parsers, Lang.GO, "package m\n\n// DOC\ntype S struct{}\n", "type_spec"
