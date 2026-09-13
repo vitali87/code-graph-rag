@@ -2358,6 +2358,20 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name and language in _JS_TS_LANGUAGES:
                 method_name = self._js_ts_arrow_binding_name(method_node)
+            # A nameless function expression the definition pass registered
+            # under a name (`x: function () {}` in a method's object literal,
+            # `this.h = function () {}` in a constructor) has a real node:
+            # adopt the record's simple name, as the module pass does. Since
+            # #1903 handed every class-scoped function to this pass, a
+            # `continue` here would leave that node with no outgoing edge.
+            if (
+                not method_name
+                and language in _JS_TS_LANGUAGES
+                and (recorded := self._recorded_caller(method_node, module_qn))
+                is not None
+                and recorded.is_named
+            ):
+                method_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the

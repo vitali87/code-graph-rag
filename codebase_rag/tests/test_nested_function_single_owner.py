@@ -96,6 +96,22 @@ def test_a_function_nested_in_a_method_keeps_its_calls(tmp_path: Path) -> None:
     assert ("repo.app.Parser.run", INNER) in edges, edges
 
 
+def _js_call_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
+    parsers, queries = load_parsers()
+    if "javascript" not in parsers:
+        pytest.skip("javascript parser not available")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "app.js").write_text(source, encoding="utf-8")
+    mock = MagicMock()
+    GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
+    return Counter(
+        (c.args[0][2], c.args[2][2])
+        for c in mock.ensure_relationship_batch.call_args_list
+        if str(c.args[1]) == "CALLS"
+    )
+
+
 JS_MIXIN = (
     "function bar() { return 1; }\n"
     "const Mixin = (Base) => class extends Base {\n"
@@ -113,17 +129,32 @@ def test_a_function_nested_in_an_unnamed_js_class_keeps_its_edge(
     # The class pass drops a class expression it cannot name, so it never
     # walks this `inner`. The module pass must still walk it, once, or the
     # nested function loses every edge (local review of the #1903 fix).
-    parsers, queries = load_parsers()
-    if "javascript" not in parsers:
-        pytest.skip("javascript parser not available")
-    root = tmp_path / "repo"
-    root.mkdir()
-    (root / "app.js").write_text(JS_MIXIN, encoding="utf-8")
-    mock = MagicMock()
-    GraphUpdater(ingestor=mock, repo_path=root, parsers=parsers, queries=queries).run()
-    edges = Counter(
-        (c.args[0][2], c.args[2][2])
-        for c in mock.ensure_relationship_batch.call_args_list
-        if str(c.args[1]) == "CALLS"
-    )
+    edges = _js_call_edges(tmp_path, JS_MIXIN)
     assert edges[("repo.app.m.inner", "repo.app.bar")] == 1, edges
+
+
+JS_NAMELESS_IN_METHOD = (
+    "function bar() { return 1; }\n"
+    "class A {\n"
+    "  m() {\n"
+    "    const h = { x: function () { return bar(); } };\n"
+    "    return h.x();\n"
+    "  }\n"
+    "  constructor() {\n"
+    "    this.handler = function () { return bar(); };\n"
+    "  }\n"
+    "}\n"
+)
+
+
+def test_a_nameless_function_expression_in_a_method_keeps_its_edge(
+    tmp_path: Path,
+) -> None:
+    """A `x: function () {}` or `this.h = function () {}` inside a method has
+    no name of its own but the definition pass registered it under one. The
+    module pass adopted that recorded name; now that the class pass owns
+    everything inside a class body it must do the same, or the registered
+    node loses every outgoing edge (greptile-local on #1906)."""
+    edges = _js_call_edges(tmp_path, JS_NAMELESS_IN_METHOD)
+    assert edges[("repo.app.A.m.x", "repo.app.bar")] == 1, edges
+    assert edges[("repo.app.A.constructor.handler", "repo.app.bar")] == 1, edges
