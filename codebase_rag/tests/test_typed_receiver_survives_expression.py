@@ -351,6 +351,50 @@ def test_a_union_left_operand_resolves_each_member(tmp_path: Path) -> None:
     ), calls
 
 
+def test_a_subclass_on_the_right_gets_its_reflected_method_first(
+    tmp_path: Path,
+) -> None:
+    """`base / derived` with `Derived(Base)`: Python calls `Derived.__rtruediv__`
+    BEFORE `Base.__truediv__`, so the result is Second, not First (Greptile and
+    CodeRabbit, round 3, both executed against CPython)."""
+    repo = _operator_repo(
+        tmp_path,
+        "class First:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Second:\n    def run(self) -> int:\n        return 2\n\n"
+        "class Base:\n"
+        "    def __truediv__(self, other: object) -> First:\n        return First()\n\n"
+        "class Derived(Base):\n"
+        "    def __rtruediv__(self, other: Base) -> Second:\n        return Second()\n",
+        "def exercise(base: Base, derived: Derived) -> int:\n"
+        "    result = base / derived\n    return result.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.Second.run") for t in calls), calls
+    assert not any(t.endswith("engine.First.run") for t in calls), calls
+
+
+def test_operator_lookup_follows_c3_not_breadth_first(tmp_path: Path) -> None:
+    """`Child(A, B)`, `A(X)`: the MRO is Child, A, X, B, so X's operator wins
+    over B's. Breadth-first visited B before X and picked the wrong result
+    (Greptile and CodeRabbit, round 3, executed against CPython)."""
+    repo = _operator_repo(
+        tmp_path,
+        "class FromX:\n    def run(self) -> int:\n        return 1\n\n"
+        "class FromB:\n    def run(self) -> int:\n        return 2\n\n"
+        "class X:\n"
+        "    def __truediv__(self, other: object) -> FromX:\n        return FromX()\n\n"
+        "class A(X):\n    pass\n\n"
+        "class B:\n"
+        "    def __truediv__(self, other: object) -> FromB:\n        return FromB()\n\n"
+        "class Child(A, B):\n    pass\n",
+        "def exercise(child: Child) -> int:\n"
+        "    result = child / 1\n    return result.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.FromX.run") for t in calls), calls
+    assert not any(t.endswith("engine.FromB.run") for t in calls), calls
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """A known-positive: the bare-name fallback DOES fire when the type is
     genuinely unknowable, so the assertions above are not vacuously green.

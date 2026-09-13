@@ -663,10 +663,27 @@ class PythonVariableAnalyzerMixin(_VarBase):
         results: dict[str, None] = {}
         forward_missing = False
         left_members = _union_members(left) if left else []
+        right_classes = [
+            qn
+            for member in (_union_members(right) if right else [])
+            if (qn := self._get_project_class_qn(member, module_qn)) is not None
+        ]
         for member in left_members:
             class_qn = self._get_project_class_qn(member, module_qn)
             if class_qn is None:
                 results.setdefault(member, None)
+                continue
+            # A right operand whose class is a STRICT subclass of the left's
+            # gets its reflected method called first, before the left's
+            # forward one -- `base / derived` runs `Derived.__rtruediv__`
+            # even though `Base.__truediv__` exists.
+            subclass_result = self._get_subclass_reflected_type(
+                class_qn, right_classes, dunder
+            )
+            if subclass_result is not None:
+                found, returned = subclass_result
+                if returned:
+                    results.setdefault(returned, None)
                 continue
             found, returned = self._get_dunder_return_type(class_qn, dunder)
             if not found:
@@ -701,6 +718,26 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return None
         return class_qn
 
+    def _get_subclass_reflected_type(
+        self, left_qn: str, right_classes: list[str], dunder: str
+    ) -> tuple[bool, str | None] | None:
+        """The reflected method of a right operand that subclasses the left.
+
+        Returns None when no right class is a strict subclass of `left_qn`
+        that defines the reflected dunder, so the caller falls through to the
+        left's forward method. Python applies this priority only when the
+        subclass actually provides the reflected method.
+        """
+        for right_qn in right_classes:
+            if right_qn == left_qn or left_qn not in self._get_mro(right_qn):
+                continue
+            found, returned = self._get_dunder_return_type(
+                right_qn, _reflected_dunder(dunder)
+            )
+            if found:
+                return found, returned
+        return None
+
     def _get_dunder_return_type(
         self, class_qn: str, dunder: str
     ) -> tuple[bool, str | None]:
@@ -712,8 +749,50 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return False, None
 
     def _get_mro(self, class_qn: str) -> list[str]:
-        # BFS over the inheritance graph, self first; guards cycles. Mirrors
-        # CallResolver._mro over the same `class_inheritance` map.
+        """Python's method resolution order for a project class.
+
+        C3 linearisation over `class_inheritance`, which keeps each class's
+        bases in declaration order, so `Child(A, B)` with `A(X)` resolves
+        `Child, A, X, B` -- the order the interpreter uses -- rather than the
+        breadth-first `Child, A, B, X` that put a base's operator ahead of a
+        grandparent's. A hierarchy C3 rejects (inconsistent bases, a cycle, or
+        one it cannot see all of) falls back to breadth-first, which is what
+        CallResolver._mro still uses; a wrong order there costs an operator's
+        result type, never a crash.
+        """
+        return self._get_c3_mro(class_qn, ()) or self._get_bfs_mro(class_qn)
+
+    def _get_c3_mro(self, class_qn: str, stack: tuple[str, ...]) -> list[str] | None:
+        if class_qn in stack or len(stack) > _MAX_ALIAS_DEPTH:
+            return None
+        bases = list(self.class_inheritance.get(class_qn, []))
+        sequences: list[list[str]] = []
+        for base in bases:
+            linear = self._get_c3_mro(base, (*stack, class_qn))
+            if linear is None:
+                return None
+            sequences.append(linear)
+        sequences.append(bases)
+        order = [class_qn]
+        while any(sequences):
+            sequences = [seq for seq in sequences if seq]
+            head = next(
+                (
+                    seq[0]
+                    for seq in sequences
+                    if not any(seq[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if head is None:
+                return None
+            order.append(head)
+            for seq in sequences:
+                if seq[0] == head:
+                    seq.pop(0)
+        return order
+
+    def _get_bfs_mro(self, class_qn: str) -> list[str]:
         seen: set[str] = set()
         order: list[str] = []
         queue = [class_qn]
