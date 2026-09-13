@@ -275,6 +275,48 @@ class TestDart:
         ]
 
 
+class TestScala:
+    def test_val_var_modifiers_and_types(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.SCALA,
+            'class C {\n  /** doc */\n  val id: Int = 1\n  private var name: String = ""\n  lazy val cache = 0\n  def m(): Unit = ()\n}\n',
+            "class_definition",
+        )
+        assert _rows(got) == [
+            ("id", "Int", ("val",), False),
+            ("name", "String", ("private", "var"), False),
+            ("cache", None, ("lazy", "val"), False),
+        ]
+
+    def test_a_destructuring_pattern_is_not_a_named_field(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.SCALA,
+            "class C {\n  val (a, b) = (1, 2)\n}\n",
+            "class_definition",
+        )
+        assert got == []
+
+
+class TestPhp:
+    def test_properties_with_visibility_static_and_nullable_type(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.PHP,
+            "<?php\nclass C {\n  private int $id = 1;\n  public static ?string $name;\n  protected $a, $b;\n  const X = 1;\n  function m() {}\n}\n",
+            "class_declaration",
+        )
+        assert _rows(got) == [
+            ("id", "int", ("private",), False),
+            ("name", "?string", ("public", "static"), True),
+            ("a", None, ("protected",), False),
+            ("b", None, ("protected",), False),
+        ]
+        # Recorded without the sigil: `$this->name`, not `$this->$name`.
+        assert all(not f.name.startswith("$") for f in got)
+
+
 class TestNotCovered:
     def test_an_uncovered_language_declares_nothing(self, parsers) -> None:
         """Not covered, never "no fields": the caller must not read [] as an answer."""

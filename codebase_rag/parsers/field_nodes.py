@@ -59,6 +59,10 @@ def declared_fields(
         return csharp_declared_fields(class_node)
     if language == cs.SupportedLanguage.DART:
         return dart_declared_fields(class_node)
+    if language == cs.SupportedLanguage.SCALA:
+        return scala_declared_fields(class_node)
+    if language == cs.SupportedLanguage.PHP:
+        return php_declared_fields(class_node)
     return []
 
 
@@ -597,6 +601,124 @@ def dart_declared_fields(class_node: Node) -> list[DeclaredField]:
                         member,
                     )
                 )
+    return out
+
+
+# --- Scala ------------------------------------------------------------------
+#
+# A `val_definition` / `var_definition` in the `template_body` is a field; its
+# `pattern` is the name (a bare identifier -- destructuring patterns are not
+# fields with a name and are skipped), `type` the annotation, and `modifiers`
+# holds `access_modifier` (`private`, `protected`) and keywords. `val` itself
+# is recorded as a modifier so a reader can tell immutable from mutable.
+
+_SCALA_KEYWORDS = frozenset({"val", "var", "lazy", "final", "override", "implicit"})
+
+
+def scala_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = next(
+        (c for c in class_node.children if c.type == cs.TS_SCALA_TEMPLATE_BODY), None
+    )
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.children:
+        if member.type not in (cs.TS_SCALA_VAL_DEFINITION, cs.TS_SCALA_VAR_DEFINITION):
+            continue
+        name_node = member.child_by_field_name("pattern")
+        if name_node is None or name_node.type != cs.TS_IDENTIFIER:
+            continue
+        if not (name := safe_decode_text(name_node)):
+            continue
+        type_node = member.child_by_field_name(cs.FIELD_TYPE)
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        modifiers: list[str] = []
+        for child in member.children:
+            if child.type == cs.TS_MODIFIERS:
+                modifiers.extend(
+                    t
+                    for m in child.children
+                    if m.type == cs.TS_SCALA_ACCESS_MODIFIER
+                    and (t := safe_decode_text(m))
+                )
+                modifiers.extend(
+                    t
+                    for m in child.children
+                    if m.type in _SCALA_KEYWORDS and (t := safe_decode_text(m))
+                )
+            elif child.type in _SCALA_KEYWORDS and (t := safe_decode_text(child)):
+                modifiers.append(t)
+        line, col = _at(name_node)
+        out.append(
+            DeclaredField(
+                name, line, col, type_name or None, tuple(modifiers), False, member
+            )
+        )
+    return out
+
+
+# --- PHP --------------------------------------------------------------------
+#
+# A `property_declaration` in the class's `declaration_list`: visibility and
+# static modifiers, an optional `type` (which may be `?string`), and one
+# `property_element` per name. The name is recorded WITHOUT the `$` sigil --
+# `$this->name` is how the property is reached, and the sigil belongs to the
+# variable syntax, not the member. Class constants (`const X = 1`) are not
+# fields here; they belong to the separate Constant issue.
+
+_PHP_MODIFIER_NODES = frozenset(
+    {
+        cs.TS_PHP_VISIBILITY_MODIFIER,
+        cs.TS_PHP_STATIC_MODIFIER,
+        "readonly_modifier",
+        "var_modifier",
+    }
+)
+
+
+def php_declared_fields(class_node: Node) -> list[DeclaredField]:
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        body = next(
+            (c for c in class_node.children if c.type == cs.TS_PHP_DECLARATION_LIST),
+            None,
+        )
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.children:
+        if member.type != cs.TS_PHP_PROPERTY_DECLARATION:
+            continue
+        modifiers = tuple(
+            t
+            for c in member.children
+            if c.type in _PHP_MODIFIER_NODES and (t := safe_decode_text(c))
+        )
+        type_node = member.child_by_field_name(cs.FIELD_TYPE)
+        type_name = safe_decode_text(type_node) if type_node is not None else None
+        for element in member.children:
+            if element.type != cs.TS_PHP_PROPERTY_ELEMENT:
+                continue
+            name_node = element.child_by_field_name(cs.FIELD_NAME)
+            if name_node is None:
+                name_node = next(
+                    (c for c in element.children if c.type == cs.TS_PHP_VARIABLE_NAME),
+                    None,
+                )
+            if name_node is None or not (raw := safe_decode_text(name_node)):
+                continue
+            line, col = _at(name_node)
+            out.append(
+                DeclaredField(
+                    raw.lstrip("$"),
+                    line,
+                    col,
+                    type_name or None,
+                    modifiers,
+                    cs.TS_STATIC in modifiers,
+                    member,
+                )
+            )
     return out
 
 
