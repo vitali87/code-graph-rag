@@ -2449,6 +2449,240 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
         assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
 
 
+class TestARestrictedAggregateOnlyAliasIsNotRefusedTwice:
+    """A proven-confined aggregated alias need not also project its name.
+
+    `RETURN f.qualified_name, count(c)` -- "how many callers does each of my
+    functions have" -- was refused even when the query restricted BOTH `c`
+    and `f` to the requested project. `_restricts_to_project` returned True
+    for `{'C'}`; `_every_projected_entity_is_attributable` then refused
+    anyway, because `c` contributes no property read of its own.
+
+    The two checks answer different questions. Attributability asks "does
+    this row say who it is about", and guards the row filter. The leak an
+    aggregate poses is a MAGNITUDE spanning projects the caller never asked
+    for -- and restriction has already established that magnitude is
+    bounded. Refusing a second time costs a common shape and prevents no
+    leak (issue #1843).
+
+    The exemption covers ONLY aliases `_restricts_to_project` vouched for.
+    What actually enforces that is the caller: `aggregated_only` is the set
+    the restriction gate above has just passed, and it is the same set
+    handed to the exemption, so an unvouched alias cannot reach here at all.
+    The `restricted` parameter is therefore a narrowing the caller cannot
+    currently violate -- defence in depth against a future caller passing a
+    wider set, not the thing keeping today's unrestricted queries out.
+
+    Said plainly because mutation testing shows it: widening the exemption
+    to every aggregated alias leaves the whole file green, since each query
+    it would wrongly admit is already refused upstream.
+
+    So only three of the eight tests below reach the changed line, and each
+    of the other five says which earlier gate decides it. The three that do:
+    the accepted grouped count, the property-read refusal, and the
+    collect-of-a-property refusal. Dropping the exemption reddens the first;
+    dropping the `not reads[entity]` guard reddens the other two. The bare
+    `collect` test reddens on its own mutation -- putting COLLECT back into
+    the magnitude pattern -- and the guard/filter agreement test guards the
+    consistency the bare-collect bug broke. The remaining five are
+    boundary tests of the accepted shape -- worth keeping, but not evidence
+    for this change.
+    """
+
+    def test_a_grouped_count_over_a_restricted_alias_is_accepted(self) -> None:
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers "
+            "ORDER BY callers DESC LIMIT 10"
+        )
+
+        assert requires_project_evidence(cypher, ALPHA)
+
+    def test_an_unrestricted_aggregated_alias_is_still_refused(self) -> None:
+        """The alias must be restricted, not merely aggregated.
+
+        Only `f` is bounded here, so the count ranges over every project's
+        callers while the row wears an in-project label.
+
+        This one is guarded by `_restricts_to_project` UPSTREAM of the
+        exemption, not by the exemption itself: widening the exemption to
+        every aggregated alias leaves it green, because the query is already
+        refused before attributability runs. Kept as a boundary test of the
+        accepted shape, not as evidence for the `restricted` filter -- see
+        the class docstring for what actually covers that.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_foreign_project_restriction_is_still_refused(self) -> None:
+        """Restricted to *a* project is not restricted to *yours*.
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{BETA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_an_alias_that_also_reads_a_property_is_still_refused(self) -> None:
+        """The exemption is for aliases exposing NO name of their own.
+
+        `c.name` puts an entity's name in the row, so that entity must carry
+        its own qualified name however well restricted it is -- otherwise
+        the row filter judges it on `f`'s label.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, c.name AS caller, count(c) AS n"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_wildcard_aggregate_is_still_refused(self) -> None:
+        """`count(*)` binds no alias, so nothing can be shown restricted.
+
+        Decided upstream of the exemption, by
+        `_every_aggregate_operand_is_bindable` -- see the class docstring.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(*) AS n"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_relationship_alias_is_still_refused(self) -> None:
+        """A relationship has no qualified name, so it cannot be vouched for.
+
+        Its confinement would have to be inferred from its endpoints, which
+        this module does not do. Recorded here so the gap is deliberate
+        rather than accidental (issue #1843).
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[r:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(r) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_a_regex_restriction_does_not_vouch_for_an_alias(self) -> None:
+        """A pattern can start with the project and still match everything.
+
+        Decided upstream of the exemption, by `_restricts_to_project` --
+        see the class docstring.
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name =~ '{ALPHA}.*|.*' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_bare_collect_over_a_restricted_alias_is_refused(self) -> None:
+        """`collect(c)` returns the ENTITIES, so restriction does not vouch.
+
+        Caught on review after the first version of this change admitted it.
+        The guard accepted the query and `scope_rows_to_project` then dropped
+        the whole row -- `_names_another_project` fails closed on a driver
+        `Node`, which is neither scalar nor a supported container -- so the
+        caller got an empty result instead of either their data or a refusal.
+        Accepted-then-silently-emptied is worse than refused, because nothing
+        in the response says the scope guard was involved.
+
+        Restriction bounds a MAGNITUDE; it does not make the entities
+        themselves attributable. So the exemption covers `count`/`sum`/`avg`/
+        `min`/`max` only, and `collect` is excluded by construction rather
+        than by a separate check that could drift (issue #1843).
+        """
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, collect(c) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+    def test_an_accepted_aggregate_survives_the_row_filter(self) -> None:
+        """The guard and the filter must agree, not merely each be safe.
+
+        The `collect` bug was a DISAGREEMENT: admitted by one, emptied by the
+        other. This asserts the pair is consistent for the shape the change
+        exists to allow -- a row whose aggregate is a number survives scoping
+        with its value intact.
+        """
+        from codebase_rag.tools.codebase_query import (
+            requires_project_evidence,
+            scope_rows_to_project,
+        )
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, count(c) AS callers"
+        )
+        assert requires_project_evidence(cypher, ALPHA)
+
+        rows = [{"name": f"{ALPHA}.mod.f", "callers": 3}]
+
+        assert scope_rows_to_project(rows, ALPHA) == rows
+
+    def test_collect_of_a_property_over_a_restricted_alias_is_refused(
+        self,
+    ) -> None:
+        """`collect` returns the names themselves, not only a magnitude."""
+        from codebase_rag.tools.codebase_query import requires_project_evidence
+
+        cypher = (
+            "MATCH (c:Function)-[:CALLS]->(f:Function) "
+            f"WHERE c.qualified_name STARTS WITH '{ALPHA}.' "
+            f"AND f.qualified_name STARTS WITH '{ALPHA}.' "
+            "RETURN f.qualified_name AS name, collect(c.name) AS callers"
+        )
+
+        assert not requires_project_evidence(cypher, ALPHA)
+
+
 class TestTheCachedUpdatersProject:
     """A cached updater belongs to one project and must not answer for another.
 
@@ -2485,21 +2719,36 @@ class TestTheCachedUpdatersProject:
         # refusal proves the cached one was rejected rather than returned.
         registry.ingestor.list_projects.return_value = []
         with pytest.raises(ValueError):
-            registry._updater_for_reingest(BETA)
+            registry._hydrate_reingest_updater(BETA)
 
     def test_the_cached_updater_is_reused_for_its_own_project(
         self, tmp_path: Path
     ) -> None:
-        # The known-positive: without this, the test above would pass just as
-        # well against a method that never reuses a cached updater at all.
-        registry = self._registry(tmp_path, cached_project=ALPHA)
-        assert registry._updater_for_reingest(ALPHA) is registry._live_updater
+        """The known-positive for the test above.
 
-    def test_an_unnamed_caller_still_reuses_the_cached_updater(
-        self, tmp_path: Path
-    ) -> None:
+        Without it, that test would pass just as well against a path that
+        never reuses a cached updater at all.
+
+        Asserted through `_guarded_rename_reingest`, which is where the reuse
+        lives now: `_updater_for_reingest` was deleted under #1783 because its
+        guard read `_graph_incomplete` alone, and a flag-only hydration helper
+        sitting beside the marker-reading one is how that defect returned once
+        already. A retained same-project updater is still reused here -- it is
+        warm, and the guarded callback does its own marking.
+        """
         registry = self._registry(tmp_path, cached_project=ALPHA)
-        assert registry._updater_for_reingest() is registry._live_updater
+        callback = registry._guarded_rename_reingest(ALPHA)
+        assert callback is not None, "fixture guard: expected a callback"
+        assert callback.__closure__ is not None
+        reused = [
+            cell.cell_contents
+            for cell in callback.__closure__
+            if cell.cell_contents is registry._live_updater
+        ]
+        assert reused, (
+            "the guarded callback rebuilt an updater instead of reusing the "
+            "warm one retained for this same project"
+        )
 
 
 # A graph known to be partial must not be READ as if it were whole.
@@ -3459,15 +3708,15 @@ def test_unattributed_damage_still_blocks_every_reingest() -> None:
 
 
 def test_the_cached_path_also_scopes_the_latch() -> None:
-    """`_updater_for_reingest` carries its own copy of the same guard."""
+    """The hydration path carries the same latch scoping as the read guard."""
     handler = _registry_for_hydration(ALPHA)
 
     with pytest.raises(ValueError) as damaged:
-        handler._updater_for_reingest(ALPHA)
+        handler._hydrate_reingest_updater(ALPHA)
     assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(damaged.value)
 
     try:
-        handler._updater_for_reingest(BETA)
+        handler._hydrate_reingest_updater(BETA)
     except ValueError as exc:
         assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=BETA) != str(exc), (
             "healthy BETA was refused for ALPHA's damage"
@@ -3785,7 +4034,7 @@ async def test_the_cached_path_honours_a_marker_from_an_earlier_process() -> Non
     handler._persisted_incomplete = MagicMock(return_value=True)
 
     with pytest.raises(ValueError) as refused:
-        handler._updater_for_reingest(ALPHA)
+        handler._hydrate_reingest_updater(ALPHA)
 
     assert cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=ALPHA) == str(refused.value)
 
@@ -3809,13 +4058,17 @@ async def test_the_cached_path_still_builds_on_a_clean_durable_state() -> None:
     handler._graph_incomplete = False
     handler._incomplete_project = None
     handler._flag_from_failed_clear = None
+    # Built with `__new__`, so every field `__init__` would set has to be
+    # set here. `_run_id` identifies this registry in the durable marker
+    # (issue #1709) and the mark inside the hydration reads it.
+    handler._run_id = "test-run-id"
     handler._persisted_incomplete = MagicMock(return_value=False)
     handler._ignore_sets = MagicMock(return_value=(None, None))
     handler.parsers = {}
     handler.queries = {}
 
     with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
-        built = handler._updater_for_reingest(ALPHA)
+        built = handler._hydrate_reingest_updater(ALPHA)
 
     assert built is updater_cls.return_value
     handler._persisted_incomplete.assert_called_once_with(ALPHA)
@@ -3861,7 +4114,7 @@ def test_a_renames_reingest_marks_before_it_writes() -> None:
 
     updater.reingest = fake_reingest
 
-    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+    with patch.object(handler, "_hydrate_reingest_updater", return_value=updater):
         callback = handler._guarded_rename_reingest(ALPHA)
         assert callback is not None, (
             "fixture guard: an indexed project must yield a callback, or this "
@@ -3880,14 +4133,11 @@ def test_a_renames_reingest_marks_before_it_writes() -> None:
     )
 
 
-def test_a_crash_in_the_rename_reingest_still_clears_the_marker() -> None:
-    """A failure must not leave the marker up forever.
+def _guarded_failure(exc: BaseException) -> tuple[object, list[str]]:
+    """Drive `_guarded_rename_reingest` to a failure, returning (handler, cleared).
 
-    The clear is in a `finally`, so a raising re-ingest still releases it --
-    the failure invalidates the graph through the caller's own handling, and
-    leaving the marker would refuse every later run for a failure already
-    reported. Without the `finally` this test goes red while the one above
-    stays green.
+    Shared so the two directions below differ ONLY in the exception, which is
+    what decides the classification.
     """
     from unittest.mock import MagicMock, patch
 
@@ -3902,16 +4152,105 @@ def test_a_crash_in_the_rename_reingest_still_clears_the_marker() -> None:
     )
 
     updater = MagicMock()
-    updater.reingest = MagicMock(side_effect=RuntimeError("re-ingest died"))
+    updater.reingest = MagicMock(side_effect=exc)
 
-    with patch.object(handler, "_updater_for_reingest", return_value=updater):
+    with patch.object(handler, "_hydrate_reingest_updater", return_value=updater):
         callback = handler._guarded_rename_reingest(ALPHA)
         assert callback is not None, "fixture guard: expected a callback"
-        with pytest.raises(RuntimeError, match="died"):
+        with pytest.raises(type(exc)):
             callback(["a.py"])
+    return handler, cleared
+
+
+def test_a_mutating_rename_reingest_failure_KEEPS_the_marker() -> None:
+    """The P1: a failure that had already written must stay marked.
+
+    The clear used to sit in a blanket `finally`, so any failure released the
+    marker. That is safe only if the caller records the damage some other
+    way, and on the INITIAL postcondition re-ingest it does not: `measure()`
+    catches, returns `verdict=None`, and sets no `graph_incomplete`, so
+    `_run_rename` re-marks nothing and the rename returns `applied` over a
+    possibly-partial graph. The durable marker was the only record and the
+    `finally` dropped it.
+
+    A plain `MagicMock` updater has no usable `reingest_mutated` bool, so
+    `_reingest_mutated` falls back to the exception TYPE: a generic
+    `RuntimeError` means writing had begun. That is the direction under test.
+    """
+    handler, cleared = _guarded_failure(RuntimeError("re-ingest died"))
+
+    assert cleared == [], (
+        "a mutating failure cleared the durable marker, which is the only "
+        f"record that survives this process: cleared={cleared}"
+    )
+    assert handler._graph_incomplete is True, (
+        "a mutating failure left the in-process flag down, so nothing in "
+        "this process knows the graph may be partial"
+    )
+    assert handler._live_updater is None, (
+        "the retained updater describes a graph that no longer exists"
+    )
+
+
+def test_a_nothing_written_rename_reingest_failure_STILL_clears() -> None:
+    """The other direction, and the one that stops this becoming a worse bug.
+
+    Without it the fix could simply never clear, which an earlier round of
+    this PR actually shipped: a marker with no expressible exit refused every
+    later run for the process lifetime, which was worse than the leak it
+    replaced. A `ValueError` is rejected before anything is touched, so the
+    marker this call created describes a run that changed nothing.
+
+    The exception type is load-bearing, not decoration. `_reingest_mutated`
+    reads `reingest_mutated` off the updater and a MagicMock returns a truthy
+    child mock for ANY attribute, which the `isinstance(flag, bool)` guard
+    rejects -- so a double always lands on the type fallback. Pass a generic
+    exception here and this control silently tests the MUTATED branch above,
+    passing for the wrong reason.
+    """
+    handler, cleared = _guarded_failure(ValueError("bad path"))
 
     assert cleared == [ALPHA], (
-        f"a failed rename re-ingest left the marker up: cleared={cleared}"
+        "a failure that wrote nothing left its marker up, so every later "
+        f"run is refused for a run that changed nothing: cleared={cleared}"
+    )
+    assert handler._graph_incomplete is False, (
+        "a failure that wrote nothing raised the incomplete flag anyway"
+    )
+
+
+def test_a_successful_rename_reingest_clears_the_marker() -> None:
+    """The success path still releases the marker.
+
+    Control for both tests above: if the classification were wired to keep
+    the marker whenever the code takes any exception path, this stays green
+    only when the non-raising path is genuinely separate.
+    """
+    from unittest.mock import MagicMock, patch
+
+    handler = _registry_for_marker_clear(cleared=True)
+    handler._live_updater = MagicMock()
+    handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+    handler._require_marker = MagicMock(return_value=None)
+    handler._begin_writing_or_refuse = MagicMock()
+    cleared: list[str] = []
+    handler._require_marker_cleared = MagicMock(
+        side_effect=lambda p, *a, **k: cleared.append(p) or None
+    )
+
+    sentinel = MagicMock(name="report")
+    updater = MagicMock()
+    updater.reingest = MagicMock(return_value=sentinel)
+
+    with patch.object(handler, "_hydrate_reingest_updater", return_value=updater):
+        callback = handler._guarded_rename_reingest(ALPHA)
+        assert callback is not None, "fixture guard: expected a callback"
+        assert callback(["a.py"]) is sentinel, (
+            "the guarded callback must return the re-ingest's own report"
+        )
+
+    assert cleared == [ALPHA], (
+        f"a successful rename re-ingest left the marker up: cleared={cleared}"
     )
 
 
@@ -3947,7 +4286,7 @@ async def test_the_rename_handler_uses_the_guarded_reingest(tmp_path: Path) -> N
     # Patched at the SOURCE module: `_run_rename` imports `rename` locally, so
     # there is no `codebase_rag.mcp.tools.rename` attribute to replace.
     with (
-        patch.object(handler, "_updater_for_reingest", return_value=updater),
+        patch.object(handler, "_hydrate_reingest_updater", return_value=updater),
         patch("codebase_rag.editing.rename.rename", fake_rename),
         patch.object(graph_query_module, "source_root_for", return_value=tmp_path),
         contextlib.suppress(Exception),

@@ -10,6 +10,7 @@ from __future__ import annotations
 import mgclient
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_dialects import (
     DIALECT_MEMGRAPH,
     DIALECT_NEO4J,
@@ -321,3 +322,77 @@ class TestCleanupDoesNotMaskTheAuditResult:
             explode,
         )
         assert HealthChecker().check_graph_integrity() == []
+
+
+class TestReachabilityNeedsAQuery:
+    """Opening a connection does not prove a Neo4j server is reachable.
+
+    The Neo4j driver connects lazily, so `session()` succeeds against a
+    dead server and the failure only surfaces when a query runs.
+    `mgclient.connect()` fails immediately. A probe that merely opens a
+    connection therefore detects a dead Memgraph and reports a dead Neo4j
+    as healthy -- silently, and in the reassuring direction.
+    """
+
+    def test_the_health_check_sends_the_probe_query(self, monkeypatch) -> None:
+        """Assert the statement that reaches the server, not that a call exists.
+
+        A source-text check would pass against a probe that executed the
+        wrong statement, or an empty one.
+        """
+        sent: list[str] = []
+
+        class RecordingCursor:
+            def execute(self, query: str, params: object = None) -> None:
+                sent.append(query)
+
+            @property
+            def description(self) -> None:
+                return None
+
+            def fetchall(self) -> list[tuple]:
+                return []
+
+            def close(self) -> None:
+                pass
+
+        class RecordingConn(FakeConn):
+            def cursor(self) -> RecordingCursor:
+                return RecordingCursor()
+
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor._create_connection",
+            lambda self: RecordingConn(),
+        )
+        monkeypatch.setattr(
+            "codebase_rag.tools.health_checker.MemgraphIngestor.close_driver",
+            lambda self: None,
+        )
+        result = HealthChecker().check_memgraph_connection()
+
+        assert result.passed
+        # The probe must actually round-trip a statement: opening the
+        # connection is not evidence a Neo4j server is reachable.
+        assert sent == [cs.HEALTH_CHECK_MEMGRAPH_QUERY]
+
+    def test_the_probe_query_is_trivial(self) -> None:
+        # It must exercise the round trip without depending on any data.
+        assert cs.HEALTH_CHECK_MEMGRAPH_QUERY.upper().startswith("RETURN 1")
+
+    def test_opening_a_session_does_not_touch_the_network(self) -> None:
+        """The asymmetry itself, against a port with nothing listening."""
+        pytest.importorskip("neo4j")
+        from codebase_rag.services.neo4j_driver import Neo4jDriver
+
+        driver = Neo4jDriver(
+            uri="bolt://127.0.0.1:9", username=None, password=None, database="neo4j"
+        )
+        try:
+            conn = driver.connect()  # lazy: must NOT raise
+            cursor = conn.cursor()  # also lazy: still no socket
+            # Only the query reaches the network, so only it belongs in
+            # the raises block (python:S5778).
+            with pytest.raises(Exception, match="(?i)unavailable|connect"):
+                cursor.execute("RETURN 1")
+        finally:
+            driver.close()

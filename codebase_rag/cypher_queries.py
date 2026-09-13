@@ -75,14 +75,63 @@ CYPHER_PROJECT_ROOT_PATH = (
 # marker another process left at `writing=true` over a graph it had started to
 # change, or that process's abort would clear a guard it does not own (#1705
 # review). Ownership of the DELETE is the remaining half, tracked in #1709.
+# One marker node PER RUN, not per project (issue #1709). The ingestor lock is
+# per registry instance, so two registries can index the same project at once;
+# with a single node per project, the second run's clear deleted the first
+# run's marker and a partial graph looked complete to a fresh process.
 CYPHER_MARK_PROJECT_INCOMPLETE = (
-    "MERGE (m:IncompleteRun {project: $project_name}) "
+    "MERGE (m:IncompleteRun {project: $project_name, run_id: $run_id}) "
     "SET m.run_incomplete = true, "
     "m.writing = coalesce(m.writing, false) OR $writing"
 )
+# Deletes only THIS run's marker, so a concurrent run's marker outlives it.
 CYPHER_CLEAR_PROJECT_INCOMPLETE = (
-    "MATCH (m:IncompleteRun {project: $project_name}) DELETE m"
+    "MATCH (m:IncompleteRun {project: $project_name, run_id: $run_id}) DELETE m"
 )
+# RECOVERY: clears every outstanding marker for the project, whichever run
+# wrote it. Deliberately not run-scoped -- its whole purpose is to clear a
+# marker some OTHER run stranded (a run that stopped before its first graph
+# write and could not, or did not live to, clear its own). A run-scoped
+# delete matches nothing there, and the project stays blocked until someone
+# runs a full update. Guarded by the caller on `writing=false` for EVERY
+# outstanding marker, so no run that has begun writing can be cleared this
+# way (issue #1709).
+# Deletes only markers that are STILL read-only at delete time. The caller
+# reads the phase and then acts on it, and between those a concurrent run can
+# promote its own marker to `writing=true` -- an unconditional delete would
+# then remove a marker protecting a graph that IS being written (raised in
+# review of #1850). Re-checking the phase inside the delete closes that
+# window: the predicate is evaluated against the row as it is now, not as the
+# caller last saw it. A legacy marker with no `writing` property reads as
+# writing, exactly as `CYPHER_PROJECT_IS_INCOMPLETE` coalesces it, so it stays
+# fail-closed here too.
+CYPHER_RECOVER_PROJECT_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE coalesce(m.writing, true) = false DELETE m"
+)
+# A marker written before run ids existed has no `run_id` property, so the
+# run-scoped clear can never match it while the read -- which matches on
+# project alone -- still sees it. Without this the project would stay blocked
+# forever after an upgrade (raised in review of #1850). Cleared alongside this
+# run's own marker on a successful completion, since a run that completes for
+# the project has established the graph is whole.
+#
+# Phase-guarded for the ROLLING DEPLOYMENT case: during an upgrade an
+# old-version process can still be writing under a legacy marker, and a
+# new-version run completing for the same project would otherwise delete the
+# protection for a graph that IS being written (#1850 review). A legacy
+# marker with no `writing` property coalesces to true and is left alone, so
+# the pre-phase markers this was written for stay put until a run can prove
+# they are stale -- fail-closed, which is the safe direction here.
+CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE = (
+    "MATCH (m:IncompleteRun {project: $project_name}) "
+    "WHERE m.run_id IS NULL AND coalesce(m.writing, true) = false DELETE m"
+)
+# "Is ANY run outstanding": the read was already a boolean question, so it
+# generalises without changing its callers' meaning. `writing` is true if ANY
+# outstanding run has begun writing, which is the conservative reading -- a
+# recoverable `writing=false` state requires every outstanding run to be
+# read-only still.
 CYPHER_PROJECT_IS_INCOMPLETE = (
     "MATCH (m:IncompleteRun {project: $project_name}) "
     "RETURN coalesce(m.run_incomplete, false) AS run_incomplete, "

@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .config import settings
 from .cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
     CYPHER_EXAMPLE_CODE_SMELLS,
@@ -19,6 +20,7 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_SECURITY_ISSUES,
     CYPHER_EXAMPLE_TASKS,
 )
+from .graph_dialects import DIALECT_MEMGRAPH
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
 from .tools.tool_descriptions import AgenticToolName
 from .types_defs import ToolNames
@@ -57,7 +59,14 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
     )
 
 
-CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
+# Section 2 is engine-neutral; the algorithm catalogue below is not.
+# MAGE procedures (nxalg.*, wcc.*, pagerank.*, path.expand, ...) exist only
+# on Memgraph. Neo4j 5 has none of them: the nearest equivalents are GDS
+# (a different call shape, needing a projected graph) and APOC, and both
+# are separately installed plugins that cannot be assumed present -- so a
+# non-Memgraph backend gets no catalogue and leans on the bounded Cypher
+# section 2 already specifies in full (issue #1813).
+_CYPHER_QUERY_RULES_TEMPLATE = """**2. Critical Cypher Query Rules**
 
 - **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
 - **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
@@ -66,8 +75,17 @@ CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`).
 - **Match the asked-about relationship explicitly and RETURN it**: For questions about callers, callees, usage, or dependencies, match the specific edge (e.g., `(caller)-[r:CALLS]->(callee)`) and include `type(r) AS relationship` in the RETURN clause. A bare node list is ambiguous — the file that *defines* or *imports* a function is not a *caller* of it, and the consumer can only tell them apart if the relationship type is in the results.
 - **Prefer multi-label matches over guessing one label**: When the node kind is uncertain, match `(n:Function|Method)` (or `(n:Function|Method|Class)`) instead of a single label — a wrong single label silently returns nothing. Leave the *other* end of a relationship pattern unlabeled when any node kind is a valid answer (e.g., module-level code also has `CALLS` edges).
-- **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`. If you genuinely need unbounded reachability, use a MAGE procedure (see Section 2b) instead of variable-length Cypher.
+- **NEVER use unbounded variable-length paths**: Patterns like `[:CALLS*]`, `[*]`, `[:CALLS*1..]` enumerate every path in the graph and exhaust memory. Always cap with an upper bound, e.g. `[:CALLS*1..6]`.@@UNBOUNDED_REACHABILITY@@
+"""
 
+_UNBOUNDED_REACHABILITY_SLOT = "@@UNBOUNDED_REACHABILITY@@"
+
+_MAGE_UNBOUNDED_REACHABILITY = (
+    " If you genuinely need unbounded reachability, use a MAGE procedure"
+    " (see Section 2b) instead of variable-length Cypher."
+)
+
+_MAGE_SECTIONS = """
 **2b. Graph Algorithm Procedures (MAGE)**
 
 For algorithmic questions (longest/shortest paths, cycles, recursion clusters, centrality, communities, reachability), prefer calling a MAGE procedure over writing variable-length Cypher. Cypher path patterns enumerate all matches with no memoization, so they OOM on cyclic graphs; MAGE procedures run real graph algorithms in bounded memory.
@@ -97,20 +115,66 @@ If a question cannot be expressed as a bounded Cypher pattern or as a single MAG
 - "longest call chain" → `CALL nxalg.strongly_connected_components() YIELD components RETURN components` (let the orchestrator post-process), or use `CALL path.expand` with a generous but finite `maxHops`.
 - "find a deeply-nested call site" → use a bounded depth such as `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1`."""
 
+# Section 2b's MAGE note recommends `EXISTS((a)-[:CALLS]->(b))`. That form
+# is NOT removed in Neo4j 5 -- `exists(<pattern>)` is a current predicate
+# function there, documented with `exists((p)-[:ACTED_IN]->())` as its own
+# example; what v5 replaced is the PROPERTY overload `exists(prop)`, by
+# `prop IS NOT NULL`. So this section states a PREFERENCE for the
+# GQL-conformant `EXISTS { ... }` rather than a false removal claim --
+# shipping a wrong "X was removed" is the same defect class as the MAGE
+# catalogue this split exists to stop serving.
+_NEO4J_SECTIONS = """
+**2b. Graph Algorithms**
 
-def build_graph_schema_and_rules() -> str:
-    return f"""You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **Memgraph knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.
+This deployment is Neo4j. Answer algorithmic questions (paths, cycles, reachability, ranking) with the bounded Cypher of section 2, and do NOT call graph-algorithm procedures: Memgraph's MAGE catalogue (`nxalg.*`, `wcc.*`, `pagerank.*`, `path.expand`, ...) does not exist here, and the Neo4j equivalents live in the GDS and APOC plugins, which may not be installed.
+
+- **Reachability / paths**: a bounded variable-length pattern, e.g. `MATCH p = (a)-[:CALLS*1..6]->(b)`, with `LIMIT`.
+- **Shortest path**: `shortestPath((a)-[:CALLS*1..10]->(b))`, which is built in.
+- **Cycles**: a bounded pattern returning to its start, e.g. `MATCH p = (a)-[:CALLS*1..6]->(a)`.
+- **Ranking / "most called"**: aggregate instead of a centrality procedure, e.g. `MATCH (c:Function)-[r:CALLS]->(f:Function) WHERE f.qualified_name STARTS WITH '<project>.' AND c.qualified_name STARTS WITH '<project>.' RETURN f.qualified_name AS name, count(r) AS callers ORDER BY callers DESC LIMIT 10`. Restrict EVERY alias the aggregate counts over, not only the one you return: an unrestricted end makes the total span projects you did not ask about.
+- **Existence of an edge**: prefer the bare pattern predicate `WHERE (a)-[:CALLS]->(b)` or `WHERE EXISTS { (a)-[:CALLS]->(b) }`, which is the GQL-conformant spelling.
+
+**2c. When Cypher Can't Answer**
+
+If a question cannot be expressed as a bounded Cypher pattern (e.g., "longest call chain in a graph with cycles"), return your best bounded approximation rather than an unbounded path query -- for example a bounded `[:CALLS*1..10]` with `ORDER BY ... LIMIT 1` -- and let the orchestrator post-process."""
+
+
+def _is_memgraph(backend: str | None = None) -> bool:
+    """Whether the configured graph store is Memgraph.
+
+    Read at call time rather than import time: a test or an embedding host may
+    set GRAPH_BACKEND after this module is first imported, and a prompt frozen
+    at import would keep advertising the wrong engine's procedures.
+    """
+    if backend is None:
+        backend = settings.GRAPH_BACKEND
+    return backend == DIALECT_MEMGRAPH
+
+
+def build_cypher_query_rules(backend: str | None = None) -> str:
+    """Section 2 plus the algorithm guidance the configured backend supports."""
+    memgraph = _is_memgraph(backend)
+    # str.replace, not str.format: the rules text carries literal braces
+    # (`{name: 'VatManager'}`, `EXISTS { ... }`) that str.format reads as
+    # fields and rejects. That is what backed this split out of #1590.
+    body = _CYPHER_QUERY_RULES_TEMPLATE.replace(
+        _UNBOUNDED_REACHABILITY_SLOT,
+        _MAGE_UNBOUNDED_REACHABILITY if memgraph else "",
+    )
+    return body + (_MAGE_SECTIONS if memgraph else _NEO4J_SECTIONS)
+
+
+def build_graph_schema_and_rules(backend: str | None = None) -> str:
+    engine = "Memgraph" if _is_memgraph(backend) else "Neo4j"
+    return f"""You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **{engine} knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.
 
 **1. Graph Schema Definition**
 The database contains information about a codebase, structured with the following nodes and relationships.
 
 {GRAPH_SCHEMA_DEFINITION}
 
-{CYPHER_QUERY_RULES}
+{build_cypher_query_rules(backend)}
 """
-
-
-GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
 
 
 def _format_active_projects_block(active_projects: list[str] | None) -> str:
@@ -331,7 +395,7 @@ def build_cypher_system_prompt(active_projects: list[str] | None = None) -> str:
     return f"""
 You are an expert translator that converts natural language questions about code structure into precise Neo4j Cypher queries.
 
-{GRAPH_SCHEMA_AND_RULES}
+{build_graph_schema_and_rules()}
 {_format_cypher_project_scope(active_projects)}
 **3. Query Optimization Rules**
 
@@ -407,7 +471,7 @@ def build_local_cypher_system_prompt(active_projects: list[str] | None = None) -
     return f"""
 You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher query. Do not add explanations or markdown.
 
-{GRAPH_SCHEMA_AND_RULES}
+{build_graph_schema_and_rules()}
 {_format_cypher_project_scope(active_projects)}
 **CRITICAL RULES FOR QUERY GENERATION:**
 1.  **NO `UNION`**: Never use the `UNION` clause. Generate a single, simple `MATCH` query.

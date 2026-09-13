@@ -58,12 +58,21 @@ def _walk(node: object) -> int:
     return count
 
 
-def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
+def _extract_names(language: cs.SupportedLanguage, root: object, source: bytes) -> None:
     """Run the language's own name extractor over every captured node.
 
     This is the qualification code the issue names: it indexes children,
     follows named fields and decodes `node.text`, all on shapes the grammar
     guarantees only for well-formed input.
+
+    Two failure modes, and only one of them raises. The loud one (#1797) is a
+    strict decode blowing up on an undecodable byte. The quiet one (#1810) is
+    tree-sitter treating that byte as a token boundary: the `name` node covers
+    only the bytes AFTER it, the extractor decodes that shortened node
+    perfectly successfully, and `alpha` is indexed as `pha` with no exception,
+    no log line and nothing to catch. A wrong name is worse than a missing
+    one -- `pha` reads as a real definition nobody calls, so dead-code and
+    impact queries get a confidently wrong answer.
     """
     fqn_spec = LANGUAGE_FQN_SPECS.get(language)
     spec = LANGUAGE_SPECS.get(language)
@@ -84,8 +93,136 @@ def _extract_names(language: cs.SupportedLanguage, root: object) -> None:
             # the extractors decode with errors="replace", so an undecodable
             # byte can no longer raise here and a regression would surface as
             # a crash rather than being silently tolerated.
-            fqn_spec.get_name(current)  # type: ignore[arg-type]
+            name = fqn_spec.get_name(current)  # type: ignore[arg-type]
+            if name is not None:
+                _check_truncated_name(language, current, name, source)
         stack.extend(current.children)  # type: ignore[attr-defined]
+
+
+def _check_truncated_name(
+    language: cs.SupportedLanguage, node: object, name: str, source: bytes
+) -> None:
+    """Fail when a name was truncated by an invalid byte beside it.
+
+    Mirrors `parsers.utils.warn_if_name_truncated`: the discriminator is the
+    byte IMMEDIATELY ADJACENT to the NAME's span, the one the grammar split
+    on. Two narrower-sounding shapes are both wrong -- the name node's own
+    bytes never contain the bad byte (tree-sitter excludes it, so they decode
+    cleanly either way and detect nothing), and the enclosing DEFINITION's
+    span contains it but also spans the whole body, so it fires on a bad byte
+    in any body comment or string while the symbol is indexed correctly.
+
+    Deliberately NOT `name.encode() in raw`: containment is satisfied BY this
+    corruption, because the truncated name is a substring of the corrupt bytes
+    (`pha` really is inside `al\xffpha`), so that oracle returns True on the
+    exact defect it would be written for and can never fire.
+    """
+    # A name carrying the replacement character is damaged whatever its span:
+    # #1797's fix decodes with errors="replace", so a bad byte the grammar
+    # keeps INSIDE the name expression (Lua's `Greeter.gr\ufffdeet`) survives as
+    # U+FFFD instead of truncating the token. Nothing is adjacent to a
+    # shortened span there, so the adjacency test below cannot see it. No
+    # legitimate identifier contains U+FFFD, so this needs no further check.
+    if _UNICODE_REPLACEMENT_CHAR in name:
+        if len(_TRUNCATED_NAMES) < _TRUNCATED_NAME_LIMIT:
+            _TRUNCATED_NAMES.add((language, name))
+        return
+    span = _name_span(node, name)
+    if span is None:
+        return
+    start, end = span
+    for probe, at_end in (
+        (source[max(0, start - _UTF8_MAX_SEQUENCE_BYTES) : start], False),
+        (source[end : end + _UTF8_MAX_SEQUENCE_BYTES], True),
+    ):
+        if probe and _has_invalid_byte(probe, at_end=at_end):
+            # Production DETECTS this and logs a warning (#1810), so it is a
+            # known, reported behaviour rather than a crash: halting the
+            # fuzzer on it would stop the run on the first mangled identifier
+            # libFuzzer invents and hide every other defect behind it.
+            #
+            # The oracle is still load-bearing. It is asserted the other way
+            # round in `test_known_defect_seeds_are_still_detected`, which
+            # requires the two corpus reproducers to trip it, so a regression
+            # that stops detecting truncation reddens there. Raise here again
+            # once the extractors stop truncating rather than warning.
+            if len(_TRUNCATED_NAMES) < _TRUNCATED_NAME_LIMIT:
+                _TRUNCATED_NAMES.add((language, name))
+            return
+
+
+# Longest UTF-8 sequence: a window this size either side of a name spans any
+# single character that could legitimately sit next to it.
+_UTF8_MAX_SEQUENCE_BYTES = 4
+# Truncated names seen this run, recorded rather than raised: the defect is
+# known and production reports it, so the fuzzer continues instead of halting
+# on the first mangled identifier libFuzzer invents.
+#
+# A BOUNDED set, not a list. libFuzzer runs millions of iterations and every
+# one can contribute a fresh name, so an unbounded collection would exhaust
+# memory and kill the run -- the same "the harness crashed itself" failure
+# this recording exists to avoid. The set is for the tests' benefit (they
+# assert the oracle still fires); the cap is what keeps it free.
+_TRUNCATED_NAME_LIMIT = 128
+_TRUNCATED_NAMES: set[tuple[cs.SupportedLanguage, str]] = set()
+# A definition's own name is at most a step or two above it (the JS/TS
+# field-definition wrapper is one).
+_NAME_SPAN_ANCESTOR_LIMIT = 3
+# Sigils an ingestor prepends to a synthesized name (a C# destructor).
+_SYNTHETIC_NAME_PREFIXES = "~"
+# What `errors="replace"` substitutes for an undecodable byte.
+_UNICODE_REPLACEMENT_CHAR = "\ufffd"
+
+
+def _has_invalid_byte(window: bytes, *, at_end: bool) -> bool:
+    """Whether `window` holds a byte no valid UTF-8 sequence explains.
+
+    The window is cut at an arbitrary offset, so it can begin or end
+    mid-character even when the source is well-formed (`\u00a9` is c2 a9, and
+    either half alone fails). The partial sequence at the CUT edge is trimmed
+    before decoding; `at_end` says which edge that is.
+    """
+    for trim in range(len(window)):
+        candidate = window[trim:] if not at_end else window[: len(window) - trim]
+        if not candidate:
+            return False
+        try:
+            candidate.decode(cs.ENCODING_UTF8)
+        except UnicodeDecodeError:
+            continue
+        return False
+    return True
+
+
+def _name_span(node: object, name: str) -> tuple[int, int] | None:
+    """Byte span the extracted `name` came from, or None."""
+    # A synthesized name need not appear in the source: C# destructor ingestion
+    # builds `~Greeter` while the source leaf is bare. Mirrors production's
+    # strip so the oracle exercises that path too.
+    name = name.lstrip(_SYNTHETIC_NAME_PREFIXES)
+    if not name:
+        return None
+    encoded = name.encode(cs.ENCODING_UTF8)
+    direct = node.child_by_field_name("name")  # type: ignore[attr-defined]
+    if direct is not None and direct.text == encoded:
+        return direct.start_byte, direct.end_byte
+
+    stack = [node]
+    while stack:
+        current = stack.pop(0)
+        if current is not node and current.text == encoded and not current.children:  # type: ignore[attr-defined]
+            return current.start_byte, current.end_byte  # type: ignore[attr-defined]
+        stack.extend(current.children)  # type: ignore[attr-defined]
+
+    ancestor = node.parent  # type: ignore[attr-defined]
+    for _ in range(_NAME_SPAN_ANCESTOR_LIMIT):
+        if ancestor is None:
+            break
+        field = ancestor.child_by_field_name("name")
+        if field is not None and field.text == encoded:
+            return field.start_byte, field.end_byte
+        ancestor = ancestor.parent
+    return None
 
 
 def _run_queries(language: cs.SupportedLanguage, tree: object) -> None:
@@ -121,7 +258,7 @@ def fuzz_parse_source(data: bytes) -> None:
 
     _walk(tree.root_node)
     _run_queries(language, tree)
-    _extract_names(language, tree.root_node)
+    _extract_names(language, tree.root_node, source)
 
 
 def main() -> None:

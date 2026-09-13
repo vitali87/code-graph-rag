@@ -104,6 +104,18 @@ EDGE_CASES: dict[str, str] = {
     "bom": "﻿def f():\n    return 1\n",
 }
 
+# Sources that are not valid UTF-8, so they cannot live in EDGE_CASES (str).
+# A bad byte INSIDE an identifier is issue #1810: tree-sitter splits the token
+# there, the `name` node covers only the bytes after it, and the extractor
+# decodes that shortened node without error -- `alpha` is indexed as `pha`
+# with nothing raised. Distinct from #1797, where the bad byte makes a strict
+# decode raise; these seeds reach the mode that stays silent.
+BYTE_EDGE_CASES: dict[str, bytes] = {
+    "truncated_identifier": b"def al\xffpha():\n    return 1\n",
+    "truncated_identifier_tail": b"def alph\xff():\n    return 1\n",
+    "bad_byte_between_defs": b"def a():\n    return 1\n\xff\ndef b():\n    return 2\n",
+}
+
 
 # The files fuzz_incremental_update can edit, in the order its `EDITABLE`
 # tuple has them (it is `tuple(sorted(FIXTURE))`). Duplicated rather than
@@ -160,7 +172,31 @@ def build_parse_corpus() -> int:
         # about the SOURCE, and libFuzzer mutates the selector byte anyway.
         (out / f"edge_{name}.bin").write_bytes(source.encode() + b"\x00")
         written += 1
+    for name, raw in BYTE_EDGE_CASES.items():
+        # Python is the target language for these, so the selector byte is the
+        # index of PYTHON rather than 0; a bad byte only truncates an
+        # identifier if the grammar actually tokenises one.
+        (out / f"edge_{name}.bin").write_bytes(raw + bytes([_python_index()]))
+        written += 1
     return written
+
+
+def _python_index() -> int:
+    """The selector byte that makes the parse harness choose Python.
+
+    The harness builds `_LANGUAGES` as `tuple(sorted(_PARSERS))` and indexes it
+    with `ConsumeIntInRange(0, len - 1)`, so the byte is the position of
+    `python` in the sorted language list. Derived rather than hard-coded: a new
+    grammar shifts every index after it, and a stale constant would silently
+    hand these seeds to the wrong parser -- exactly the failure the docstring
+    above records for the pre-existing seeds.
+    """
+    from codebase_rag import constants as cs
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+    languages = tuple(sorted(parsers))
+    return languages.index(cs.SupportedLanguage.PYTHON)
 
 
 def build_shell_corpus() -> int:

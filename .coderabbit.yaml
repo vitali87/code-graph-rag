@@ -10,3 +10,18 @@ reviews:
   pre_merge_checks:
     docstrings:
       mode: "off"
+  auto_review:
+    # Auto-review defaults to the default branch only, so on a stacked chain
+    # every layer above the bottom is skipped and only the bottom PR is ever
+    # read (issue #1581: 14 of 18 open PRs had never been reviewed). The skip
+    # is easy to misread as a clean result -- the same "Review skipped"
+    # headline covers "already reviewed the last commit", which means the head
+    # IS covered, so the notice cannot be judged without opening its body.
+    #
+    # These patterns are anchored and cover the two prefixes stacks are cut
+    # from here. Deliberately not ".*": a base that is neither the default
+    # branch nor a recognised stack layer should keep the default behaviour
+    # rather than silently opting in.
+    base_branches:
+      - "^feat/.*"
+      - "^fix/.*"

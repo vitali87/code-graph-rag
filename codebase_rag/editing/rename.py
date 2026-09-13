@@ -1087,6 +1087,15 @@ class Renamer:
             logger.warning(cs.RENAME_CONTRACT_UNMEASURED.format(error=error))
             return report._replace(
                 verdict=None,
+                # The re-ingest may have written before it failed, so the
+                # graph may be partial. The ROLLBACK path already says so;
+                # this path did not, and it is the one the caller reaches
+                # while `applied` is still True -- so `_run_rename` saw a
+                # clean report and re-marked nothing, leaving no record at
+                # all. `verdict=None` says "could not measure", which is not
+                # the same claim as "the graph may be damaged" (found by a
+                # peer review session, PR #1547).
+                graph_incomplete=True,
                 message=cs.RENAME_CONTRACT_UNMEASURED.format(error=error),
             )
         verdict = verify(

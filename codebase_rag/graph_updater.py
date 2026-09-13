@@ -739,6 +739,55 @@ def _natural_qn(qualified_name: str) -> str:
     return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
 
 
+def _project_root_for_single_file(target: Path) -> Path:
+    """The project root owning `target`, or its parent when none is found.
+
+    A single-file run used to treat the target's PARENT as the repo root, so a
+    file in a subdirectory was keyed relative to that subdirectory: the same
+    file indexed as `pkg/module_a.py` by a full build became `module_a.py`,
+    with a qualified name to match. The keys differ, so delete-before-reingest
+    misses the existing node and a duplicate set is written under the wrong
+    key, and `Project.root_path` is overwritten with the subdirectory (#1775).
+
+    Two markers, and they are NOT interchangeable -- the cache outranks `.git`
+    at any depth, which is the whole subtlety here:
+
+    * the hash cache (`repo_path / HASH_CACHE_FILENAME`) is written by every
+      directory run, so an ancestor holding one is EVIDENCE of the root that
+      actually indexed this file. Agreeing with it is the entire point, since
+      disagreeing is what writes a second identity for the same file;
+    * `.git` is only a GUESS at a root. It earns its place because the cache
+      alone leaves a reachable gap -- the first single-file run on a fresh
+      clone finds no cache and reproduces #1775 exactly -- but it says nothing
+      about what has been indexed.
+
+    Ranking them, rather than taking the nearest of either, is required. A
+    submodule or linked worktree puts a `.git` INSIDE a project that owns the
+    cache, so a nearest-of-either walk picks the nested marker and keys the
+    file as `pkg/module_a.py` where the outer build keyed it as
+    `components/inner/pkg/module_a.py` -- reintroducing this very issue one
+    level down, and overwriting `Project.root_path` with the nested directory.
+    Measured on a nested worktree-style marker during review of this change.
+
+    So: the nearest CACHED ancestor wins outright; only if there is none does
+    the nearest `.git` apply. Two nested caches still resolve to the nearer,
+    which is the project that genuinely indexed the target.
+
+    The final fallback is the old behaviour: a target under neither marker is
+    not identifiably part of a project here, so there is no root to agree with
+    and inventing one (the filesystem root, say) would key it against a tree
+    nobody asked to index. That case still keys divergently from a later full
+    build of an enclosing directory -- it is a narrowed gap, not a closed one.
+    """
+    git_root: Path | None = None
+    for ancestor in target.parents:
+        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
+            return ancestor
+        if git_root is None and (ancestor / cs.GIT_DIR_NAME).exists():
+            git_root = ancestor
+    return git_root if git_root is not None else target.parent
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -775,7 +824,7 @@ class GraphUpdater:
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
-            repo_path = resolved.parent
+            repo_path = _project_root_for_single_file(resolved)
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
@@ -1825,9 +1874,29 @@ class GraphUpdater:
         hash_cache_published = True
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
-            hash_cache_published = _publish_hash_cache(
-                cache_path, new_hashes, observed_at
-            )
+            # A single-file run may UPDATE an existing cache but must never
+            # CREATE one, for the same reason it does not record the
+            # exclusion state below: it walked one file and cannot describe
+            # a directory's contents.
+            #
+            # Creating one is actively harmful since #1775, because the
+            # cache is what marks a project root. A cache created under
+            # `pkg/` by a run targeting `pkg/module_a.py` makes every later
+            # single-file run below `pkg/` root THERE, which preserves
+            # exactly the misrooting #1775 removes. Measured in review: the
+            # stray held all three sibling files, so it is indistinguishable
+            # by content from a genuine project's cache and cannot be
+            # filtered out after the fact -- it has to not be written.
+            #
+            # Updating an existing one stays correct: such a run is rooted
+            # at the ancestor that owns that cache, so the entries it writes
+            # are keyed against the same root every other run uses.
+            if self._single_file is not None and not cache_path.is_file():
+                logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            else:
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, new_hashes, observed_at
+                )
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None and hash_cache_published:
             _save_dir_mtimes(*self._pending_dir_mtimes)
@@ -2926,6 +2995,16 @@ class GraphUpdater:
         # The call pass iterates _parsed_files; a removed file must leave it
         # (a re-parse re-registers), or deleted files keep contributing and
         # created files never do (issue #1028).
+        #
+        # This removal is ALSO what keeps the list free of duplicates. The
+        # appender in `_process_single_file` appends unconditionally, so
+        # every re-parse route has to strip the old entry first -- the
+        # incremental path calls this method, and `reingest` gets there via
+        # `_reingest_delete`. A deduplicating appender is deliberately not
+        # the mechanism: one existed (`register_parsed_file`, added for
+        # #1028) and was left callerless when #1524 moved the watcher onto
+        # `reingest`, where it read as the guarantee's source while never
+        # running. Removed in #1784; the invariant lives here.
         self._parsed_files = [
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
@@ -3043,14 +3122,85 @@ class GraphUpdater:
 
         qns_to_remove = set()
 
-        for qn in list(self.function_registry.keys()):
-            if (
-                any(
-                    qn.startswith(f"{prefix}.") or qn == prefix
-                    for prefix in module_qn_prefixes
+        # A directory may share a sibling FILE's stem, and then the module qns
+        # nest: `proj/a.py` records `proj.a` while `proj/a/b.py` records
+        # `proj.a.b`. Deleting `a.py` matches the prefix `proj.a.` and would
+        # take `b.py`'s definitions with it, though `b.py` still exists and
+        # this event does not re-parse it, so nothing restores them (issue
+        # #1773). `foreign_qns` does not save them: it is built from function
+        # SPAN records, so it protects `proj.a.b.Nested.deep` while leaving
+        # the class `proj.a.b.Nested`, which records no span -- exactly the
+        # asymmetry measured on `A.cs` beside `A/B.cs`, and reproduced here on
+        # `a.py` beside `a/b.py`. The sweep is language-agnostic, so this is
+        # not a C#-only shape.
+        #
+        # Ownership must come from a RECORD, not from the qn's shape. The
+        # obvious rule -- keep a qn that also sits under a longer surviving
+        # module -- is wrong for C#, whose class qn embeds its namespace:
+        # `proj/Core.cs` with `namespace Util` yields `proj.Core.Util.Helper`,
+        # sitting under the SIBLING module `proj.Core.Util` from
+        # `proj/Core/Util.cs`. That rule would keep `Helper` after deleting
+        # the file that declares it (measured; caught in review of #1844).
+        # #1769 hit the same trap and answered it the same way, with an
+        # explicit owner record.
+        #
+        # `class_owner_module` is that record, cross-language and written by
+        # every language's ingest (#1772). A qn whose declaring module is
+        # still mapped to a file, and is not itself being deleted, belongs to
+        # a file that still exists: keep it. A qn with no recorded owner is
+        # left to the prefix rule, which is the pre-existing behaviour.
+        owner_module = self.factory.definition_processor.class_owner_module
+        live_modules = set(self.factory.definition_processor.module_qn_to_file_path)
+        # `class_owner_module` is written at INGEST, so a definition carried
+        # over by a REHYDRATE has no entry there and would fall back to the
+        # prefix rule. `rehydrated_definition_paths` is the record for exactly
+        # those, written when the row is read back from the graph, and it
+        # already serves as ownership evidence in `_prune_class_keyed_maps`.
+        # Consulting both means an unchanged sibling's class is protected on
+        # an incremental run too, not only on the run that parsed it (raised
+        # in review of #1844; pre-existing on main, which loses it either way).
+        rehydrated = self.factory.definition_processor.rehydrated_definition_paths
+        deleted_rel = cached_relative_path(file_path, self.repo_path).as_posix()
+        # "Not the file being deleted" is not enough: a definition recorded
+        # against a file removed EARLIER also has a different path, and would
+        # be preserved as a stale entry that goes on steering call resolution
+        # (raised by CodeRabbit on #1844). Require the recorded path to belong
+        # to a module that is still live.
+        live_paths = {
+            cached_relative_path(path, self.repo_path).as_posix()
+            for path in self.factory.definition_processor.module_qn_to_file_path.values()
+        }
+
+        def _owned_by_a_surviving_file(qn: str) -> bool:
+            owner = owner_module.get(qn)
+            if owner is not None:
+                return owner not in module_qn_prefixes and owner in live_modules
+            # The rehydrated half: owned by a file that is not the one being
+            # deleted. Compared as a relative posix path, the form the
+            # rehydrate stores.
+            rehydrated_path = rehydrated.get(qn)
+            if rehydrated_path is not None:
+                return (
+                    str(rehydrated_path) != deleted_rel
+                    and str(rehydrated_path) in live_paths
                 )
-                or qn in owned_qns
-            ) and qn not in foreign_qns:
+            return False
+
+        for qn in list(self.function_registry.keys()):
+            matched_prefix = any(
+                qn.startswith(f"{prefix}.") or qn == prefix
+                for prefix in module_qn_prefixes
+            )
+            if (
+                matched_prefix
+                and qn not in owned_qns
+                and _owned_by_a_surviving_file(qn)
+            ):
+                # Declared by a file that still exists; the prefix match is an
+                # accident of the shared stem. `owned_qns` still wins, since
+                # that is this file's own span-record evidence.
+                continue
+            if (matched_prefix or qn in owned_qns) and qn not in foreign_qns:
                 qns_to_remove.add(qn)
                 del self.function_registry[qn]
 
@@ -3772,8 +3922,19 @@ class GraphUpdater:
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
 
-        _touch_empty_json(cache_path)
-        _touch_empty_json(dir_mtimes_path)
+        # Same rule as the publish site in `run`: a single-file run may
+        # UPDATE an existing cache but must never CREATE one. These two
+        # calls are what actually bring a stray into existence -- they run
+        # before any publishing -- so the guard has to be here as well.
+        #
+        # No `or cache_path.is_file()` arm: `_touch_empty_json` already
+        # returns early when the file exists, so the update case is
+        # unaffected either way and the extra arm could never fail. Its
+        # absence is checked by the "still updates an existing cache" test,
+        # which reddens on the publish-site guard rather than this one.
+        if self._single_file is None:
+            _touch_empty_json(cache_path)
+            _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
 
@@ -4398,15 +4559,6 @@ class GraphUpdater:
         self.factory._func_class_captures_cache.pop(file_path, None)
         return (root_node, language)
 
-    def register_parsed_file(
-        self, file_path: Path, language: cs.SupportedLanguage
-    ) -> None:
-        # Watch-mode events parse outside run(): the file must join the
-        # call pass's iteration set or its outgoing CALLS edges are never
-        # emitted (issue #1028).
-        if all(existing != file_path for existing, _ in self._parsed_files):
-            self._parsed_files.append((file_path, language))
-
     def _process_function_calls(self, only: Collection[Path] | None = None) -> None:
         # `only` scopes the pass to a re-ingested subset (issue #1524); every
         # other file keeps the edges it already has.
@@ -4449,12 +4601,25 @@ class GraphUpdater:
             root_node = self._ast_for(file_path)
             if root_node is None:
                 continue
-            if captures_cache is not None and file_path in captures_cache:
-                cached = captures_cache[file_path]
-                if not cached.get(cs.CAPTURE_CALL) and not cached.get(
-                    cs.CAPTURE_FUNCTION
-                ):
-                    continue
+            # Issue #1837: there is deliberately no capture-based skip here.
+            # The old one ("no calls and no functions, so nothing to walk")
+            # was unsound in both directions. A MODULE-LEVEL reference -- a
+            # dispatch table holding an imported handler, a bare
+            # `x = handler`, a JSX element -- is a real CALLS edge that lives
+            # under no capture kind at all, and process_calls_in_file runs
+            # those passes ahead of its own no-calls early return precisely
+            # so such a file is covered. A captured class is positive
+            # evidence of work too: the Python decorator pass takes class
+            # nodes as its targets.
+            #
+            # Only a file recording none of call/function/class could license
+            # a skip, and no such CACHE ENTRY exists: the populator stores a
+            # key only when the query matched it and drops an all-absent
+            # entry (definition_processor.py), so every entry has a non-empty
+            # kind. A narrowed guard would be unreachable rather than merely
+            # cheap -- measured 0 hits over 105 real files, while the old
+            # guard skipped this repo's own class-only parsers/constants.py.
+            # Uncached files were always walked, so the walk is now uniform.
             self.factory.call_processor.process_calls_in_file(
                 file_path,
                 root_node,
@@ -4935,6 +5100,24 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # BEFORE the hash commit, matching `run()`, which does both passes
+        # ahead of its cache write. `_reingest_update_hashes` saves the hash
+        # cache to disk, which records these files as indexed; queueing the
+        # rebuilt finding and link writes after it meant an interruption in
+        # between left caches claiming the files were done while those writes
+        # never landed -- and the next run would skip them as unchanged
+        # (raised in review of #1852).
+        self._reingest_rebuild_findings(reparse)
+        self._link_endpoint_resources()
+        # Unconditionally, because neither post-pass guarantees one:
+        # `_reingest_rebuild_findings` only QUEUES its nodes and edges, and
+        # `_link_endpoint_resources` returns early when RESOLVES_TO is
+        # disabled or the ingestor cannot query, so on those paths nothing
+        # flushes what the rebuild queued. The hash cache below records these
+        # files as current, and a later run would take the in-sync path and
+        # skip the post-passes entirely -- so an unflushed queue here is lost
+        # for good rather than retried (raised by CodeRabbit on #1852).
+        self.ingestor.flush_all()
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
@@ -4960,6 +5143,33 @@ class GraphUpdater:
         )
         return report
 
+    def _reingest_rebuild_findings(self, reparse: dict[str, Path]) -> None:
+        """Re-run the finding analysis for the RE-PARSED modules only.
+
+        `CYPHER_DELETE_MODULE` detaches a re-parsed Module from its finding
+        nodes (`HAS_SMELL`, `HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`), and
+        nothing recreated those edges until the next full `update_repository`
+        (issue #1670). A re-ingested file therefore lost its findings and
+        stayed lost, which reads as "this file is clean".
+
+        Scoped rather than repo-wide, because the full pass is not cheap
+        enough to run on every re-ingest -- the other option the issue
+        offers. Measured over this repo's own parser tree: 1.001s for 125
+        modules against 0.001s for one, so the full pass would dominate a
+        scoped re-ingest and grow with the repository rather than with the
+        change. The analyzer already takes a module map, so the scope is the
+        argument and needs no new machinery.
+        """
+        processor = self.factory.definition_processor
+        touched = set(reparse.values())
+        scoped = {
+            module_qn: path
+            for module_qn, path in processor.module_qn_to_file_path.items()
+            if path in touched
+        }
+        if scoped:
+            self.finding_analyzer.analyze(scoped)
+
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -4973,14 +5183,36 @@ class GraphUpdater:
             # a full walk established which paths those are.
             #
             # Left unguarded it did not merely over-reach, it emptied the
-            # graph (issue #1756). `repo_path` is the TARGET'S PARENT here,
-            # so `pkg/module_a.py` makes it `pkg/` and every module's
-            # relative path is resolved against the wrong root:
-            # `root_module.py` is tested as `pkg/root_module.py`, is absent,
-            # and is deleted. Modules are the worst case because
+            # graph (issue #1756). At the time `repo_path` was the TARGET'S
+            # PARENT, so `pkg/module_a.py` made it `pkg/` and every module's
+            # relative path resolved against the wrong root: `root_module.py`
+            # was tested as `pkg/root_module.py`, found absent, and deleted.
+            # Modules are the worst case because
             # CYPHER_ALL_MODULE_PATHS_INTERNAL returns no `absolute_path`, so
             # the containment gate that spares out-of-repo File and Folder
             # rows never runs for them.
+            #
+            # #1775 fixed that misrooting: `repo_path` is now the project
+            # root whenever an ancestor holds the hash cache or a `.git`.
+            #
+            # That removes the MEASURED cause of #1756 rather than the guard's
+            # justification. Two things were checked while looking at #1776:
+            #
+            # * the path test now agrees with disk truth -- on a correctly
+            #   rooted single-file run, surviving siblings survive and only a
+            #   genuinely absent path is selected;
+            # * `packages_now` is NOT a partial-walk artefact either, because
+            #   `identify_structure` rglobs the whole of `repo_path`
+            #   independently of which FILES are parsed. An earlier version of
+            #   this comment claimed the opposite; a test written to pin that
+            #   claim failed, which is how the error was found.
+            #
+            # So the guard is now conservative rather than load-bearing, and
+            # narrowing it is #1776. It is kept because "conservative" is the
+            # right default for a whole-project delete, and because the
+            # premise above is worth re-measuring against a live database
+            # before acting on it -- these observations come from the
+            # emulated store, which models fewer node kinds than production.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
             # The two sweeps below still run. Unlike the path-keyed loop they
             # take no path and no project: each deletes only nodes with zero
