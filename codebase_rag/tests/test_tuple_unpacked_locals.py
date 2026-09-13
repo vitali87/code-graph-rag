@@ -224,19 +224,28 @@ def _functions(node: Node) -> Iterator[Node]:
 
 
 def _local_types(
-    tmp_path: Path, body: str, function: str, *, extra: dict[str, str] | None = None
+    tmp_path: Path,
+    body: str,
+    function: str,
+    *,
+    package: str = "",
+    extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """The engine's local type map for one function, read directly: what the
     fallback does with an UNBOUND name is its own business, so a test about
     binding asserts on the map, not on the edge the fallback then picks.
-    `extra` adds sibling modules to the package."""
+    `package` nests the module one level down (`proj.pkg.app`), for a rule
+    that reads the module qn's depth.
+    `extra` adds sibling modules beside `app.py`."""
     repo = tmp_path / "proj"
-    repo.mkdir(parents=True)
+    module_dir = repo / package if package else repo
+    module_dir.mkdir(parents=True)
     (repo / "__init__.py").touch()
-    (repo / "engine.py").write_text(_TWO_CLASSES)
-    (repo / "app.py").write_text(_TWO + body)
+    (module_dir / "__init__.py").touch()
+    (module_dir / "engine.py").write_text(_TWO_CLASSES)
+    (module_dir / "app.py").write_text(_TWO + body)
     for filename, source in (extra or {}).items():
-        (repo / filename).write_text(source)
+        (module_dir / filename).write_text(source)
     parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
@@ -249,7 +258,8 @@ def _local_types(
         if (n.child_by_field_name("name").text or b"").decode() == function
     )
     engine = updater.factory.type_inference.python_type_inference
-    return engine.build_local_variable_type_map(node, "proj.app")
+    module_qn = ".".join(part for part in ("proj", package, "app") if part)
+    return engine.build_local_variable_type_map(node, module_qn)
 
 
 def test_a_count_mismatch_binds_nothing(tmp_path: Path) -> None:
@@ -705,6 +715,212 @@ def test_a_nested_scope_unpacking_does_not_type_the_outer_name(
         "use",
     )
     assert "w" not in types, types
+
+
+def test_a_tuple_typed_parameter_unpacks_positionally(tmp_path: Path) -> None:
+    """`def use(p: tuple[int, Widget]): _n, w = p` -- the tuple type is on the
+    NAME, not on a call (issue #1900). The same split applies to a stored
+    `tuple[...]` type string."""
+    types = _local_types(
+        tmp_path,
+        "def use(p: tuple[int, Banner]) -> int:\n    _n, w = p\n    return w.render()\n",
+        "use",
+    )
+    assert types.get("w") == "Banner", types
+
+
+def test_a_tuple_typed_local_unpacks_positionally(tmp_path: Path) -> None:
+    """An annotated local, not a parameter: `q: tuple[Widget, Banner] = ...`."""
+    types = _local_types(
+        tmp_path,
+        "def use(p: tuple[int, Banner]) -> int:\n"
+        "    q: tuple[Widget, Banner] = (Widget(), Banner())\n"
+        "    w, b = q\n"
+        "    return b.render()\n",
+        "use",
+    )
+    assert types.get("w") == "Widget" and types.get("b") == "Banner", types
+
+
+def test_a_tuple_typed_local_assigned_from_an_untyped_call_unpacks(
+    tmp_path: Path,
+) -> None:
+    """`q: tuple[int, Banner] = untyped()`: the defining call is found but
+    says nothing, so the name's own annotation must be consulted next -- the
+    commonest annotated-local shape, and the one a call-or-name choice
+    skipped (local review P1)."""
+    types = _local_types(
+        tmp_path,
+        "def untyped():\n"
+        "    return (0, Banner())\n"
+        "\n"
+        "def use() -> int:\n"
+        "    q: tuple[int, Banner] = untyped()\n"
+        "    _n, w = q\n"
+        "    return w.render()\n",
+        "use",
+    )
+    assert types.get("w") == "Banner", types
+
+
+def test_a_declared_but_unassigned_name_carries_its_annotation(
+    tmp_path: Path,
+) -> None:
+    """`q: tuple[int, Banner]` with no value has no right-hand side at all;
+    the annotation is the only thing that can type it (local review P2)."""
+    types = _local_types(
+        tmp_path,
+        "def untyped():\n"
+        "    return (0, Banner())\n"
+        "\n"
+        "def use() -> int:\n"
+        "    q: tuple[int, Banner]\n"
+        "    q = untyped()\n"
+        "    _n, w = q\n"
+        "    return w.render()\n",
+        "use",
+    )
+    assert types.get("q") == "tuple[int, Banner]" and types.get("w") == "Banner", types
+
+
+def test_the_value_outranks_the_annotation_and_the_annotation_fills_the_gap(
+    tmp_path: Path,
+) -> None:
+    """Precedence, pinned on the map: `x: Banner = Widget()` stays `Widget`
+    (as before #1900), `y: Banner = opaque(1)` becomes `Banner`, and a quoted
+    forward reference loses its quotes. An annotation that pre-empted the
+    value regressed `x` to `Banner` and `z` to `'Banner'` (local review P1).
+    `opaque` returns its parameter, so its body infers nothing: a callee that
+    merely lacks an annotation is still read from its `return`."""
+    types = _local_types(
+        tmp_path,
+        "def opaque(raw):\n"
+        "    return raw\n"
+        "\n"
+        "def use() -> int:\n"
+        "    x: Banner = Widget()\n"
+        "    y: Banner = opaque(1)\n"
+        "    z: 'Banner' = opaque(1)\n"
+        "    return x.render() + y.render() + z.render()\n",
+        "use",
+    )
+    assert (types.get("x"), types.get("y"), types.get("z")) == (
+        "Widget",
+        "Banner",
+        "Banner",
+    ), types
+
+
+def test_a_typed_container_local_still_types_its_loop_variable(
+    tmp_path: Path,
+) -> None:
+    """`items: List[Widget] = load()` with `load -> list[Widget]`: the value's
+    `list[Widget]` is what a `for` loop can unwrap; the raw `List[Widget]`
+    is not. The base tree bound `w` to `Widget`; the annotation-first rule
+    lost it (local review P1, regression)."""
+    types = _local_types(
+        tmp_path,
+        "from typing import List\n"
+        "\n"
+        "def load() -> list[Widget]:\n"
+        "    return [Widget()]\n"
+        "\n"
+        "def use() -> int:\n"
+        "    items: List[Widget] = load()\n"
+        "    for w in items:\n"
+        "        w.render()\n"
+        "    return 0\n",
+        "use",
+    )
+    assert types.get("w") == "Widget", types
+
+
+def test_self_inside_a_tuple_on_a_name_keeps_its_text(tmp_path: Path) -> None:
+    """`p: tuple[int, Self]` on a method's parameter: the stored text has no
+    owner, so `Self` must stay `Self` rather than resolve the MODULE qn as if
+    it were a method's and bind `w` to the package (local review P2). Needs
+    a module three parts deep, or the wrong rule returns nothing anyway."""
+    types = _local_types(
+        tmp_path,
+        "from typing import Self\n"
+        "\n"
+        "class Host:\n"
+        "    def use(self, p: tuple[int, Self]) -> int:\n"
+        "        _n, w = p\n"
+        "        return 0\n",
+        "use",
+        package="pkg",
+    )
+    assert types.get("w") == "Self", types
+
+
+_OPAQUE = "def opaque(raw):\n    return raw\n\n"
+
+# annotation -> (import line, the type the map must hold). Each read the way
+# a return annotation is; the raw text would be unreadable downstream.
+_ANNOTATED_LOCAL_FORMS = {
+    "optional": ("Optional[Banner]", "from typing import Optional\n"),
+    "optional_quoted": ("Optional['Banner']", "from typing import Optional\n"),
+    "pipe_none": ("Banner | None", ""),
+    "quoted": ("'Banner'", ""),
+}
+
+
+@pytest.mark.parametrize("form", sorted(_ANNOTATED_LOCAL_FORMS))
+def test_an_annotated_local_reads_like_a_return_annotation(
+    tmp_path: Path, form: str
+) -> None:
+    """`y: Optional[Banner] = opaque(1); y.render()`: the map must hold
+    `Banner`, not the raw `Optional[Banner]` the resolver cannot read, which
+    cost `y` the fallback edge it had while untyped (local review P1). The
+    edge is pinned too, since the map alone cannot show the resolver reads
+    the value. The plain `quoted` form is also satisfied by the raw text
+    with its quotes stripped, so no mutation reddens it alone: it pins the
+    form, the other three pin the normalisation."""
+    annotation, imports = _ANNOTATED_LOCAL_FORMS[form]
+    body = (
+        imports + _OPAQUE + "def use() -> int:\n"
+        f"    y: {annotation} = opaque(1)\n"
+        "    return y.render()\n"
+    )
+    assert _local_types(tmp_path, body, "use").get("y") == "Banner"
+    edge_root = tmp_path / "edge"
+    edge_root.mkdir()
+    assert _render_targets(edge_root, body) == {"use": {"Banner"}}
+
+
+def test_an_annotated_container_local_types_its_loop_variable(
+    tmp_path: Path,
+) -> None:
+    """`items: List[Widget] = opaque(1)`: the value says nothing, so the
+    annotation must supply the `list[Widget]` marker a loop unwraps, not the
+    raw `List[Widget]` that typed `w` as `List[Widget]` (local review P1)."""
+    body = (
+        "from typing import List\n" + _OPAQUE + "def use() -> int:\n"
+        "    items: List[Widget] = opaque(1)\n"
+        "    for w in items:\n"
+        "        w.render()\n"
+        "    return 0\n"
+    )
+    types = _local_types(tmp_path, body, "use")
+    assert types.get("items") == "list[Widget]", types
+    assert types.get("w") == "Widget", types
+
+
+def test_an_unreadable_annotation_types_nothing(tmp_path: Path) -> None:
+    """`d: dict[str, Widget] = opaque(1); for k in d`: neither the resolver
+    nor the loop pass can read a dict annotation, so `d` stays untyped, as
+    on the base, rather than typing `k` as `dict[str, Widget]`."""
+    body = (
+        _OPAQUE + "def use() -> int:\n"
+        "    d: dict[str, Widget] = opaque(1)\n"
+        "    for k in d:\n"
+        "        k.render()\n"
+        "    return 0\n"
+    )
+    types = _local_types(tmp_path, body, "use")
+    assert "d" not in types, types
+    assert "k" not in types, types
 
 
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:

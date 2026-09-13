@@ -436,6 +436,7 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        self._process_assignment_annotation(assignments, local_var_types, module_qn)
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
@@ -492,6 +493,41 @@ class PythonAstAnalyzerMixin(_AstBase):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
+    def _process_assignment_annotation(
+        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+    ) -> None:
+        """`q: T = ...`, or a bare `q: T`: the annotation types a name the
+        value gave no type for (#1900).
+
+        A last resort, not a pre-emption. Inference from the value keeps
+        priority because it resolves further: `x: Base = Derived()` stays
+        `Derived`. A declaration without a value has no right-hand side at
+        all, and is typed here alone. The annotation is read the way a return
+        annotation is, so `Optional[Banner]` is `Banner` and `List[Widget]`
+        the `list[Widget]` marker a loop can unwrap, where the raw text would
+        be unreadable downstream and cost the name the fallback edge it had
+        untyped (local review P1); one that resolves to nothing types nothing.
+        A `tuple[...]` alone keeps its text: it is what `_unpacked_elements`
+        splits position by position, and what a typed parameter stores.
+        """
+        for assignment in assignments:
+            type_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            if type_node is None or left is None:
+                continue
+            var_name = self._extract_assignment_variable_name(left)
+            if not var_name or var_name in local_var_types:
+                continue
+            annotation = safe_decode_text(type_node) or ""
+            if annotated := self._type_of_annotated_name(annotation, module_qn):
+                local_var_types[var_name] = annotated
+
+    def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None:
+        text = text.strip().strip("\"'")
+        if self._tuple_elements_from_text(text, "", module_qn):
+            return text
+        return self._annotation_type_from_text(text, "", module_qn)
+
     def _process_assignment_unpacking(
         self,
         caller: Node,
@@ -505,8 +541,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         `tuple_pattern` target, so an unpacked local had no type and a call on
         it fell to the bare-name fallback (issue #1896, the real shape of
         trace/sourcemap.py:225). The right-hand side is a call annotated
-        `tuple[A, B, C]`, or a local that was assigned such a call earlier in
-        the same body; the annotation is read RAW here because
+        `tuple[A, B, C]`, a local that was assigned such a call earlier in
+        the same body, or -- when no call says anything -- a name whose own
+        stored type is a `tuple[...]`: a typed parameter or an annotated local
+        (#1900). The annotation is read RAW here because
         `_annotated_return_type` deliberately refuses a heterogeneous tuple,
         which is exactly what unpacking consumes position by position. The
         walk captures every assignment under the caller, including a nested
@@ -539,13 +577,11 @@ class PythonAstAnalyzerMixin(_AstBase):
     ) -> None:
         left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if (
-            left is None
-            or right is None
-            or (call := self._defining_call(right, caller)) is None
-        ):
+        if left is None or right is None:
             return
-        elements = self._tuple_return_elements(call, module_qn, local_var_types, bound)
+        elements = self._unpacked_elements(
+            right, caller, bound, local_var_types, module_qn
+        )
         targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
         if len(elements) == 1 and elements[0][1]:
             elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
@@ -558,6 +594,30 @@ class PythonAstAnalyzerMixin(_AstBase):
             )
             if name and name not in local_var_types:
                 local_var_types[name] = element
+
+    def _unpacked_elements(
+        self,
+        right: Node,
+        caller: Node,
+        bound: frozenset[str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> list[tuple[str, bool]]:
+        """The positions of the tuple an unpacking's right-hand side carries:
+        the defining call's return annotation, or -- when no call says
+        anything -- the name's own stored `tuple[...]` type, a typed parameter
+        or an annotated local (#1900). The stored text has no owner: `Self`
+        inside it keeps its text rather than resolving the module qn as if it
+        were a method's."""
+        elements: list[tuple[str, bool]] = []
+        if (call := self._defining_call(right, caller)) is not None:
+            elements = self._tuple_return_elements(
+                call, module_qn, local_var_types, bound
+            )
+        if elements or right.type != cs.TS_PY_IDENTIFIER:
+            return elements
+        stored = local_var_types.get(safe_decode_text(right) or "")
+        return self._tuple_elements_from_text(stored, "", module_qn) if stored else []
 
     def _defining_call(self, right: Node, caller: Node) -> Node | None:
         """The call an unpacking's right-hand side comes from, or None.
@@ -596,7 +656,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         type_node = callee_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None:
             return []
-        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        return self._tuple_elements_from_text(
+            safe_decode_text(type_node) or "", callee_qn, module_qn
+        )
+
+    def _tuple_elements_from_text(
+        self, text: str, owner_qn: str, module_qn: str
+    ) -> list[tuple[str, bool]]:
+        """Split a `tuple[...]` annotation (Optional stripped) into positions;
+        empty for anything else, including a union of two tuples."""
+        text = text.strip().strip("\"'")
         members = [
             member
             for part in _split_top_level(text, cs.PY_UNION_SEPARATOR)
@@ -612,9 +681,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             return []
         parts = _split_top_level(container.group("inner"))
         if len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS:
-            return [(self._element_type(parts[0], callee_qn, module_qn), True)]
+            return [(self._element_type(parts[0], owner_qn, module_qn), True)]
         return [
-            (self._element_type(part, callee_qn, module_qn), False) for part in parts
+            (self._element_type(part, owner_qn, module_qn), False) for part in parts
         ]
 
     def _element_type(self, element: str, callee_qn: str, module_qn: str) -> str:
@@ -897,7 +966,19 @@ class PythonAstAnalyzerMixin(_AstBase):
         type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None or type_node.text is None:
             return None
-        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        return self._annotation_type_from_text(
+            safe_decode_text(type_node) or "", method_qn, module_qn
+        )
+
+    def _annotation_type_from_text(
+        self, text: str, owner_qn: str, module_qn: str
+    ) -> str | None:
+        """The type an annotation's text names, resolved in scope: a class,
+        `Self` against `owner_qn` (a method's qn; none for a local), or the
+        `list[<element>]` marker for a homogeneous container; ``None`` for
+        anything the resolver could not read, including a heterogeneous
+        tuple."""
+        text = text.strip().strip("\"'")
         non_none = [
             member
             for part in text.split(cs.PY_UNION_SEPARATOR)
@@ -907,7 +988,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
         candidate = non_none[0]
         if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
-            candidate = optional.group("inner").strip()
+            candidate = optional.group("inner").strip().strip("\"'")
         if container := re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate):
             element_text = _homogeneous_element(
                 container.group("name"), container.group("inner")
@@ -915,10 +996,10 @@ class PythonAstAnalyzerMixin(_AstBase):
             if element_text is None:
                 return None
             element = self._trusted_annotation_name(
-                element_text.strip("\"'"), method_qn, module_qn
+                element_text.strip("\"'"), owner_qn, module_qn
             )
             return cs.PY_LIST_TYPE_FORMAT.format(element=element) if element else None
-        return self._trusted_annotation_name(candidate, method_qn, module_qn)
+        return self._trusted_annotation_name(candidate, owner_qn, module_qn)
 
     def _trusted_annotation_name(
         self, candidate: str, method_qn: str, module_qn: str
