@@ -13,11 +13,11 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.parameter_nodes import python_declared_parameters
 
 
-def _params(src: str):
+def _params(src: str, *, has_receiver: bool = True):
     parsers, _ = load_parsers()
     tree = parsers["python"].parse(src.encode())
     fn = next(n for n in tree.root_node.children if n.type == "function_definition")
-    return python_declared_parameters(fn)
+    return python_declared_parameters(fn, has_receiver=has_receiver)
 
 
 def test_keyword_only_parameters_are_declared() -> None:
@@ -88,3 +88,11 @@ def test_a_comment_before_self_does_not_defeat_the_exclusion() -> None:
     """The receiver is the first BINDING, not the first child (local review P2)."""
     got = _params("def m(  # note\n    self, x):\n    pass\n")
     assert [p.name for p in got] == ["x"]
+
+
+def test_an_explicit_self_is_kept_when_there_is_no_receiver() -> None:
+    """`def callback(self, value)` at module level, or under @staticmethod:
+    the caller supplies `self`, so it is a parameter (review, non-blocking).
+    The name alone cannot decide; the call site passes what it knows."""
+    got = _params("def callback(self, value):\n    pass\n", has_receiver=False)
+    assert [(p.name, p.index) for p in got] == [("self", 0), ("value", 1)]

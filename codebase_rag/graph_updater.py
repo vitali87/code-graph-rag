@@ -2249,20 +2249,24 @@ class GraphUpdater:
             )
         )
 
-    def _requeue_parameter_types(
-        self, project_params: PropertyDict, rehydrated_owners: set[str]
-    ) -> None:
+    def _requeue_parameter_types(self, project_params: PropertyDict) -> None:
         # OF_TYPE for the Parameter nodes of files this run does not re-parse:
         # their owners never re-emit them, so the pending list is rebuilt from
         # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
         # (issue #1527). Without this, re-parsing only the TYPE's file detaches
-        # every OF_TYPE into it and nothing puts them back. Only owners the
-        # rehydration loop restored qualify: by the time this runs EVERY
-        # definition is in the registry, so "owner in registry" cannot tell a
-        # re-parsed owner (which queued its own) from an unchanged one.
-        if not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE) or not isinstance(
-            self.ingestor, QueryProtocol
+        # every OF_TYPE into it and nothing puts them back. The key is the
+        # FILE: a Parameter whose file is being re-parsed this run is
+        # re-emitted by ingest and queues its own (a requeue here would carry
+        # the OLD annotation); one whose file is not needs rebuilding. Neither
+        # registry membership nor "what the rehydration loop restored" can
+        # tell the two apart -- a reused updater already holds every unchanged
+        # definition, a fresh one holds none -- and both were tried first.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
         ):
+            # A full build re-parses every file: ingest queues everything.
             return
         try:
             rows = self.ingestor.fetch_all(
@@ -2283,7 +2287,7 @@ class GraphUpdater:
                 and isinstance(path, str)
             ):
                 continue
-            if qn.rpartition(cs.SEPARATOR_DOT)[0] not in rehydrated_owners:
+            if path in self._reparsed_file_keys:
                 continue
             pending.append(
                 PendingParameterType(
@@ -2291,14 +2295,16 @@ class GraphUpdater:
                 )
             )
 
-    def _requeue_field_types(
-        self, project_params: PropertyDict, rehydrated_owners: set[str]
-    ) -> None:
-        # The Field counterpart of _requeue_parameter_types, for the same
-        # reason and with the same guard: only owners the rehydration loop
-        # restored qualify, because by now every definition is in the registry.
-        if not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE) or not isinstance(
-            self.ingestor, QueryProtocol
+    def _requeue_field_types(self, project_params: PropertyDict) -> None:
+        # The Field counterpart of _requeue_parameter_types, keyed on the FILE
+        # for the same reason: a Field whose file is being re-parsed this run
+        # is re-emitted by ingest and queues its own type; one whose file is
+        # not needs rebuilding from the graph. A full build re-parses every
+        # file, so ingest queues everything and there is nothing to rebuild.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
         try:
@@ -2320,7 +2326,7 @@ class GraphUpdater:
                 and isinstance(path, str)
             ):
                 continue
-            if qn.rpartition(cs.SEPARATOR_DOT)[0] not in rehydrated_owners:
+            if path in self._reparsed_file_keys:
                 continue
             pending.append(
                 PendingFieldType(
@@ -2338,7 +2344,6 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         added = 0
-        rehydrated_owners: set[str] = set()
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
             rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
@@ -2382,7 +2387,6 @@ class GraphUpdater:
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
                 # makes re-emitting the already-known edges harmless.
-                rehydrated_owners.add(qn)
                 self._requeue_type_facts(node_type, qn, path, row)
                 # Spans for hybrid expansion-call callee joins: only C/C++
                 # Function/Method rows carry a usable span.
@@ -2444,8 +2448,8 @@ class GraphUpdater:
             else:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
-        self._requeue_parameter_types(project_params, rehydrated_owners)
-        self._requeue_field_types(project_params, rehydrated_owners)
+        self._requeue_parameter_types(project_params)
+        self._requeue_field_types(project_params)
 
     def _seed_module_qns_from_graph(
         self,
@@ -5271,6 +5275,19 @@ class GraphUpdater:
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
         pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
+        # The same for parameter annotations: the scoped prologue rehydrates
+        # them from the graph before this delete, so a changed annotation
+        # would otherwise emit OF_TYPE to both the old and the new type.
+        pending_params = self.factory.definition_processor.pending_parameter_types
+        pending_params[:] = [
+            fact for fact in pending_params if fact.module_qn not in stale_modules
+        ]
+        # Fields the same: a changed field annotation would otherwise emit
+        # OF_TYPE to both the old and the new type through reingest.
+        pending_fields = self.factory.definition_processor.pending_field_types
+        pending_fields[:] = [
+            fact for fact in pending_fields if fact.module_qn not in stale_modules
+        ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)

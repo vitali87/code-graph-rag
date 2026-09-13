@@ -1339,6 +1339,7 @@ class FunctionIngestMixin:
             func_node,
             language,
             func_props,
+            has_receiver=False,
         )
         # Deferred: emission happens after Pass 2 so router mount prefixes
         # (possibly declared in other modules) can resolve (issue #877).

@@ -178,3 +178,70 @@ def test_of_type_survives_a_reparse_of_only_the_type_file(tmp_path: Path) -> Non
     # comes back through ingest. consumer.py is not, and is the real test.
     assert ("proj.app.Box.widget", "proj.models.Widget") in of_type, of_type
     assert ("proj.consumer.Holder.gadget", "proj.models.Gadget") in of_type, of_type
+
+
+def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
+    """Second `run()` on the SAME updater: its registry already holds every
+    unchanged definition, so a requeue keyed on registry membership skipped
+    them all (#1804's CodeRabbit finding). Keyed on the file being re-parsed."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    for name, src in _SRC.items():
+        (repo / name).write_text(src)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+fields"]),
+    )
+    updater.run(force=True)
+    (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
+    updater.run(force=False)
+
+    of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
+    assert ("proj.consumer.Holder.gadget", "proj.models.Gadget") in of_type, of_type
+
+
+def test_scoped_reingest_drops_the_old_field_annotation(tmp_path: Path) -> None:
+    """`x: Old` -> `x: New` through `reingest`: the scoped prologue rehydrates
+    the OLD annotation from the graph before the delete, so without the
+    stale-module filter OF_TYPE went to both (#1804's Greptile finding)."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    app = repo / "app.py"
+    app.write_text(
+        "class Old:\n    pass\n\nclass New:\n    pass\n\nclass Box:\n    x: Old\n"
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    capture = resolve_capture(["+fields"])
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).run(force=True)
+    assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
+        ("proj.app.Box.x", "proj.app.Old")
+    }
+
+    app.write_text(
+        "class Old:\n    pass\n\nclass New:\n    pass\n\nclass Box:\n    x: New\n"
+    )
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).reingest([app])
+
+    assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
+        ("proj.app.Box.x", "proj.app.New")
+    }

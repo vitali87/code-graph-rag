@@ -704,7 +704,9 @@ class _StatefulIngestor:
                     for (label, _uid), props in self.nodes.items()
                     if label == cs.NodeLabel.PARAMETER.value
                     and cs.KEY_TYPE_NAME in props
-                    and _text(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
                 ]
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
@@ -719,7 +721,9 @@ class _StatefulIngestor:
                     for (label, _uid), props in self.nodes.items()
                     if label == cs.NodeLabel.FIELD.value
                     and cs.KEY_TYPE_NAME in props
-                    and _text(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
                 ]
             case cs.CYPHER_ALL_INHERITS:
                 inherits: list[tuple[str, int, ResultRow]] = []

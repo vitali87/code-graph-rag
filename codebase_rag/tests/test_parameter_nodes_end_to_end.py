@@ -37,6 +37,12 @@ _SRC = {
         "class Factory:\n"
         "    def make(self, widget: Widget) -> Widget:\n"
         "        return widget\n"
+        "    @staticmethod\n"
+        "    def static(self, value: int) -> int:\n"
+        "        return value\n"
+        "\n"
+        "def callback(self, value: int) -> int:\n"
+        "    return value\n"
     ),
 }
 
@@ -209,3 +215,98 @@ def test_of_type_survives_a_reparse_of_only_the_type_file(tmp_path: Path) -> Non
     # come back through ingest. consumer.py is not, and is the real test.
     assert ("proj.app.build.1", "proj.models.Widget") in of_type, of_type
     assert ("proj.consumer.use.0", "proj.models.Gadget") in of_type, of_type
+
+
+def test_an_explicit_self_survives_where_no_receiver_is_implied(tmp_path: Path) -> None:
+    """A module-level `def callback(self, value)` and a `@staticmethod` both
+    declare `self` explicitly; only an instance/class method has an implicit
+    receiver. Classified at the call site, not by the name."""
+    store = _index(tmp_path, ["+parameters"])
+    params = _nodes(store, cs.NodeLabel.PARAMETER.value)
+    assert {
+        qn: p[cs.KEY_NAME]
+        for qn, p in params.items()
+        if qn.startswith("proj.app.callback.")
+    } == {
+        "proj.app.callback.0": "self",
+        "proj.app.callback.1": "value",
+    }
+    assert {
+        qn: p[cs.KEY_NAME]
+        for qn, p in params.items()
+        if qn.startswith("proj.app.Factory.static.")
+    } == {
+        "proj.app.Factory.static.0": "self",
+        "proj.app.Factory.static.1": "value",
+    }
+    # ...and the instance method still drops its receiver.
+    assert {qn for qn in params if qn.startswith("proj.app.Factory.make.")} == {
+        "proj.app.Factory.make.0"
+    }
+
+
+def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
+    """Second `run()` on the SAME updater: its registry already holds every
+    unchanged definition, so keying the requeue on registry membership skipped
+    them all (CodeRabbit). Keyed on the file being re-parsed instead."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    for name, src in _SRC.items():
+        (repo / name).write_text(src)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+parameters"]),
+    )
+    updater.run(force=True)
+    (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
+    updater.run(force=False)
+
+    of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
+    assert ("proj.consumer.use.0", "proj.models.Gadget") in of_type, of_type
+
+
+def test_scoped_reingest_drops_the_old_annotation(tmp_path: Path) -> None:
+    """`def f(x: Old)` -> `def f(x: New)` through `reingest`: the scoped
+    prologue rehydrates the OLD annotation from the graph before the delete,
+    so without filtering, OF_TYPE went to both (Greptile, executed)."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    app = repo / "app.py"
+    app.write_text(
+        "class Old:\n    pass\n\nclass New:\n    pass\n\ndef f(x: Old) -> int:\n    return 0\n"
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    capture = resolve_capture(["+parameters"])
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).run(force=True)
+    assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
+        ("proj.app.f.0", "proj.app.Old")
+    }
+
+    app.write_text(
+        "class Old:\n    pass\n\nclass New:\n    pass\n\ndef f(x: New) -> int:\n    return 0\n"
+    )
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).reingest([app])
+
+    assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
+        ("proj.app.f.0", "proj.app.New")
+    }

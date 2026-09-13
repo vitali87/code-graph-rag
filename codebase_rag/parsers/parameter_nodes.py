@@ -83,12 +83,17 @@ def _py_binding(param: Node) -> tuple[Node | None, bool]:
     ), False
 
 
-def python_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
+def python_declared_parameters(
+    func_node: Node, *, has_receiver: bool = True
+) -> list[DeclaredParameter]:
     """Every formal parameter a Python function declares, in source order.
 
-    A `self`/`cls` that is the FIRST BINDING is excluded -- it is the receiver,
-    not a parameter the caller supplies, and it is 20% of all slots in this
-    repo. "First binding" rather than first child: a comment can precede it.
+    With `has_receiver`, a `self`/`cls` that is the FIRST BINDING is excluded
+    -- it is the receiver, not a parameter the caller supplies, and it is 20%
+    of all slots in this repo. "First binding" rather than first child: a
+    comment can precede it. The CALLER decides `has_receiver`: a name alone
+    cannot, because `def callback(self, value)` at module level and a
+    `@staticmethod` both declare an explicit `self` that a caller supplies.
     The bare `*` and `/` separators bind nothing and take no index. `*args`
     and `**kwargs` are one parameter each, flagged variadic, annotated or not.
 
@@ -110,7 +115,7 @@ def python_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
         if name_node is None or not (name := safe_decode_text(name_node)):
             continue
         first_binding, seen_binding = not seen_binding, True
-        if first_binding and name in _PY_IMPLICIT_RECEIVERS:
+        if has_receiver and first_binding and name in _PY_IMPLICIT_RECEIVERS:
             continue
         type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
         declared.append(
@@ -136,12 +141,12 @@ class PendingParameterType(NamedTuple):
 
 
 def declared_parameters(
-    func_node: Node, language: cs.SupportedLanguage | None
+    func_node: Node, language: cs.SupportedLanguage | None, *, has_receiver: bool
 ) -> list[DeclaredParameter]:
     """Per-language dispatch. Languages without an enumerator declare nothing
     yet; a missing entry means "not covered", never "no parameters"."""
     if language == cs.SupportedLanguage.PYTHON:
-        return python_declared_parameters(func_node)
+        return python_declared_parameters(func_node, has_receiver=has_receiver)
     return []
 
 
@@ -154,8 +159,13 @@ def emit_declared_parameters(
     func_node: Node,
     language: cs.SupportedLanguage | None,
     owner_props: dict,
+    *,
+    has_receiver: bool,
 ) -> int:
     """Parameter nodes and HAS_PARAMETER edges for one Function or Method.
+
+    `has_receiver` is the call site's knowledge: a Method's first binding is
+    the receiver unless the method is static; a Function's never is.
 
     Gated on the capture selection the same way `link_contracts` is: a
     filtering sink that would drop the edge must not receive the node either,
@@ -164,7 +174,7 @@ def emit_declared_parameters(
     rel_gate = getattr(ingestor, "rel_enabled", None)
     if callable(rel_gate) and not rel_gate(cs.RelationshipType.HAS_PARAMETER):
         return 0
-    declared = declared_parameters(func_node, language)
+    declared = declared_parameters(func_node, language, has_receiver=has_receiver)
     if not declared:
         return 0
     path = owner_props.get(cs.KEY_PATH)

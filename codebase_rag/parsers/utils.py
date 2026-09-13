@@ -324,6 +324,10 @@ def _is_property_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
 
 
+def _is_static_decorator(decorators: list[str]) -> bool:
+    return bool(_decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
+
+
 def _is_abstract_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.ABSTRACT_DECORATORS)
 
@@ -1379,6 +1383,7 @@ def ingest_method(
         method_node,
         language,
         method_props,
+        has_receiver=not _is_static_decorator(decorators),
     )
     method_props.update(fingerprint_props(method_node))
 
