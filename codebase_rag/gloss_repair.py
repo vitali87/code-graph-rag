@@ -6,8 +6,10 @@ takes the notes that pass did not reach -- their name is gone -- and places
 each one by the content hash it recorded when it was written:
 
 * exactly one definition in the note's project carries that hash: the
-  definition was renamed or moved, and the note follows it, graded MOVED,
-  with the old name kept in `moved_from` so the move stays visible;
+  definition was moved under the same name (a rename changes the hash, since
+  the name is part of it), and the note follows it, graded MOVED, with the
+  old name kept in `moved_from` so the move stays visible -- or EXACT again
+  if the hash has led it back to the name it was first written against;
 * several carry it: the note is graded AMBIGUOUS, attached to nothing, with
   the candidates recorded in `candidate_qns` for a reader to pick from;
 * none carries it, or the note has no comparable hash (a class or module
@@ -20,9 +22,14 @@ note that cannot be placed becomes visibly orphaned -- LOST and AMBIGUOUS are
 states a reader sees on the old name (`gloss.glosses_for`), never a silent
 deletion or a silent re-bind. Nothing here deletes anything.
 
-The lookup is scoped to the note's own project (the first segment of
-`target_qn`), because two projects can hold byte-identical definitions and a
-note about one of them says nothing about the other.
+The lookup is scoped to the note's own project, because two projects can hold
+byte-identical definitions and a note about one of them says nothing about the
+other. The project is the one recorded on the note at write time; it is not
+read back off `target_qn`, because a project name may itself contain dots
+(`foo.bar` and `foo.baz` share a first segment). A note from before the
+project was recorded falls back to the longest registered project name that
+prefixes its `target_qn`, fetched once per pass and only when such a note
+exists; if no project prefixes it, the note is LOST.
 """
 
 from __future__ import annotations
@@ -53,10 +60,8 @@ class _Unanchored(NamedTuple):
     target_hash: str | None
     anchor_state: str
     candidate_qns: list[str]
-
-    @property
-    def project(self) -> str:
-        return self.target_qn.split(cs.SEPARATOR_DOT, 1)[0]
+    # As recorded on the note; None on a note from before it was recorded.
+    project: str | None
 
     @property
     def comparable_hash(self) -> str | None:
@@ -72,28 +77,65 @@ def _unanchored(row: ResultRow) -> _Unanchored:
         sorted(str(c) for c in raw if c is not None) if isinstance(raw, list) else []
     )
     hash_value = row.get(cs.KEY_TARGET_HASH)
+    project = row.get(cs.KEY_PROJECT)
     return _Unanchored(
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         target_qn=str(row.get(cs.KEY_TARGET_QN, "")),
         target_hash=hash_value if isinstance(hash_value, str) else None,
         anchor_state=str(row.get(cs.KEY_ANCHOR_STATE, "")),
         candidate_qns=candidates,
+        project=project if isinstance(project, str) and project else None,
     )
 
 
+def _projects_of(fetch_all: QueryFn, notes: list[_Unanchored]) -> dict[str, str | None]:
+    """Each note's project, by note key.
+
+    The recorded `project` wins. A note without one (written before the
+    property existed) takes the longest registered project name that
+    prefixes its `target_qn`; the project list is read once, and only if such
+    a note exists. None means no project claims the note.
+    """
+    projects: dict[str, str | None] = {}
+    legacy = [n for n in notes if n.project is None]
+    names: list[str] = []
+    if legacy:
+        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None):
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.append(name)
+        # Longest first, so `foo.bar` claims `foo.bar.mod.f` ahead of `foo`.
+        names.sort(key=len, reverse=True)
+    for note in notes:
+        if note.project is not None:
+            projects[note.qualified_name] = note.project
+            continue
+        projects[note.qualified_name] = next(
+            (
+                name
+                for name in names
+                if note.target_qn.startswith(f"{name}{cs.SEPARATOR_DOT}")
+            ),
+            None,
+        )
+    return projects
+
+
 def _candidates_by_hash(
-    fetch_all: QueryFn, notes: list[_Unanchored]
+    fetch_all: QueryFn, notes: list[_Unanchored], projects: dict[str, str | None]
 ) -> dict[tuple[str, str], list[str]]:
     """Definitions carrying each note's hash, one query per project.
 
     Keyed on (project, hash) so a definition in another project that happens
-    to carry the same hash is never a candidate.
+    to carry the same hash is never a candidate. The prefix is the full
+    project name plus a dot, so `foo.bar.` never admits `foo.baz.x`.
     """
     hashes_by_project: dict[str, set[str]] = defaultdict(set)
     for note in notes:
         comparable = note.comparable_hash
-        if comparable is not None:
-            hashes_by_project[note.project].add(comparable)
+        project = projects.get(note.qualified_name)
+        if comparable is not None and project is not None:
+            hashes_by_project[project].add(comparable)
     found: dict[tuple[str, str], list[str]] = defaultdict(list)
     for project in sorted(hashes_by_project):
         rows = fetch_all(
@@ -138,6 +180,8 @@ def _mark(
 def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairReport:
     """Place every unattached note by content hash, or mark why it cannot be.
 
+    `moved` lists every note placed by hash this pass, including one whose
+    hash led it back to its origin (the store grades that one EXACT).
     Deterministic: notes are visited in key order and candidates are sorted,
     so the same graph yields the same writes. Raises nothing of its own; a
     store error propagates to the caller, which logs it and lets the next
@@ -147,15 +191,17 @@ def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairRepor
         (_unanchored(row) for row in fetch_all(cq.CYPHER_UNANCHORED_GLOSSES, None)),
         key=lambda n: n.qualified_name,
     )
-    candidates = _candidates_by_hash(fetch_all, notes)
+    projects = _projects_of(fetch_all, notes)
+    candidates = _candidates_by_hash(fetch_all, notes, projects)
     report = RepairReport(moved=[], ambiguous=[], lost=[])
     for note in notes:
         comparable = note.comparable_hash
-        if comparable is None:
+        project = projects.get(note.qualified_name)
+        if comparable is None or project is None:
             _mark(execute_write, note, cs.GlossAnchorState.LOST, [])
             report.lost.append(note.qualified_name)
             continue
-        qns = sorted(set(candidates.get((note.project, comparable), [])))
+        qns = sorted(set(candidates.get((project, comparable), [])))
         if len(qns) == 1:
             execute_write(
                 cq.CYPHER_GLOSS_MOVE,

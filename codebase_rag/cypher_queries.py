@@ -533,7 +533,8 @@ ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
 SET g.kind = $kind, g.status = $status, g.body = $body,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
     g.target_hash = $target_hash, g.anchor_state = $anchor_state,
-    g.write_id = $write_id, g.mention_qns = $mention_qns
+    g.write_id = $write_id, g.mention_qns = $mention_qns,
+    g.project = $project_name
 MERGE (g)-[:{_ANNOTATES}]->(t)
 WITH g, mentioned
 OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
@@ -580,14 +581,21 @@ WITH g, count(subject) AS subjects
 WHERE subjects = 0
 RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
        g.target_hash AS target_hash, g.anchor_state AS anchor_state,
-       g.moved_from AS moved_from, g.candidate_qns AS candidate_qns"""
+       g.moved_from AS moved_from, g.candidate_qns AS candidate_qns,
+       g.project AS project"""
 CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
+# `origin` is the name the note was first written against (its first move
+# recorded it in `moved_from`). Following the hash back to that name is a
+# return home, not another move: the note is EXACT again with no `moved_from`.
+# Computed in a WITH so both SETs read the pre-update values (local review).
 CYPHER_GLOSS_MOVE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $new_qn}})
-SET g.anchor_state = '{_STATE_MOVED}',
-    g.moved_from = coalesce(g.moved_from, g.target_qn),
+WITH g, t, coalesce(g.moved_from, g.target_qn) AS origin
+SET g.anchor_state = CASE WHEN origin = $new_qn
+    THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
+    g.moved_from = CASE WHEN origin = $new_qn THEN null ELSE origin END,
     g.target_qn = $new_qn, g.candidate_qns = null
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
@@ -638,8 +646,14 @@ RETURN {_GLOSS_ROW}"""
 # `target_qn` still naming the definition they were about. This is how a
 # LOST or AMBIGUOUS note stays visible through the same read that would have
 # found it attached (issue #1808).
+# Scoped to the project the way every gloss read is, by the recorded
+# `project` (falling back to the qn prefix for a note written before that
+# property existed), and matching the target the way `resolve` names one: the
+# full qualified name or a dotted suffix of it (`Store.get`).
 CYPHER_GLOSSES_ORPHANED_ON = f"""MATCH (g:{_GLOSS})
-WHERE g.target_qn = $qn
+WHERE (g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
+  AND (g.target_qn = $qn OR g.target_qn ENDS WITH $suffix)
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0

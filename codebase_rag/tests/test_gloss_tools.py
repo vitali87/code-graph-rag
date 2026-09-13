@@ -117,10 +117,23 @@ class FakeGraph:
             out = [self._gloss_row(g) for g, qn in self.mentions if qn == p[cs.KEY_QN]]
         elif query == cq.CYPHER_GLOSSES_ORPHANED_ON:
             attached = {g for g, _qn in self.annotates}
+
+            def in_project(props: PropertyDict) -> bool:
+                recorded = props.get(cs.KEY_PROJECT)
+                if recorded is not None:
+                    return recorded == p[cs.KEY_PROJECT_NAME]
+                return str(props.get(cs.KEY_TARGET_QN, "")).startswith(
+                    str(p[cs.KEY_PROJECT_PREFIX])
+                )
+
+            def names_target(props: PropertyDict) -> bool:
+                qn = str(props.get(cs.KEY_TARGET_QN, ""))
+                return qn == p[cs.KEY_QN] or qn.endswith(str(p[cs.KEY_SUFFIX]))
+
             out = [
                 self._gloss_row(g)
                 for g, props in self.glosses.items()
-                if props.get(cs.KEY_TARGET_QN) == p[cs.KEY_QN] and g not in attached
+                if in_project(props) and names_target(props) and g not in attached
             ]
         else:
             raise AssertionError(f"unexpected query: {query[:60]}")
@@ -158,11 +171,20 @@ class FakeGraph:
             for k, v in self.glosses.get(key, {}).items()
             if k in (cs.KEY_CREATED_BY, cs.KEY_CREATED_AT)
         }
-        skip = {cs.KEY_QN, cs.KEY_PROJECT_PREFIX, cs.KEY_CREATED_BY, cs.KEY_CREATED_AT}
+        skip = {
+            cs.KEY_QN,
+            cs.KEY_PROJECT_PREFIX,
+            cs.KEY_PROJECT_NAME,
+            cs.KEY_CREATED_BY,
+            cs.KEY_CREATED_AT,
+        }
         self.glosses[key] = {
             **kept,
             **created,
             **{k: v for k, v in p.items() if k not in skip and v is not None},
+            # `g.project = $project_name`: the parameter lands on the node
+            # under the property name.
+            cs.KEY_PROJECT: p[cs.KEY_PROJECT_NAME],
         }
         self.annotates.add((key, target))
         # A repeat write replaces the note's mentions.
@@ -516,6 +538,53 @@ def test_read_on_a_gone_definition_returns_its_orphaned_notes_with_the_error() -
     assert orphaned[0]["candidate_qns"] == [STORE_GET, UTIL_GET], "sorted"
     assert orphaned[1]["anchor_state"] == cs.GlossAnchorState.LOST.value
     assert orphaned[1]["candidate_qns"] == []
+
+
+def test_a_written_note_records_its_project() -> None:
+    # Recorded, not derived: a project name may contain dots, and the repair
+    # pass and the orphan read scope on this field (local review).
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    assert graph.glosses[row["qualified_name"]][cs.KEY_PROJECT] == P
+    assert "g.project = $project_name" in cq.CYPHER_GLOSS_WRITE
+
+
+def test_read_on_a_gone_definition_accepts_the_dotted_suffix_form() -> None:
+    # The tool text promises resolve-style names, so `removed` and
+    # `app.removed` must find the notes written against `proj.app.removed`.
+    graph = FakeGraph()
+    gone = f"{P}.app.removed"
+    graph.glosses["gloss:lost"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_PROJECT: P,
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    for name in ("removed", "app.removed", gone):
+        result = gloss.glosses_for(graph.fetch_all, P, name)
+        assert _is_refusal(result), name
+        assert [g["qualified_name"] for g in result[cs.KEY_ORPHANED]] == [
+            "gloss:lost"
+        ], name
+    # A suffix that is not dot-aligned is not the name: `moved` is not
+    # `.removed`.
+    assert cs.KEY_ORPHANED not in gloss.glosses_for(graph.fetch_all, P, "moved")
+
+
+def test_read_on_a_gone_definition_never_shows_another_projects_notes() -> None:
+    # The full qualified name of another project's gone definition resolves
+    # to nothing here, and its notes are that project's to show, not ours.
+    graph = FakeGraph()
+    graph.glosses["gloss:theirs"] = {
+        cs.KEY_TARGET_QN: "other.app.removed",
+        cs.KEY_PROJECT: "other",
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    for name in ("other.app.removed", "removed"):
+        assert cs.KEY_ORPHANED not in gloss.glosses_for(graph.fetch_all, P, name)
 
 
 def test_read_on_a_gone_definition_with_no_notes_is_a_plain_refusal() -> None:

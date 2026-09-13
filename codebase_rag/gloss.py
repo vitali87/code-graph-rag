@@ -259,6 +259,9 @@ def write_gloss(
         cs.KEY_CREATED_AT: datetime.now(UTC).isoformat(timespec="seconds"),
         cs.KEY_COMMIT_SHA: commit_sha or None,
         cs.KEY_TARGET_HASH: _target_hash(fetch_all, project_name, target_qn),
+        # Recorded, not derived: a project name may contain dots, so the
+        # repair pass cannot read it back off `target_qn` (local review).
+        cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
         cs.KEY_WRITE_ID: uuid.uuid4().hex,
     }
@@ -296,7 +299,15 @@ def glosses_for(
         # gone, so it gets no such list.
         if cs.KEY_CANDIDATES not in refusal:
             orphaned = _sort_gloss_rows(
-                fetch_all(cq.CYPHER_GLOSSES_ORPHANED_ON, {cs.KEY_QN: target})
+                fetch_all(
+                    cq.CYPHER_GLOSSES_ORPHANED_ON,
+                    {
+                        cs.KEY_PROJECT_NAME: project_name,
+                        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                        cs.KEY_QN: target,
+                        cs.KEY_SUFFIX: f"{cs.SEPARATOR_DOT}{target}",
+                    },
+                )
             )
             if orphaned:
                 refusal[cs.KEY_ORPHANED] = orphaned

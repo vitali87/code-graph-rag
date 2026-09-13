@@ -20,6 +20,9 @@ B = "beta"
 H = f"{cs.ANCHOR_HASH_VERSION}deadbeef"
 H2 = f"{cs.ANCHOR_HASH_VERSION}cafef00d"
 LEGACY = "clone-skeleton-without-prefix"
+# `note(project=_DERIVED)` records the first segment of the target, which is
+# what a real write records for an undotted project name.
+_DERIVED = "<derived>"
 
 
 class FakeStore:
@@ -28,6 +31,8 @@ class FakeStore:
         self.definitions: dict[str, str | None] = {}
         # gloss key -> properties, plus the set of attached keys.
         self.glosses: dict[str, PropertyDict] = {}
+        # Registered Project nodes, for the legacy-note fallback.
+        self.projects: list[str] = []
         self.attached: set[str] = set()
         self.reads: list[tuple[str, PropertyDict | None]] = []
         self.writes: list[tuple[str, PropertyDict | None]] = []
@@ -44,13 +49,17 @@ class FakeStore:
         attached: bool = False,
         candidate_qns: list[str] | None = None,
         moved_from: str | None = None,
+        project: str | None = _DERIVED,
     ) -> None:
+        if project == _DERIVED:
+            project = target_qn.split(".", 1)[0]
         self.glosses[key] = {
             cs.KEY_TARGET_QN: target_qn,
             cs.KEY_TARGET_HASH: target_hash,
             cs.KEY_ANCHOR_STATE: state,
             cs.KEY_CANDIDATE_QNS: candidate_qns,
             cs.KEY_MOVED_FROM: moved_from,
+            cs.KEY_PROJECT: project,
         }
         if attached:
             self.attached.add(key)
@@ -66,6 +75,10 @@ class FakeStore:
                 if key not in self.attached
             ]
             return list(reversed(rows))  # unsorted on purpose
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [
+                {cs.KEY_NAME: name, cs.KEY_ROOT_PATH: None} for name in self.projects
+            ]
         if query == cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH:
             assert params is not None
             wanted = set(params[cs.KEY_HASHES])  # type: ignore[arg-type]
@@ -85,11 +98,15 @@ class FakeStore:
         if query == cq.CYPHER_GLOSS_MOVE:
             new_qn = str(params[cs.KEY_NEW_QN])
             assert new_qn in self.definitions, "MOVE matched a definition"
-            props[cs.KEY_MOVED_FROM] = (
-                props.get(cs.KEY_MOVED_FROM) or props[cs.KEY_TARGET_QN]
-            )
+            # Mirrors the statement: `origin` is read before either SET.
+            origin = props.get(cs.KEY_MOVED_FROM) or props[cs.KEY_TARGET_QN]
+            if origin == new_qn:
+                props[cs.KEY_MOVED_FROM] = None
+                props[cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.EXACT.value
+            else:
+                props[cs.KEY_MOVED_FROM] = origin
+                props[cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.MOVED.value
             props[cs.KEY_TARGET_QN] = new_qn
-            props[cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.MOVED.value
             props[cs.KEY_CANDIDATE_QNS] = None
             self.attached.add(key)
         elif query == cq.CYPHER_GLOSS_MARK:
@@ -247,7 +264,10 @@ def test_a_moved_note_keeps_its_first_origin_across_a_second_move() -> None:
     store.note("gloss:1", f"{A}.first", H, moved_from=f"{A}.zeroth")
     _run(store)
     assert store.glosses["gloss:1"][cs.KEY_MOVED_FROM] == f"{A}.zeroth"
-    assert "coalesce(g.moved_from, g.target_qn)" in cq.CYPHER_GLOSS_MOVE
+    assert store.glosses["gloss:1"][cs.KEY_ANCHOR_STATE] == (
+        cs.GlossAnchorState.MOVED.value
+    )
+    assert "coalesce(g.moved_from, g.target_qn) AS origin" in cq.CYPHER_GLOSS_MOVE
 
 
 def test_notes_are_visited_in_key_order() -> None:
@@ -276,6 +296,81 @@ def test_the_name_tier_owns_a_note_whose_name_came_back() -> None:
     # is not moved back here even if its old name reappears.
     assert "WHERE subjects = 0" in cq.CYPHER_UNANCHORED_GLOSSES
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
+
+
+# --- the project is recorded, not read off the name --------------------------
+
+
+def test_a_dotted_project_name_scopes_to_itself_not_to_its_first_segment() -> None:
+    # `--project-name foo.bar` is legal. Splitting `target_qn` on the first
+    # dot would scope the lookup to `foo.` and let a note from `foo.bar`
+    # re-bind into `foo.baz` (local review). The recorded project is used
+    # instead, and the prefix is the whole name plus a dot.
+    store = FakeStore()
+    store.define("foo.baz.mod.same", H)
+    store.note("gloss:1", "foo.bar.mod.gone", H, project="foo.bar")
+    report = _run(store)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["gloss:1"])
+    lookups = [p for q, p in store.reads if q == cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH]
+    assert [p[cs.KEY_PROJECT_PREFIX] for p in lookups] == ["foo.bar."]
+    # And the other direction: the note's own project is where it may land.
+    store.define("foo.bar.mod.here", H)
+    assert _run(store).moved == ["gloss:1"]
+    assert store.glosses["gloss:1"][cs.KEY_TARGET_QN] == "foo.bar.mod.here"
+
+
+def test_a_legacy_note_without_a_project_takes_the_longest_registered_prefix() -> None:
+    # A note written before `project` was recorded has only its qn to go on.
+    # Among the registered projects, the longest one that prefixes the qn is
+    # the owner: `foo.bar` over `foo`. Read once per pass.
+    store = FakeStore()
+    store.projects = ["foo", "foo.bar", "other"]
+    store.define("foo.bar.mod.here", H)
+    store.define("foo.mod.decoy", H)
+    store.note("gloss:1", "foo.bar.mod.gone", H, project=None)
+    report = _run(store)
+    assert report.moved == ["gloss:1"]
+    assert store.glosses["gloss:1"][cs.KEY_TARGET_QN] == "foo.bar.mod.here"
+    assert [q for q, _ in store.reads].count(cq.CYPHER_LIST_PROJECTS) == 1
+
+
+def test_a_legacy_note_no_project_prefixes_is_lost() -> None:
+    store = FakeStore()
+    store.projects = ["other"]
+    store.define("foo.bar.mod.here", H)
+    store.note("gloss:1", "foo.bar.mod.gone", H, project=None)
+    assert _run(store).lost == ["gloss:1"]
+    assert all(q != cq.CYPHER_DEFINITIONS_BY_ANCHOR_HASH for q, _ in store.reads)
+
+
+def test_the_project_list_is_not_read_when_every_note_records_its_project() -> None:
+    store = FakeStore()
+    store.note("gloss:1", f"{A}.gone", H)
+    _run(store)
+    assert all(q != cq.CYPHER_LIST_PROJECTS for q, _ in store.reads)
+
+
+# --- a hash that leads back home ---------------------------------------------
+
+
+def test_a_moved_note_whose_hash_returns_to_its_origin_is_exact_again() -> None:
+    # MOVED A -> B; B is gone; A is back with the same hash. Following the
+    # hash to A is a return, not a second move: EXACT, and no `moved_from`
+    # (local review: it read MOVED from itself).
+    store = FakeStore()
+    store.define(f"{A}.first", H)
+    store.note(
+        "gloss:1",
+        f"{A}.second",
+        H,
+        state=cs.GlossAnchorState.MOVED.value,
+        moved_from=f"{A}.first",
+    )
+    assert _run(store).moved == ["gloss:1"]
+    g = store.glosses["gloss:1"]
+    assert g[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.EXACT.value
+    assert g[cs.KEY_MOVED_FROM] is None
+    assert g[cs.KEY_TARGET_QN] == f"{A}.first"
 
 
 # --- query shapes -------------------------------------------------------------
@@ -318,7 +413,14 @@ def test_the_hash_lookup_is_project_scoped_and_label_bound() -> None:
 def test_the_move_binds_the_edge_to_the_matched_definition_only() -> None:
     q = cq.CYPHER_GLOSS_MOVE
     assert "{qualified_name: $new_qn}" in q
-    assert f"SET g.anchor_state = '{cs.GlossAnchorState.MOVED.value}'" in q
+    # The origin is read in a WITH before the SETs, so neither SET can see
+    # the other's new value.
+    assert "WITH g, t, coalesce(g.moved_from, g.target_qn) AS origin" in q
+    assert (
+        f"CASE WHEN origin = $new_qn\n    THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
+    )
+    assert "g.moved_from = CASE WHEN origin = $new_qn THEN null ELSE origin END" in q
     assert "g.target_qn = $new_qn" in q
     assert "g.candidate_qns = null" in q
     assert f"MERGE (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(t)" in q
@@ -333,7 +435,9 @@ def test_the_mark_writes_state_and_candidates_and_no_edge() -> None:
 
 def test_the_orphan_read_returns_the_same_row_shape_as_the_other_reads() -> None:
     q = cq.CYPHER_GLOSSES_ORPHANED_ON
-    assert "WHERE g.target_qn = $qn" in q
+    assert "(g.target_qn = $qn OR g.target_qn ENDS WITH $suffix)" in q
+    assert "g.project = $project_name" in q
+    assert "(g.project IS NULL AND g.target_qn STARTS WITH $project_prefix)" in q
     assert "g.moved_from AS moved_from" in q
     assert "g.candidate_qns AS candidate_qns" in q
     assert "collect(m.qualified_name) AS mentions" in q

@@ -45,14 +45,18 @@ if TYPE_CHECKING:
 # from the gloss to its subject, and an undirected match would also count a
 # gloss annotated BY something else, if that relationship is ever added.
 #
-# Scoped to the deleted project by the note's own record of its subject.
+# Scoped to the deleted project by the note's own record of its project.
 # Since stage four of #1808 an unattached gloss is not necessarily garbage: a
 # note graded LOST or AMBIGUOUS in a project that still exists is unattached
 # by design and stays readable on its old name. Only the notes about the
-# project just deleted go with it.
+# project just deleted go with it. Keyed on the recorded `project`, not a
+# qn prefix, because project names may contain dots: deleting `foo` must not
+# sweep `foo.bar`'s notes. A note written before `project` was recorded has
+# only its qn to go on and takes the prefix.
 CYPHER_DELETE_ORPHANED_GLOSSES = (
     f"MATCH (g:{cs.NodeLabel.GLOSS.value}) "
-    "WHERE g.target_qn STARTS WITH $project_prefix "
+    "WHERE (g.project = $project_name "
+    "OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix)) "
     f"OPTIONAL MATCH (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(subject) "
     "WITH g, count(subject) AS subjects "
     "WHERE subjects = 0 "
@@ -79,7 +83,10 @@ def prune_orphaned_glosses(ingestor: QueryProtocol, project_name: str) -> bool:
     try:
         ingestor.execute_write(
             CYPHER_DELETE_ORPHANED_GLOSSES,
-            {cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}"},
+            {
+                cs.KEY_PROJECT_NAME: project_name,
+                cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}",
+            },
         )
     except Exception as error:  # noqa: BLE001 -- see docstring
         logger.warning(lg.GLOSS_PRUNE_FAILED.format(error=error))

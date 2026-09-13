@@ -880,6 +880,11 @@ KEY_ANCHOR_HASH = "anchor_hash"
 # name a MOVED gloss was written against, kept so the move stays visible;
 # `candidate_qns` lists the definitions an AMBIGUOUS gloss could belong to.
 KEY_MOVED_FROM = "moved_from"
+# The project a gloss belongs to, recorded at write time. A project name may
+# contain dots (`--project-name` is taken as given), so it cannot be read back
+# off `target_qn`; a note written before this property existed falls back to
+# the longest registered project name that prefixes its `target_qn`.
+KEY_PROJECT = "project"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
 KEY_NEW_QN = "new_qn"

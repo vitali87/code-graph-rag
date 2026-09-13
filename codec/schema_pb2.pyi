@@ -305,7 +305,7 @@ class SecurityIssue(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., message: _Optional[str] = ..., start_line: _Optional[int] = ..., end_line: _Optional[int] = ..., path: _Optional[str] = ..., snippet: _Optional[str] = ...) -> None: ...
 
 class Gloss(_message.Message):
-    __slots__ = ("qualified_name", "kind", "status", "body", "created_by", "created_at", "commit_sha", "target_qn", "target_hash", "anchor_quote", "anchor_prefix", "anchor_suffix", "anchor_state", "moved_from")
+    __slots__ = ("qualified_name", "kind", "status", "body", "created_by", "created_at", "commit_sha", "target_qn", "target_hash", "anchor_quote", "anchor_prefix", "anchor_suffix", "anchor_state", "moved_from", "project")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -320,6 +320,7 @@ class Gloss(_message.Message):
     ANCHOR_SUFFIX_FIELD_NUMBER: _ClassVar[int]
     ANCHOR_STATE_FIELD_NUMBER: _ClassVar[int]
     MOVED_FROM_FIELD_NUMBER: _ClassVar[int]
+    PROJECT_FIELD_NUMBER: _ClassVar[int]
     qualified_name: str
     kind: str
     status: str
@@ -334,7 +335,8 @@ class Gloss(_message.Message):
     anchor_suffix: str
     anchor_state: str
     moved_from: str
-    def __init__(self, qualified_name: _Optional[str] = ..., kind: _Optional[str] = ..., status: _Optional[str] = ..., body: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[str] = ..., commit_sha: _Optional[str] = ..., target_qn: _Optional[str] = ..., target_hash: _Optional[str] = ..., anchor_quote: _Optional[str] = ..., anchor_prefix: _Optional[str] = ..., anchor_suffix: _Optional[str] = ..., anchor_state: _Optional[str] = ..., moved_from: _Optional[str] = ...) -> None: ...
+    project: str
+    def __init__(self, qualified_name: _Optional[str] = ..., kind: _Optional[str] = ..., status: _Optional[str] = ..., body: _Optional[str] = ..., created_by: _Optional[str] = ..., created_at: _Optional[str] = ..., commit_sha: _Optional[str] = ..., target_qn: _Optional[str] = ..., target_hash: _Optional[str] = ..., anchor_quote: _Optional[str] = ..., anchor_prefix: _Optional[str] = ..., anchor_suffix: _Optional[str] = ..., anchor_state: _Optional[str] = ..., moved_from: _Optional[str] = ..., project: _Optional[str] = ...) -> None: ...
 
 class Parameter(_message.Message):
     __slots__ = ("qualified_name", "name", "index", "path", "absolute_path", "start_line", "start_col", "type_name", "is_variadic", "has_default")

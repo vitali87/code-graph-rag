@@ -99,7 +99,9 @@ def test_prune_issues_exactly_one_write_scoped_to_the_project() -> None:
     store = _FakeStore()
     assert prune_orphaned_glosses(store, "proj") is True  # type: ignore[arg-type]
     assert store.writes == [CYPHER_DELETE_ORPHANED_GLOSSES]
-    assert store.params == [{cs.KEY_PROJECT_PREFIX: "proj."}]
+    assert store.params == [
+        {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
+    ]
 
 
 def test_a_failing_sweep_does_not_raise() -> None:
@@ -137,17 +139,30 @@ def test_the_sweep_is_scoped_to_the_deleted_project() -> None:
     only by deleting the same project name again. The orphans it leaves read
     as LOST notes on a project that no longer exists -- visible, not wrong.
     """
-    assert "WHERE g.target_qn STARTS WITH $project_prefix" in (
-        CYPHER_DELETE_ORPHANED_GLOSSES
-    ), (
+    q = CYPHER_DELETE_ORPHANED_GLOSSES
+    assert "WHERE (g.project = $project_name" in q, (
         "the sweep is unscoped again; deleting one project would destroy the "
         "LOST and AMBIGUOUS notes of every other project"
     )
     # The scope is applied to the gloss before the subject count, so it can
     # never widen the delete: an attached note is still never touched.
-    where, _ = CYPHER_DELETE_ORPHANED_GLOSSES.split("OPTIONAL MATCH", 1)
-    assert "$project_prefix" in where
-    assert "subjects = 0" in CYPHER_DELETE_ORPHANED_GLOSSES
+    where, _ = q.split("OPTIONAL MATCH", 1)
+    assert "$project_name" in where
+    assert "subjects = 0" in q
+
+
+def test_the_sweep_keys_on_the_recorded_project_not_a_name_prefix() -> None:
+    """Project names may contain dots (`--project-name foo.bar` is legal).
+
+    A prefix test on `target_qn` would let a delete of `foo` sweep `foo.bar`'s
+    notes. The recorded `project` is compared whole; only a note written
+    before that property existed (`g.project IS NULL`) has nothing but its
+    qn to go on and takes the prefix, which is the documented cost of the
+    legacy path, not the rule.
+    """
+    q = CYPHER_DELETE_ORPHANED_GLOSSES
+    assert "g.project = $project_name" in q
+    assert "(g.project IS NULL AND g.target_qn STARTS WITH $project_prefix)" in q
 
 
 def test_the_deliberate_delete_runs_the_sweep() -> None:

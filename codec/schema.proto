@@ -351,6 +351,10 @@ message GraphCodeIndex {
     // The name a MOVED gloss was written against (stage four of #1808);
     // unset unless the note has followed its definition to a new name.
     string moved_from = 14;
+    // The project the gloss was written in. `target_qn` starts with it, but a
+    // project name may itself contain dots, so it is recorded rather than
+    // split back out. Unset on a gloss written before this field existed.
+    string project = 15;
   }
 
   // A declared formal parameter of a Function or Method (issue #1804).
