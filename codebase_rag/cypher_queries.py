@@ -501,7 +501,14 @@ LIMIT 1"""
 # of the same deterministic key; the other properties are SET by name (a null
 # unsets one): the ingestor's parameter type carries scalars and string lists,
 # not a nested map, so `SET g += $props` is not expressible on the wire.
-# `UNWIND` of an empty list yields no rows; the MERGEs above it have already run.
+# `write_id` is a per-call nonce: the statement returns nothing through the
+# write API, and on a repeat write the node's mere presence cannot tell a
+# gated-out request from the earlier note, so the caller reads it back and
+# checks the nonce. A repeat write REPLACES the note's MENTIONS edges (collect
+# then FOREACH DELETE, so an empty set is a no-op), because the edges belong to
+# the note's current text and a stale one would say something the note no
+# longer does. `UNWIND` of an empty list yields no rows; the MERGEs above it
+# have already run.
 _GLOSS = NodeLabel.GLOSS.value
 _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
@@ -519,8 +526,13 @@ MERGE (g:{_GLOSS} {{qualified_name: $qn}})
 ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
 SET g.kind = $kind, g.status = $status, g.body = $body,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
-    g.target_hash = $target_hash, g.anchor_state = $anchor_state
+    g.target_hash = $target_hash, g.anchor_state = $anchor_state,
+    g.write_id = $write_id
 MERGE (g)-[:{_ANNOTATES}]->(t)
+WITH g, mentioned
+OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
+WITH g, mentioned, collect(stale) AS stale_edges
+FOREACH (edge IN stale_edges | DELETE edge)
 WITH g, mentioned
 UNWIND mentioned AS m
 MERGE (g)-[:{_MENTIONS}]->(m)"""
@@ -529,7 +541,7 @@ _GLOSS_ROW = (
     "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "
     "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
     "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
-    "collect(m.qualified_name) AS mentions"
+    "g.write_id AS write_id, collect(m.qualified_name) AS mentions"
 )
 CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)

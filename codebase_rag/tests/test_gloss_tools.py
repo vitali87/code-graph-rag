@@ -164,6 +164,8 @@ class FakeGraph:
             **{k: v for k, v in p.items() if k not in skip and v is not None},
         }
         self.annotates.add((key, target))
+        # A repeat write replaces the note's mentions.
+        self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         for qn in wanted:
             self.mentions.add((key, qn))
 
@@ -336,6 +338,53 @@ def test_a_mention_that_vanished_before_the_write_writes_nothing() -> None:
     assert "not written" in result[cs.DICT_KEY_ERROR]
     assert len(graph.glosses) == 1, "only the unrelated note remains"
     assert not any(qn == RUN for _, qn in graph.annotates)
+
+
+def test_a_repeat_write_replaces_the_mentions() -> None:
+    graph = FakeGraph()
+    first = _write(graph, RUN, mentions=VALIDATE)
+    key = first["qualified_name"]
+    assert graph.mentions == {(key, VALIDATE)}
+    changed = _write(graph, RUN, mentions=UTIL_GET)
+    assert changed["mentions"] == [UTIL_GET]
+    assert graph.mentions == {(key, UTIL_GET)}
+    cleared = _write(graph, RUN)
+    assert cleared["mentions"] == []
+    assert graph.mentions == set()
+
+
+def test_a_rejected_repeat_write_is_not_reported_as_the_old_note() -> None:
+    # The node already exists, so its presence after a gated-out statement
+    # proves nothing; the per-call nonce is what tells this write ran.
+    graph = FakeGraph()
+    first = _write(graph, RUN, author="first-agent")
+    original_fetch = graph.fetch_all
+
+    def fetch_then_drop(
+        query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        rows = original_fetch(query, params)
+        if query == cq.CYPHER_GLOSS_TARGET:
+            graph.nodes.pop(UTIL_GET, None)
+        return rows
+
+    result = gloss.write_gloss(
+        fetch_then_drop,
+        graph.execute_write,
+        P,
+        RUN,
+        body=BODY,
+        kind=cs.GlossKind.SAFETY_PRECONDITION.value,
+        mentions=UTIL_GET,
+        author="retry-agent",
+        commit_sha="c2",
+    )
+    assert _is_refusal(result)
+    assert "not written" in result[cs.DICT_KEY_ERROR]
+    stored = graph.glosses[first["qualified_name"]]
+    assert stored[cs.KEY_CREATED_BY] == "first-agent"
+    assert cs.KEY_COMMIT_SHA not in stored, "the old note is exactly as it was"
+    assert graph.mentions == set()
 
 
 def test_a_repeat_write_keeps_the_original_author_and_time() -> None:
@@ -619,18 +668,40 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
     }
 
 
-def test_a_capture_outage_aborts_even_a_full_build(tmp_path: Path) -> None:
-    # A full build used to continue on the grounds that every caller is
-    # re-parsed; gloss edges have no source to re-derive from, so continuing
-    # would orphan every note in the project.
+class _RaisingStore:
     # A real class, not a MagicMock: the capture is gated on the runtime
     # QueryProtocol check, which a bare mock does not satisfy.
-    class _RaisingStore:
-        def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
-            raise RuntimeError("store down")
+    def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
+        raise RuntimeError("store down")
 
-        def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
-            return None
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        return None
+
+
+def test_a_capture_outage_aborts_an_incremental_run(tmp_path: Path) -> None:
+    updater = GraphUpdater(
+        ingestor=_RaisingStore(),  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    updater._is_full_build = False
+    with pytest.raises(RuntimeError, match="store down"):
+        updater._capture_inbound_edges(["app.py"])
+
+
+def test_a_capture_outage_on_a_full_build_says_the_notes_are_lost() -> None:
+    # A full build continues over an unreadable graph (an existing contract);
+    # the warning must not claim nothing is lost, because gloss edges have no
+    # source to be re-derived from.
+    from codebase_rag import logs as lg
+
+    assert "Gloss" in lg.INBOUND_CAPTURE_FAILED
+    assert "orphaned" in lg.INBOUND_CAPTURE_FAILED
+
+
+def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) -> None:
+    from codebase_rag import logs as lg
 
     updater = GraphUpdater(
         ingestor=_RaisingStore(),  # type: ignore[arg-type]
@@ -639,8 +710,9 @@ def test_a_capture_outage_aborts_even_a_full_build(tmp_path: Path) -> None:
         queries={},
     )
     updater._is_full_build = True
-    with pytest.raises(RuntimeError, match="store down"):
-        updater._capture_inbound_edges(["app.py"])
+    with patch("codebase_rag.graph_updater.logger") as log:
+        assert updater._capture_inbound_edges(["app.py"]) == []
+    log.warning.assert_called_once_with(lg.INBOUND_CAPTURE_FAILED)
 
 
 def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(

@@ -28,6 +28,7 @@ stage; every gloss written here is EXACT at the moment it is written.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TypedDict
@@ -192,8 +193,8 @@ def write_gloss(
     Every input is resolved and validated BEFORE anything is written, and the
     write itself is one all-or-nothing statement, so an error or a refusal
     always means the graph is unchanged. A repeat write of the same note
-    (same subject, kind and body) updates it in place and keeps its original
-    author and creation time. `mentions` is a
+    (same subject, kind and body) updates it in place, keeps its original
+    author and creation time, and replaces its mentions. `mentions` is a
     comma-separated list of further definitions the note talks about; each
     becomes a `MENTIONS` edge and each is held to the same resolution rule as
     the subject.
@@ -241,15 +242,18 @@ def write_gloss(
         cs.KEY_COMMIT_SHA: commit_sha or None,
         cs.KEY_TARGET_HASH: _target_hash(fetch_all, project_name, target_qn),
         cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
+        cs.KEY_WRITE_ID: uuid.uuid4().hex,
     }
     # One statement writes the node and every edge, or nothing (see the
-    # query). The statement is silent either way, so the node's presence
-    # afterwards is the only evidence the write landed: the subject or a
-    # mentioned definition may have left the graph between resolving and
-    # writing, and that must read as "not written", not as success.
+    # query). The statement is silent either way, and on a repeat write the
+    # node's presence proves nothing (the earlier note satisfies it), so the
+    # only evidence THIS write landed is the per-call nonce read back from
+    # the node: the subject or a mentioned definition may have left the
+    # graph between resolving and writing, and that must read as "not
+    # written", not as success over the old state.
     execute_write(cq.CYPHER_GLOSS_WRITE, params)
     stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
-    if not stored:
+    if not stored or stored[0].get(cs.KEY_WRITE_ID) != params[cs.KEY_WRITE_ID]:
         return GlossRefusal(error=cs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
     return _gloss_row(stored[0])
 

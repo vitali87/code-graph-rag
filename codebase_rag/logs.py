@@ -1028,6 +1028,11 @@ GO_TYPE_LOCATIONS_REHYDRATED = (
 FUNCTION_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} function location(s) from the persisted graph"
 )
+INBOUND_CAPTURE_FAILED = (
+    "Could not read inbound edges from the graph; this full rebuild re-parses "
+    "every caller, so source-derived edges are re-resolved, but any Gloss "
+    "notes attached to re-parsed symbols lose their edges and are orphaned."
+)
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
