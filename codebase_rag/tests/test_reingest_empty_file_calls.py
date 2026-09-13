@@ -233,3 +233,48 @@ def test_an_unavailable_query_is_not_cached_as_an_empty_result(
         "an unavailable combined query changed the call edges: "
         f"without={sorted(_calls(without_query))} with={sorted(expected)}"
     )
+
+
+def test_a_removed_call_is_retracted_while_its_function_remains(
+    tmp_path: Path,
+) -> None:
+    """The row of the issue's scope table that nothing here pinned.
+
+    The existing control asserts the edge SURVIVES when the call remains. This
+    is the opposite direction: `run()` stays defined and stops calling
+    `helper()`, so the edge must be RETRACTED while the function itself stays
+    in the graph.
+
+    The issue records that this shape was already handled correctly, which is
+    exactly why it is worth a test -- an untested working behaviour is one
+    nobody notices breaking. It also discriminates against the crudest wrong
+    fix for the leak: dropping a re-parsed file's definitions along with its
+    edges would retract the edge AND lose `run`, satisfying half of this and
+    failing the other (CodeRabbit, #1833).
+    """
+    _fixture(tmp_path)
+    (tmp_path / "pkg" / "app.py").write_text(
+        "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
+        encoding="utf-8",
+    )
+    updater, store = _built(tmp_path)
+    assert ("proj.pkg.app.run", "proj.pkg.util.helper") in _calls(store), (
+        "fixture guard: the initial index must emit the edge that is expected "
+        "to be retracted below"
+    )
+
+    (tmp_path / "pkg" / "app.py").write_text(
+        "def run():\n    return 42\n", encoding="utf-8"
+    )
+    updater.reingest(["pkg/app.py"])
+    store.flush_all()
+
+    assert _calls(store) == set(), (
+        "the call was removed from the source but its edge survives: "
+        f"{sorted(_calls(store))}"
+    )
+    functions = {str(uid) for (label, uid) in store.nodes if label == "Function"}
+    assert "proj.pkg.app.run" in functions, (
+        "the function itself was dropped along with its call edge, so the "
+        "retraction took the definition with it"
+    )
