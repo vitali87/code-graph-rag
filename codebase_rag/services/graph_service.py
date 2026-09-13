@@ -538,16 +538,18 @@ class MemgraphIngestor:
             return
 
         buffer_size = len(self.node_buffer)
+        buffered_nodes = self.node_buffer[:buffer_size]
         nodes_by_label: defaultdict[str, list[dict[str, PropertyValue]]] = defaultdict(
             list
         )
-        for label, props in self.node_buffer:
+        for label, props in buffered_nodes:
             nodes_by_label[label].append(props)
 
         flushed_total = 0
         skipped_total = 0
 
         first_error: Exception | None = None
+        failed_labels: set[str] = set()
 
         if self._executor and len(nodes_by_label) > 1:
             logger.info(
@@ -569,6 +571,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
+                    failed_labels.add(label)
                     logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
@@ -579,6 +582,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
+                    failed_labels.add(label)
                     logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
@@ -588,7 +592,9 @@ class MemgraphIngestor:
         )
         if skipped_total:
             logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
-        self.node_buffer.clear()
+        self.node_buffer[:buffer_size] = [
+            node for node in buffered_nodes if node[0] in failed_labels
+        ]
 
         if first_error is not None:
             raise first_error
