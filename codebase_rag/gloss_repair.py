@@ -136,6 +136,9 @@ def _candidates_by_hash(
         project = projects.get(note.qualified_name)
         if comparable is not None and project is not None:
             hashes_by_project[project].add(comparable)
+    # One entry per PHYSICAL row: two nodes sharing a qualified name (a
+    # Function and a Method, say) are two candidates, and the move statement
+    # counts them the same way.
     found: dict[tuple[str, str], list[str]] = defaultdict(list)
     for project in sorted(hashes_by_project):
         rows = fetch_all(
@@ -153,7 +156,7 @@ def _candidates_by_hash(
     return found
 
 
-def _mark(
+def _update_anchor_verdict(
     execute_write: WriteFn,
     note: _Unanchored,
     state: cs.GlossAnchorState,
@@ -180,8 +183,14 @@ def _mark(
 def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairReport:
     """Place every unattached note by content hash, or mark why it cannot be.
 
-    `moved` lists every note placed by hash this pass, including one whose
-    hash led it back to its origin (the store grades that one EXACT).
+    The move statement re-validates hash, project and exactly-one physical
+    target at write time and binds the node it found, so a match that
+    appeared (or a hash that changed) between this pass's read and the write
+    makes it a no-op. The note is read back after the move: `moved` lists it
+    only if it now records the candidate as its subject -- including a note
+    whose hash led it back to its origin, which the store grades EXACT. A
+    declined move gets no mark and no report entry; the next pass sees the
+    note unattached again and decides on the graph as it is then.
     Deterministic: notes are visited in key order and candidates are sorted,
     so the same graph yields the same writes. Raises nothing of its own; a
     store error propagates to the caller, which logs it and lets the next
@@ -198,20 +207,39 @@ def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairRepor
         comparable = note.comparable_hash
         project = projects.get(note.qualified_name)
         if comparable is None or project is None:
-            _mark(execute_write, note, cs.GlossAnchorState.LOST, [])
+            _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
             report.lost.append(note.qualified_name)
             continue
-        qns = sorted(set(candidates.get((project, comparable), [])))
-        if len(qns) == 1:
+        # Physical rows, not distinct names: a same-name pair is two.
+        rows = candidates.get((project, comparable), [])
+        if len(rows) == 1:
             execute_write(
                 cq.CYPHER_GLOSS_MOVE,
-                {cs.KEY_QN: note.qualified_name, cs.KEY_NEW_QN: qns[0]},
+                {
+                    cs.KEY_QN: note.qualified_name,
+                    cs.KEY_TARGET_HASH: comparable,
+                    cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+                },
             )
-            report.moved.append(note.qualified_name)
-        elif qns:
-            _mark(execute_write, note, cs.GlossAnchorState.AMBIGUOUS, qns)
+            if _moved_to(fetch_all, note.qualified_name, rows[0]):
+                report.moved.append(note.qualified_name)
+        elif rows:
+            _update_anchor_verdict(
+                execute_write, note, cs.GlossAnchorState.AMBIGUOUS, sorted(set(rows))
+            )
             report.ambiguous.append(note.qualified_name)
         else:
-            _mark(execute_write, note, cs.GlossAnchorState.LOST, [])
+            _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
             report.lost.append(note.qualified_name)
     return report
+
+
+def _moved_to(fetch_all: QueryFn, key: str, candidate: str) -> bool:
+    """Whether the note now records `candidate` as its subject.
+
+    The move statement may decline (its own count of physical targets was
+    not one at write time), and it is silent either way, so the only
+    evidence it landed is the note's record read back.
+    """
+    rows = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
+    return bool(rows) and rows[0].get(cs.KEY_TARGET_QN) == candidate

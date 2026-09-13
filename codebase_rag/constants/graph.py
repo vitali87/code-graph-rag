@@ -887,7 +887,6 @@ KEY_MOVED_FROM = "moved_from"
 KEY_PROJECT = "project"
 KEY_CANDIDATE_QNS = "candidate_qns"
 KEY_HASHES = "hashes"
-KEY_NEW_QN = "new_qn"
 # Prefix on every anchor hash. A Gloss written before this format existed
 # recorded the clone skeleton (`ast_fingerprint`) as its target hash; the two
 # are not comparable, so grading is gated on the prefix and a legacy note is

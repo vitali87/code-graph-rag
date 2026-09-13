@@ -186,7 +186,13 @@ class FakeGraph:
             # under the property name.
             cs.KEY_PROJECT: p[cs.KEY_PROJECT_NAME],
         }
+        # A fresh write against a name is EXACT at that name: any earlier
+        # subject edge (a note that had MOVED) is dropped and the repair
+        # state cleared, mirroring the statement.
+        self.annotates = {(g, qn) for g, qn in self.annotates if g != key}
         self.annotates.add((key, target))
+        self.glosses[key].pop(cs.KEY_MOVED_FROM, None)
+        self.glosses[key].pop(cs.KEY_CANDIDATE_QNS, None)
         # A repeat write replaces the note's mentions.
         self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         for qn in wanted:
@@ -538,6 +544,38 @@ def test_read_on_a_gone_definition_returns_its_orphaned_notes_with_the_error() -
     assert orphaned[0]["candidate_qns"] == [STORE_GET, UTIL_GET], "sorted"
     assert orphaned[1]["anchor_state"] == cs.GlossAnchorState.LOST.value
     assert orphaned[1]["candidate_qns"] == []
+
+
+def test_a_repeat_write_of_a_moved_note_replaces_its_subject_edge() -> None:
+    # The key is deterministic in (subject, kind, body), so writing the same
+    # note against its ORIGINAL name after it has MOVED finds the same node,
+    # still attached to the definition it followed. A name-keyed MERGE added a
+    # second ANNOTATES edge (bot review: 1 -> 2 edges reproduced). The write
+    # drops any other subject edge first and clears the repair state.
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    key = row["qualified_name"]
+    # The note follows its hash to another definition.
+    graph.annotates = {(g, qn) for g, qn in graph.annotates if g != key}
+    graph.annotates.add((key, VALIDATE))
+    graph.glosses[key][cs.KEY_TARGET_QN] = VALIDATE
+    graph.glosses[key][cs.KEY_MOVED_FROM] = RUN
+    graph.glosses[key][cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.MOVED.value
+    again = _write(graph, RUN)
+    assert again["qualified_name"] == key
+    assert {qn for g, qn in graph.annotates if g == key} == {RUN}, "one subject"
+    assert again["moved_from"] is None
+    assert again["anchor_state"] == cs.GlossAnchorState.EXACT.value
+    q = cq.CYPHER_GLOSS_WRITE
+    # The stale-subject deletion precedes the new subject MERGE.
+    stale = q.index(
+        f"OPTIONAL MATCH (g)-[old:{cs.RelationshipType.ANNOTATES.value}]->(prev)"
+    )
+    assert "WHERE prev <> t" in q
+    assert "FOREACH (edge IN stale_subjects | DELETE edge)" in q
+    merge = q.index(f"MERGE (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(t)")
+    assert stale < merge
+    assert "g.moved_from = null, g.candidate_qns = null" in q
 
 
 def test_a_written_note_records_its_project() -> None:

@@ -522,6 +522,11 @@ CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.anchor_hash AS target_hash
 LIMIT 1"""
+# The key is deterministic in (subject, kind, body), so a repeat write of a
+# note that has since MOVED finds the same node still attached to the
+# definition it followed. A fresh write against a name is EXACT at that
+# name: any other subject edge is dropped before the new one is merged, and
+# the repair state (`moved_from`, `candidate_qns`) is cleared (bot review).
 CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
 OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
@@ -534,7 +539,12 @@ SET g.kind = $kind, g.status = $status, g.body = $body,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
     g.target_hash = $target_hash, g.anchor_state = $anchor_state,
     g.write_id = $write_id, g.mention_qns = $mention_qns,
-    g.project = $project_name
+    g.project = $project_name, g.moved_from = null, g.candidate_qns = null
+WITH g, t, mentioned
+OPTIONAL MATCH (g)-[old:{_ANNOTATES}]->(prev)
+WHERE prev <> t
+WITH g, t, mentioned, collect(old) AS stale_subjects
+FOREACH (edge IN stale_subjects | DELETE edge)
 MERGE (g)-[:{_ANNOTATES}]->(t)
 WITH g, mentioned
 OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
@@ -586,17 +596,27 @@ RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
 CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
+# The move re-validates its own precondition and binds the node it found:
+# the definitions carrying the note's hash in its project are collected
+# INSIDE the statement, and the note is bound only if there is exactly one
+# PHYSICAL node -- so a same-name pair across two labels (two nodes, one
+# qualified name) is refused rather than given two edges, and a match that
+# appeared or a hash that changed between the repair pass's read and this
+# write makes the statement a no-op instead of a wrong binding (bot review).
 # `origin` is the name the note was first written against (its first move
 # recorded it in `moved_from`). Following the hash back to that name is a
 # return home, not another move: the note is EXACT again with no `moved_from`.
-# Computed in a WITH so both SETs read the pre-update values (local review).
+# Computed in a WITH so both SETs read the pre-update values.
 CYPHER_GLOSS_MOVE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: $new_qn}})
-WITH g, t, coalesce(g.moved_from, g.target_qn) AS origin
-SET g.anchor_state = CASE WHEN origin = $new_qn
+MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
+WITH g, collect(t) AS targets
+WHERE size(targets) = 1
+WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
+SET g.anchor_state = CASE WHEN origin = t.qualified_name
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
-    g.moved_from = CASE WHEN origin = $new_qn THEN null ELSE origin END,
-    g.target_qn = $new_qn, g.candidate_qns = null
+    g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END,
+    g.target_qn = t.qualified_name, g.candidate_qns = null
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""

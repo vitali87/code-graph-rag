@@ -9,6 +9,7 @@ what lets a second pass be run over the result of the first.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -27,8 +28,9 @@ _DERIVED = "<derived>"
 
 class FakeStore:
     def __init__(self) -> None:
-        # qualified_name -> anchor_hash, for every definition in the graph.
-        self.definitions: dict[str, str | None] = {}
+        # One entry per PHYSICAL definition node: (qualified_name, anchor_hash).
+        # Two entries may share a name (a Function and a Method with one qn).
+        self.definitions: list[tuple[str, str | None]] = []
         # gloss key -> properties, plus the set of attached keys.
         self.glosses: dict[str, PropertyDict] = {}
         # Registered Project nodes, for the legacy-note fallback.
@@ -36,9 +38,15 @@ class FakeStore:
         self.attached: set[str] = set()
         self.reads: list[tuple[str, PropertyDict | None]] = []
         self.writes: list[tuple[str, PropertyDict | None]] = []
+        # Runs once, right after the hash lookup has answered: another
+        # updater changing the graph between the pass's read and its write.
+        self.after_lookup: Callable[[], None] | None = None
 
     def define(self, qn: str, anchor_hash: str | None) -> None:
-        self.definitions[qn] = anchor_hash
+        self.definitions.append((qn, anchor_hash))
+
+    def undefine(self, qn: str) -> None:
+        self.definitions = [(q, h) for q, h in self.definitions if q != qn]
 
     def note(
         self,
@@ -64,6 +72,11 @@ class FakeStore:
         if attached:
             self.attached.add(key)
 
+    def _targets(self, target_hash: str, prefix: str) -> list[str]:
+        return [
+            q for q, h in self.definitions if h == target_hash and q.startswith(prefix)
+        ]
+
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
@@ -83,10 +96,22 @@ class FakeStore:
             assert params is not None
             wanted = set(params[cs.KEY_HASHES])  # type: ignore[arg-type]
             prefix = str(params[cs.KEY_PROJECT_PREFIX])
-            return [
+            out: list[ResultRow] = [
                 {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_ANCHOR_HASH: h}
-                for qn, h in self.definitions.items()
+                for qn, h in self.definitions
                 if h in wanted and qn.startswith(prefix)
+            ]
+            if self.after_lookup is not None:
+                self.after_lookup()
+                self.after_lookup = None
+            return out
+        if query == cq.CYPHER_GLOSS_READ:
+            assert params is not None
+            key = str(params[cs.KEY_QN])
+            if key not in self.glosses:
+                return []
+            return [
+                {cs.KEY_QUALIFIED_NAME: key, **self.glosses[key], cs.KEY_MENTIONS: []}
             ]
         raise AssertionError(f"unexpected query: {query[:60]}")
 
@@ -96,9 +121,14 @@ class FakeStore:
         key = str(params[cs.KEY_QN])
         props = self.glosses[key]
         if query == cq.CYPHER_GLOSS_MOVE:
-            new_qn = str(params[cs.KEY_NEW_QN])
-            assert new_qn in self.definitions, "MOVE matched a definition"
-            # Mirrors the statement: `origin` is read before either SET.
+            # Mirrors the statement: the targets are collected INSIDE the
+            # write, and anything but exactly one physical node is a no-op.
+            targets = self._targets(
+                str(params[cs.KEY_TARGET_HASH]), str(params[cs.KEY_PROJECT_PREFIX])
+            )
+            if len(targets) != 1:
+                return
+            new_qn = targets[0]
             origin = props.get(cs.KEY_MOVED_FROM) or props[cs.KEY_TARGET_QN]
             if origin == new_qn:
                 props[cs.KEY_MOVED_FROM] = None
@@ -134,8 +164,8 @@ def test_one_definition_with_the_hash_means_the_note_follows_it() -> None:
     report = _run(store)
     assert report == RepairReport(moved=["gloss:1"], ambiguous=[], lost=[])
     assert _writes(store, cq.CYPHER_GLOSS_MOVE) == [
-        {cs.KEY_QN: "gloss:1", cs.KEY_NEW_QN: f"{A}.new.place"}
-    ]
+        {cs.KEY_QN: "gloss:1", cs.KEY_TARGET_HASH: H, cs.KEY_PROJECT_PREFIX: f"{A}."}
+    ], "the statement re-validates hash and project itself; no name is passed"
     g = store.glosses["gloss:1"]
     assert g[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.MOVED.value
     assert g[cs.KEY_TARGET_QN] == f"{A}.new.place"
@@ -223,7 +253,7 @@ def test_a_changed_verdict_is_written_over_the_old_one() -> None:
     assert _run(store).ambiguous == ["gloss:1"]
     assert store.writes == []
     # One candidate disappears: the note now has a single home.
-    del store.definitions[f"{A}.z.place"]
+    store.undefine(f"{A}.z.place")
     assert _run(store).moved == ["gloss:1"]
     assert store.glosses["gloss:1"][cs.KEY_TARGET_QN] == f"{A}.a.place"
 
@@ -350,6 +380,52 @@ def test_the_project_list_is_not_read_when_every_note_records_its_project() -> N
     assert all(q != cq.CYPHER_LIST_PROJECTS for q, _ in store.reads)
 
 
+# --- physical nodes, not names -----------------------------------------------
+
+
+def test_two_nodes_sharing_one_name_and_the_hash_are_ambiguous() -> None:
+    # A Function and a Method can share a qualified name (`Acc.total`) and,
+    # with identical bodies, the hash. Counting distinct NAMES would see one
+    # candidate and a name-keyed move would bind BOTH nodes (bot review).
+    # Two physical rows are two candidates: AMBIGUOUS, one name listed.
+    store = FakeStore()
+    store.define(f"{A}.Acc.total", H)
+    store.define(f"{A}.Acc.total", H)
+    store.note("gloss:1", f"{A}.old.total", H)
+    report = _run(store)
+    assert report == RepairReport(moved=[], ambiguous=["gloss:1"], lost=[])
+    assert _writes(store, cq.CYPHER_GLOSS_MOVE) == []
+    [mark] = _writes(store, cq.CYPHER_GLOSS_MARK)
+    assert mark is not None
+    assert mark[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.AMBIGUOUS.value
+    assert mark[cs.KEY_CANDIDATE_QNS] == [f"{A}.Acc.total"]
+    assert "gloss:1" not in store.attached
+
+
+def test_a_move_declined_at_write_time_is_neither_moved_nor_marked() -> None:
+    # Between the pass's lookup and its write another updater adds a second
+    # definition with the hash. The statement counts its targets itself,
+    # finds two, and does nothing; the pass reads the note back, sees it
+    # unmoved, and reports nothing -- no MARK either, since the verdict it
+    # read is stale. The next pass decides on the graph as it is then.
+    store = FakeStore()
+    store.define(f"{A}.new.place", H)
+    store.note("gloss:1", f"{A}.old.place", H)
+    store.after_lookup = lambda: store.define(f"{A}.other.place", H)
+    report = _run(store)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert len(_writes(store, cq.CYPHER_GLOSS_MOVE)) == 1, "the move was attempted"
+    assert _writes(store, cq.CYPHER_GLOSS_MARK) == []
+    g = store.glosses["gloss:1"]
+    assert g[cs.KEY_TARGET_QN] == f"{A}.old.place"
+    assert g[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.EXACT.value
+    assert "gloss:1" not in store.attached
+    # The read-back is what told the pass the move did not land.
+    assert any(q == cq.CYPHER_GLOSS_READ for q, _ in store.reads)
+    # And the following pass, with both definitions present, marks it.
+    assert _run(store).ambiguous == ["gloss:1"]
+
+
 # --- a hash that leads back home ---------------------------------------------
 
 
@@ -411,17 +487,29 @@ def test_the_hash_lookup_is_project_scoped_and_label_bound() -> None:
 
 
 def test_the_move_binds_the_edge_to_the_matched_definition_only() -> None:
+    # The statement re-validates its precondition at write time: it collects
+    # the physical nodes carrying the hash in the project and binds only if
+    # there is exactly one -- so a same-name pair gets no edge (a name-keyed
+    # MATCH would bind both) and a match that appeared since the pass's read
+    # makes it a no-op. No name is passed in.
     q = cq.CYPHER_GLOSS_MOVE
-    assert "{qualified_name: $new_qn}" in q
+    assert "$new_qn" not in q
+    assert "t.anchor_hash = $target_hash" in q
+    assert "t.qualified_name STARTS WITH $project_prefix" in q
+    assert "WITH g, collect(t) AS targets" in q
+    assert "WHERE size(targets) = 1" in q
     # The origin is read in a WITH before the SETs, so neither SET can see
     # the other's new value.
-    assert "WITH g, t, coalesce(g.moved_from, g.target_qn) AS origin" in q
+    assert "WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin" in q
     assert (
-        f"CASE WHEN origin = $new_qn\n    THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"CASE WHEN origin = t.qualified_name\n    THEN '{cs.GlossAnchorState.EXACT.value}' "
         f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
     )
-    assert "g.moved_from = CASE WHEN origin = $new_qn THEN null ELSE origin END" in q
-    assert "g.target_qn = $new_qn" in q
+    assert (
+        "g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END"
+        in q
+    )
+    assert "g.target_qn = t.qualified_name" in q
     assert "g.candidate_qns = null" in q
     assert f"MERGE (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(t)" in q
 

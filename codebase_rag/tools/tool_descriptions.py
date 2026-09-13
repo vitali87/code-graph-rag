@@ -250,7 +250,9 @@ MCP_GLOSSES = (
     "the project carries the recorded hash (the note follows it; "
     "`moved_from` keeps the old name), AMBIGUOUS when several do "
     "(`candidate_qns` lists them) and LOST when none does. A note on a class "
-    "or module, or one written before hashes were recorded, keeps its state. "
+    "or module, or one written before hashes were recorded, is not graded "
+    "while attached (there is no hash to compare) and is LOST if its name "
+    "disappears (there is no hash to follow). "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
