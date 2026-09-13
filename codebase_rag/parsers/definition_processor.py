@@ -395,7 +395,10 @@ class DefinitionProcessor(
         from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        if not self.pending_type_facts:
+        # Every queue, not just the first: a Parameter fact with no RETURNS/
+        # ACCEPTS fact beside it (a peer's Field pass hit exactly this) would
+        # otherwise be skipped outright, and OF_TYPE silently absent.
+        if not self.pending_type_facts and not self.pending_parameter_types:
             return 0
         resolver = TypeReferenceResolver(
             self.function_registry,

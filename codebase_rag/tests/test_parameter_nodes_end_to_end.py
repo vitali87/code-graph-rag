@@ -310,3 +310,38 @@ def test_scoped_reingest_drops_the_old_annotation(tmp_path: Path) -> None:
     assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
         ("proj.app.f.0", "proj.app.New")
     }
+
+
+def test_the_deferred_pass_runs_for_parameter_facts_alone(tmp_path: Path) -> None:
+    """`emit_type_edges` used to return early when no RETURNS/ACCEPTS fact was
+    queued, BEFORE the parameter pass -- a Parameter fact on its own was
+    skipped and OF_TYPE silently absent. Today every annotated parameter also
+    queues an ACCEPTS fact, so no ingest path reaches this; the guard is pinned
+    directly (a peer's Field pass, which queues nothing else, hit it)."""
+    from codebase_rag.parsers.parameter_nodes import PendingParameterType
+
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    for name, src in _SRC.items():
+        (repo / name).write_text(src)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+parameters"]),
+    )
+    updater.run(force=True)
+    processor = updater.factory.definition_processor
+    assert not processor.pending_type_facts and not processor.pending_parameter_types
+
+    processor.pending_parameter_types.append(
+        PendingParameterType("proj.app.build.1", "proj.app", "Widget")
+    )
+    emitted = processor.emit_type_edges()
+
+    assert emitted == 1
+    assert processor.pending_parameter_types == []
