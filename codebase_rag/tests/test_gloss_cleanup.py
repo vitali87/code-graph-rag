@@ -15,7 +15,9 @@ than an extra relationship in that traversal:
 
 A traversal-based delete cannot separate those, because a rebuild deletes and
 recreates the same symbols. Asking whether the SUBJECT still exists can: that
-is false only after a real deletion.
+is false only after a real deletion -- and, since stage four of #1808, for a
+note graded LOST or AMBIGUOUS, which is unattached by design. So the sweep
+also asks whether the note was written about the project just deleted.
 """
 
 from __future__ import annotations
@@ -39,9 +41,11 @@ class _FakeStore:
 
     def __init__(self) -> None:
         self.writes: list[str] = []
+        self.params: list[object] = []
 
     def execute_write(self, query: str, params: object = None) -> None:
         self.writes.append(query)
+        self.params.append(params)
 
 
 def test_the_project_delete_does_not_reach_a_gloss() -> None:
@@ -91,10 +95,11 @@ def test_the_sweep_follows_the_edge_in_its_real_direction() -> None:
     )
 
 
-def test_prune_issues_exactly_one_write() -> None:
+def test_prune_issues_exactly_one_write_scoped_to_the_project() -> None:
     store = _FakeStore()
-    assert prune_orphaned_glosses(store) is True  # type: ignore[arg-type]
+    assert prune_orphaned_glosses(store, "proj") is True  # type: ignore[arg-type]
     assert store.writes == [CYPHER_DELETE_ORPHANED_GLOSSES]
+    assert store.params == [{cs.KEY_PROJECT_PREFIX: "proj."}]
 
 
 def test_a_failing_sweep_does_not_raise() -> None:
@@ -111,25 +116,38 @@ def test_a_failing_sweep_does_not_raise() -> None:
         def execute_write(self, query: str, params: object = None) -> None:
             raise RuntimeError("store refused the sweep")
 
-    assert prune_orphaned_glosses(_Refusing()) is False, (  # type: ignore[arg-type]
+    assert prune_orphaned_glosses(_Refusing(), "proj") is False, (  # type: ignore[arg-type]
         "a refused sweep must report failure rather than raise, so the "
         "caller can log it without failing a delete that already happened"
     )
 
 
-def test_the_sweep_is_not_scoped_to_one_project() -> None:
-    """Why leaving orphans behind is recoverable rather than permanent.
+def test_the_sweep_is_scoped_to_the_deleted_project() -> None:
+    """An unattached gloss is no longer proof of garbage (stage four of #1808).
 
-    The predicate is 'this gloss has no subject', not 'this gloss belonged to
-    the project just deleted'. So a sweep that fails once is retried by the
-    next deliberate delete of ANY project -- which is what makes the
-    non-raising behaviour above safe rather than merely convenient.
+    A note graded LOST or AMBIGUOUS is unattached BY DESIGN: its definition's
+    name is gone and nothing carries its hash, or several do, and it stays
+    readable on the old name so the orphaning is visible. An unscoped sweep
+    would destroy every such note in every project the moment any one project
+    was deleted. The predicate is therefore 'this gloss has no subject AND it
+    was written about the project just deleted', read off the note's own
+    `target_qn`, which starts with the project name.
+
+    The cost is the earlier retry story: a sweep that fails once is retried
+    only by deleting the same project name again. The orphans it leaves read
+    as LOST notes on a project that no longer exists -- visible, not wrong.
     """
-    assert "$project_name" not in CYPHER_DELETE_ORPHANED_GLOSSES
-    assert "project" not in CYPHER_DELETE_ORPHANED_GLOSSES.lower(), (
-        "the sweep became project-scoped; a failed sweep would then only be "
-        "retried by deleting that same project, which no longer exists"
+    assert "WHERE g.target_qn STARTS WITH $project_prefix" in (
+        CYPHER_DELETE_ORPHANED_GLOSSES
+    ), (
+        "the sweep is unscoped again; deleting one project would destroy the "
+        "LOST and AMBIGUOUS notes of every other project"
     )
+    # The scope is applied to the gloss before the subject count, so it can
+    # never widen the delete: an attached note is still never touched.
+    where, _ = CYPHER_DELETE_ORPHANED_GLOSSES.split("OPTIONAL MATCH", 1)
+    assert "$project_prefix" in where
+    assert "subjects = 0" in CYPHER_DELETE_ORPHANED_GLOSSES
 
 
 def test_the_deliberate_delete_runs_the_sweep() -> None:

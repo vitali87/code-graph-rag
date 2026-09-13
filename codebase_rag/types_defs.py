@@ -939,6 +939,7 @@ _GLOSS_NODE_PROPS = (
     "created_by: string, created_at: string, commit_sha: string?, "
     "target_qn: string, target_hash: string?, anchor_quote: string?, "
     "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, "
+    "moved_from: string?, candidate_qns: list[string]?, "
     "write_id: string?, mention_qns: list[string]?}"
 )
 

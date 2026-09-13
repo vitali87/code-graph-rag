@@ -115,6 +115,13 @@ class FakeGraph:
             out = [self._gloss_row(g) for g, qn in self.annotates if qn == p[cs.KEY_QN]]
         elif query == cq.CYPHER_GLOSSES_MENTIONING:
             out = [self._gloss_row(g) for g, qn in self.mentions if qn == p[cs.KEY_QN]]
+        elif query == cq.CYPHER_GLOSSES_ORPHANED_ON:
+            attached = {g for g, _qn in self.annotates}
+            out = [
+                self._gloss_row(g)
+                for g, props in self.glosses.items()
+                if props.get(cs.KEY_TARGET_QN) == p[cs.KEY_QN] and g not in attached
+            ]
         else:
             raise AssertionError(f"unexpected query: {query[:60]}")
         # Deliberately unsorted: the tools must sort.
@@ -468,6 +475,88 @@ def test_read_refuses_an_ambiguous_name_the_same_way_as_a_write() -> None:
     assert len(result["candidates"]) == 2
 
 
+def test_read_on_a_gone_definition_returns_its_orphaned_notes_with_the_error() -> None:
+    # Stage four of #1808: a note whose definition's name is gone is LOST or
+    # AMBIGUOUS and attached to nothing, so the read that used to find it
+    # attached would report "no definition" and nothing else. The refusal
+    # stands (the name does not resolve, and nothing is re-bound), and the
+    # notes written against that exact name come back with it, state and
+    # candidates included, so the orphaning is visible rather than silent.
+    graph = FakeGraph()
+    gone = f"{P}.app.removed"
+    graph.glosses["gloss:lost"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_BODY: "b1",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    graph.glosses["gloss:amb"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_BODY: "b2",
+        cs.KEY_CREATED_AT: "2026-09-13T09:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.AMBIGUOUS.value,
+        cs.KEY_CANDIDATE_QNS: [UTIL_GET, STORE_GET],
+    }
+    # A note on the same old name that has since MOVED is attached, so it is
+    # not orphaned and must not appear here.
+    graph.glosses["gloss:moved"] = {
+        cs.KEY_TARGET_QN: RUN,
+        cs.KEY_MOVED_FROM: gone,
+        cs.KEY_BODY: "b3",
+        cs.KEY_CREATED_AT: "2026-09-13T08:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.MOVED.value,
+    }
+    graph.annotates.add(("gloss:moved", RUN))
+    result = gloss.glosses_for(graph.fetch_all, P, gone)
+    assert _is_refusal(result)
+    assert cs.KEY_CANDIDATES not in result
+    orphaned = result[cs.KEY_ORPHANED]
+    assert [g["qualified_name"] for g in orphaned] == ["gloss:amb", "gloss:lost"]
+    assert orphaned[0]["anchor_state"] == cs.GlossAnchorState.AMBIGUOUS.value
+    assert orphaned[0]["candidate_qns"] == [STORE_GET, UTIL_GET], "sorted"
+    assert orphaned[1]["anchor_state"] == cs.GlossAnchorState.LOST.value
+    assert orphaned[1]["candidate_qns"] == []
+
+
+def test_read_on_a_gone_definition_with_no_notes_is_a_plain_refusal() -> None:
+    graph = FakeGraph()
+    result = gloss.glosses_for(graph.fetch_all, P, f"{P}.app.never")
+    assert _is_refusal(result)
+    assert cs.KEY_ORPHANED not in result, "an empty list would read as a finding"
+
+
+def test_read_on_an_ambiguous_name_does_not_look_for_orphans() -> None:
+    # An ambiguous name is not a gone name; the refusal carries candidates
+    # and nothing else, and no orphan read is issued for it.
+    graph = FakeGraph()
+    seen: list[str] = []
+
+    def spy(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        seen.append(query)
+        return graph.fetch_all(query, params)
+
+    result = gloss.glosses_for(spy, P, "get")
+    assert _is_refusal(result)
+    assert cq.CYPHER_GLOSSES_ORPHANED_ON not in seen
+
+
+def test_a_moved_note_reads_back_with_where_it_came_from() -> None:
+    graph = FakeGraph()
+    graph.glosses["gloss:moved"] = {
+        cs.KEY_TARGET_QN: RUN,
+        cs.KEY_MOVED_FROM: f"{P}.app.old_run",
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T08:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.MOVED.value,
+    }
+    graph.annotates.add(("gloss:moved", RUN))
+    result = gloss.glosses_for(graph.fetch_all, P, RUN)
+    [row] = result["annotating"]
+    assert row["anchor_state"] == cs.GlossAnchorState.MOVED.value
+    assert row["moved_from"] == f"{P}.app.old_run"
+    assert row["candidate_qns"] == []
+
+
 # --- the MCP surface ----------------------------------------------------------
 
 
@@ -717,8 +806,13 @@ class _RecordingStore:
     def __init__(self) -> None:
         self.writes: list[str] = []
         self.fail = False
+        # When set, the store reports one note the name tier left unattached
+        # (no comparable hash), so the repair tier has something to mark.
+        self.unanchored: list[ResultRow] = []
 
     def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
+        if query == cq.CYPHER_UNANCHORED_GLOSSES:
+            return list(self.unanchored)
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -741,6 +835,14 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     # so a rebuild that recreated the definitions (or a capture that could
     # not be read) still ends with every note attached.
     store = _RecordingStore()
+    store.unanchored = [
+        {
+            cs.KEY_QUALIFIED_NAME: "gloss:orphan",
+            cs.KEY_TARGET_QN: f"{P}.gone.f",
+            cs.KEY_TARGET_HASH: None,
+            cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
+        }
+    ]
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=tmp_path,
@@ -748,8 +850,13 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
         queries={},
     )
     updater._reanchor_glosses()
+    # Name tier first; then the repair tier places or marks what the name
+    # tier left unattached (here: one note with no comparable hash, marked
+    # LOST); then the mentions restore, so a note that has just MOVED gets
+    # its MENTIONS edges back in the same run; then grading.
     assert store.writes == [
         cq.CYPHER_REANCHOR_GLOSSES,
+        cq.CYPHER_GLOSS_MARK,
         cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
         cq.CYPHER_GRADE_GLOSS_ANCHORS,
     ]
@@ -759,15 +866,33 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
 
 
+def test_reanchoring_by_name_resets_the_state_it_left_behind() -> None:
+    # A note the previous run graded LOST or AMBIGUOUS whose name has come
+    # back is attached again and reads EXACT (grading may demote it to STALE
+    # straight after); a MOVED note stays MOVED, since `target_qn` is by then
+    # the name it moved to. The candidate list belongs to AMBIGUOUS alone.
+    q = cq.CYPHER_REANCHOR_GLOSSES
+    assert "SET g.anchor_state = CASE WHEN g.moved_from IS NULL" in q
+    assert (
+        f"THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
+    )
+    assert "g.candidate_qns = null" in q
+    assert "DELETE" not in q
+
+
 def test_grading_compares_the_recorded_hash_with_the_subjects_current_one() -> None:
     # After re-anchoring, a note whose recorded hash no longer matches the
     # subject's `anchor_hash` reads STALE; a match reads EXACT again; a
     # subject or note without a hash is left as it is, never guessed at.
     q = cq.CYPHER_GRADE_GLOSS_ANCHORS
     assert "g.target_hash = t.anchor_hash" in q
+    assert f"ELSE '{cs.GlossAnchorState.STALE.value}' END" in q
+    # A note that followed its definition to a new name stays MOVED while the
+    # hashes agree: `moved_from` is what keeps the move visible.
     assert (
-        f"THEN '{cs.GlossAnchorState.EXACT.value}' ELSE '{cs.GlossAnchorState.STALE.value}'"
-        in q
+        f"CASE WHEN g.moved_from IS NULL\n          THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
     )
     assert "g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL" in q
     # A note that recorded a pre-format hash (stage two wrote the clone

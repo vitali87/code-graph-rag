@@ -42,8 +42,11 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # statement ran; it means nothing outside that call. `mention_qns` is the
     # note's own record of what it mentions, from which the MENTIONS edges are
     # rebuilt after a sync; the edges themselves are exported, so the list is
-    # redundant on the wire (issue #1808).
-    "Gloss": frozenset({"write_id", "mention_qns"}),
+    # redundant on the wire (issue #1808). `candidate_qns` is the repair
+    # pass's record of where an AMBIGUOUS note could belong, recomputed from
+    # the graph after every sync, so exporting it would only freeze a verdict
+    # the next run replaces (stage four of #1808).
+    "Gloss": frozenset({"write_id", "mention_qns", "candidate_qns"}),
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),

@@ -23,8 +23,11 @@ Three decisions from the issue are load-bearing here:
 A gloss is EXACT at the moment it is written and records the subject's
 `anchor_hash` (see `parsers/anchor_hash.py`); after every sync the graph
 updater compares the two and grades the note EXACT or STALE, so a reader
-knows whether the code under a note has changed since it was made. The text
-quote and the MOVED / AMBIGUOUS / LOST tiers are the next stage.
+knows whether the code under a note has changed since it was made. A note
+whose subject's name is gone is repaired by content hash (`gloss_repair`):
+MOVED when one definition carries it, AMBIGUOUS or LOST otherwise, and the
+unattached ones stay readable through `glosses_for` on the old name. The
+text-quote anchor is the next stage.
 """
 
 from __future__ import annotations
@@ -57,12 +60,17 @@ class GlossRow(TypedDict):
     target_qn: str
     target_hash: str | None
     anchor_state: str
+    moved_from: str | None
+    candidate_qns: list[str]
     mentions: list[str]
 
 
 class GlossRefusal(TypedDict, total=False):
     error: str
     candidates: list[SymbolRow]
+    # Notes written against a name that no longer resolves: a LOST or
+    # AMBIGUOUS note is unattached, and this is where it is still visible.
+    orphaned: list[GlossRow]
 
 
 class GlossesResult(TypedDict):
@@ -163,8 +171,16 @@ def _gloss_row(row: ResultRow) -> GlossRow:
         target_qn=str(row.get(cs.KEY_TARGET_QN, "")),
         target_hash=_opt_str(row.get(cs.KEY_TARGET_HASH)),
         anchor_state=str(row.get(cs.KEY_ANCHOR_STATE, "")),
+        moved_from=_opt_str(row.get(cs.KEY_MOVED_FROM)),
+        candidate_qns=_str_list(row.get(cs.KEY_CANDIDATE_QNS)),
         mentions=mentions,
     )
+
+
+def _str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return sorted(str(item) for item in value if item is not None)
 
 
 def _opt_str(value: object) -> str | None:
@@ -272,7 +288,19 @@ def glosses_for(
     """
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
-        return subject  # type: ignore[return-value]
+        refusal: GlossRefusal = subject  # type: ignore[assignment]
+        # A name that matches nothing may still be one notes were written
+        # against: the definition is gone and the notes are LOST or
+        # AMBIGUOUS. They are returned with the refusal so the orphaning is
+        # visible, never re-bound to a lookalike. An ambiguous name is not
+        # gone, so it gets no such list.
+        if cs.KEY_CANDIDATES not in refusal:
+            orphaned = _sort_gloss_rows(
+                fetch_all(cq.CYPHER_GLOSSES_ORPHANED_ON, {cs.KEY_QN: target})
+            )
+            if orphaned:
+                refusal[cs.KEY_ORPHANED] = orphaned
+        return refusal
     subject_row: SymbolRow = subject  # type: ignore[assignment]
     params: PropertyDict = {cs.KEY_QN: subject_row["qualified_name"]}
     return GlossesResult(
