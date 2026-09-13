@@ -1,4 +1,9 @@
-from .constants import CYPHER_DEFAULT_LIMIT, NodeLabel, RelationshipType
+from .constants import (
+    CYPHER_DEFAULT_LIMIT,
+    GlossAnchorState,
+    NodeLabel,
+    RelationshipType,
+)
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
@@ -514,7 +519,7 @@ _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
 CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
-RETURN n.ast_fingerprint AS target_hash
+RETURN n.anchor_hash AS target_hash
 LIMIT 1"""
 CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
@@ -556,6 +561,18 @@ WHERE g.mention_qns IS NOT NULL
 UNWIND g.mention_qns AS mention_qn
 MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
 MERGE (g)-[:{_MENTIONS}]->(m)"""
+# Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
+# `target_hash` when it was written; after a sync the two are compared and the
+# note graded EXACT or STALE. A subject with no hash (a class, a module) or a
+# note written before hashes existed is left as it is rather than guessed at,
+# and a STALE note goes back to EXACT if the code is reverted. Nothing here
+# moves a note or deletes one.
+_STATE_EXACT = GlossAnchorState.EXACT.value
+_STATE_STALE = GlossAnchorState.STALE.value
+CYPHER_GRADE_GLOSS_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
+WHERE g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
+SET g.anchor_state = CASE WHEN g.target_hash = t.anchor_hash
+    THEN '{_STATE_EXACT}' ELSE '{_STATE_STALE}' END"""
 _GLOSS_ROW = (
     "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
     "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "

@@ -243,7 +243,10 @@ MCP_ANNOTATE = (
 MCP_GLOSSES = (
     "Notes (Glosses) about one definition: `annotating` are filed on it, "
     "`mentioning` are filed on other definitions and refer to it. `target` "
-    "is resolved as `annotate` resolves it. " + _MCP_DETERMINISTIC_NOTE
+    "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
+    "EXACT while the definition's code is unchanged since the note was "
+    "written and STALE once it has changed (graded after each sync; a "
+    "class or module subject is not graded). " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_GLOSS_BODY = (
     "The note itself: the reasoning a reader cannot recover from the code."

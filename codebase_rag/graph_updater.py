@@ -5619,7 +5619,7 @@ class GraphUpdater:
             self.finding_analyzer.analyze(scoped)
 
     def _reanchor_glosses(self) -> None:
-        """Re-attach every Gloss to the definitions its own record names.
+        """Re-attach every Gloss to the definitions its own record names, then grade it.
 
         A gloss lives only in the graph, so a rebuild that deletes and
         recreates a definition, or an inbound-edge capture that could not be
@@ -5635,6 +5635,10 @@ class GraphUpdater:
         try:
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+            # Then grade: the subject's `anchor_hash` was just re-emitted by
+            # the parse, so comparing it with the note's recorded hash here
+            # is what makes a note about changed code read STALE.
+            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
