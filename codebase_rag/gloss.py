@@ -20,9 +20,11 @@ Three decisions from the issue are load-bearing here:
   that left the graph between resolving and writing therefore reports "not
   written", not success, and never a note with half its edges.
 
-Anchoring beyond the qualified name (the text quote, the graded repair chain
-that turns a moved or edited subject into MOVED / STALE / LOST) is the next
-stage; every gloss written here is EXACT at the moment it is written.
+A gloss is EXACT at the moment it is written and records the subject's
+`anchor_hash` (see `parsers/anchor_hash.py`); after every sync the graph
+updater compares the two and grades the note EXACT or STALE, so a reader
+knows whether the code under a note has changed since it was made. The text
+quote and the MOVED / AMBIGUOUS / LOST tiers are the next stage.
 """
 
 from __future__ import annotations
