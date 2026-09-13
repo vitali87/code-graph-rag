@@ -4670,7 +4670,18 @@ class GraphUpdater:
         # delombok overlay are per-run inputs run() computes before Pass 2;
         # a fresh updater must compute them too or a Lombok class re-parses
         # without its generated members.
-        self.factory.structure_processor.identify_structure()
+        #
+        # `emit=False`: the MAP is what hydration needs, and it needs all of
+        # it -- a parent lookup can reach any directory, so `only` is not an
+        # option here. Emitting is a different matter. The unrestricted walk
+        # writes a node for every directory as it is on disk NOW, so a
+        # directory whose package-ness changed since the last index gained a
+        # node of the new kind beside its surviving old one -- two
+        # contradictory container identities, for a directory this scoped
+        # call never named (issue #1872). The scoped re-derivation inside
+        # `reingest` is what legitimately emits, and it restricts itself to
+        # the flipped directories and their children.
+        self.factory.structure_processor.identify_structure(emit=False)
         self._rehydrate_registry_from_graph()
         self._rehydrate_function_locations()
         self._reingest_hydrated = True
@@ -4889,12 +4900,23 @@ class GraphUpdater:
             )
         except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
             return set()
-        # EVERY row, not the first: row order is unspecified, and a
-        # directory can already hold BOTH kinds (#1872), so "the first row
-        # wins" answers Package or Folder for the same graph depending on the
-        # driver (CodeRabbit, PR #1835).
+        return self._container_kinds_from_rows(rows)
+
+    @staticmethod
+    def _container_kinds_from_rows(rows: object) -> set[str]:
+        """Container labels out of `CYPHER_CONTAINER_KIND` rows.
+
+        Shared by both readers of that query rather than restated in each:
+        two readers of one query drift, and this one already carries two
+        non-obvious rules that would drift separately.
+
+        EVERY row, not the first: row order is unspecified, and a directory
+        can already hold BOTH kinds (#1872), so "the first row wins" answers
+        Package or Folder for the same graph depending on the driver
+        (CodeRabbit, PR #1835).
+        """
         recorded: set[str] = set()
-        for row in rows or ():
+        for row in rows or ():  # type: ignore[union-attr]
             raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
             # Narrowed to a list of str before the membership test: a result
             # scalar is a union wide enough that `in` is not defined on every
@@ -4938,6 +4960,123 @@ class GraphUpdater:
         else:
             was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
         return is_package_now != was_package
+
+    def _uncontained_dirs(self, present: dict[str, Path]) -> tuple[set[str], set[str]]:
+        """Ancestor directories of `present` the graph holds no container for.
+
+        Hydration used to emit a node for every directory on disk, which
+        covered a directory that is NEW since the last index as a side
+        effect. It no longer emits (issue #1872), and the scoped
+        re-derivation does not cover these either: it re-derives directories
+        whose package-ness FLIPPED, and a brand-new directory never flipped.
+        Without this the re-parse writes CONTAINS_FILE and CONTAINS_MODULE
+        edges out of a container node nothing wrote -- and in production the
+        merge query MATCHes both endpoints, so the edge is not created at all
+        and the new file is silently unparented (greptile-local, #1872).
+
+        Guarded on the graph having NO container for the directory, not on
+        the directory being in this call. An unconditional ancestor scope
+        would re-derive an ancestor that changed independently and give it a
+        second container identity -- the #1835 rule, which
+        `test_an_independently_changed_ancestor_keeps_one_identity` pins.
+        """
+        new_dirs: set[str] = set()
+        diverged: set[str] = set()
+        for key in present:
+            self._climb_uncontained(Path(key).parent, new_dirs, diverged)
+        return new_dirs, diverged
+
+    def _climb_uncontained(
+        self, start: Path, new_dirs: set[str], diverged: set[str]
+    ) -> None:
+        """Climb from one file's directory to the first correct ancestor.
+
+        Stops at the first directory the graph already records correctly --
+        everything above it is correct too, since an ancestor is only wrong
+        if something changed it, and that change would have been caught on
+        its own climb.
+
+        Split out of `_uncontained_dirs` to keep it under the
+        cognitive-complexity limit; the nested loop was the whole cost.
+        """
+        parent = start
+        while True:
+            rel = parent.as_posix()
+            if rel in new_dirs or rel in diverged:
+                return
+            needs = self._container_needs_deriving(rel)
+            if needs is None:
+                return
+            (diverged if needs else new_dirs).add(rel)
+            if rel == ".":
+                return
+            parent = parent.parent
+
+    def _container_needs_deriving(self, rel: str) -> bool | None:
+        """Whether this directory needs deriving, and if so which kind of need.
+
+        `True` means its recorded kind DIVERGED from disk, `False` means the
+        graph holds no container for it at all, and `None` means it is
+        already correct and the walk can stop climbing.
+
+        The two true cases differ in what the caller must then do: a new
+        directory only needs deriving, while a diverged one also needs its
+        stale node pruned. Both matter, and the second for a reason easy to
+        miss -- a child's parent identity comes from `structural_elements`,
+        which hydration fills from DISK, so a child under a diverged ancestor
+        gets a containment edge naming an identity the graph does not hold
+        and the subtree is left disconnected (Greptile, PR #1875).
+        """
+        directory = self.repo_path if rel == "." else self.repo_path / rel
+        recorded = self._container_kinds_or_unknown(directory)
+        if recorded is None:
+            # "I could not ask" is not "there is nothing there". Treating an
+            # unreadable store as an absent container would derive every
+            # ancestor and re-create the duplicate identity this path
+            # prevents. Abort in the read-only prologue, as the other
+            # prologue reads do, rather than act on an unknown.
+            raise ReingestAborted(ls.REINGEST_CONTAINER_KIND_UNKNOWN)
+        if not recorded:
+            return False
+        return True if self._kind_diverged(directory, recorded) else None
+
+    def _container_kinds_or_unknown(self, directory: Path) -> set[str] | None:
+        """The recorded container kinds, or None when the read RAISED.
+
+        ONE read with three outcomes, deliberately: a set (possibly empty,
+        meaning no container node), or None meaning "could not ask".
+        Asking twice -- once to test readability and once for the value --
+        meant a failure BETWEEN the two turned an existing container into
+        "no container", which skipped the prune and left both identities in
+        the graph: the exact defect this path exists to remove, reachable
+        through its own guard (Greptile, PR #1875).
+
+        A sink with NO query surface is not a failure. It is a legitimate
+        configuration the whole scoped path already tolerates, and treating
+        it as unknown aborted every re-ingest against one.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_CONTAINER_KIND,
+                {cs.KEY_PATH: cached_resolve_posix(directory)},
+            )
+        except Exception:  # noqa: BLE001 -- the caller decides what to do
+            return None
+        return self._container_kinds_from_rows(rows)
+
+    def _kind_diverged(self, directory: Path, recorded: set[str]) -> bool:
+        """Whether the graph's container kind disagrees with the disk's.
+
+        Two recorded kinds is already a disagreement with any disk state --
+        one of them is stale whatever the directory is now.
+        """
+        if len(recorded) > 1:
+            return True
+        structure = self.factory.structure_processor
+        is_package_now = bool(structure.is_package_dir(directory))
+        return (cs.NodeLabel.PACKAGE.value in recorded) != is_package_now
 
     def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
         """Directories to re-derive: the flipped ones plus their CHILDREN.
@@ -5246,8 +5385,8 @@ class GraphUpdater:
             return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
         # Everything up to the inbound-edge capture issues no delete and no
-        # content write (a fresh updater's structure hydration re-emits
-        # idempotent Package and Folder upserts, nothing more). A failure
+        # content write (a fresh updater's structure hydration
+        # derives the package map and emits nothing, #1872). A failure
         # there leaves the graph as it was and says so with ReingestAborted,
         # so a caller holding the updater (the MCP tool, the watcher) keeps
         # it rather than treating the graph as partially rewritten.
@@ -5313,6 +5452,18 @@ class GraphUpdater:
         # node of the new kind; the sibling re-parse below re-points the
         # containment edges onto it, and `_prune_flipped_containers` removes
         # the node of the old kind once both have happened.
+        # New directories first: their container has to exist before the
+        # re-parse writes containment edges out of it.
+        # A directory with no container yet only needs deriving. One whose
+        # recorded kind DIVERGED from disk also needs its stale node pruned,
+        # or the derivation emits the new kind beside the old one -- the very
+        # duplicate identity this path exists to prevent. Pruning is what
+        # `flipped_dirs` already means, so it joins that set rather than
+        # getting a second, parallel mechanism to keep in step.
+        new_dirs, diverged_dirs = self._uncontained_dirs(present)
+        flipped_dirs |= diverged_dirs
+        if scope := (new_dirs | diverged_dirs):
+            self.factory.structure_processor.identify_structure(only=scope)
         if flipped_dirs:
             # Scoped to the flipped directories and their CHILDREN, never
             # their ancestors -- see `_flip_derivation_scope` for both halves
