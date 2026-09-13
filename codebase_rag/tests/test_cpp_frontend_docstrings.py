@@ -87,8 +87,10 @@ def test_documented_definitions_carry_their_doxygen_comment(temp_repo: Path) -> 
     assert methods.get("open") == "Opens the box.\nSecond line.", methods
     # The known-negative: an undocumented member stays None, not "" or a
     # neighbour's comment.
-    assert "undocumented" in methods and methods["undocumented"] is None, methods
+    assert "undocumented" in methods, methods
+    assert methods["undocumented"] is None, methods
 
     functions = _docstrings(ingestor, "Function")
     assert functions.get("release") == "Frees a box.", functions
-    assert "plain" in functions and functions["plain"] is None, functions
+    assert "plain" in functions, functions
+    assert functions["plain"] is None, functions

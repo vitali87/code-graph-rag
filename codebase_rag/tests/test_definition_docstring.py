@@ -70,11 +70,12 @@ def parsers() -> dict:
     return loaded
 
 
-def _find(node: ASTNode, node_type: str) -> ASTNode | None:
+def _first_descendant_of_type(node: ASTNode, node_type: str) -> ASTNode | None:
+    """The first node of `node_type` in document order under (or at) `node`, or None."""
     if node.type == node_type:
         return node
     for child in node.children:
-        found = _find(child, node_type)
+        found = _first_descendant_of_type(child, node_type)
         if found is not None:
             return found
     return None
@@ -89,7 +90,7 @@ def _parse(parsers: dict, language: Lang, source: str) -> ASTNode:
 
 def _declaration(parsers: dict, language: Lang, source: str, node_type: str) -> ASTNode:
     root = _parse(parsers, language, source)
-    node = _find(root, node_type)
+    node = _first_descendant_of_type(root, node_type)
     # A fixture guard, not a behaviour assertion. A grammar that renames a node
     # type leaves `node is None`, and without this the test reports "no
     # docstring extracted" -- a production-looking failure caused by the
@@ -442,7 +443,7 @@ class TestWrappedDeclarations:
         """
         src = "package m\n\n// GROUP\ntype (\n\t// DOC\n\tA struct{}\n\tB struct{}\n)\n"
         root = _parse(parsers, Lang.GO, src)
-        specs = [n for n in _all(root, "type_spec")]
+        specs = [n for n in _all_descendants_of_type(root, "type_spec")]
         assert len(specs) == 2, "fixture: expected two type_spec nodes"
         assert extract_definition_docstring(specs[0], Lang.GO) == "DOC"
         assert extract_definition_docstring(specs[1], Lang.GO) is None
@@ -493,10 +494,11 @@ class TestTrailingComments:
         assert extract_definition_docstring(node, Lang.CPP) == "Real."
 
 
-def _all(node: ASTNode, node_type: str) -> list[ASTNode]:
+def _all_descendants_of_type(node: ASTNode, node_type: str) -> list[ASTNode]:
+    """Every node of `node_type` under (or at) `node`, in document order."""
     found = [node] if node.type == node_type else []
     for child in node.children:
-        found.extend(_all(child, node_type))
+        found.extend(_all_descendants_of_type(child, node_type))
     return found
 
 
