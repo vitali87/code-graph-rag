@@ -2514,6 +2514,48 @@ class MCPToolsRegistry:
             ),
         )
 
+    def _rename_reingest_updater(self, project_name: str) -> GraphUpdater:
+        """The updater the rename re-ingests through, refusing a partial graph.
+
+        A retained updater for THIS project is reused as-is: it is warm, and
+        the guarded callback does its own marking. Otherwise hydrate through
+        the marker-reading helper, never a flag-only one -- `_updater_for_
+        reingest` was deleted under #1783 precisely because its guard reads
+        `_graph_incomplete` alone, which dies with the process, so a fresh
+        registry after a crash hydrated from a graph a previous run left
+        partial (#1679).
+
+        The reuse therefore has to carry the same refusal itself. Skipping it
+        re-created that very defect on this path: `_require_marker` WRITES a
+        marker and never reads one, and `_hydrate_reingest_updater` is the
+        only place `_persisted_incomplete` is consulted, so a warm updater
+        re-ingested over a graph a PEER REGISTRY left partial -- identical
+        incomplete state giving opposite outcomes purely on whether an updater
+        happened to be warm. Two registries per project is a real
+        configuration (#1709), and RENAME sits outside `_READS_THE_GRAPH`, so
+        the read guard does not cover it either (greptile-local, PR #1547).
+
+        Split out of `_guarded_rename_reingest` to keep it under the
+        cognitive-complexity limit; choosing the updater and refusing over a
+        partial graph is one decision, and wrapping the call is another.
+        """
+        retained = self._live_updater
+        if retained is None or retained.project_name != project_name:
+            return self._hydrate_reingest_updater(project_name)
+        # Recovery FIRST, then the latch: reading the latch before
+        # `_persisted_incomplete` can clear a stranded recoverable marker left
+        # this path refusing a rename the cold path allows.
+        persisted_incomplete = self._recover_then_persisted_incomplete(project_name)
+        latched_here = self._graph_incomplete and self._incomplete_project in (
+            None,
+            project_name,
+        )
+        if latched_here or persisted_incomplete:
+            raise ValueError(
+                cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
+            )
+        return retained
+
     def _guarded_rename_reingest(
         self, project_name: str
     ) -> Callable[[list[str]], ReingestReport] | None:
@@ -2537,41 +2579,7 @@ class MCPToolsRegistry:
             and project_name not in self.ingestor.list_projects()
         ):
             return None
-        # A retained updater for THIS project is reused as-is: it is warm and
-        # `guarded()` below does its own marking. Otherwise hydrate through
-        # the marker-reading helper, never a flag-only one -- `_updater_for_
-        # reingest` was deleted under #1783 precisely because its guard reads
-        # `_graph_incomplete` alone, which dies with the process, so a fresh
-        # registry after a crash hydrates from a graph a previous run left
-        # partial (#1679).
-        #
-        # The reuse therefore has to carry the same refusal itself. Skipping
-        # it re-created that very defect on this path: `_require_marker`
-        # below WRITES a marker and never reads one, and
-        # `_hydrate_reingest_updater` is the only place `_persisted_incomplete`
-        # is consulted, so a warm updater re-ingested over a graph a PEER
-        # REGISTRY left partial -- identical incomplete state giving opposite
-        # outcomes purely on whether an updater happened to be warm. Two
-        # registries per project is a real configuration (#1709), and RENAME
-        # sits outside `_READS_THE_GRAPH`, so the read guard does not cover it
-        # either (greptile-local, PR #1547).
-        retained = self._live_updater
-        if retained is not None and retained.project_name == project_name:
-            # Recovery FIRST, then the latch: reading the latch before
-            # `_persisted_incomplete` can clear a stranded recoverable marker
-            # left this path refusing a rename the cold path allows.
-            persisted_incomplete = self._recover_then_persisted_incomplete(project_name)
-            latched_here = self._graph_incomplete and self._incomplete_project in (
-                None,
-                project_name,
-            )
-            if latched_here or persisted_incomplete:
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            updater = retained
-        else:
-            updater = self._hydrate_reingest_updater(project_name)
+        updater = self._rename_reingest_updater(project_name)
 
         def guarded(paths: list[str]) -> ReingestReport:
             if (
