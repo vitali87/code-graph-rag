@@ -118,11 +118,14 @@ def test_removing_a_decorator_changes_it() -> None:
     # A Python decorator is the PARENT of the definition node, so the tree
     # walk alone cannot see it; the extracted names are folded in instead.
     node = _python_definition(BASE)
-    assert anchor_hash(node, ["property"]) != anchor_hash(node, [])
-    assert anchor_hash(node, ["property"]) == anchor_hash(node, ["property"])
-    assert anchor_hash(node, ["cache", "property"]) != anchor_hash(
-        node, ["property", "cache"]
-    )
+    decorated = anchor_hash(node, ["property"])
+    decorated_again = anchor_hash(node, ["property"])
+    plain = anchor_hash(node, [])
+    reordered = anchor_hash(node, ["cache", "property"])
+    reordered_back = anchor_hash(node, ["property", "cache"])
+    assert decorated != plain
+    assert decorated == decorated_again
+    assert reordered != reordered_back
 
 
 DART_ONE = "int f() {\n  return 1;\n}\n"
