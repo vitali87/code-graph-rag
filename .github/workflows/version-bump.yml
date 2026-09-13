@@ -201,7 +201,25 @@ jobs:
           HIGHLIGHTS_API_TOKEN: ${{ secrets.HIGHLIGHTS_API_TOKEN }}
           HIGHLIGHTS_RESOLVE: ${{ secrets.HIGHLIGHTS_RESOLVE }}
         run: |
-          [ -n "$HIGHLIGHTS_API_URL" ] || exit 0
+          # continue-on-error stays: a flaky highlights endpoint must not fail
+          # a release. What it must not do is render every outcome as the same
+          # green tick (issue #1605). Each exit below therefore records a
+          # distinct outcome in the job summary, so "not configured", "the API
+          # failed" and "it worked" are told apart at a glance instead of from
+          # a log line that reads the same in all three cases.
+          set -o pipefail
+          note() { echo "- **Highlights:** $1" >> "$GITHUB_STEP_SUMMARY"; }
+          # The step runs under `bash -e`, so with pipefail on, a curl or jq
+          # failure aborts at the pipeline itself and no line after it runs.
+          # Without this trap that abort would write no summary at all, which
+          # is the silent-green failure this issue is about, just relocated.
+          # ERR fires on the aborting command; the trap clears itself so the
+          # deliberate `exit 1` below reports its own message instead.
+          trap 'note "FAILED, the highlights API call did not complete"' ERR
+          if [ -z "$HIGHLIGHTS_API_URL" ]; then
+            note 'skipped, HIGHLIGHTS_API_URL is not configured'
+            exit 0
+          fi
           RESOLVE_ARGS=()
           [ -n "$HIGHLIGHTS_RESOLVE" ] && RESOLVE_ARGS=(--resolve "$HIGHLIGHTS_RESOLVE")
           sed -E 's| by @[^ ]+ in https://[^ ]+||' /tmp/notes.md > /tmp/titles.md
@@ -217,6 +235,20 @@ jobs:
           | jq -er '.choices[0].message.content // empty' \
           | sed -e '/<think>/,/<\/think>/d' \
           | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/highlights.md
+          # `pipefail` rather than PIPESTATUS: a curl or jq failure is invisible
+          # in $? because the pipeline's status is the LAST stage's, and
+          # PIPESTATUS would work here but is clobbered by the next command
+          # run, so a line inserted above this check would silently disable it.
+          # The emptiness test is separate and not redundant: the redirection
+          # creates the file whether or not anything is written to it, so its
+          # existence proves nothing, and an empty one reaches update_news.py
+          # indistinguishably from a release that genuinely had no themes.
+          trap - ERR
+          if [ ! -s /tmp/highlights.md ]; then
+            note 'FAILED, the API returned nothing usable; NEWS.md will not change'
+            exit 1
+          fi
+          note "generated $(grep -c '^\*' /tmp/highlights.md || echo 0) theme(s)"
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
@@ -238,7 +270,22 @@ jobs:
           # highlight becomes a news entry.
           # A NEWS.md change without the README re-render would drift from the
           # generate-README pre-commit hook, so revert both if the render fails.
-          python3 scripts/update_news.py /tmp/highlights.md
+          # update_news.py already reports "parsed N, deduped N, inserted N"
+          # and exits 1 when bullet-shaped lines fail to parse (#1605). That
+          # exit code is swallowed by continue-on-error, which is wanted -- a
+          # dead highlights endpoint must not fail a release -- but it must not
+          # also be unobservable, so the outcome is recorded either way.
+          if news_out=$(python3 scripts/update_news.py /tmp/highlights.md 2>&1); then
+            # The "parsed/deduped/inserted" line, not the last line: the last
+            # line is "no new themes to add" on a quiet release and "added: ..."
+            # on a busy one, and neither distinguishes a working parser from a
+            # dead one. The counts are what #1605 added for exactly that.
+            counts=$(printf '%s\n' "$news_out" | grep -m1 '^parsed ' || true)
+            echo "- **NEWS.md:** ${counts:-$news_out}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **NEWS.md:** FAILED, $news_out" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "$news_out"
           if ! git diff --quiet NEWS.md; then
             if ! (uv sync --frozen && uv run --frozen python scripts/generate_readme.py); then
               git checkout -- NEWS.md README.md
