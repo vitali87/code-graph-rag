@@ -54,13 +54,15 @@ _BODIES = {
         "    def pick(self, override: Path | None) -> str:\n"
         "        return (override or self.base).resolve().as_posix()\n"
     ),
-    # The same `or`, split across lines: the keyword must be found as a
-    # token, not as a space-padded substring (CodeRabbit).
+    # The same `or`, split across lines with the keyword ALONE on its line:
+    # no " or " substring exists, so only a token match finds it (CodeRabbit).
+    # An earlier version kept `or self.base` on one line and proved nothing.
     "paren_or_multiline": (
         "    def pick(self, override: Path | None) -> str:\n"
         "        return (\n"
         "            override\n"
-        "            or self.base\n"
+        "            or\n"
+        "            self.base\n"
         "        ).resolve().as_posix()\n"
     ),
 }
