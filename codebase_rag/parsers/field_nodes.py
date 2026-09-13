@@ -19,6 +19,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..services import IngestorProtocol
+from .definition_docstring import extract_definition_docstring
 from .type_facts import TypeReferenceResolver
 from .utils import safe_decode_text
 
@@ -827,6 +828,14 @@ def emit_declared_fields(
             props[cs.KEY_ABSOLUTE_PATH] = absolute_path
         if field.type_name:
             props[cs.KEY_TYPE_NAME] = field.type_name
+        # The point of the exercise (issue #1805): the doc comment above the
+        # declaring node, through the same extractor definitions use. Python
+        # has no field docstring convention and the extractor returns None for
+        # it, so the property is simply absent there.
+        if language is not None and (
+            docstring := extract_definition_docstring(field.node, language)
+        ):
+            props[cs.KEY_DOCSTRING] = docstring
         ingestor.ensure_node_batch(cs.NodeLabel.FIELD, props)
         ingestor.ensure_relationship_batch(
             owner,

@@ -41,6 +41,8 @@ _SRC = {
     # A second language, so the emitter is proven to run off the enumerator
     # dispatch and not off a Python-only path.
     "Shape.java": "class Shape {\n  private static final int SIDES = 4;\n  String name;\n  void m() {}\n}\n",
+    # The point of the exercise: 32% of Rust `///` blocks precede a field.
+    "geo.rs": "pub struct Point {\n    /// Horizontal offset.\n    pub x: i32,\n    pub y: i32,\n}\n",
 }
 
 
@@ -297,3 +299,17 @@ def test_scoped_reingest_keeps_a_colliding_modules_field_facts(tmp_path: Path) -
         "the unchanged colliding file's OF_TYPE was not rebuilt"
     )
     assert of_type_for("Holder") == {"proj.models.Gadget"}
+
+
+def test_a_documented_field_carries_its_doc_comment(tmp_path: Path) -> None:
+    """The docstring goes through the same extractor definitions use (#1888),
+    pointed at the declaring node; an undocumented sibling has no property."""
+    store = _index(tmp_path, ["+fields"])
+    fields = _nodes(store, cs.NodeLabel.FIELD.value)
+    point = {qn.rsplit(".", 1)[-1]: p for qn, p in fields.items() if ".Point." in qn}
+    assert set(point) == {"x", "y"}, sorted(fields)
+    assert point["x"][cs.KEY_DOCSTRING] == "Horizontal offset."
+    assert cs.KEY_DOCSTRING not in point["y"]
+    # Python has no field-docstring convention: absent, not empty.
+    box = {qn.rsplit(".", 1)[-1]: p for qn, p in fields.items() if ".Box." in qn}
+    assert all(cs.KEY_DOCSTRING not in p for p in box.values())
