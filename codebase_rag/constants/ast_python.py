@@ -94,7 +94,6 @@ TS_FIELD_ARGUMENT = "argument"
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
 PY_OP_AND = "and"
-PY_OP_OR = "or"
 # `left <op> right` dispatches to `left.__dunder__`, so the expression's type is
 # whatever that method returns -- which an overloaded operator can make a
 # different class from either operand (`Factory / Config -> Product`).
