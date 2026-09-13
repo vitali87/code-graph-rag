@@ -73,9 +73,9 @@ _SHAPES = {
 def _edges(repo: Path, *, method: str) -> set[tuple[str, str]]:
     parsers, queries = load_parsers()
     store = _StatefulIngestor()
-    GraphUpdater(
-        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
-    ).run(force=True)
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
     return {
         (str(src), str(tgt))
         for _sl, src, rel, _tl, tgt in store.edges
@@ -164,8 +164,126 @@ def test_a_heterogeneous_tuple_binds_each_position(tmp_path: Path) -> None:
         "    return banner.render()\n"
     )
     edges = _edges(repo, method="render")
-    assert {t for s, t in edges if s.endswith("app.first")} == {"proj.engine.Widget.render"}
-    assert {t for s, t in edges if s.endswith("app.second")} == {"proj.engine.Banner.render"}
+    assert {t for s, t in edges if s.endswith("app.first")} == {
+        "proj.engine.Widget.render"
+    }
+    assert {t for s, t in edges if s.endswith("app.second")} == {
+        "proj.engine.Banner.render"
+    }
+
+
+_TWO = (
+    "from .engine import Widget, Banner\n"
+    "\n"
+    "def fw() -> tuple[int, Widget]:\n    return (0, Widget())\n"
+    "\n"
+    "def fb() -> tuple[int, Banner]:\n    return (0, Banner())\n"
+    "\n"
+)
+_TWO_CLASSES = (
+    "class Widget:\n    def render(self) -> int:\n        return 1\n\n"
+    "class Banner:\n    def render(self) -> int:\n        return 2\n"
+)
+
+
+def _render_targets(tmp_path: Path, body: str) -> dict[str, set[str]]:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_TWO_CLASSES)
+    (repo / "app.py").write_text(_TWO + body)
+    out: dict[str, set[str]] = {}
+    for src, tgt in _edges(repo, method="render"):
+        out.setdefault(src.rsplit(".", 1)[-1], set()).add(tgt.rsplit(".", 2)[-2])
+    return out
+
+
+def test_the_nearest_preceding_binding_wins(tmp_path: Path) -> None:
+    """`p = fw(); p = fb(); _n, w = p` unpacks fb's result (local review P1:
+    the first binding was taken). A reassignment AFTER the use is ignored."""
+    got = _render_targets(
+        tmp_path,
+        "def nearest() -> int:\n"
+        "    p = fw()\n    p = fb()\n    _n, w = p\n    return w.render()\n"
+        "\n"
+        "def later() -> int:\n"
+        "    p = fw()\n    _n, w = p\n    p = fb()\n    return w.render()\n",
+    )
+    assert got.get("nearest") == {"Banner"}, got
+    assert got.get("later") == {"Widget"}, got
+
+
+def _local_types(tmp_path: Path, body: str, function: str) -> dict[str, str]:
+    """The engine's local type map for one function, read directly: what the
+    fallback does with an UNBOUND name is its own business, so a test about
+    binding asserts on the map, not on the edge the fallback then picks."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_TWO_CLASSES)
+    (repo / "app.py").write_text(_TWO + body)
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater.run(force=True)
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse((_TWO + body).encode())
+    node = next(
+        n
+        for n in tree.root_node.children
+        if n.type == "function_definition"
+        and (n.child_by_field_name("name").text or b"").decode() == function
+    )
+    engine = updater.factory.type_inference.python_type_inference
+    return engine.build_local_variable_type_map(node, "proj.app")
+
+
+def test_a_count_mismatch_binds_nothing(tmp_path: Path) -> None:
+    """`a, b = three()` cannot be positional; a guess (`b` as the second
+    element) would be worse than leaving it unbound."""
+    types = _local_types(
+        tmp_path,
+        "def three() -> tuple[int, Widget, Banner]:\n"
+        "    return (0, Widget(), Banner())\n"
+        "\n"
+        "def mismatch() -> int:\n    a, b = three()\n    return b.render()\n",
+        "mismatch",
+    )
+    assert "a" not in types and "b" not in types, types
+
+
+def test_optional_and_nested_generics_are_read_through(tmp_path: Path) -> None:
+    """`Optional[tuple[int, Banner]]` strips to the tuple; a nested generic
+    with its own commas (`dict[str, list[Widget]]`) is ONE position. Read
+    from the type map: an edge would not tell a bound `Banner` from the
+    fallback happening to pick it."""
+    body = (
+        "from typing import Optional\n"
+        "\n"
+        "def opt() -> Optional[tuple[int, Banner]]:\n    return None\n"
+        "\n"
+        "def nested() -> tuple[int, dict[str, list[Widget]], Banner]:\n"
+        "    return (0, {}, Banner())\n"
+        "\n"
+        "def use_opt() -> int:\n    _n, b = opt()\n    return b.render()\n"
+        "\n"
+        "def use_nested() -> int:\n    _n, d, b = nested()\n    return b.render()\n"
+    )
+    assert _local_types(tmp_path / "opt", body, "use_opt").get("b") == "Banner"
+    nested = _local_types(tmp_path / "nested", body, "use_nested")
+    assert nested.get("b") == "Banner", nested
+    assert nested.get("d") == "dict[str, list[Widget]]", nested
+
+
+def test_an_existing_binding_is_not_overwritten(tmp_path: Path) -> None:
+    """A name the earlier passes already typed keeps that type, the same
+    first-wins rule `_process_assignment_complex` applies."""
+    got = _render_targets(
+        tmp_path,
+        "def keep() -> int:\n"
+        "    w = Widget()\n    _n, w = fb()\n    return w.render()\n",
+    )
+    assert got.get("keep") == {"Widget"}, got
 
 
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:

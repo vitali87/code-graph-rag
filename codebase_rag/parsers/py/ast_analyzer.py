@@ -66,12 +66,24 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..factory import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
     class _AstAnalyzerDeps(Protocol):
+        import_processor: ImportProcessor
+
         def build_local_variable_type_map(
             self, caller_node: Node, module_qn: str
         ) -> dict[str, str]: ...
+
+        def _extract_full_method_call(self, node: Node) -> str | None: ...
+
+        def _resolve_method_qualified_name(
+            self,
+            method_call: str,
+            module_qn: str,
+            local_var_types: dict[str, str] | None = None,
+        ) -> str | None: ...
 
         def _analyze_comprehension(
             self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -280,8 +292,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         if right.type != cs.TS_PY_IDENTIFIER:
             return None
         name = safe_decode_text(right)
-        # Captures are not guaranteed to come back in document order, and the
-        # walk stops at the first assignment past the use, so sort first.
+        # The NEAREST binding before the use, not the first: `p = fw(); p =
+        # fb(); _n, w = p` unpacks fb's result. Captures are not guaranteed to
+        # come back in document order, so sort, and stop at the use.
+        defining: Node | None = None
         for earlier in sorted(assignments, key=lambda node: node.start_byte):
             if earlier.end_byte > right.start_byte:
                 break
@@ -294,8 +308,8 @@ class PythonAstAnalyzerMixin(_AstBase):
                 and safe_decode_text(target) == name
                 and value.type == cs.TS_PY_CALL
             ):
-                return value
-        return None
+                defining = value
+        return defining
 
     def _tuple_return_elements(
         self, call: Node, module_qn: str, local_var_types: dict[str, str]
