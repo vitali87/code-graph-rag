@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from tree_sitter import Language, Parser
 
+from codebase_rag.constants import SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -49,7 +50,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result == "This is a docstring"
 
     def test_single_quoted_docstring(self, py_parser: Parser) -> None:
@@ -64,7 +65,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result == "Single quoted docstring"
 
     def test_triple_double_quoted_docstring(self, py_parser: Parser) -> None:
@@ -79,7 +80,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result == "Triple double quoted docstring"
 
     def test_triple_single_quoted_docstring(self, py_parser: Parser) -> None:
@@ -94,7 +95,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result == "Triple single quoted docstring"
 
     def test_multiline_docstring(self, py_parser: Parser) -> None:
@@ -113,7 +114,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result is not None
         assert "multiline" in result
         assert "multiple lines" in result
@@ -130,7 +131,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result is None
 
     def test_empty_function_body(self, py_parser: Parser) -> None:
@@ -144,7 +145,7 @@ def my_func():
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(func_node)
+        result = processor._get_docstring(func_node, SupportedLanguage.PYTHON)
         assert result is None
 
     def test_class_docstring(self, py_parser: Parser) -> None:
@@ -160,7 +161,7 @@ class MyClass:
         from codebase_rag.parsers.definition_processor import DefinitionProcessor
 
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        result = processor._get_docstring(class_node)
+        result = processor._get_docstring(class_node, SupportedLanguage.PYTHON)
         assert result == "Class level docstring"
 
 

@@ -276,7 +276,9 @@ class FunctionIngestMixin:
     csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     def _ingest_all_functions(
         self,
@@ -788,7 +790,9 @@ class FunctionIngestMixin:
                 cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
                 cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
                 cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                cs.KEY_DOCSTRING: self._get_docstring(func_node),
+                cs.KEY_DOCSTRING: self._get_docstring(
+                    func_node, cs.SupportedLanguage.CPP
+                ),
             }
             if file_path is not None and self.repo_path is not None:
                 props[cs.KEY_PATH] = cached_relative_path(
@@ -1440,7 +1444,7 @@ class FunctionIngestMixin:
         resolution: FunctionResolution,
         module_qn: str,
         lang_queries: LanguageQueries,
-        language: cs.SupportedLanguage | None = None,
+        language: cs.SupportedLanguage,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -1459,7 +1463,7 @@ class FunctionIngestMixin:
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).
             cs.KEY_END_LINE: dart_definition_end_point(func_node)[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(func_node),
+            cs.KEY_DOCSTRING: self._get_docstring(func_node, language),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
         if file_path is not None:

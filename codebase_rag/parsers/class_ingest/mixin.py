@@ -222,7 +222,9 @@ class ClassIngestMixin:
         )
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
@@ -1084,7 +1086,7 @@ class ClassIngestMixin:
             cs.KEY_START_LINE: class_start_line,
             cs.KEY_START_COL: class_start_col,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(class_node),
+            cs.KEY_DOCSTRING: self._get_docstring(class_node, language),
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:

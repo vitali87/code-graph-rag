@@ -340,3 +340,66 @@ class TestUnsupportedLanguages:
     def test_sql_has_no_convention(self, parsers: dict) -> None:
         root = _parse(parsers, Lang.SQL, "-- note\nSELECT 1;\n")
         assert extract_definition_docstring(root, Lang.SQL) is None
+
+
+class TestReachesTheGraph:
+    """The extracted docstring lands on the definition node the ingestor writes.
+
+    The unit tests above prove the extractor; these prove the WIRING, which is
+    the half a unit test cannot see. `_get_docstring` dispatches on a
+    `language` argument, and a call site that forgot to pass it would have
+    fallen back to the Python path with nothing failing -- so the argument is
+    required, and this drives a real `GraphUpdater` over real files to observe
+    the property arriving rather than the function returning.
+    """
+
+    @pytest.fixture
+    def updater(self, temp_repo, mock_ingestor):
+        from codebase_rag.graph_updater import GraphUpdater
+
+        loaded, queries = load_parsers()
+        return GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=loaded,
+            queries=queries,
+        )
+
+    @staticmethod
+    def _node_props(updater, label: str, name: str) -> dict:
+        calls = updater.ingestor.ensure_node_batch.call_args_list
+        found = [
+            c[0][1] for c in calls if c[0][0] == label and c[0][1].get("name") == name
+        ]
+        # Fixture guard: a missing node is "the file was not processed", not
+        # "the docstring is absent", and the two must not read the same.
+        assert len(found) == 1, (
+            f"expected one {label} node named {name!r}, got {len(found)}"
+        )
+        return found[0]
+
+    def test_a_rust_function_node_carries_its_doc(self, temp_repo, updater) -> None:
+        (temp_repo / "lib.rs").write_text("/// Adds two numbers.\nfn add() {}\n")
+        updater.run()
+        assert self._node_props(updater, "Function", "add")["docstring"] == (
+            "Adds two numbers."
+        )
+
+    def test_a_java_class_node_carries_its_doc(self, temp_repo, updater) -> None:
+        (temp_repo / "C.java").write_text("/** A class. */\nclass C {}\n")
+        updater.run()
+        assert self._node_props(updater, "Class", "C")["docstring"] == "A class."
+
+    def test_the_python_path_still_works(self, temp_repo, updater) -> None:
+        """The control: dispatching on language must not break the old path."""
+        (temp_repo / "m.py").write_text('def f():\n    """Py doc."""\n    pass\n')
+        updater.run()
+        assert self._node_props(updater, "Function", "f")["docstring"] == "Py doc."
+
+    def test_an_undocumented_definition_has_no_docstring(
+        self, temp_repo, updater
+    ) -> None:
+        """None, not empty string -- the property is optional in the schema."""
+        (temp_repo / "lib.rs").write_text("fn bare() {}\n")
+        updater.run()
+        assert self._node_props(updater, "Function", "bare").get("docstring") is None

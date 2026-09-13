@@ -243,7 +243,7 @@ def test_container_resolution_uses_directory_for_disambiguated_modules() -> None
             "proj.svc.types.go": "shapes",
         }
 
-        def _get_docstring(self, node: object) -> str | None:
+        def _get_docstring(self, node: object, language: object) -> str | None:
             return None
 
     resolved = _Stub()._resolve_go_container_qn("proj.svc.ops", "Point")

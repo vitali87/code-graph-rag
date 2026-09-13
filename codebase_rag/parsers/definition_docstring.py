@@ -67,12 +67,12 @@ def _definition_spec(language: SupportedLanguage) -> ModuleDocSpec | None:
             line_markers=_OUTER_LINE_MARKERS,
             block_markers=_OUTER_BLOCK_MARKERS,
         )
-    if language == SupportedLanguage.GO:
-        # Go's doc comment is an ordinary `//` in both positions. The module
-        # spec anchors it to `package foo`; a definition's doc is anchored to
-        # the definition instead, which the caller's walk already does, so
-        # the anchor must come OFF or every definition doc is rejected.
-        return spec._replace(anchor_types=frozenset())
+    # Go needs nothing: its doc comment is an ordinary `//` at both levels and
+    # the module spec's `anchor_types` is consulted only by the module walk.
+    # An earlier version cleared it here "or every definition doc is
+    # rejected" -- untrue, this module never reads the field, and the
+    # self-audit that found it is the same one that found four unreachable
+    # `_INTERLEAVED` entries: a rule nothing executes is a claim, not a guard.
     return spec
 
 
