@@ -71,6 +71,8 @@ class FakeGraph:
         self.root = root
         # When set, the subject is gone by the time the write statement runs.
         self.vanish_on_write = False
+        # When set, every MENTIONS statement fails at the store.
+        self.fail_mentions = False
 
     def _gloss_row(self, key: str) -> ResultRow:
         row: ResultRow = dict(self.glosses[key])
@@ -124,24 +126,30 @@ class FakeGraph:
         p = params or {}
         self.writes.append((query, p))
         key = str(p[cs.KEY_QN])
-        target = str(p[cs.KEY_TARGET_QN])
+        target = str(p.get(cs.KEY_TARGET_QN, ""))
         subject_present = target in self.nodes and target.startswith(
-            str(p[cs.KEY_PROJECT_PREFIX])
+            str(p.get(cs.KEY_PROJECT_PREFIX, ""))
         )
         if query == cq.CYPHER_GLOSS_WRITE:
             if self.vanish_on_write or not subject_present:
                 return
-            # SET g.x = null unsets the property: a None never lands.
-            props = {
+            # Every property is SET by name and a null unsets it, so a
+            # rewrite REPLACES the stored properties rather than merging.
+            self.glosses[key] = {
                 k: v
                 for k, v in p.items()
                 if k not in (cs.KEY_QN, cs.KEY_PROJECT_PREFIX) and v is not None
             }
-            self.glosses[key] = {**self.glosses.get(key, {}), **props}
             self.annotates.add((key, target))
         elif query == cq.CYPHER_GLOSS_MENTION:
+            if self.fail_mentions:
+                raise RuntimeError("store down")
             if key in self.glosses and subject_present:
                 self.mentions.add((key, target))
+        elif query == cq.CYPHER_GLOSS_DELETE:
+            self.glosses.pop(key, None)
+            self.annotates = {(g, qn) for g, qn in self.annotates if g != key}
+            self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         else:
             raise AssertionError(f"unexpected write: {query[:60]}")
 
@@ -197,11 +205,19 @@ def test_a_bare_name_matching_several_definitions_is_refused_with_candidates() -
     result = _write(graph, "get")
     assert _is_refusal(result)
     assert "2 definitions" in result[cs.DICT_KEY_ERROR]
-    assert [c["qualified_name"] for c in result[cs.KEY_CANDIDATES]] == [
+    assert [c["qualified_name"] for c in result["candidates"]] == [
         STORE_GET,
         UTIL_GET,
     ]
     assert graph.writes == []
+
+
+def test_a_dotted_suffix_matching_one_definition_is_accepted() -> None:
+    # `resolve` also returns every `get` by bare name; the documented
+    # `Class.method` target form must still land on the one it suffixes.
+    graph = FakeGraph()
+    row = _write(graph, "Store.get")
+    assert row["target_qn"] == STORE_GET
 
 
 def test_a_bare_name_matching_one_definition_is_accepted() -> None:
@@ -215,7 +231,7 @@ def test_an_unknown_target_is_refused_and_writes_nothing() -> None:
     result = _write(graph, "nothing_here")
     assert _is_refusal(result)
     assert "nothing_here" in result[cs.DICT_KEY_ERROR]
-    assert cs.KEY_CANDIDATES not in result
+    assert "candidates" not in result
     assert graph.writes == []
 
 
@@ -270,6 +286,28 @@ def test_author_and_commit_are_recorded_when_given() -> None:
     assert row["commit_sha"] == "abc123"
     bare = _write(graph, VALIDATE)
     assert bare["commit_sha"] is None
+    # Rewriting the same note without a commit unsets the one it had.
+    again = _write(graph, RUN, author="cgr-1")
+    assert again["qualified_name"] == row["qualified_name"]
+    assert again["commit_sha"] is None
+
+
+def test_a_failed_mention_write_removes_the_node_this_call_created() -> None:
+    graph = FakeGraph()
+    graph.fail_mentions = True
+    with pytest.raises(RuntimeError, match="store down"):
+        _write(graph, RUN, mentions=VALIDATE)
+    assert graph.glosses == {}
+    assert graph.annotates == set()
+
+
+def test_a_failed_mention_write_leaves_a_pre_existing_note_alone() -> None:
+    graph = FakeGraph()
+    first = _write(graph, RUN)
+    graph.fail_mentions = True
+    with pytest.raises(RuntimeError, match="store down"):
+        _write(graph, RUN, mentions=VALIDATE)
+    assert set(graph.glosses) == {first["qualified_name"]}
 
 
 def test_a_target_without_a_fingerprint_stores_no_hash() -> None:
@@ -337,7 +375,7 @@ def test_read_refuses_an_ambiguous_name_the_same_way_as_a_write() -> None:
     graph = FakeGraph()
     result = gloss.glosses_for(graph.fetch_all, P, "get")
     assert _is_refusal(result)
-    assert len(result[cs.KEY_CANDIDATES]) == 2
+    assert len(result["candidates"]) == 2
 
 
 # --- the MCP surface ----------------------------------------------------------
@@ -536,6 +574,30 @@ def test_restoring_a_gloss_edge_bypasses_the_capture_filter(tmp_path: Path) -> N
         ("Gloss", "MENTIONS", RUN),
         ("Function", "CALLS", RUN),
     }
+
+
+def test_a_capture_outage_aborts_even_a_full_build(tmp_path: Path) -> None:
+    # A full build used to continue on the grounds that every caller is
+    # re-parsed; gloss edges have no source to re-derive from, so continuing
+    # would orphan every note in the project.
+    # A real class, not a MagicMock: the capture is gated on the runtime
+    # QueryProtocol check, which a bare mock does not satisfy.
+    class _RaisingStore:
+        def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
+            raise RuntimeError("store down")
+
+        def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+            return None
+
+    updater = GraphUpdater(
+        ingestor=_RaisingStore(),  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    updater._is_full_build = True
+    with pytest.raises(RuntimeError, match="store down"):
+        updater._capture_inbound_edges(["app.py"])
 
 
 def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(

@@ -89,8 +89,9 @@ def resolve_one(
 ) -> SymbolRow | GlossRefusal:
     """The single definition `target` names, or why there is not one.
 
-    An exact qualified-name match wins outright; otherwise the target must
-    resolve to exactly one definition. A location is an exception by design:
+    An exact qualified-name match wins outright, then a unique dotted-suffix
+    match (`Store.get`), then a unique match of any kind. A location is an
+    exception by design:
     `resolve` orders its rows innermost first, and the innermost is the one
     the line "is in".
     """
@@ -106,7 +107,14 @@ def resolve_one(
     exact = [row for row in rows if row["qualified_name"] == target]
     if len(exact) == 1:
         return exact[0]
-    if not exact and len(rows) == 1:
+    # `Store.get` is a dotted suffix of exactly one definition even when
+    # other `get`s exist; `resolve` returns those too (matched by bare name),
+    # so the suffix tier is what makes the documented target form usable.
+    dotted = f"{cs.SEPARATOR_DOT}{target}"
+    suffix = [row for row in rows if row["qualified_name"].endswith(dotted)]
+    if not exact and len(suffix) == 1:
+        return suffix[0]
+    if not exact and not suffix and len(rows) == 1:
         return rows[0]
     return GlossRefusal(
         error=cs.MCP_GLOSS_TARGET_AMBIGUOUS.format(target=target, count=len(rows)),
@@ -230,6 +238,7 @@ def write_gloss(
         cs.KEY_TARGET_HASH: _target_hash(fetch_all, project_name, target_qn),
         cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
     }
+    existed = bool(fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key}))
     execute_write(cq.CYPHER_GLOSS_WRITE, params)
     # Read back before adding mentions: a MATCH on a vanished subject writes
     # nothing and raises nothing, so the node's presence is the only evidence
@@ -238,15 +247,23 @@ def write_gloss(
     stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     if not stored:
         return GlossRefusal(error=cs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
-    for mention in mentioned:
-        execute_write(
-            cq.CYPHER_GLOSS_MENTION,
-            {
-                cs.KEY_QN: key,
-                cs.KEY_TARGET_QN: mention["qualified_name"],
-                cs.KEY_PROJECT_PREFIX: prefix,
-            },
-        )
+    try:
+        for mention in mentioned:
+            execute_write(
+                cq.CYPHER_GLOSS_MENTION,
+                {
+                    cs.KEY_QN: key,
+                    cs.KEY_TARGET_QN: mention["qualified_name"],
+                    cs.KEY_PROJECT_PREFIX: prefix,
+                },
+            )
+    except Exception:
+        # "An error means nothing was written" must stay true: a node this
+        # call created is removed before the error surfaces. A note that
+        # already existed is not this call's to delete and is left as it was.
+        if not existed:
+            execute_write(cq.CYPHER_GLOSS_DELETE, {cs.KEY_QN: key})
+        raise
     if mentioned:
         stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     return _gloss_row(stored[0])

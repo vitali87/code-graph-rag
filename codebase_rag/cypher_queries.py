@@ -516,6 +516,8 @@ CYPHER_GLOSS_MENTION = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 MATCH (m:{_GRAPH_DEFINITION_LABELS})
 WHERE m.qualified_name = $target_qn AND m.qualified_name STARTS WITH $project_prefix
 MERGE (g)-[:{_MENTIONS}]->(m)"""
+CYPHER_GLOSS_DELETE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+DETACH DELETE g"""
 _GLOSS_ROW = (
     "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
     "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "

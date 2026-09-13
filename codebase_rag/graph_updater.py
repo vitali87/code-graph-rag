@@ -2915,19 +2915,14 @@ class GraphUpdater:
         # context-sensitive).
         if not reindexed_keys or not isinstance(self.ingestor, QueryProtocol):
             return []
-        try:
-            return self.ingestor.fetch_all(
-                cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
-            )
-        except Exception:
-            # A FULL build re-parses every caller, so nothing is lost and the
-            # sync may continue; an incremental run cannot re-resolve edges
-            # from files it will not parse, so the outage must abort it
-            # rather than silently drop them.
-            if not self._is_full_build:
-                raise
-            logger.warning(ls.INBOUND_CAPTURE_FAILED)
-            return []
+        # An outage here aborts the sync, full build or not. A full build
+        # used to continue on the grounds that every caller is re-parsed, but
+        # the captured set now includes the ANNOTATES / MENTIONS edges of
+        # glosses (issue #1808), which have no source to be re-derived from:
+        # continuing would silently orphan every note in the project.
+        return self.ingestor.fetch_all(
+            cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
+        )
 
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
