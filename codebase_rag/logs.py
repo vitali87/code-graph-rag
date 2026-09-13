@@ -1030,8 +1030,12 @@ FUNCTION_LOCATIONS_REHYDRATED = (
 )
 INBOUND_CAPTURE_FAILED = (
     "Could not read inbound edges from the graph; this full rebuild re-parses "
-    "every caller, so source-derived edges are re-resolved, but any Gloss "
-    "notes attached to re-parsed symbols lose their edges and are orphaned."
+    "every caller, so source-derived edges are re-resolved, and Gloss notes "
+    "are re-attached to their symbols by recorded name at the end of the run."
+)
+GLOSS_REANCHOR_FAILED = (
+    "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
+    "Unattached notes are re-attached by the next run."
 )
 
 # Orphan pruning logs

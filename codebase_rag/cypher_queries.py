@@ -527,7 +527,7 @@ ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
 SET g.kind = $kind, g.status = $status, g.body = $body,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
     g.target_hash = $target_hash, g.anchor_state = $anchor_state,
-    g.write_id = $write_id
+    g.write_id = $write_id, g.mention_qns = $mention_qns
 MERGE (g)-[:{_ANNOTATES}]->(t)
 WITH g, mentioned
 OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
@@ -535,6 +535,22 @@ WITH g, mentioned, collect(stale) AS stale_edges
 FOREACH (edge IN stale_edges | DELETE edge)
 WITH g, mentioned
 UNWIND mentioned AS m
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+# Re-anchoring by qualified name, the EXACT tier of the repair chain the issue
+# describes. A gloss records its subject (`target_qn`) and mentions
+# (`mention_qns`) as properties, so when a rebuild has deleted and recreated
+# the definitions, or an inbound-edge capture could not be read, the edges are
+# rebuilt from the note's own record rather than lost. A subject whose name is
+# gone stays unattached (a later stage grades it MOVED / LOST); nothing is
+# re-bound to a different name.
+CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
+WHERE NOT (g)-[:{_ANNOTATES}]->()
+MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
+MERGE (g)-[:{_ANNOTATES}]->(t)"""
+CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
+WHERE g.mention_qns IS NOT NULL
+UNWIND g.mention_qns AS mention_qn
+MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
 MERGE (g)-[:{_MENTIONS}]->(m)"""
 _GLOSS_ROW = (
     "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "

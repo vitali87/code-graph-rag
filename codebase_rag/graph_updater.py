@@ -18,6 +18,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
+from . import cypher_queries as cq
 from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
@@ -1790,6 +1791,7 @@ class GraphUpdater:
         self._link_endpoint_resources()
 
         self._prune_orphan_nodes()
+        self._reanchor_glosses()
         # The prune issues its own deletes and has no flush of its own, so the
         # flush above cannot cover them (issue #1645). Without this they are
         # still queued when the caches commit below, and a run that stops in
@@ -2925,9 +2927,10 @@ class GraphUpdater:
             # graph (test_fully_unreadable_graph_still_completes_the_rebuild
             # pins this). The captured set also holds the ANNOTATES / MENTIONS
             # edges of glosses (issue #1808), which have no source to come
-            # back from: the warning says so rather than claiming nothing is
-            # lost. An incremental run cannot re-resolve edges from files it
-            # will not parse, so there the outage aborts the run.
+            # back from; those are rebuilt from the notes' own recorded names
+            # by `_reanchor_glosses` at the end of the run. An incremental run
+            # cannot re-resolve edges from files it will not parse, so there
+            # the outage aborts the run.
             if not self._is_full_build:
                 raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
@@ -5298,6 +5301,7 @@ class GraphUpdater:
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        self._reanchor_glosses()
         self.ingestor.flush_all()
 
     def _reingest_update_hashes(
@@ -5589,6 +5593,26 @@ class GraphUpdater:
         }
         if scoped:
             self.finding_analyzer.analyze(scoped)
+
+    def _reanchor_glosses(self) -> None:
+        """Re-attach every Gloss to the definitions its own record names.
+
+        A gloss lives only in the graph, so a rebuild that deletes and
+        recreates a definition, or an inbound-edge capture that could not be
+        read, would otherwise leave the note unattached and the next sweep
+        would delete it. The note records its subject and mentions by
+        qualified name, and this rebuilds the edges from that record after
+        every sync (issue #1808). Never raises: the sync has already landed,
+        and an unattached note is recoverable by the next run, so a failure
+        here is logged rather than reported as a failed sync.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

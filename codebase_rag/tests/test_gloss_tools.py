@@ -151,13 +151,7 @@ class FakeGraph:
             for k, v in self.glosses.get(key, {}).items()
             if k in (cs.KEY_CREATED_BY, cs.KEY_CREATED_AT)
         }
-        skip = {
-            cs.KEY_QN,
-            cs.KEY_PROJECT_PREFIX,
-            cs.KEY_MENTION_QNS,
-            cs.KEY_CREATED_BY,
-            cs.KEY_CREATED_AT,
-        }
+        skip = {cs.KEY_QN, cs.KEY_PROJECT_PREFIX, cs.KEY_CREATED_BY, cs.KEY_CREATED_AT}
         self.glosses[key] = {
             **kept,
             **created,
@@ -199,6 +193,10 @@ def test_a_note_on_an_exact_qualified_name_is_stored_with_its_edges() -> None:
     assert row["mentions"] == [VALIDATE]
     assert graph.annotates == {(key, RUN)}
     assert graph.mentions == {(key, VALIDATE)}
+    # The note carries its own record of what it is attached to, which the
+    # post-sync re-anchor pass rebuilds the edges from.
+    assert graph.glosses[key][cs.KEY_TARGET_QN] == RUN
+    assert graph.glosses[key][cs.KEY_MENTION_QNS] == [VALIDATE]
 
 
 def test_the_same_note_twice_is_one_node() -> None:
@@ -690,14 +688,14 @@ def test_a_capture_outage_aborts_an_incremental_run(tmp_path: Path) -> None:
         updater._capture_inbound_edges(["app.py"])
 
 
-def test_a_capture_outage_on_a_full_build_says_the_notes_are_lost() -> None:
+def test_a_capture_outage_on_a_full_build_names_how_notes_come_back() -> None:
     # A full build continues over an unreadable graph (an existing contract);
-    # the warning must not claim nothing is lost, because gloss edges have no
-    # source to be re-derived from.
+    # the warning must say how the gloss edges, which have no source to be
+    # re-derived from, are recovered: by the re-anchor pass, not by re-parsing.
     from codebase_rag import logs as lg
 
     assert "Gloss" in lg.INBOUND_CAPTURE_FAILED
-    assert "orphaned" in lg.INBOUND_CAPTURE_FAILED
+    assert "re-attached" in lg.INBOUND_CAPTURE_FAILED
 
 
 def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) -> None:
@@ -713,6 +711,93 @@ def test_a_capture_outage_on_a_full_build_warns_and_continues(tmp_path: Path) ->
     with patch("codebase_rag.graph_updater.logger") as log:
         assert updater._capture_inbound_edges(["app.py"]) == []
     log.warning.assert_called_once_with(lg.INBOUND_CAPTURE_FAILED)
+
+
+class _RecordingStore:
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+        self.fail = False
+
+    def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
+        return []
+
+    def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        if self.fail:
+            raise RuntimeError("store down")
+        self.writes.append(query)
+
+    def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
+        return None
+
+    def ensure_relationship_batch(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    def flush_all(self) -> None:
+        return None
+
+
+def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) -> None:
+    # The statements read the note's recorded names, not a captured edge set,
+    # so a rebuild that recreated the definitions (or a capture that could
+    # not be read) still ends with every note attached.
+    store = _RecordingStore()
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    updater._reanchor_glosses()
+    assert store.writes == [
+        cq.CYPHER_REANCHOR_GLOSSES,
+        cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
+    ]
+    assert "g.target_qn" in cq.CYPHER_REANCHOR_GLOSSES
+    assert "g.mention_qns" in cq.CYPHER_REANCHOR_GLOSS_MENTIONS
+    # Only an unattached note is re-anchored; an attached one is left alone.
+    assert "NOT (g)-[:ANNOTATES]->()" in cq.CYPHER_REANCHOR_GLOSSES
+
+
+def test_reanchoring_failure_is_logged_not_raised(tmp_path: Path) -> None:
+    from codebase_rag import logs as lg
+
+    store = _RecordingStore()
+    store.fail = True
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    with patch("codebase_rag.graph_updater.logger") as log:
+        updater._reanchor_glosses()
+    log.warning.assert_called_once_with(
+        lg.GLOSS_REANCHOR_FAILED.format(error="store down")
+    )
+
+
+def test_a_full_rebuild_ends_by_reanchoring_the_notes(tmp_path: Path) -> None:
+    # The finding this pins: a forced rebuild whose inbound-edge capture failed
+    # deleted and recreated the definitions with nothing to restore, leaving
+    # every note unattached. The re-anchor pass runs at the end of the run.
+    from codebase_rag.parser_loader import load_parsers
+
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    parsers, queries = load_parsers()
+    store = _RecordingStore()
+    store.fetch_all = lambda query, params=None: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        RuntimeError("graph down")
+    )
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name=P,
+    )
+    with patch.object(GraphUpdater, "_reanchor_glosses", autospec=True) as reanchor:
+        updater.run(force=True)
+    reanchor.assert_called_once()
 
 
 def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(
