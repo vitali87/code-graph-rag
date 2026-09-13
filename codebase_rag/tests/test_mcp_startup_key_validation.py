@@ -41,8 +41,10 @@ def _isolated_env(tmp_path: Path) -> Any:
     the missing-key branch was never reached, and the test asserted nothing --
     it passed or failed on ambient state rather than on the code (#1871).
 
-    Cleared by name rather than with `clear=True`, which would also drop PATH
-    and the loader's own variables.
+    Cleared by rebuilding the mapping WITHOUT those keys and passing
+    `clear=True`. PATH and the loader's own variables survive because they
+    are carried over in `kept`, not because `clear` is off -- a bare
+    `clear=False` merge is exactly the bug this helper exists to avoid.
     """
     # Built as an explicit replacement mapping rather than by mutating
     # os.environ after entry: `patch.dict` restores whatever it saved, so the
