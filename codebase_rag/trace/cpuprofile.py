@@ -83,8 +83,11 @@ def _url_to_path(url: str) -> str:
     """
     # V8 URLs (and Path.as_uri) percent-encode spaces and other characters;
     # decode so the path matches the real repo prefix.
-    path = unquote(urlparse(url).path)
-    if _DRIVE_LETTER.match(path):
+    parsed = urlparse(url)
+    path = unquote(parsed.path)
+    if parsed.netloc and parsed.netloc.lower() != cs.TRACE_JS_LOCAL_FILE_HOST:
+        path = cs.TRACE_JS_UNC_PATH.format(host=parsed.netloc, path=path)
+    elif _DRIVE_LETTER.match(path):
         path = path[1:]
     # Normalise to POSIX separators so a Windows drive path (`C:\repo\main.js`)
     # matches the POSIX `root_prefix`; the graph stores POSIX paths too.

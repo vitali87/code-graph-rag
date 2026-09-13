@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -244,3 +246,72 @@ def test_non_int_child_entry_is_rejected_not_dropped(tmp_path):
     profile = {"nodes": [{"id": 1, "callFrame": _frame("a", "", 0), "children": ["x"]}]}
     with pytest.raises(ValueError):
         _convert_raw(tmp_path, profile)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("file://nas/share/my%20repo/main.js", "//nas/share/my repo/main.js"),
+        (
+            "file://nas/share/%E4%BD%A0%E5%A5%BD%20repo/main.js",
+            "//nas/share/你好 repo/main.js",
+        ),
+        ("file:////nas/share/my%20repo/main.js", "//nas/share/my repo/main.js"),
+        ("file://localhost/C:/repo/main.js", "C:/repo/main.js"),
+        ("file://LOCALHOST/repo/main.js", "/repo/main.js"),
+    ],
+)
+def test_file_url_authority_preserves_network_and_local_paths(
+    url: str, expected: str
+) -> None:
+    from codebase_rag.trace.cpuprofile import _url_to_path
+
+    assert _url_to_path(url) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+def test_unc_repository_keeps_profile_edges(tmp_path: Path) -> None:
+    repo_root = Path("//127.0.0.1/cgr-profile-tests/my repo 项目")
+    profile_path = tmp_path / "unc.cpuprofile"
+    profile_path.write_text(json.dumps(_profile(repo_root)), encoding="utf-8")
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    header, records = read_trace_file(output)
+    edges = {
+        (record.caller.qualname, record.callee.qualname): record for record in records
+    }
+
+    assert count == 4
+    assert set(edges) == {
+        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        ("runAll", "handle"),
+        ("handle", "greet"),
+        ("runAll", "callback"),
+    }
+    assert header.repo_root == str(repo_root)
+    dispatch = edges[("handle", "greet")]
+    assert dispatch.caller.path == (repo_root / "src" / "registry.js").as_posix()
+    assert dispatch.callee.path == dispatch.caller.path
+    assert (dispatch.caller.line, dispatch.callee.line, dispatch.count) == (7, 11, 7)
+
+
+def test_http_frames_stay_outside_the_project(tmp_path: Path) -> None:
+    local_url = (tmp_path / "main.js").as_uri()
+    profile = {
+        "nodes": [
+            _node(1, _frame("caller", local_url, 1), children=[2]),
+            _node(
+                2,
+                _frame("remote", "https://example.invalid/main.js", 1),
+                children=[3],
+            ),
+            _node(3, _frame("callee", local_url, 5), hit_count=3),
+        ]
+    }
+
+    assert _convert_raw(tmp_path, profile) == 1
+    _header, records = read_trace_file(tmp_path / "out.jsonl")
+    assert [(record.caller.qualname, record.callee.qualname) for record in records] == [
+        ("caller", "callee")
+    ]
