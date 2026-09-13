@@ -1368,7 +1368,7 @@ def ingest_method(
         type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
     )
     method_props.update(fingerprint_props(method_node))
-    method_props.update(anchor_hash_props(method_node))
+    method_props.update(anchor_hash_props(method_node, decorators))
 
     # Persist @property status on the node so an incremental rebuild can restore
     # the registry's property-name set for unchanged files (it re-marks from this
@@ -1515,7 +1515,7 @@ def module_function_props(
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
     props.update(fingerprint_props(function_node))
-    props.update(anchor_hash_props(function_node))
+    props.update(anchor_hash_props(function_node, props[cs.KEY_DECORATORS]))
     return props
 
 

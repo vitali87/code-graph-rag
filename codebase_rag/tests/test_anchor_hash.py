@@ -111,10 +111,119 @@ def test_it_sees_what_the_clone_skeleton_cannot() -> None:
         assert _hash(variant) != _hash(BASE)
 
 
+def test_removing_a_decorator_changes_it() -> None:
+    # A Python decorator is the PARENT of the definition node, so the tree
+    # walk alone cannot see it; the extracted names are folded in instead.
+    node = _python_definition(BASE)
+    assert anchor_hash(node, ["property"]) != anchor_hash(node, [])
+    assert anchor_hash(node, ["property"]) == anchor_hash(node, ["property"])
+    assert anchor_hash(node, ["cache", "property"]) != anchor_hash(
+        node, ["property", "cache"]
+    )
+
+
 def test_props_carry_the_hash_under_the_shared_key() -> None:
     props = anchor_hash_props(_python_definition(BASE))
     assert set(props) == {cs.KEY_ANCHOR_HASH}
     assert props[cs.KEY_ANCHOR_HASH] == _hash(BASE)
+
+
+def test_an_indexed_decorated_method_hashes_its_decorator(tmp_path: Path) -> None:
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    plain = "class Store:\n    def size(self):\n        return 1\n"
+    decorated = "class Store:\n    @property\n    def size(self):\n        return 1\n"
+    hashes = []
+    for source in (plain, decorated):
+        root = tmp_path / ("decorated" if source is decorated else "plain")
+        root.mkdir()
+        (root / "mod.py").write_text(source, encoding="utf-8")
+        store = _StatefulIngestor()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=root,
+            parsers=parsers,
+            queries=queries,
+            project_name="proj",
+        ).run(force=True)
+        store.flush_all()
+        props = next(
+            p
+            for (_l, _u), p in store.nodes.items()
+            if p.get(cs.KEY_QUALIFIED_NAME) == "proj.mod.Store.size"
+        )
+        hashes.append(props[cs.KEY_ANCHOR_HASH])
+    assert hashes[0] != hashes[1]
+
+
+class _BufferingStore(_StatefulIngestor):
+    """The emulator, but nodes land only at flush (as the real ingestor's
+    batching does below its batch size), and the grade statement records
+    what it could see when it ran."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending: list[tuple[str, dict]] = []
+        self.grade_saw: list[tuple[int, str | None]] = []
+
+    def ensure_node_batch(self, label: str, properties: dict) -> None:  # type: ignore[override]
+        self.pending.append((label, dict(properties)))
+
+    def flush_all(self) -> None:
+        for label, properties in self.pending:
+            super().ensure_node_batch(label, properties)
+        self.pending.clear()
+        super().flush_all()
+
+    def execute_write(self, query: str, params: dict | None = None) -> None:  # type: ignore[override]
+        from codebase_rag import cypher_queries as cq
+
+        if query == cq.CYPHER_GRADE_GLOSS_ANCHORS:
+            run = next(
+                (
+                    p
+                    for (_l, _u), p in self.nodes.items()
+                    if p.get(cs.KEY_QUALIFIED_NAME) == "proj.mod.run"
+                ),
+                None,
+            )
+            self.grade_saw.append(
+                (len(self.pending), run.get(cs.KEY_ANCHOR_HASH) if run else None)
+            )
+            return
+        super().execute_write(query, params)
+
+
+def test_a_scoped_reingest_grades_after_the_new_nodes_are_flushed(
+    tmp_path: Path,
+) -> None:
+    # The grade compares a note with its subject's CURRENT hash in the store.
+    # Run before the flush, the edited function is still in the buffer and the
+    # note on the very file just edited stays EXACT until the following sync.
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    (tmp_path / "mod.py").write_text(BASE, encoding="utf-8")
+    store = _BufferingStore()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=tmp_path,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run(force=True)
+    store.flush_all()
+    before = _hash(BASE)
+    (tmp_path / "mod.py").write_text(LOGIC_CHANGED, encoding="utf-8")
+    store.grade_saw.clear()
+    updater.reingest((tmp_path / "mod.py",))
+    assert store.grade_saw, "the scoped reingest must grade the notes"
+    pending_at_grade, hash_at_grade = store.grade_saw[-1]
+    assert pending_at_grade == 0, "graded while re-parsed nodes were still buffered"
+    assert hash_at_grade == _hash(LOGIC_CHANGED)
+    assert hash_at_grade != before
 
 
 def test_indexed_functions_and_methods_carry_the_hash(tmp_path: Path) -> None:

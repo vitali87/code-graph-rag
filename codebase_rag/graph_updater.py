@@ -5325,8 +5325,14 @@ class GraphUpdater:
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
-        self._reanchor_glosses()
+        # Flush FIRST: the re-parsed definitions are still buffered in the
+        # ingestor here, and the grading statement compares a note against
+        # its subject's current `anchor_hash` in the store. Graded before the
+        # flush it finds no subject (the old node is already deleted, the new
+        # one not yet written) and the note on the very file that was just
+        # edited stays EXACT until the following sync (issue #1808).
         self.ingestor.flush_all()
+        self._reanchor_glosses()
 
     def _reingest_update_hashes(
         self,

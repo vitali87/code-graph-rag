@@ -21,6 +21,7 @@ the tree-sitter equivalent of Python's `ast.dump()`.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Sequence
 
 from tree_sitter import Node
 
@@ -32,9 +33,19 @@ _OPEN = b"\x01"
 _CLOSE = b"\x02"
 
 
-def anchor_hash(definition: Node) -> str:
-    """Hex digest of the definition's named-node tree with leaf text."""
+def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
+    """Hex digest of the definition's named-node tree with leaf text.
+
+    `decorators` are the already-extracted decorator / annotation names. In
+    Python and TypeScript they are siblings or parents of the definition
+    node rather than children, so the tree walk alone would miss removing
+    `@property`, which is a signature change by any reading; folding the
+    extracted list in makes every language agree (Java's `@Override` IS a
+    child and would be hashed twice, harmlessly).
+    """
     digest = hashlib.sha256()
+    for decorator in decorators:
+        digest.update(decorator.encode(cs.ENCODING_UTF8) + _SEPARATOR)
     # Iterative: deep trees overflow Python recursion, as `ast_fingerprint`
     # found. Open/close markers keep the nesting in the digest so moving a
     # statement into or out of a block changes it.
@@ -62,5 +73,5 @@ def anchor_hash(definition: Node) -> str:
     return digest.hexdigest()
 
 
-def anchor_hash_props(definition: Node) -> PropertyDict:
-    return {cs.KEY_ANCHOR_HASH: anchor_hash(definition)}
+def anchor_hash_props(definition: Node, decorators: Sequence[str] = ()) -> PropertyDict:
+    return {cs.KEY_ANCHOR_HASH: anchor_hash(definition, decorators)}

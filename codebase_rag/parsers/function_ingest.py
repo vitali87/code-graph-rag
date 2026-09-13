@@ -799,7 +799,7 @@ class FunctionIngestMixin:
             # Computed here, not at flush: the tree (and this node) is gone by
             # the time deferred methods are written out.
             props.update(fingerprint_props(func_node))
-            props.update(anchor_hash_props(func_node))
+            props.update(anchor_hash_props(func_node, decorators))
             if not hasattr(self, "_deferred_cpp_methods"):
                 self._deferred_cpp_methods = []
             self._deferred_cpp_methods.append(
@@ -1478,7 +1478,7 @@ class FunctionIngestMixin:
             )
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
-        props.update(anchor_hash_props(func_node))
+        props.update(anchor_hash_props(func_node, decorators))
         return props
 
     def _create_function_relationships(
