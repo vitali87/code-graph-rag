@@ -1061,3 +1061,75 @@ def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
     assert delta["symbols"]["renamed"] == []
     assert _qn("pkg.empty.Alpha") in delta["symbols"]["removed"]
     assert _qn("pkg.empty.Renamed") in delta["symbols"]["added"]
+
+
+def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # Issue #1836. The three tests above each rename ONE empty class, so
+    # `peers` is 1 and the uniqueness guard never fires. With two empty
+    # classes in the same file renamed together, `peers` is 2 for each, and
+    # the guard refuses BEFORE `declared` is consulted -- so a pairing the
+    # operation explicitly declared is dropped, and the contract sees two
+    # removals plus two additions instead of two renames.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n\n\nclass Beta:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Gamma:\n    pass\n\n\nclass Delta:\n    pass\n")
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {
+                (_qn("pkg.empty.Alpha"), _qn("pkg.empty.Gamma")),
+                (_qn("pkg.empty.Beta"), _qn("pkg.empty.Delta")),
+            }
+        ),
+    )
+
+    assert sorted(delta["symbols"]["renamed"], key=lambda r: r["old"]) == [
+        {
+            "old": _qn("pkg.empty.Alpha"),
+            "new": _qn("pkg.empty.Gamma"),
+            "path": "pkg/empty.py",
+        },
+        {
+            "old": _qn("pkg.empty.Beta"),
+            "new": _qn("pkg.empty.Delta"),
+            "path": "pkg/empty.py",
+        },
+    ]
+
+
+def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The known-positive for the fix above: admitting a declared pair past
+    # the uniqueness guard must NOT admit an undeclared one alongside it.
+    # Only Alpha->Gamma is declared, so Beta and Delta stay a removal plus an
+    # addition even though both sit in the same ambiguous group.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n\n\nclass Beta:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Gamma:\n    pass\n\n\nclass Delta:\n    pass\n")
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset({(_qn("pkg.empty.Alpha"), _qn("pkg.empty.Gamma"))}),
+    )
+
+    assert delta["symbols"]["renamed"] == [
+        {
+            "old": _qn("pkg.empty.Alpha"),
+            "new": _qn("pkg.empty.Gamma"),
+            "path": "pkg/empty.py",
+        }
+    ]
+    assert _qn("pkg.empty.Beta") in delta["symbols"]["removed"]
+    assert _qn("pkg.empty.Delta") in delta["symbols"]["added"]

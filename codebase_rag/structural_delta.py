@@ -420,19 +420,32 @@ def _pair_lone_containers(
             if after.definitions[other].path == definition.path
             and after.definitions[other].label == definition.label
         ]
-        peers = [
-            other
-            for other in lone_removed
-            if before.definitions[other].path == definition.path
-            and before.definitions[other].label == definition.label
-        ]
-        if len(matches) == 1 and len(peers) == 1:
-            # The only admissible evidence: the operation says it did this.
-            if (qn, matches[0]) not in declared:
-                continue
-            found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
-            paired_new.add(matches[0])
-            lone_added.remove(matches[0])
+        # A DECLARATION is the only admissible evidence, and it is now the
+        # ONLY test (issue #1836). This pass previously required the candidate
+        # sets to be unique -- `len(matches) == 1 and len(peers) == 1` -- and
+        # consulted `declared` afterwards. That ordering dropped pairings the
+        # operation had explicitly named: renaming two empty containers in one
+        # file makes the peer count 2 for each, so both were refused before
+        # the declaration was read, the contract saw two removals plus two
+        # additions, and it rolled back a correct edit.
+        #
+        # Dropping the uniqueness test loosens nothing, which is why the peer
+        # scan is gone rather than reordered. It existed to refuse a GUESS
+        # among indistinguishable candidates, and no guess is made here any
+        # more: a pair is admitted when and only when `declared` names it.
+        declared_match = next(
+            (other for other in matches if (qn, other) in declared), None
+        )
+        if declared_match is not None:
+            found.append(
+                RenameFinding(old=qn, new=declared_match, path=definition.path)
+            )
+            paired_new.add(declared_match)
+            lone_added.remove(declared_match)
+        # No `else`: an UNDECLARED pairing is never inferred here, unambiguous
+        # or not. Without a fingerprint or descendants, a lone rename and a
+        # lone replacement are the same edit, so it falls through to a removal
+        # plus an addition -- which is what the snapshots actually show.
     return found
 
 
