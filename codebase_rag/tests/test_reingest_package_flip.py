@@ -407,18 +407,23 @@ def test_a_nested_directory_flips_under_its_parent_package(tmp_path: Path) -> No
 
 
 def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) -> None:
-    """Ancestors must not be re-derived, only the flipped directory's children.
+    """An independently changed ancestor ends with exactly ONE identity.
 
     A re-derivation EMITS the node for whatever kind a directory is on disk
-    now. Putting an ancestor in scope therefore gave one that had changed
+    now, so putting an ancestor in scope gave one that had changed
     independently a SECOND container identity beside the one it already had
-    (Greptile, PR #1835).
+    (Greptile, PR #1835). The original fix was to exclude ancestors entirely,
+    and this test asserted the ancestor kept its old Package node.
 
-    I had included ancestors so a nested directory's parent lookup could find
-    its enclosing package, and had already MEASURED that dropping them
-    reddened nothing -- recording it as "defensive, not load-bearing". It was
-    actively harmful, which is the cost of shipping code whose only
-    justification is that no test contradicts it.
+    That expectation was too weak, and #1872 showed why: leaving the ancestor
+    alone also leaves the graph disagreeing with the disk, so a NEW child
+    under it gets a containment edge naming an identity the graph does not
+    hold, and the subtree is silently disconnected. The ancestor is now
+    derived AND pruned when its recorded kind diverged, so it ends with one
+    identity -- the correct one.
+
+    Asserted against a clean rebuild, which pins both halves: not two nodes,
+    and not the wrong one.
     """
     root = tmp_path / "incremental"
     root.mkdir()
@@ -439,14 +444,27 @@ def test_an_independently_changed_ancestor_keeps_one_identity(tmp_path: Path) ->
     updater.reingest(["outer/inner/__init__.py"])
     store.flush_all()
 
-    containers = _containers(store)
-    assert ("Folder", "outer") not in containers, (
-        "the ancestor was re-derived and gained a Folder node beside its "
-        f"existing Package node: {sorted(containers)}"
+    clean_root = tmp_path / "clean"
+    (clean_root / "outer" / "inner").mkdir(parents=True)
+    (clean_root / "outer" / "inner" / "__init__.py").write_text("", encoding="utf-8")
+    (clean_root / "outer" / "inner" / "mod.py").write_text(UTIL, encoding="utf-8")
+    clean_store = _StatefulIngestor()
+    _updater(clean_root, clean_store).run(force=True)
+    clean_store.flush_all()
+
+    # Compared against a clean rebuild rather than against a named label,
+    # which pins presence AND absence at once: the ancestor must hold exactly
+    # ONE identity, and it must be the right one. Naming the label was the
+    # older form of this assertion and it could only see the "gained a second
+    # node" half.
+    assert _containers(store) == _containers(clean_store), (
+        "the incremental result disagrees with a clean index about the "
+        f"containers: incremental={sorted(_containers(store))} "
+        f"clean={sorted(_containers(clean_store))}"
     )
-    assert ("Package", "proj.outer.inner") in containers, (
+    assert ("Package", "proj.outer.inner") in _containers(store), (
         "fixture guard: the nested directory this call named must still have "
-        "been promoted, or the assertion above passes for the wrong reason"
+        "been promoted, or the comparison above passes for the wrong reason"
     )
 
 

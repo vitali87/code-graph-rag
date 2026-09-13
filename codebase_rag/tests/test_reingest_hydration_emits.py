@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
 
@@ -270,3 +270,82 @@ def test_a_file_added_in_a_new_SUBdirectory_still_gets_its_container(
     assert not dangling, (
         f"the new subdirectory's containment edges are unparented: {dangling}"
     )
+
+
+def test_an_unreadable_container_query_aborts_before_deriving(
+    tmp_path: Path,
+) -> None:
+    """ "I could not ask" must not be read as "there is nothing there".
+
+    `_recorded_container_kinds` returns an empty set for BOTH cases. If the
+    uncontained walk treated a failed read as an absent container, a
+    transient store failure would derive and emit EVERY ancestor, giving any
+    that had changed on disk a second identity beside its old one -- the
+    duplicate-container defect this whole PR exists to remove, recreated by
+    the fix for it (Greptile, PR #1875).
+
+    Aborting is safe here because it happens in the read-only prologue,
+    before any delete or content write, which is exactly what
+    `ReingestAborted` means.
+    """
+    from unittest.mock import patch
+
+    root = tmp_path / "incremental"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+    before = dict(store.nodes)
+
+    (root / "newdir").mkdir()
+    (root / "newdir" / "n.py").write_text(UTIL, encoding="utf-8")
+
+    updater = _updater(root, store)
+    real_fetch = store.fetch_all
+
+    def flaky(query: str, params: dict | None = None):
+        if query == cs.CYPHER_CONTAINER_KIND:
+            raise RuntimeError("store went away")
+        return real_fetch(query, params)
+
+    with patch.object(store, "fetch_all", side_effect=flaky):
+        with pytest.raises(ReingestAborted):
+            updater.reingest(["newdir/n.py"])
+
+    assert store.nodes == before, (
+        "the aborted re-ingest wrote nodes, so it was not the read-only "
+        "prologue it claims to abort in"
+    )
+
+
+def test_a_sink_without_a_query_surface_still_reingests(tmp_path: Path) -> None:
+    """The control: no query surface is a configuration, not a failure.
+
+    An earlier version of the abort above could not tell "this sink cannot
+    answer queries at all" from "the query raised", and aborted every
+    re-ingest against a plain sink -- reddening five of main's own tests.
+    """
+    from unittest.mock import patch
+
+    root = tmp_path / "incremental"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+
+    (root / "newdir").mkdir()
+    (root / "newdir" / "n.py").write_text(UTIL, encoding="utf-8")
+
+    updater = _updater(root, store)
+    # `isinstance(..., QueryProtocol)` is what the guard consults, so failing
+    # that check is how a surface-less sink presents.
+    with patch("codebase_rag.graph_updater.QueryProtocol", type(None)):
+        report = updater.reingest(["newdir/n.py"])
+
+    assert report.reparsed, "a sink without a query surface could not re-ingest at all"

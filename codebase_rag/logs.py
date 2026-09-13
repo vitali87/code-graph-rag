@@ -959,6 +959,10 @@ REINGEST_MODULE_PATHS_UNKNOWN = (
     "Re-ingest aborted: the graph's module paths could not be read, so the "
     "module qns already taken are unknown"
 )
+REINGEST_CONTAINER_KIND_UNKNOWN = (
+    "Re-ingest aborted: a directory's recorded container kind could not be "
+    "read, so whether it is new or has diverged from disk is unknown"
+)
 INCREMENTAL_FILE_FAILED = (
     "Failed to index {path}; the remaining changed files are still rebuilt "
     "before the error is raised: {error}"
