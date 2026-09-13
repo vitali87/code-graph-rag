@@ -646,6 +646,8 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             ("typescript", b"/** Satisfies */\nconst g = (() => {}) satisfies Fn;\n"),
             ("typescript", b"/** Non-null */\nconst h = (function () {})!;\n"),
             ("javascript", b"/** Default paren */\nexport default (() => {});\n"),
+            # `<T>expr`: the type comes FIRST in the grammar (CodeRabbit on #1889).
+            ("typescript", b"/** Assert doc */\nconst f = <Fn>(() => {});\n"),
         ],
         ids=[
             "js-arrow",
@@ -662,6 +664,7 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             "ts-satisfies",
             "ts-non-null",
             "js-default-paren",
+            "ts-type-assertion",
         ],
     )
     def test_an_adjacent_doc_above_a_function_binding_is_not_the_files(

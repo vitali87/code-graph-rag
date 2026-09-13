@@ -597,11 +597,18 @@ def _unwrap_transparent(node: ASTNode, spec: ModuleDocSpec) -> ASTNode:
     """The value inside any number of transparent wrappers, or the node itself.
 
     `(() => {})` is a `parenthesized_expression` around an `arrow_function`;
-    `x as T` an `as_expression` whose FIRST named child is `x`. Each wrapper's
-    first named child is the wrapped value, so the loop descends there.
+    `x as T` an `as_expression` whose first named child is `x`; `<T>x` a
+    `type_assertion` whose first named child is the TYPE. The wrapped value is
+    the first named child that is not a `type_arguments`, and the loop
+    descends there.
     """
     while node.type in spec.transparent_types:
-        inner = next((c for c in node.children if c.is_named), None)
+        # `<T>expr` puts its `type_arguments` BEFORE the expression, so the
+        # first named child is the type, not the value (CodeRabbit on #1889).
+        inner = next(
+            (c for c in node.children if c.is_named and c.type != "type_arguments"),
+            None,
+        )
         if inner is None:
             return node
         node = inner
