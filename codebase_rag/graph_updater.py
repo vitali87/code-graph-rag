@@ -2942,34 +2942,52 @@ class GraphUpdater:
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
+    def _restorable_edge(
+        self, row: ResultRow
+    ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
+        """The (caller_spec, rel, target_spec) a captured row restores, or None.
+
+        None for a malformed row, a target the re-index did not recreate (a
+        renamed or removed definition is correctly left without its stale
+        inbound edge, matching a clean re-index), or a label without a key.
+        """
+        caller_label = row.get(cs.KEY_CALLER_LABEL)
+        caller_qn = row.get(cs.KEY_CALLER_QN)
+        rel = row.get(cs.KEY_REL)
+        target_label = row.get(cs.KEY_TARGET_LABEL)
+        target_qn = row.get(cs.KEY_TARGET_QN)
+        if not (
+            isinstance(caller_label, str)
+            and isinstance(caller_qn, str)
+            and isinstance(rel, str)
+            and isinstance(target_label, str)
+            and isinstance(target_qn, str)
+        ):
+            return None
+        module_label = cs.NodeLabel.MODULE.value
+        if target_label != module_label and target_qn not in self.function_registry:
+            return None
+        caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
+        target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
+        if caller_key is None or target_key is None:
+            return None
+        return (
+            (caller_label, caller_key, caller_qn),
+            rel,
+            (target_label, target_key, target_qn),
+        )
+
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
-        # re-index. A target that was renamed or removed is correctly left
-        # without its stale inbound edge, matching a clean re-index.
+        # re-index (see `_restorable_edge` for what is dropped).
         if not captured:
             return
-        module_label = cs.NodeLabel.MODULE.value
         restored = 0
         for row in captured:
-            caller_label = row.get(cs.KEY_CALLER_LABEL)
-            caller_qn = row.get(cs.KEY_CALLER_QN)
-            rel = row.get(cs.KEY_REL)
-            target_label = row.get(cs.KEY_TARGET_LABEL)
-            target_qn = row.get(cs.KEY_TARGET_QN)
-            if not (
-                isinstance(caller_label, str)
-                and isinstance(caller_qn, str)
-                and isinstance(rel, str)
-                and isinstance(target_label, str)
-                and isinstance(target_qn, str)
-            ):
+            edge = self._restorable_edge(row)
+            if edge is None:
                 continue
-            if target_label != module_label and target_qn not in self.function_registry:
-                continue
-            caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
-            target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
-            if caller_key is None or target_key is None:
-                continue
+            caller_spec, rel, target_spec = edge
             # The edge's own properties (its site, issue #1522) come back with
             # it: per-site edges are keyed by them, so a bare re-emission
             # would land beside the original instead of restoring it.
@@ -2982,9 +3000,9 @@ class GraphUpdater:
             # dropped, orphaning the note (issue #1808).
             writer = self.ingestor if rel in _GLOSS_RELS else self._sink
             writer.ensure_relationship_batch(
-                (caller_label, caller_key, caller_qn),
+                caller_spec,
                 rel,
-                (target_label, target_key, target_qn),
+                target_spec,
                 properties=cast(PropertyDict, props)
                 if isinstance(props, dict) and props
                 else None,
