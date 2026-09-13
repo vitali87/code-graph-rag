@@ -220,10 +220,10 @@ class ProtobufFileIngestor:
         self._relationships[unique_key] = rel
 
     def _sorted_nodes(self) -> list[pb.Node]:
-        # Canonical order (issue #1138): node ids are unique within the map, so
-        # the id alone is a total order; insertion order (parse order) must
-        # never leak into the artifact bytes.
-        return [node for _id, node in sorted(self._nodes.items())]
+        # Canonical order (issue #1138): the map is keyed on (label, id), a
+        # total order even where two labels share an id; insertion order
+        # (parse order) must never leak into the artifact bytes.
+        return [node for _key, node in sorted(self._nodes.items())]
 
     def _sorted_relationships(self) -> list[pb.Relationship]:
         # The map key IS (source_id, type, target_id): a deterministic total

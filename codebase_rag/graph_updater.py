@@ -2321,14 +2321,7 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_FIELD_TYPES, project_params
-            )
-        except Exception:
-            if not self._is_full_build:
-                raise
-            return
+        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
