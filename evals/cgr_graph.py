@@ -73,7 +73,10 @@ _DEFINES_RELS = frozenset(
 # What CYPHER_DELETE_MODULE walks: the definitions plus what hangs off them
 # by ownership. Kept separate from _DEFINES_RELS, which the definition
 # queries use and which must not see a Parameter as a definition.
-_MODULE_SUBTREE_RELS = _DEFINES_RELS | {cs.RelationshipType.HAS_PARAMETER.value}
+_MODULE_SUBTREE_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
