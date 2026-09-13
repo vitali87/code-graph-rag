@@ -26,13 +26,17 @@ if TYPE_CHECKING:
 
 
 # Destructuring targets whose identifiers are bindings; anything else under a
-# target (attribute, subscript, call) is a mutation, not a rebinding.
+# target (attribute, subscript, call) is a mutation, not a rebinding. A plain
+# `tuple` / `list` appears only under `as_pattern_target`
+# (`with f() as (a, self):`), where it destructures like a pattern.
 _PATTERN_TYPES = frozenset(
     {
         cs.TS_PY_PATTERN_LIST,
         cs.TS_PY_TUPLE_PATTERN,
         cs.TS_PY_LIST_PATTERN,
         cs.TS_PY_AS_PATTERN_TARGET,
+        cs.TS_PY_TUPLE,
+        cs.TS_PY_LIST,
     }
 )
 
@@ -163,7 +167,9 @@ class PythonTypeInferenceEngine(
 
         Assignment and augmented assignment (`self = pick()`, `a, self = pair`),
         a `for self in ...` target, a `with ... as self` / `except ... as self`
-        alias and a walrus `(self := pick())`. Nested def, lambda and class
+        alias, a walrus `(self := pick())`, a `case` capture (`case self:`,
+        `case Foo(x=self):`, `case [self, *rest]:`, `case Foo() as self:`)
+        and an import (`from m import f as self`). Nested def, lambda and class
         BODIES are not descended into (a binding there belongs to that scope);
         their parameter defaults, annotations, return annotation and
         superclass arguments are, because those evaluate in this scope. An attribute or subscript target
@@ -200,9 +206,60 @@ class PythonTypeInferenceEngine(
                 target = node.child_by_field_name(cs.FIELD_NAME)
             elif node.type == cs.TS_PY_AS_PATTERN:
                 target = node.child_by_field_name(cs.FIELD_ALIAS)
+                if target is None:
+                    # `case <pattern> as self:` has no alias field; the
+                    # capture is the trailing identifier.
+                    target = node.named_children[-1] if node.named_children else None
+            elif node.type == cs.TS_PY_ALIASED_IMPORT:
+                target = node.child_by_field_name(cs.FIELD_ALIAS)
+            elif node.type in (cs.TS_PY_CASE_PATTERN, cs.TS_PY_KEYWORD_PATTERN):
+                if cls._case_pattern_captures(node, name):
+                    return True
+            elif node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+                # `from m import self` binds the bare name; an aliased import
+                # is handled as its own node above.
+                for imported in node.children_by_field_name(cs.FIELD_NAME):
+                    if cls._is_bare_name(imported, name):
+                        return True
             if target is not None and cls._binds_name(target, name):
                 return True
             stack.extend(node.named_children)
+        return False
+
+    @staticmethod
+    def _is_bare_name(node: Node, name: str) -> bool:
+        """Whether `node` is a one-part `dotted_name` (or identifier) spelling `name`.
+
+        In a case pattern a one-part dotted name is a CAPTURE; a multi-part
+        one (`Colour.RED`) is a value pattern and binds nothing.
+        """
+        if node.type == cs.TS_PY_DOTTED_NAME:
+            if node.named_child_count != 1:
+                return False
+            node = node.named_children[0]
+        return (
+            node.type == cs.TS_PY_IDENTIFIER
+            and node.text is not None
+            and node.text.decode(cs.ENCODING_UTF8) == name
+        )
+
+    @classmethod
+    def _case_pattern_captures(cls, node: Node, name: str) -> bool:
+        """Whether the DIRECT children of a case/keyword pattern capture `name`.
+
+        A bare dotted name (`case self:`), or a splat (`case [*self]:`). The
+        class name of `Foo(...)` sits under `class_pattern`, not here, and the
+        keyword of `Foo(x=self)` is the first child of `keyword_pattern`, so
+        neither is taken. Nested patterns are reached by the caller's walk.
+        """
+        children = node.named_children
+        if node.type == cs.TS_PY_KEYWORD_PATTERN:
+            children = children[1:]
+        for child in children:
+            if child.type == cs.TS_PY_SPLAT_PATTERN:
+                child = child.named_children[0] if child.named_children else child
+            if cls._is_bare_name(child, name):
+                return True
         return False
 
     @classmethod

@@ -76,6 +76,11 @@ TS_PY_DOTTED_NAME = "dotted_name"
 # `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
 # node, invisible to named_children.
 TS_PY_UNION_PATTERN = "union_pattern"
+# `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
+TS_PY_KEYWORD_PATTERN = "keyword_pattern"
+TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `import x as y` / `from m import x as y`; the alias is a local binding.
+TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"

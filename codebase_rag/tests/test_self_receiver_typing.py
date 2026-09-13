@@ -324,6 +324,61 @@ _BINDING_FORMS = (
     "            return 1\n"
     "        w = self.parse()\n"
     "        return w.render()\n\n"
+    "    def match_capture(self) -> str:\n"
+    "        match pick():\n"
+    "            case self:\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_keyword(self) -> str:\n"
+    "        match pick():\n"
+    "            case Widget(name=self):\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_sequence(self) -> str:\n"
+    "        match pick():\n"
+    "            case [self, *rest]:\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_splat(self) -> str:\n"
+    "        match pick():\n"
+    "            case [first, *self]:\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_as(self) -> str:\n"
+    "        match pick():\n"
+    "            case Widget() as self:\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_keyword_name(self) -> str:\n"
+    "        match pick():\n"
+    "            case Widget(self=1):\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def match_value_pattern(self) -> str:\n"
+    "        match pick():\n"
+    "            case Widget.self:\n"
+    "                pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def with_tuple_alias(self) -> str:\n"
+    "        with pick() as (self, other):\n"
+    "            pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def import_alias(self) -> str:\n"
+    "        from proj.other import pick as self\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def import_bare(self) -> str:\n"
+    "        from proj.other import self\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
     "    def nested_scope_only(self) -> str:\n"
     "        class Inner:\n"
     "            def go(self) -> int:\n"
@@ -375,6 +430,19 @@ def test_every_binding_form_of_the_receiver_suppresses_the_seed(tmp_path: Path) 
     # annotation is evaluated by the enclosing method).
     assert maps["nested_return_annotation"].get("w") != "Widget"
     assert maps["nested_param_annotation"].get("w") != "Widget"
+    # A `case` capture in any position, a destructuring `with ... as (a, b)`
+    # target and an import alias are bindings too (local reviewer).
+    for method in (
+        "match_capture",
+        "match_keyword",
+        "match_sequence",
+        "match_splat",
+        "match_as",
+        "with_tuple_alias",
+        "import_alias",
+        "import_bare",
+    ):
+        assert maps[method].get("w") != "Widget", method
 
 
 def test_an_attribute_or_subscript_target_is_not_a_rebinding(tmp_path: Path) -> None:
@@ -383,6 +451,10 @@ def test_an_attribute_or_subscript_target_is_not_a_rebinding(tmp_path: Path) -> 
     # bot: nearly every method assigns an attribute of self).
     maps = _binding_form_maps(tmp_path)
     assert maps["attribute_target"].get("w") == "Widget"
+    # Nor is the KEYWORD of `Widget(self=1)` or the value pattern
+    # `Widget.self`: neither names a local, so the seed must stay.
+    assert maps["match_keyword_name"].get("w") == "Widget"
+    assert maps["match_value_pattern"].get("w") == "Widget"
 
 
 def test_a_rebinding_in_a_nested_scope_does_not_suppress_the_seed(
