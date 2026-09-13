@@ -909,6 +909,16 @@ class _StatefulIngestor:
                 # is how #1682's waiting-importer path went uncovered for a
                 # whole release (issue #1716). A new query must be emulated
                 # here, or named in _NOT_MODELLED with a reason.
+                #
+                # When you hit this, read it as "the double is missing a
+                # case", not as a defect in the code under test. Some callers
+                # catch a failed read and treat it as "cannot tell -> refuse"
+                # (`_persisted_incomplete` does), so this assertion surfaces
+                # as a REFUSAL from production rather than as an error naming
+                # the double -- a real guard firing and a missing case here
+                # look exactly alike from the test's side. Twice in one
+                # session (PR #1835, PR #1547) that cost a wrong diagnosis
+                # before the stack was read.
                 raise AssertionError(
                     f"{type(self).__name__} does not emulate this query, and it "
                     f"is not in _NOT_MODELLED. Add a case or a reason:\n{query}"
