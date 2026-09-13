@@ -1659,6 +1659,12 @@ class GraphUpdater:
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
+            # The re-anchor runs here too: a run whose re-anchor failed still
+            # published its cache, so the next unchanged run takes this path,
+            # and "re-attached by the next run" (the re-anchor's own contract)
+            # would otherwise be false for exactly the run that needs it. Two
+            # statements, no-ops when every note is attached (issue #1808).
+            self._reanchor_glosses()
             self.ingestor.flush_all()
             return
 

@@ -755,7 +755,7 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     assert "g.target_qn" in cq.CYPHER_REANCHOR_GLOSSES
     assert "g.mention_qns" in cq.CYPHER_REANCHOR_GLOSS_MENTIONS
     # Only an unattached note is re-anchored; an attached one is left alone.
-    assert "NOT (g)-[:ANNOTATES]->()" in cq.CYPHER_REANCHOR_GLOSSES
+    assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
 
 
 def test_reanchoring_failure_is_logged_not_raised(tmp_path: Path) -> None:
@@ -797,6 +797,26 @@ def test_a_full_rebuild_ends_by_reanchoring_the_notes(tmp_path: Path) -> None:
     )
     with patch.object(GraphUpdater, "_reanchor_glosses", autospec=True) as reanchor:
         updater.run(force=True)
+    reanchor.assert_called_once()
+
+
+def test_an_unchanged_run_still_reanchors_the_notes(tmp_path: Path) -> None:
+    # A run whose re-anchor failed has already published its cache, so the
+    # next unchanged run takes the in-sync fast path; the re-anchor must run
+    # there or "re-attached by the next run" is false for that run.
+    store = _RecordingStore()
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    with (
+        patch.object(GraphUpdater, "_is_already_in_sync", return_value=True),
+        patch.object(GraphUpdater, "_reanchor_glosses", autospec=True) as reanchor,
+    ):
+        updater.run()
+    assert updater.skipped_because_in_sync
     reanchor.assert_called_once()
 
 

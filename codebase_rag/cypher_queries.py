@@ -543,8 +543,12 @@ MERGE (g)-[:{_MENTIONS}]->(m)"""
 # rebuilt from the note's own record rather than lost. A subject whose name is
 # gone stays unattached (a later stage grades it MOVED / LOST); nothing is
 # re-bound to a different name.
+# "Unattached" is asked with OPTIONAL MATCH plus a count, not a pattern
+# predicate in WHERE, which Memgraph 3 rejects (test_memgraph3_cypher_compat).
 CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
-WHERE NOT (g)-[:{_ANNOTATES}]->()
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
 MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
