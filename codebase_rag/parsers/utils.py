@@ -1340,10 +1340,8 @@ def ingest_method(
         # extend the span over the body (no-op for other languages).
         cs.KEY_END_LINE: _method_end_line(method_node, language),
         cs.KEY_DOCSTRING: get_docstring_func(method_node, language),
-        cs.KEY_IS_EXPORTED: (
-            export_detection.is_exported(method_node, method_name, language)
-            if language is not None
-            else False
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            method_node, method_name, language
         ),
     }
     if file_path is not None and repo_path is not None:

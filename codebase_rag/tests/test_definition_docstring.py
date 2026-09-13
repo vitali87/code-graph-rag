@@ -339,7 +339,128 @@ class TestUnsupportedLanguages:
 
     def test_sql_has_no_convention(self, parsers: dict) -> None:
         root = _parse(parsers, Lang.SQL, "-- note\nSELECT 1;\n")
-        assert extract_definition_docstring(root, Lang.SQL) is None
+        # A CHILD, not the root: the root has no parent, so the extractor
+        # returns None before it ever consults the spec table, and a SQL entry
+        # added to that table would leave this test green (greptile-local).
+        statement = [c for c in root.children if c.type != "comment"][0]
+        assert extract_definition_docstring(statement, Lang.SQL) is None
+
+
+class TestWrappedDeclarations:
+    """The ingester hands over the INNER node; the doc sits beside the wrapper.
+
+    Every case here came back None end-to-end before the wrapper climb was
+    added (greptile-local, first review round).
+    """
+
+    def test_ts_export_class(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers, Lang.TS, "/** DOC */\nexport class C {}\n", "class_declaration"
+        )
+        assert extract_definition_docstring(node, Lang.TS) == "DOC"
+
+    def test_ts_export_default_function(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.TS,
+            "/** DOC */\nexport default function f() {}\n",
+            "function_declaration",
+        )
+        assert extract_definition_docstring(node, Lang.TS) == "DOC"
+
+    def test_js_const_arrow_function(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers, Lang.JS, "/** DOC */\nconst f = () => {};\n", "arrow_function"
+        )
+        assert extract_definition_docstring(node, Lang.JS) == "DOC"
+
+    def test_js_commonjs_assigned_function(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.JS,
+            "/** DOC */\nmodule.exports.f = function () {};\n",
+            "function_expression",
+        )
+        assert extract_definition_docstring(node, Lang.JS) == "DOC"
+
+    def test_go_type_spec(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers, Lang.GO, "package m\n\n// DOC\ntype S struct{}\n", "type_spec"
+        )
+        assert extract_definition_docstring(node, Lang.GO) == "DOC"
+
+    def test_dart_method_signature(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.DART,
+            "class C {\n  /// DOC\n  void m() {}\n}\n",
+            "function_signature",
+        )
+        assert extract_definition_docstring(node, Lang.DART) == "DOC"
+
+    def test_a_grouped_go_type_is_not_climbed(self, parsers: dict) -> None:
+        """The group's comment describes the group; a member's doc is its sibling.
+
+        Climbing a two-member group would hand the group comment to BOTH.
+        """
+        src = "package m\n\n// GROUP\ntype (\n\t// DOC\n\tA struct{}\n\tB struct{}\n)\n"
+        root = _parse(parsers, Lang.GO, src)
+        specs = [n for n in _all(root, "type_spec")]
+        assert len(specs) == 2, "fixture: expected two type_spec nodes"
+        assert extract_definition_docstring(specs[0], Lang.GO) == "DOC"
+        assert extract_definition_docstring(specs[1], Lang.GO) is None
+
+
+class TestTrailingComments:
+    """A comment on the previous line's row is that line's, never the next's.
+
+    Doxygen `///<`, Go and Java end-of-line remarks were being written to the
+    following declaration as its docstring (greptile-local, first round).
+    """
+
+    def test_cpp_doxygen_member_comment(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.CPP,
+            "class K {\n  int a; ///< The a field\n  void m() {}\n};\n",
+            "function_definition",
+        )
+        assert extract_definition_docstring(node, Lang.CPP) is None
+
+    def test_go_end_of_line_comment(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.GO,
+            "package m\n\nvar x = 1 // trailing note\nfunc Trail() {}\n",
+            "function_declaration",
+        )
+        assert extract_definition_docstring(node, Lang.GO) is None
+
+    def test_java_end_of_line_block_comment(self, parsers: dict) -> None:
+        node = _declaration(
+            parsers,
+            Lang.JAVA,
+            "class C {\n  int a; /** trailing */\n  void g() {}\n}\n",
+            "method_declaration",
+        )
+        assert extract_definition_docstring(node, Lang.JAVA) is None
+
+    def test_a_trailing_line_does_not_open_a_doc_block(self, parsers: dict) -> None:
+        """The control for the walk-up: the real doc survives, the trailer does not."""
+        node = _declaration(
+            parsers,
+            Lang.CPP,
+            "class K {\n  int a; ///< trailer\n  /// Real.\n  void m() {}\n};\n",
+            "function_definition",
+        )
+        assert extract_definition_docstring(node, Lang.CPP) == "Real."
+
+
+def _all(node: ASTNode, node_type: str) -> list[ASTNode]:
+    found = [node] if node.type == node_type else []
+    for child in node.children:
+        found.extend(_all(child, node_type))
+    return found
 
 
 class TestReachesTheGraph:
@@ -403,3 +524,28 @@ class TestReachesTheGraph:
         (temp_repo / "lib.rs").write_text("fn bare() {}\n")
         updater.run()
         assert self._node_props(updater, "Function", "bare").get("docstring") is None
+
+    def test_wrapped_declarations_reach_their_nodes(self, temp_repo, updater) -> None:
+        """The shapes the first review found undocumented end-to-end."""
+        (temp_repo / "a.ts").write_text(
+            "/** EC doc */\nexport class EC {}\n\n"
+            "/** ef doc */\nexport function ef() {}\n\n"
+            "/** EI doc */\nexport interface EI {}\n"
+        )
+        (temp_repo / "e.go").write_text("package m\n\n// S doc\ntype S struct{}\n")
+        (temp_repo / "i.dart").write_text("class C {\n  /// m doc\n  void m() {}\n}\n")
+        updater.run()
+        assert self._node_props(updater, "Class", "EC")["docstring"] == "EC doc"
+        assert self._node_props(updater, "Function", "ef")["docstring"] == "ef doc"
+        assert self._node_props(updater, "Interface", "EI")["docstring"] == "EI doc"
+        assert self._node_props(updater, "Class", "S")["docstring"] == "S doc"
+        assert self._node_props(updater, "Method", "m")["docstring"] == "m doc"
+
+    def test_a_trailing_comment_does_not_reach_the_next_node(
+        self, temp_repo, updater
+    ) -> None:
+        (temp_repo / "e.go").write_text(
+            "package m\n\nvar x = 1 // trailing note\nfunc Trail() {}\n"
+        )
+        updater.run()
+        assert self._node_props(updater, "Function", "Trail").get("docstring") is None

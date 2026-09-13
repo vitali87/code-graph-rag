@@ -57,6 +57,56 @@ _INTERLEAVED: dict[SupportedLanguage, frozenset[str]] = {
     SupportedLanguage.RUST: frozenset({"attribute_item"}),
 }
 
+# Node types that WRAP the declaration the ingester hands us, so that the doc
+# comment is a sibling of the wrapper and not of the node. `export class C {}`
+# is an `export_statement` around a `class_declaration`; Go's `type S struct{}`
+# is a `type_declaration` around the `type_spec` the class ingest passes; a
+# Dart method is a `method_signature` around its `function_signature`; a JS
+# `const f = () => {}` is `lexical_declaration` > `variable_declarator` >
+# `arrow_function`, and a CommonJS `module.exports.f = function () {}` is
+# `expression_statement` > `assignment_expression` > `function_expression`.
+# Reading `node.parent.children` for any of these looked at the wrapper's
+# children and reported every such declaration as undocumented (greptile-local,
+# PR for #1809: TS export class/function/interface, Go struct and interface,
+# Dart method, JS arrow and CJS function all came back None end-to-end).
+_JS_WRAPPERS = frozenset(
+    {
+        "export_statement",
+        "lexical_declaration",
+        "variable_declaration",
+        "variable_declarator",
+        "expression_statement",
+        "assignment_expression",
+    }
+)
+_WRAPPERS: dict[SupportedLanguage, frozenset[str]] = {
+    SupportedLanguage.JS: _JS_WRAPPERS,
+    SupportedLanguage.TS: _JS_WRAPPERS,
+    SupportedLanguage.TSX: _JS_WRAPPERS,
+    SupportedLanguage.GO: frozenset({"type_declaration"}),
+    SupportedLanguage.DART: frozenset({"method_signature"}),
+}
+
+
+def _climb_wrappers(node: ASTNode, language: SupportedLanguage) -> ASTNode:
+    """The outermost single-declaration wrapper around `node`, or `node`.
+
+    Climbs only while the parent is a wrapper type AND holds exactly one child
+    of the node's type. A grouped Go `type ( A struct{}; B struct{} )` or a
+    `const a = () => {}, b = () => {}` is not climbed: the leading comment
+    describes the group, and each member's own doc -- if any -- is already its
+    sibling inside the group, where the ordinary walk finds it.
+    """
+    wrappers = _WRAPPERS.get(language)
+    if not wrappers:
+        return node
+    while (parent := node.parent) is not None and parent.type in wrappers:
+        same = [child for child in parent.children if child.type == node.type]
+        if len(same) != 1:
+            break
+        node = parent
+    return node
+
 
 def _definition_spec(language: SupportedLanguage) -> ModuleDocSpec | None:
     """The module spec with its markers switched to the outer forms.
@@ -115,6 +165,13 @@ def _doc_block_start(
         return None
 
     last = siblings[index]
+    # A comment that starts on the row where the previous sibling ENDS is that
+    # sibling's trailing comment -- Doxygen's `int a; ///< The a field`, Go's
+    # `var x = 1 // note` -- and go/parser, doxygen and javadoc all read it
+    # so. Accepting it on adjacency alone wrote the previous line's remark to
+    # the NEXT declaration as its docstring (greptile-local, PR for #1809).
+    if _is_trailing(siblings, index):
+        return None
     text = safe_decode_with_fallback(last).strip()
     is_line = last.type in spec.line_types and _is_marked(text, spec.line_markers)
     is_block = last.type in spec.block_types and _is_marked(text, spec.block_markers)
@@ -139,8 +196,24 @@ def _doc_block_start(
             break
         if siblings[index].start_point[0] - _last_row(above) > 1:
             break
+        # The same rule going up: a trailing comment on the line above the
+        # block belongs to that line, and must not open the block.
+        if _is_trailing(siblings, index - 1):
+            break
         index -= 1
     return index
+
+
+def _is_trailing(siblings: list[ASTNode], index: int) -> bool:
+    """Whether `siblings[index]` starts on the row its previous sibling ends on.
+
+    `_last_row` rather than `end_point`, because a line comment's extent
+    includes its newline: two consecutive `///` lines would otherwise read as
+    the second trailing the first, and every multi-line doc would be refused.
+    """
+    if index <= 0:
+        return False
+    return _last_row(siblings[index - 1]) == siblings[index].start_point[0]
 
 
 def _last_row(node: ASTNode) -> int:
@@ -171,6 +244,7 @@ def extract_definition_docstring(
     spec = _definition_spec(language)
     if spec is None:
         return None
+    node = _climb_wrappers(node, language)
     parent = node.parent
     if parent is None:
         return None

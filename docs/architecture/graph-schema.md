@@ -172,7 +172,11 @@ reason, even when they do carry the marker:
 `Class`, `Function`, `Method`, `Interface`, `Enum`, `Type` and `Union` carry
 the documentation of that one definition in the same optional `docstring`
 property. Python's is the string literal that opens the body; every other
-language's is the doc comment immediately above the declaration.
+language's is the doc comment immediately above the declaration -- or above
+the statement that wraps it: an `export`, a Go `type`, a `const f = () =>`
+assignment, a `module.exports.f = function` assignment. A comment that trails
+the previous line (`int a; ///< the a field`) is that line's remark, never the
+next declaration's documentation.
 
 The markers are the ones in the module table with one exception: Rust
 documents a definition with the **outer** forms, `///` and `/**`, while `//!`
