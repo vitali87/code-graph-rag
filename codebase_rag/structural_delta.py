@@ -421,18 +421,28 @@ def _pair_lone_containers(
             and after.definitions[other].label == definition.label
         ]
         # A DECLARATION is the only admissible evidence, and it is now the
-        # ONLY test (issue #1836). This pass previously required the candidate
-        # sets to be unique -- `len(matches) == 1 and len(peers) == 1` -- and
-        # consulted `declared` afterwards. That ordering dropped pairings the
-        # operation had explicitly named: renaming two empty containers in one
-        # file makes the peer count 2 for each, so both were refused before
-        # the declaration was read, the contract saw two removals plus two
-        # additions, and it rolled back a correct edit.
+        # only test. This pass previously required BOTH candidate sets to be
+        # unique -- `len(matches) == 1 and len(peers) == 1` -- and consulted
+        # `declared` afterwards, so two empty containers renamed in one file
+        # were refused before the declaration was read: each sees two matches
+        # and two peers. The contract then saw two removals plus two additions
+        # where the operation had named two renames, and rolled back a correct
+        # edit.
         #
-        # Dropping the uniqueness test loosens nothing, which is why the peer
-        # scan is gone rather than reordered. It existed to refuse a GUESS
-        # among indistinguishable candidates, and no guess is made here any
-        # more: a pair is admitted when and only when `declared` names it.
+        # This DOES loosen the gate, deliberately: with one removed and two
+        # added containers the old code refused on `len(matches) != 1` and this
+        # admits the declared one. That is sound because a declaration is still
+        # required, not because nothing widened -- the uniqueness tests existed
+        # to refuse a GUESS among indistinguishable candidates, and no guess is
+        # made here any more. A pair is admitted when and only when `declared`
+        # names it, and `matches` is already filtered on path and label, so an
+        # absent, cross-file or mismatched-label target is still refused.
+        #
+        # This does NOT fix issue #1836, whose nested container is never
+        # DECLARED in the first place: `rename.py`'s `pairs` is built from
+        # `report.hierarchy`, and `_hierarchy` walks only `overrides` edges, so
+        # no descendant of a renamed symbol is ever named. That is a separate
+        # axis -- what is declared, not what is admitted given a declaration.
         declared_match = next(
             (other for other in matches if (qn, other) in declared), None
         )
