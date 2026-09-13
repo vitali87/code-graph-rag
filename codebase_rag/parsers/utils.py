@@ -1234,8 +1234,8 @@ def ingest_method(
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[ASTNode], str | None],
-    language: cs.SupportedLanguage | None = None,
+    get_docstring_func: Callable[[ASTNode, cs.SupportedLanguage], str | None],
+    language: cs.SupportedLanguage,
     lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
@@ -1339,11 +1339,9 @@ def ingest_method(
         # Dart method signatures end before their sibling function_body;
         # extend the span over the body (no-op for other languages).
         cs.KEY_END_LINE: _method_end_line(method_node, language),
-        cs.KEY_DOCSTRING: get_docstring_func(method_node),
-        cs.KEY_IS_EXPORTED: (
-            export_detection.is_exported(method_node, method_name, language)
-            if language is not None
-            else False
+        cs.KEY_DOCSTRING: get_docstring_func(method_node, language),
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            method_node, method_name, language
         ),
     }
     if file_path is not None and repo_path is not None:
@@ -1524,7 +1522,8 @@ def ingest_exported_function(
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[ASTNode], str | None],
+    get_docstring_func: Callable[[ASTNode, cs.SupportedLanguage], str | None],
+    language: cs.SupportedLanguage,
     is_export_inside_function_func: Callable[[ASTNode], bool],
     file_path: Path | None,
     repo_path: Path | None,
@@ -1562,7 +1561,7 @@ def ingest_exported_function(
         function_qn,
         function_name,
         function_node,
-        get_docstring_func(function_node),
+        get_docstring_func(function_node, language),
         file_path,
         repo_path,
     )

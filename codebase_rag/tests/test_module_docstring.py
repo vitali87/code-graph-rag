@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from tree_sitter import Language, Parser
 
+from codebase_rag.constants import SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -61,7 +62,7 @@ class TestModuleDocstringExtraction:
 
         tree = py_parser.parse(code)
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        return processor._get_docstring(tree.root_node)
+        return processor._get_docstring(tree.root_node, SupportedLanguage.PYTHON)
 
     def test_triple_quoted_module_docstring(self, py_parser: Parser) -> None:
         code = b'"""Module summary."""\n\nimport os\n'
@@ -102,7 +103,12 @@ class TestModuleDocstringExtraction:
         code = b'def f():\n    """Function doc."""\n    pass\n'
         tree = py_parser.parse(code)
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        assert processor._get_docstring(tree.root_node.children[0]) == "Function doc."
+        assert (
+            processor._get_docstring(
+                tree.root_node.children[0], SupportedLanguage.PYTHON
+            )
+            == "Function doc."
+        )
 
 
 @pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
