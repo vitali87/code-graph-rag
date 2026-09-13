@@ -494,3 +494,68 @@ def test_a_demoted_package_keeps_its_child_container_edge(tmp_path: Path) -> Non
         f"index: incremental={sorted(_containment(store))} "
         f"clean={sorted(_containment(clean_store))}"
     )
+
+
+@pytest.mark.parametrize("direction", ["demote", "promote"])
+def test_a_FRESH_updater_still_detects_the_flip(tmp_path: Path, direction: str) -> None:
+    """The MCP tool's path, which every other test here misses.
+
+    Every test above re-uses the updater that did the initial index, so its
+    `structural_elements` still holds the map derived BEFORE the change and
+    the comparison in `_package_ness_changed` has a real "was" to read.
+
+    `MCPToolsRegistry` builds a NEW `GraphUpdater` per project, and so does
+    the watcher -- `reingest`'s own docstring names both. On a fresh updater
+    `_hydrate_for_reingest` calls `identify_structure()` first, which derives
+    the map FROM DISK, so both sides of the comparison are the post-change
+    state, `flipped` is empty, and nothing is re-derived, re-parsed or
+    pruned. The fix was inert on the path it exists for, and a suite that
+    only ever reuses one updater cannot see it (greptile-local, PR #1835).
+
+    Asserted against a clean rebuild for the same reason as the test above:
+    the node identity changes with the kind, so naming one expected uid
+    would pin the wrong thing.
+    """
+    started_as_package = direction == "demote"
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=started_as_package)
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+
+    init = root / "pkg" / "__init__.py"
+    if started_as_package:
+        assert ("Package", "proj.pkg") in _containers(store), (
+            "fixture guard: the initial index must produce a Package"
+        )
+        init.unlink()
+    else:
+        assert ("Folder", "pkg") in _containers(store), (
+            "fixture guard: the initial index must produce a Folder"
+        )
+        init.write_text("", encoding="utf-8")
+
+    # The whole point: a DIFFERENT updater over the SAME store, which is what
+    # a second MCP call or a watcher event actually does.
+    fresh = _updater(root, store)
+    if started_as_package:
+        fresh.reingest([], deleted=["pkg/__init__.py"])
+    else:
+        fresh.reingest(["pkg/__init__.py"])
+    store.flush_all()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    _fixture(clean_root, with_init=not started_as_package)
+    clean_store = _StatefulIngestor()
+    _updater(clean_root, clean_store).run(force=True)
+    clean_store.flush_all()
+
+    assert _containers(store) == _containers(clean_store), (
+        "a fresh updater did not detect the package-ness flip, so the "
+        "directory kept both identities: "
+        f"incremental={sorted(_containers(store))} "
+        f"clean={sorted(_containers(clean_store))}"
+    )

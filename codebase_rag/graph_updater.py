@@ -4856,6 +4856,39 @@ class GraphUpdater:
                 siblings[key] = candidate
         return siblings
 
+    def _recorded_container_is_package(self, directory: Path) -> bool | None:
+        """What the GRAPH records for this directory: True/False, or None.
+
+        None means "cannot tell" -- no query surface, the read failed, or no
+        container node exists yet -- and the caller falls back to the
+        in-memory map.
+
+        The graph is asked FIRST because the in-memory map is not a record of
+        the previous state on every path. A fresh updater (the MCP tool builds
+        one per project, and so does the watcher) runs
+        `_hydrate_for_reingest` before the flip check, and that calls
+        `identify_structure()`, which derives the map FROM DISK. Both sides of
+        the comparison were then the post-change state, no flip was ever
+        detected, and the whole fix was inert on the path it exists for
+        (greptile-local, PR #1835).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return None
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_CONTAINER_KIND,
+                {cs.KEY_PATH: cached_resolve_posix(directory)},
+            )
+        except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
+            return None
+        for row in rows or ():
+            labels = row.get("labels") if isinstance(row, dict) else None
+            if labels and cs.NodeLabel.PACKAGE in labels:
+                return True
+            if labels and cs.NodeLabel.FOLDER in labels:
+                return False
+        return None
+
     def _package_ness_changed(self, structure: object, rel: str) -> bool:
         """Whether this directory's kind on DISK differs from the recorded one.
 
@@ -4868,7 +4901,12 @@ class GraphUpdater:
         directory = self.repo_path / rel if rel != "." else self.repo_path
         if not directory.is_dir():
             return False
-        was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
+        # The graph's record first; the map only when it cannot answer. See
+        # `_recorded_container_is_package` for why the map alone is wrong on a
+        # fresh updater.
+        was_package = self._recorded_container_is_package(directory)
+        if was_package is None:
+            was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
         return bool(structure.is_package_dir(directory)) != was_package  # type: ignore[attr-defined]
 
     def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
@@ -5246,30 +5284,15 @@ class GraphUpdater:
         # containment edges onto it, and `_prune_flipped_containers` removes
         # the node of the old kind once both have happened.
         if flipped_dirs:
-            # Scoped to the flipped directories AND their ancestors: the
-            # unrestricted walk emits a node for every directory that changed
-            # on disk since the last derivation, so an unrelated directory
-            # whose indicator was removed elsewhere gained a second container
-            # identity beside the one it already had (Greptile, PR #1835).
-            # Ancestors are included because each directory's parent lookup
-            # reads `structural_elements` for the enclosing package. Measured
-            # caveat: dropping them reddens nothing, because that map PERSISTS
-            # across calls, so an ancestor derived by an earlier run is still
-            # there. It is defensive against a first derivation that starts
-            # from an empty map -- not load-bearing on the paths the tests
-            # cover, and its greenness is not evidence that it works.
-            # EXACTLY the flipped directories -- no ancestors. Putting an
-            # ancestor in scope re-derives it, and a re-derivation EMITS the
-            # node for whatever kind it is on disk now, so an ancestor that
-            # changed independently gained a second container identity beside
-            # the one it already had (Greptile, PR #1835).
+            # Scoped to the flipped directories and their CHILDREN, never
+            # their ancestors -- see `_flip_derivation_scope` for both halves
+            # of that rule.
             #
-            # The ancestor walk was there so a nested directory's parent
-            # lookup could find the enclosing package. It is not needed:
-            # `structural_elements` PERSISTS across calls, so the parent's
-            # entry is already in the map from the run that derived it. I had
-            # measured that and recorded it as "defensive, not load-bearing";
-            # it turned out to be actively harmful.
+            # Scoped at all because the unrestricted walk emits a node for
+            # every directory that changed on disk since the last derivation,
+            # so an unrelated directory whose indicator was removed elsewhere
+            # gained a second container identity beside the one it already
+            # had (Greptile, PR #1835).
             self.factory.structure_processor.identify_structure(
                 only=self._flip_derivation_scope(flipped_dirs)
             )

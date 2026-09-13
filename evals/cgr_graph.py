@@ -450,6 +450,19 @@ class _StatefulIngestor:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:
                 return self._path_rows(_PACKAGE_LABEL)
+            case cs.CYPHER_CONTAINER_KIND:
+                # Which container kind the graph records for one directory.
+                # Matches on absolute_path across BOTH labels, as the real
+                # query does, so a directory holding two container nodes (the
+                # very defect #1798 is about) returns both rows rather than
+                # silently picking one.
+                wanted = _text(params.get(cs.KEY_PATH)) if params else ""
+                return [
+                    {"labels": [node_label]}
+                    for (node_label, _uid), props in self.nodes.items()
+                    if node_label in (_PACKAGE_LABEL, _FOLDER_LABEL)
+                    and _text(props.get(cs.KEY_ABSOLUTE_PATH)) == wanted
+                ]
             case cs.CYPHER_INBOUND_EDGES:
                 raw_paths = params.get(cs.CYPHER_PARAM_PATHS) if params else None
                 changed: set[str] = (
