@@ -4950,6 +4950,41 @@ class GraphUpdater:
             was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
         return is_package_now != was_package
 
+    def _uncontained_dirs(self, present: dict[str, Path]) -> set[str]:
+        """Ancestor directories of `present` the graph holds no container for.
+
+        Hydration used to emit a node for every directory on disk, which
+        covered a directory that is NEW since the last index as a side
+        effect. It no longer emits (issue #1872), and the scoped
+        re-derivation does not cover these either: it re-derives directories
+        whose package-ness FLIPPED, and a brand-new directory never flipped.
+        Without this the re-parse writes CONTAINS_FILE and CONTAINS_MODULE
+        edges out of a container node nothing wrote -- and in production the
+        merge query MATCHes both endpoints, so the edge is not created at all
+        and the new file is silently unparented (greptile-local, #1872).
+
+        Guarded on the graph having NO container for the directory, not on
+        the directory being in this call. An unconditional ancestor scope
+        would re-derive an ancestor that changed independently and give it a
+        second container identity -- the #1835 rule, which
+        `test_an_independently_changed_ancestor_keeps_one_identity` pins.
+        """
+        uncontained: set[str] = set()
+        for key in present:
+            parent = Path(key).parent
+            while True:
+                rel = parent.as_posix()
+                if rel in uncontained:
+                    break
+                directory = self.repo_path if rel == "." else self.repo_path / rel
+                if self._recorded_container_kinds(directory):
+                    break
+                uncontained.add(rel)
+                if rel == ".":
+                    break
+                parent = parent.parent
+        return uncontained
+
     def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
         """Directories to re-derive: the flipped ones plus their CHILDREN.
 
@@ -5257,8 +5292,8 @@ class GraphUpdater:
             return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
         # Everything up to the inbound-edge capture issues no delete and no
-        # content write (a fresh updater's structure hydration re-emits
-        # idempotent Package and Folder upserts, nothing more). A failure
+        # content write (a fresh updater's structure hydration
+        # derives the package map and emits nothing, #1872). A failure
         # there leaves the graph as it was and says so with ReingestAborted,
         # so a caller holding the updater (the MCP tool, the watcher) keeps
         # it rather than treating the graph as partially rewritten.
@@ -5324,6 +5359,10 @@ class GraphUpdater:
         # node of the new kind; the sibling re-parse below re-points the
         # containment edges onto it, and `_prune_flipped_containers` removes
         # the node of the old kind once both have happened.
+        # New directories first: their container has to exist before the
+        # re-parse writes containment edges out of it.
+        if uncontained := self._uncontained_dirs(present):
+            self.factory.structure_processor.identify_structure(only=uncontained)
         if flipped_dirs:
             # Scoped to the flipped directories and their CHILDREN, never
             # their ancestors -- see `_flip_derivation_scope` for both halves

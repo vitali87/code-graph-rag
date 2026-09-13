@@ -173,3 +173,100 @@ def test_suppressing_emission_writes_nothing_and_records_both_kinds(
     assert len(store.nodes) == before, (
         "emit=False wrote nodes, which is the whole thing it exists not to do"
     )
+
+
+def _containment_from_missing_containers(store: _StatefulIngestor) -> list[tuple]:
+    """CONTAINS_* edges whose SOURCE container node does not exist.
+
+    In production this is worse than a stray edge: the merge query MATCHes
+    both endpoints, so a missing source means the edge is never created at
+    all and the new file and module are silently unparented.
+    """
+    uids = {(label, str(uid)) for (label, uid) in store.nodes}
+    return [
+        (sl, str(s_), r, tl, str(t))
+        for (sl, s_, r, tl, t) in store.edges
+        if "CONTAINS" in r and (sl, str(s_)) not in uids
+    ]
+
+
+def test_a_file_added_in_a_NEW_directory_still_gets_its_container(
+    tmp_path: Path,
+) -> None:
+    """Suppressing hydration's emission must not orphan a new directory.
+
+    Hydration's unscoped walk was the only writer of the container node for a
+    directory that is NEW since the last index. The scoped re-derivation does
+    not cover it: it re-derives directories whose package-ness FLIPPED, and a
+    brand-new directory never flipped -- it simply was not there before.
+
+    So `emit=False` alone left `CONTAINS_FILE` and `CONTAINS_MODULE` edges
+    pointing at a container node nothing had written (greptile-local, #1872).
+    """
+    root = tmp_path / "incremental"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+
+    # Both kinds, because they are written by different branches: a plain
+    # directory becomes a Folder and one with an indicator becomes a Package.
+    (root / "newplain").mkdir()
+    (root / "newplain" / "n.py").write_text(UTIL, encoding="utf-8")
+    (root / "newpkg").mkdir()
+    (root / "newpkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "newpkg" / "p.py").write_text(UTIL, encoding="utf-8")
+
+    _updater(root, store).reingest(
+        ["newplain/n.py", "newpkg/__init__.py", "newpkg/p.py"]
+    )
+    store.flush_all()
+
+    kinds = _kinds_by_directory(store)
+    assert kinds.get("newplain") == {cs.NodeLabel.FOLDER.value}, (
+        f"a new plain directory got no Folder node: {kinds}"
+    )
+    assert kinds.get("newpkg") == {cs.NodeLabel.PACKAGE.value}, (
+        f"a new package directory got no Package node: {kinds}"
+    )
+    dangling = _containment_from_missing_containers(store)
+    assert not dangling, (
+        "containment edges point at container nodes nothing wrote, so in "
+        f"production the new files would be unparented: {dangling}"
+    )
+
+
+def test_a_file_added_in_a_new_SUBdirectory_still_gets_its_container(
+    tmp_path: Path,
+) -> None:
+    """The nested case, which the flat one above does not cover.
+
+    A new directory under an EXISTING package has a parent the graph already
+    holds, so a fix that only handled top-level additions would pass the test
+    above and still orphan this one.
+    """
+    root = tmp_path / "incremental"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "m.py").write_text(UTIL, encoding="utf-8")
+
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    store.flush_all()
+
+    (root / "pkg" / "sub").mkdir()
+    (root / "pkg" / "sub" / "q.py").write_text(UTIL, encoding="utf-8")
+
+    _updater(root, store).reingest(["pkg/sub/q.py"])
+    store.flush_all()
+
+    assert "sub" in _kinds_by_directory(store), (
+        f"a new subdirectory got no container node at all: {_kinds_by_directory(store)}"
+    )
+    dangling = _containment_from_missing_containers(store)
+    assert not dangling, (
+        f"the new subdirectory's containment edges are unparented: {dangling}"
+    )
