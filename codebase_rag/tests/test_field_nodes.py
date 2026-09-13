@@ -343,6 +343,118 @@ class TestPhp:
         assert all(not f.name.startswith("$") for f in got)
 
 
+class TestOwnerShapesFromReview:
+    """Shapes the first local review found enumerating nothing."""
+
+    def test_java_enum_body_and_interface_constants(self, parsers) -> None:
+        enum = _fields(
+            parsers,
+            Lang.JAVA,
+            "enum Colour {\n  RED, GREEN;\n  private final int code = 1;\n}\n",
+            "enum_declaration",
+        )
+        assert _rows(enum) == [("code", "int", ("private", "final"), False)]
+        iface = _fields(
+            parsers,
+            Lang.JAVA,
+            "interface Konst {\n  int MAX = 1;\n}\n",
+            "interface_declaration",
+        )
+        assert _rows(iface) == [("MAX", "int", (), False)]
+
+    def test_ts_interface_members_and_parameter_properties(self, parsers) -> None:
+        iface = _fields(
+            parsers,
+            Lang.TS,
+            "interface I {\n  a: string;\n  b?: number;\n}\n",
+            "interface_declaration",
+        )
+        assert _rows(iface) == [("a", "string", (), False), ("b", "number", (), False)]
+        cls = _fields(
+            parsers,
+            Lang.TS,
+            "class K {\n  constructor(private p: number, readonly q?: string, plain: number) {}\n}\n",
+            "class_declaration",
+        )
+        assert _rows(cls) == [
+            ("p", "number", ("private",), False),
+            ("q", "string", ("readonly",), False),
+        ]
+
+    def test_php_promoted_constructor_properties(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.PHP,
+            "<?php\nclass P {\n  public function __construct(private int $x, protected readonly ?string $y = null, int $z) {}\n}\n",
+            "class_declaration",
+        )
+        assert _rows(got) == [
+            ("x", "int", ("private",), False),
+            ("y", "?string", ("protected", "readonly"), False),
+        ]
+
+    def test_csharp_event_and_record_parameters(self, parsers) -> None:
+        cls = _fields(
+            parsers,
+            Lang.CSHARP,
+            "class C {\n  public event EventHandler Ev;\n}\n",
+            "class_declaration",
+        )
+        assert _rows(cls) == [("Ev", "EventHandler", ("public",), False)]
+        rec = _fields(
+            parsers,
+            Lang.CSHARP,
+            "record R(int X, string Name);\n",
+            "record_declaration",
+        )
+        assert _rows(rec) == [
+            ("X", "int", ("public",), False),
+            ("Name", "string", ("public",), False),
+        ]
+
+    def test_dart_generic_and_nullable_types_as_written(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.DART,
+            "class C {\n  List<int>? l;\n  Map<String, int> m = {};\n}\n",
+            "class_definition",
+        )
+        assert [(f.name, f.type_name) for f in got] == [
+            ("l", "List<int>?"),
+            ("m", "Map<String, int>"),
+        ]
+
+    def test_scala_trait_abstract_val_and_var(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.SCALA,
+            "trait T {\n  val x: Int\n  var y: String\n}\n",
+            "trait_definition",
+        )
+        assert _rows(got) == [
+            ("x", "Int", ("val",), False),
+            ("y", "String", ("var",), False),
+        ]
+
+    def test_cpp_function_pointer_is_a_field_and_a_method_is_not(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.CPP,
+            "struct S {\n  void (*cb)(int);\n  void m();\n};\n",
+            "struct_specifier",
+        )
+        assert _rows(got) == [("cb", "void", ("public",), False)]
+
+    def test_python_attribute_tuple_targets(self, parsers) -> None:
+        got = _fields(
+            parsers,
+            Lang.PYTHON,
+            "class C:\n    def __init__(self):\n        self.d, self.e = 1, 2\n",
+            "class_definition",
+        )
+        assert _rows(got) == [("d", None, (), False), ("e", None, (), False)]
+
+
 class TestNotCovered:
     def test_an_uncovered_language_declares_nothing(self, parsers) -> None:
         """Not covered, never "no fields": the caller must not read [] as an answer."""

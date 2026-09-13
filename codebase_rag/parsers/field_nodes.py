@@ -180,15 +180,25 @@ def _py_instance_fields(method: Node) -> list[DeclaredField]:
         node = stack.pop(0)
         if node.type == cs.TS_PY_ASSIGNMENT:
             left = node.child_by_field_name(cs.FIELD_LEFT)
-            if (
-                left is not None
-                and left.type == cs.TS_PY_ATTRIBUTE
-                and (obj := left.child_by_field_name(cs.FIELD_OBJECT)) is not None
-                and safe_decode_text(obj) in cs.SELF_RECEIVER_KEYWORDS
-                and (attr := left.child_by_field_name("attribute")) is not None
-                and (name := safe_decode_text(attr))
-            ):
-                type_node = node.child_by_field_name(cs.FIELD_TYPE)
+            # `self.d, self.e = 1, 2` puts the attributes in a target list.
+            if left is None:
+                targets: list[Node] = []
+            elif left.type in ("pattern_list", cs.TS_PY_TUPLE_PATTERN, cs.TS_PY_TUPLE):
+                targets = [c for c in left.children if c.type == cs.TS_PY_ATTRIBUTE]
+            else:
+                targets = [left]
+            for target in targets:
+                if not (
+                    target.type == cs.TS_PY_ATTRIBUTE
+                    and (obj := target.child_by_field_name(cs.FIELD_OBJECT)) is not None
+                    and safe_decode_text(obj) in cs.SELF_RECEIVER_KEYWORDS
+                    and (attr := target.child_by_field_name("attribute")) is not None
+                    and (name := safe_decode_text(attr))
+                ):
+                    continue
+                type_node = (
+                    node.child_by_field_name(cs.FIELD_TYPE) if target is left else None
+                )
                 type_name = (
                     safe_decode_text(type_node) if type_node is not None else None
                 )
@@ -214,8 +224,8 @@ def java_declared_fields(class_node: Node) -> list[DeclaredField]:
     if body is None:
         return []
     out: list[DeclaredField] = []
-    for member in body.children:
-        if member.type != cs.TS_FIELD_DECLARATION:
+    for member in _java_members(body):
+        if member.type not in (cs.TS_FIELD_DECLARATION, "constant_declaration"):
             continue
         modifiers = _keyword_modifiers(member, _JAVA_KEYWORDS)
         type_node = member.child_by_field_name(cs.FIELD_TYPE)
@@ -240,6 +250,22 @@ def java_declared_fields(class_node: Node) -> list[DeclaredField]:
     return out
 
 
+def _java_members(body: Node) -> list[Node]:
+    """The body's members, looking through an enum's `enum_body_declarations`.
+
+    An enum's fields sit under that wrapper after the constants and `;`, so a
+    walk of `body.children` alone saw none of them; an interface's constants
+    are `constant_declaration` rather than `field_declaration` (local review).
+    """
+    members: list[Node] = []
+    for child in body.children:
+        if child.type == "enum_body_declarations":
+            members.extend(child.children)
+        else:
+            members.append(child)
+    return members
+
+
 # --- JavaScript / TypeScript ---------------------------------------------------
 #
 # JavaScript has `field_definition` with a `property` name and no types;
@@ -256,25 +282,89 @@ _TS_KEYWORDS = frozenset(
 
 def js_declared_fields(class_node: Node) -> list[DeclaredField]:
     return _js_ts_fields(
-        class_node, cs.TS_JS_FIELD_DEFINITION, cs.FIELD_PROPERTY, _JS_KEYWORDS
+        class_node,
+        frozenset({cs.TS_JS_FIELD_DEFINITION}),
+        cs.FIELD_PROPERTY,
+        _JS_KEYWORDS,
     )
 
 
 def ts_declared_fields(class_node: Node) -> list[DeclaredField]:
-    return _js_ts_fields(
-        class_node, cs.TS_PUBLIC_FIELD_DEFINITION, cs.FIELD_NAME, _TS_KEYWORDS
+    # A class member is a `public_field_definition`; an interface member is a
+    # `property_signature` with the same `name`/`type` fields (local review).
+    fields = _js_ts_fields(
+        class_node,
+        frozenset({cs.TS_PUBLIC_FIELD_DEFINITION, "property_signature"}),
+        cs.FIELD_NAME,
+        _TS_KEYWORDS,
     )
+    return fields + _ts_parameter_properties(class_node)
+
+
+def _ts_parameter_properties(class_node: Node) -> list[DeclaredField]:
+    """`constructor(private p: number, readonly q?: string)` declares fields.
+
+    A parameter with an accessibility modifier, `readonly` or `override` is a
+    parameter property; a plain one is not (local review).
+    """
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.children:
+        if member.type != "method_definition":
+            continue
+        name = member.child_by_field_name(cs.FIELD_NAME)
+        if name is None or safe_decode_text(name) != "constructor":
+            continue
+        params = member.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            continue
+        for param in params.children:
+            if param.type not in ("required_parameter", "optional_parameter"):
+                continue
+            modifiers = _keyword_modifiers(param, _TS_KEYWORDS)
+            if not modifiers:
+                continue
+            name_node = param.child_by_field_name("pattern")
+            if name_node is None or not (pname := safe_decode_text(name_node)):
+                continue
+            line, col = _at(name_node)
+            out.append(
+                DeclaredField(
+                    pname,
+                    line,
+                    col,
+                    _ts_annotation_text(param),
+                    modifiers,
+                    False,
+                    param,
+                )
+            )
+    return out
+
+
+def _ts_annotation_text(node: Node) -> str | None:
+    """The type inside a `type_annotation` (`: T`), or None."""
+    annotation = node.child_by_field_name(cs.FIELD_TYPE)
+    if annotation is None:
+        return None
+    inner = next((c for c in annotation.children if c.is_named), None)
+    return (safe_decode_text(inner) or None) if inner is not None else None
 
 
 def _js_ts_fields(
-    class_node: Node, member_type: str, name_field: str, keywords: frozenset[str]
+    class_node: Node,
+    member_types: frozenset[str],
+    name_field: str,
+    keywords: frozenset[str],
 ) -> list[DeclaredField]:
     body = class_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
         return []
     out: list[DeclaredField] = []
     for member in body.children:
-        if member.type != member_type:
+        if member.type not in member_types:
             continue
         name_node = member.child_by_field_name(name_field)
         if name_node is None or not (name := safe_decode_text(name_node)):
@@ -461,15 +551,21 @@ def _cpp_field_identifier(declarator: Node) -> Node | None:
     node: Node | None = declarator
     while node is not None:
         if node.type in _CPP_DECLARATOR_STOP:
+            # `void (*cb)(int);` is a function POINTER field: the declarator
+            # under the function_declarator is parenthesised. A method's is the
+            # bare field_identifier (local review).
+            inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+            if inner is not None and inner.type == "parenthesized_declarator":
+                node = inner
+                continue
             return None
         if node.type == cs.CppNodeType.FIELD_IDENTIFIER:
             return node
         inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
         if inner is None:
-            inner = next(
-                (c for c in node.children if c.type == cs.CppNodeType.FIELD_IDENTIFIER),
-                None,
-            )
+            # A `parenthesized_declarator` has no `declarator` field: its one
+            # named child is the pointer/array declarator to keep descending.
+            inner = next((c for c in node.children if c.is_named), None)
         node = inner
     return None
 
@@ -481,10 +577,10 @@ def _cpp_field_identifier(declarator: Node) -> Node | None:
 
 
 def csharp_declared_fields(class_node: Node) -> list[DeclaredField]:
+    out: list[DeclaredField] = _csharp_record_parameters(class_node)
     body = class_node.child_by_field_name(cs.FIELD_BODY)
     if body is None:
-        return []
-    out: list[DeclaredField] = []
+        return out
     for member in body.children:
         modifiers = tuple(
             t
@@ -510,7 +606,7 @@ def csharp_declared_fields(class_node: Node) -> list[DeclaredField]:
                         member,
                     )
                 )
-        elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
+        elif member.type in (cs.TS_CSHARP_FIELD_DECLARATION, "event_field_declaration"):
             var_decl = next(
                 (
                     c
@@ -538,6 +634,31 @@ def csharp_declared_fields(class_node: Node) -> list[DeclaredField]:
     return out
 
 
+def _csharp_record_parameters(class_node: Node) -> list[DeclaredField]:
+    """`record R(int X, string Name)`: positional parameters ARE public properties."""
+    if class_node.type != cs.TS_CSHARP_RECORD_DECLARATION:
+        return []
+    out: list[DeclaredField] = []
+    for plist in class_node.children:
+        if plist.type != cs.TS_CSHARP_PARAMETER_LIST:
+            continue
+        for param in plist.children:
+            if param.type != cs.TS_CSHARP_PARAMETER:
+                continue
+            name_node = param.child_by_field_name(cs.FIELD_NAME)
+            type_node = param.child_by_field_name(cs.FIELD_TYPE)
+            if name_node is None or not (name := safe_decode_text(name_node)):
+                continue
+            type_name = (
+                (safe_decode_text(type_node) or None) if type_node is not None else None
+            )
+            line, col = _at(name_node)
+            out.append(
+                DeclaredField(name, line, col, type_name, ("public",), False, param)
+            )
+    return out
+
+
 # --- Dart -------------------------------------------------------------------
 #
 # A class-body `declaration` carries keyword children (`static`, `const`,
@@ -557,6 +678,23 @@ _DART_NAME_ENTRIES = frozenset(
 )
 
 
+def _dart_type_text(member: Node) -> str | None:
+    """`List<int>?` as written: the type identifier plus its arguments and `?`.
+
+    Every other language records the full declared type; the bare
+    `type_identifier` alone gave `List` for `List<int>` (local review).
+    """
+    parts: list[str] = []
+    for child in member.children:
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER and not parts:
+            parts.append(safe_decode_text(child) or "")
+        elif parts and child.type in ("type_arguments", "nullable_type"):
+            parts.append(safe_decode_text(child) or "")
+        elif parts:
+            break
+    return "".join(parts) or None
+
+
 def dart_declared_fields(class_node: Node) -> list[DeclaredField]:
     body = next(
         (c for c in class_node.named_children if c.type == cs.TS_DART_CLASS_BODY), None
@@ -572,10 +710,7 @@ def dart_declared_fields(class_node: Node) -> list[DeclaredField]:
             for c in member.children
             if c.type in _DART_KEYWORDS and (t := safe_decode_text(c))
         )
-        type_node = next(
-            (c for c in member.children if c.type == cs.TS_DART_TYPE_IDENTIFIER), None
-        )
-        type_name = safe_decode_text(type_node) if type_node is not None else None
+        type_name = _dart_type_text(member)
         for name_list in member.children:
             if name_list.type not in _DART_NAME_LISTS:
                 continue
@@ -626,9 +761,18 @@ def scala_declared_fields(class_node: Node) -> list[DeclaredField]:
     if body is None:
         return out
     for member in body.children:
-        if member.type not in (cs.TS_SCALA_VAL_DEFINITION, cs.TS_SCALA_VAR_DEFINITION):
+        if member.type not in (
+            cs.TS_SCALA_VAL_DEFINITION,
+            cs.TS_SCALA_VAR_DEFINITION,
+            "val_declaration",
+            "var_declaration",
+        ):
             continue
-        name_node = member.child_by_field_name("pattern")
+        # A definition names its target in `pattern`; an abstract declaration
+        # (`val x: Int` in a trait) in `name` (local review).
+        name_node = member.child_by_field_name("pattern") or member.child_by_field_name(
+            cs.FIELD_NAME
+        )
         if name_node is None or name_node.type != cs.TS_IDENTIFIER:
             continue
         if not (name := safe_decode_text(name_node)):
@@ -733,7 +877,7 @@ def php_declared_fields(class_node: Node) -> list[DeclaredField]:
         )
     if body is None:
         return []
-    out: list[DeclaredField] = []
+    out: list[DeclaredField] = _php_promoted_properties(class_node)
     for member in body.children:
         if member.type != cs.TS_PHP_PROPERTY_DECLARATION:
             continue
@@ -765,6 +909,51 @@ def php_declared_fields(class_node: Node) -> list[DeclaredField]:
                     modifiers,
                     cs.TS_STATIC in modifiers,
                     member,
+                )
+            )
+    return out
+
+
+def _php_promoted_properties(class_node: Node) -> list[DeclaredField]:
+    """`__construct(private int $x)` declares a property (PHP 8 promotion)."""
+    body = class_node.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        body = next(
+            (c for c in class_node.children if c.type == cs.TS_PHP_DECLARATION_LIST),
+            None,
+        )
+    if body is None:
+        return []
+    out: list[DeclaredField] = []
+    for member in body.children:
+        if member.type != "method_declaration":
+            continue
+        name = member.child_by_field_name(cs.FIELD_NAME)
+        if name is None or safe_decode_text(name) != "__construct":
+            continue
+        params = member.child_by_field_name(cs.FIELD_PARAMETERS)
+        if params is None:
+            continue
+        for param in params.children:
+            if param.type != "property_promotion_parameter":
+                continue
+            modifiers = tuple(
+                t
+                for field in ("visibility", "readonly")
+                if (m := param.child_by_field_name(field)) is not None
+                and (t := safe_decode_text(m))
+            )
+            name_node = param.child_by_field_name(cs.FIELD_NAME)
+            if name_node is None or not (raw := safe_decode_text(name_node)):
+                continue
+            type_node = param.child_by_field_name(cs.FIELD_TYPE)
+            type_name = (
+                (safe_decode_text(type_node) or None) if type_node is not None else None
+            )
+            line, col = _at(name_node)
+            out.append(
+                DeclaredField(
+                    raw.lstrip("$"), line, col, type_name, modifiers, False, param
                 )
             )
     return out
@@ -879,6 +1068,10 @@ def emit_field_type_edges(
                 (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn),
             )
             emitted += 1
+    # Emptied like the sibling passes: a reused updater (watch mode) would
+    # otherwise re-resolve every old fact each run and re-emit OF_TYPE from a
+    # Field that no longer exists (local review P1).
+    pending.clear()
     return emitted
 
 

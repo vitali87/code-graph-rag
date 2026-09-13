@@ -43,6 +43,11 @@ _SRC = {
     "Shape.java": "class Shape {\n  private static final int SIDES = 4;\n  String name;\n  void m() {}\n}\n",
     # The point of the exercise: 32% of Rust `///` blocks precede a field.
     "geo.rs": "pub struct Point {\n    /// Horizontal offset.\n    pub x: i32,\n    pub y: i32,\n}\n",
+    # Owners other than Class: an Interface and an Enum both declare fields.
+    "shapes.ts": "interface I {\n  a: string;\n}\n",
+    "Colour.java": "enum Colour {\n  RED;\n  private final int code = 1;\n}\n",
+    # A field and a method with one name share the `<owner>.<name>` key.
+    "acc.py": "class Acc:\n    total = 0\n\n    def total(self):\n        return 0\n",
 }
 
 
@@ -206,6 +211,13 @@ def test_of_type_survives_on_a_reused_updater(tmp_path: Path) -> None:
 
     of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
     assert ("proj.consumer.Holder.gadget", "proj.models.Gadget") in of_type, of_type
+    # Every OF_TYPE source must be a live node: the field queue is emptied after
+    # each run like the parameter one, or a reused updater re-emits an edge
+    # from a Field that no longer exists (local review P1).
+    live = set(_nodes(store, cs.NodeLabel.FIELD.value)) | set(
+        _nodes(store, cs.NodeLabel.PARAMETER.value)
+    )
+    assert {s for s, _t in of_type} <= live, {s for s, _t in of_type} - live
 
 
 def test_scoped_reingest_drops_the_old_field_annotation(tmp_path: Path) -> None:
@@ -313,3 +325,28 @@ def test_a_documented_field_carries_its_doc_comment(tmp_path: Path) -> None:
     # Python has no field-docstring convention: absent, not empty.
     box = {qn.rsplit(".", 1)[-1]: p for qn, p in fields.items() if ".Box." in qn}
     assert all(cs.KEY_DOCSTRING not in p for p in box.values())
+
+
+def test_interface_and_enum_owners_declare_fields(tmp_path: Path) -> None:
+    store = _index(tmp_path, ["+fields"])
+    fields = _nodes(store, cs.NodeLabel.FIELD.value)
+    assert any(qn.endswith(".I.a") for qn in fields), sorted(fields)
+    assert any(qn.endswith(".Colour.code") for qn in fields), sorted(fields)
+    has = _edges(store, cs.RelationshipType.HAS_FIELD.value)
+    assert any(src.endswith(".I") and tgt.endswith(".I.a") for src, tgt in has), has
+
+
+def test_a_field_and_a_method_may_share_a_qualified_name(tmp_path: Path) -> None:
+    """Both exist under `Acc.total`; the label-less definition lookup must
+    therefore exclude Field (and Parameter) rows, which carry no `end`."""
+    store = _index(tmp_path, ["+fields"])
+    labels = {
+        label
+        for (label, _uid), props in store.nodes.items()
+        if str(props.get(cs.KEY_QUALIFIED_NAME, "")).endswith(".Acc.total")
+    }
+    assert labels == {cs.NodeLabel.FIELD.value, cs.NodeLabel.METHOD.value}, labels
+    from codebase_rag.cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
+
+    assert "NOT n:Field" in CYPHER_FIND_BY_QUALIFIED_NAME
+    assert "NOT n:Parameter" in CYPHER_FIND_BY_QUALIFIED_NAME
