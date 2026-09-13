@@ -13,9 +13,11 @@ nothing; a positive pins that the element type is USED, not merely absent.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
@@ -213,6 +215,14 @@ def test_the_nearest_preceding_binding_wins(tmp_path: Path) -> None:
     assert got.get("later") == {"Widget"}, got
 
 
+def _functions(node: Node) -> Iterator[Node]:
+    """Every def under a node, nested ones included, in document order."""
+    for child in node.children:
+        if child.type == "function_definition":
+            yield child
+        yield from _functions(child)
+
+
 def _local_types(
     tmp_path: Path, body: str, function: str, *, extra: dict[str, str] | None = None
 ) -> dict[str, str]:
@@ -235,9 +245,8 @@ def _local_types(
     tree = parsers[cs.SupportedLanguage.PYTHON].parse((_TWO + body).encode())
     node = next(
         n
-        for n in tree.root_node.children
-        if n.type == "function_definition"
-        and (n.child_by_field_name("name").text or b"").decode() == function
+        for n in _functions(tree.root_node)
+        if (n.child_by_field_name("name").text or b"").decode() == function
     )
     engine = updater.factory.type_inference.python_type_inference
     return engine.build_local_variable_type_map(node, "proj.app")
@@ -380,6 +389,15 @@ _REBINDING_STATEMENTS = {
     "augmented": "    p += supplied\n",
     "for_loop": "    for p in supplied:\n        pass\n",
     "with_as": "    with supplied as p:\n        pass\n",
+    # `p` is now a PIECE of something, not fw's tuple, whether that something
+    # is a plain value or fw's own result (local review P2).
+    "pattern_target": "    p, q = supplied\n",
+    "pattern_target_call": "    p, q = fw()\n",
+    # tree-sitter parses a with statement's `as (p, q)` as a tuple
+    # EXPRESSION, not a pattern (local review P2).
+    "with_tuple_target": "    with supplied as (p, q):\n        pass\n",
+    "walrus": "    if (p := supplied):\n        pass\n",
+    "except_as": "    try:\n        pass\n    except Exception as p:\n        pass\n",
 }
 
 
@@ -493,6 +511,106 @@ _UNTYPED_SHADOWS = {
         "    _n, w = make_pair()\n"
         "    return w.render()\n",
         None,
+    ),
+    # Every other way a body binds a name (local review P2): each makes
+    # `helpers` local for the whole body, so the module is unreachable.
+    "with_tuple_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    with supplied as (helpers, x):\n"
+        "        pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "walrus_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    if (helpers := supplied):\n"
+        "        pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "except_target_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception as helpers:\n"
+        "        pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "body_import_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    import os as helpers\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "nested_def_name_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    def helpers() -> int:\n"
+        "        return 0\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    "match_capture_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    match supplied:\n"
+        "        case [helpers]:\n"
+        "            pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        None,
+    ),
+    # A closure reads the enclosing def's local, not the module.
+    "enclosing_local_over_module": (
+        "from . import helpers\n"
+        "\n"
+        "def outer(supplied) -> int:\n"
+        "    helpers = supplied\n"
+        "    def use() -> int:\n"
+        "        _n, w = helpers.make_pair()\n"
+        "        return w.render()\n"
+        "    return use()\n",
+        None,
+    ),
+    # `case helpers.X` is a VALUE pattern: it captures nothing.
+    "match_value_pattern_is_not_a_capture": (
+        "from . import helpers\n"
+        "\n"
+        "def use(supplied) -> int:\n"
+        "    match supplied:\n"
+        "        case helpers.X:\n"
+        "            pass\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
+    # A class body's names are not visible to its methods, as Python has it.
+    "enclosing_class_attribute_does_not_shadow": (
+        "from . import helpers\n"
+        "\n"
+        "class K:\n"
+        "    helpers = 1\n"
+        "\n"
+        "    def use(self) -> int:\n"
+        "        _n, w = helpers.make_pair()\n"
+        "        return w.render()\n",
+        "Banner",
     ),
     # A nested def's binding is that def's local; the outer `helpers` is
     # still the module.
