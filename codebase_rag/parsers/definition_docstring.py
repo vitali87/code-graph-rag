@@ -36,15 +36,25 @@ _OUTER_LINE_MARKERS = ("///",)
 _OUTER_BLOCK_MARKERS = ("/**", "/*!")
 
 # Node types that legally sit BETWEEN a doc comment and the declaration it
-# documents, per the grammars. C# allows attributes, Dart metadata, Rust
-# outer attributes, Java/Scala annotations. A walk that stops at the first
-# non-comment sibling misses every annotated declaration.
+# documents, as SIBLINGS of that declaration. A walk that stopped at the first
+# non-comment sibling would miss the declaration entirely.
+#
+# Rust alone, and that is measured rather than assumed. The first version of
+# this table also carried Java, Scala, C# and Dart entries on the reasoning
+# that each language allows an annotation there -- they do, but their grammars
+# make the annotation a CHILD of the declaration, so the doc comment is
+# already the immediately preceding sibling and this walk never runs. Checked
+# on the loaded grammars: for `/** DOC */ @Deprecated class C {}` the
+# top-level siblings are `[block_comment, class_declaration]` in Java, and the
+# same shape in Scala, C# and Dart, against
+# `[line_comment, attribute_item, struct_item]` in Rust.
+#
+# Found by mutation: disabling the walk reddened ONE test rather than the three
+# predicted, which is what exposed the other entries as unreachable. An entry
+# that cannot execute is not a safety margin -- it is a claim about a grammar
+# that nothing checks.
 _INTERLEAVED: dict[SupportedLanguage, frozenset[str]] = {
     SupportedLanguage.RUST: frozenset({"attribute_item"}),
-    SupportedLanguage.JAVA: frozenset({"annotation", "marker_annotation", "modifiers"}),
-    SupportedLanguage.SCALA: frozenset({"annotation"}),
-    SupportedLanguage.CSHARP: frozenset({"attribute_list"}),
-    SupportedLanguage.DART: frozenset({"annotation", "metadata"}),
 }
 
 
@@ -192,11 +202,10 @@ def _target_index(siblings: list[ASTNode], node: ASTNode) -> int | None:
     `sibs[2] == node` is True. An identity search silently found nothing and
     every definition read as undocumented.
 
-    NOT by `==` either, which is value equality on type and extent: two
-    siblings can share both (an empty `declaration` repeated, Dart's split
-    signature/body) and the first match would win. The start point plus the
-    type is unique among one parent's children, because two siblings cannot
-    begin at the same byte.
+    NOT by `==` either, which is value equality on type and extent, so the
+    first match would win if two siblings ever shared both. The key below is
+    (start, end, type); every match is collected and exactly one is required,
+    for the reason in the comment on the return.
     """
     key = (node.start_point, node.end_point, node.type)
     matches = [

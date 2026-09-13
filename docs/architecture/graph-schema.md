@@ -167,6 +167,36 @@ reason, even when they do carry the marker:
 - **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
   marker in JavaScript, TypeScript or TSX; `/**` is.
 
+## Definition Documentation
+
+`Class`, `Function`, `Method`, `Interface`, `Enum`, `Type` and `Union` carry
+the documentation of that one definition in the same optional `docstring`
+property. Python's is the string literal that opens the body; every other
+language's is the doc comment immediately above the declaration.
+
+The markers are the ones in the module table with one exception: Rust
+documents a definition with the **outer** forms, `///` and `/**`, while `//!`
+and `/*!` describe the enclosing module and are never attached to an item. Go
+has no marker at either level, so `//` directly above a declaration is its doc.
+
+Whether a comment belongs to the file or to the declaration beneath it is one
+decision, made once, from the blank line: a doc comment touching a declaration
+is that declaration's, a detached one is the file's. So `/** Class docs */`
+directly above `class C {}` lands on the `Class` node and not on the `Module`,
+and the same comment separated by a blank line does the reverse. Rust is the one
+language where a detached `///` belongs to neither -- it documents nothing, and
+`rustc` warns on it.
+
+An attribute between the comment and its declaration does not detach it
+(`/// doc` / `#[derive(Debug)]` / `struct S`). In the other languages an
+annotation is part of the declaration node itself, so the comment is already
+adjacent and no skipping is needed.
+
+The exclusions are the module table's -- separator rules, directives, ordinary
+comments without the marker -- for the same reason: an `// ordinary note`
+recorded as a function's documentation is a wrong answer that reads like a
+right one.
+
 ## Nested Definitions
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
