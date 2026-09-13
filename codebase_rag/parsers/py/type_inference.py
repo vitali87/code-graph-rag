@@ -85,42 +85,98 @@ class PythonTypeInferenceEngine(
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
     @staticmethod
-    def _receiver_parameter_names(caller_node: Node) -> list[str]:
-        """`self` / `cls` when one is the first parameter of `caller_node` or
-        of a def enclosing it below the class (a closure inside a method sees
-        the method's `self`). A staticmethod, or a def whose first parameter
-        is anything else, yields nothing."""
-        names: list[str] = []
+    def _first_parameter_name(def_node: Node) -> str | None:
+        params = def_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        first = params.named_children[0] if params and params.named_children else None
+        if first is not None and first.type != cs.TS_PY_IDENTIFIER:
+            first = next(
+                (c for c in first.named_children if c.type == cs.TS_PY_IDENTIFIER), None
+            )
+        if first is None or first.text is None:
+            return None
+        return first.text.decode(cs.ENCODING_UTF8)
+
+    @staticmethod
+    def _parameter_names(def_node: Node) -> set[str]:
+        params = def_node.child_by_field_name(cs.FIELD_PARAMETERS)
+        names: set[str] = set()
+        for param in params.named_children if params else []:
+            ident = (
+                param
+                if param.type == cs.TS_PY_IDENTIFIER
+                else next(
+                    (c for c in param.named_children if c.type == cs.TS_PY_IDENTIFIER),
+                    None,
+                )
+            )
+            if ident is not None and ident.text is not None:
+                names.add(ident.text.decode(cs.ENCODING_UTF8))
+        return names
+
+    @staticmethod
+    def _is_static_method(def_node: Node) -> bool:
+        parent = def_node.parent
+        if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
+            return False
+        for child in parent.named_children:
+            if child.type == cs.TS_PY_DECORATOR and child.text is not None:
+                text = child.text.decode(cs.ENCODING_UTF8).lstrip("@").strip()
+                if text.split("(", 1)[0].rsplit(".", 1)[-1] in cs.STATIC_DECORATORS:
+                    return True
+        return False
+
+    @staticmethod
+    def _rebinds(def_node: Node, name: str) -> bool:
+        """Whether the def's own body assigns to `name` (`self = pick()`)."""
+        stack = list(def_node.named_children)
+        while stack:
+            node = stack.pop()
+            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
+                left = node.child_by_field_name(cs.FIELD_LEFT)
+                if (
+                    left is not None
+                    and left.type == cs.TS_PY_IDENTIFIER
+                    and left.text is not None
+                    and left.text.decode(cs.ENCODING_UTF8) == name
+                ):
+                    return True
+            stack.extend(node.named_children)
+        return False
+
+    @classmethod
+    def _receiver_parameter_names(cls, caller_node: Node) -> list[str]:
+        """The bound receiver (`self` or `cls`) visible to `caller_node`, or nothing.
+
+        Only the method DIRECTLY in the class body has a bound receiver, and
+        only when it is not a staticmethod: its first parameter, named `self`
+        or `cls`. A staticmethod's `self` or a nested def's own `self`
+        parameter is a caller-supplied value of unknown type. A closure inside
+        a method sees the method's receiver unless one of the defs between
+        them declares a parameter of that name (shadowing). A def that
+        rebinds the receiver in its body (`self = pick()`) gets no seed: the
+        alias pass yields to an existing entry, so the seed would have kept
+        the class type over the factory's.
+        """
+        chain: list[Node] = []
         node: Node | None = caller_node
         while node is not None and node.type != cs.TS_PY_CLASS_DEFINITION:
             if node.type == cs.TS_PY_FUNCTION_DEFINITION:
-                params = node.child_by_field_name(cs.FIELD_PARAMETERS)
-                first = (
-                    params.named_children[0]
-                    if params and params.named_children
-                    else None
-                )
-                if first is not None and first.type != cs.TS_PY_IDENTIFIER:
-                    first = next(
-                        (
-                            c
-                            for c in first.named_children
-                            if c.type == cs.TS_PY_IDENTIFIER
-                        ),
-                        None,
-                    )
-                text = (
-                    first.text.decode(cs.ENCODING_UTF8)
-                    if first and first.text
-                    else None
-                )
-                if (
-                    text in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS)
-                    and text not in names
-                ):
-                    names.append(text)
+                chain.append(node)
             node = node.parent
-        return names
+        if node is None or not chain:
+            return []  # not inside a class at all
+        method = chain[-1]
+        if cls._is_static_method(method):
+            return []
+        receiver = cls._first_parameter_name(method)
+        if receiver not in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+            return []
+        for inner in chain[:-1]:
+            if receiver in cls._parameter_names(inner):
+                return []
+        if any(cls._rebinds(d, receiver) for d in chain):
+            return []
+        return [receiver]
 
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str, class_context: str | None = None

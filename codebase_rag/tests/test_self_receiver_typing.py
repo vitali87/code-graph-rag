@@ -205,6 +205,90 @@ def test_a_returned_local_typed_from_self_types_the_caller(tmp_path: Path) -> No
     assert _render_targets(repo, ".use") == {"proj.widget.Widget.render"}
 
 
+_SHAPES = (
+    "from proj.widget import Widget\n"
+    "from proj.other import pick\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    @staticmethod\n"
+    "    def static_self(self) -> str:\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def shadowing(self) -> str:\n"
+    "        def inner(self) -> str:\n"
+    "            w = self.parse()\n"
+    "            return w.render()\n"
+    "        return inner(self)\n\n"
+    "    def rebinding(self) -> str:\n"
+    "        self = pick()\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def plain(self) -> str:\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def other_first(other, self) -> str:\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n"
+)
+
+
+def _method_maps(tmp_path: Path) -> dict[str, dict[str, str]]:
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    repo = _build(tmp_path, _SHAPES, _DECOY_CONTROL)
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater.run(force=True)
+    python = next(p for k, p in parsers.items() if str(k) == "python")
+    tree = python.parse((repo / "app.py").read_bytes())
+    class_node = next(
+        n for n in tree.root_node.children if n.type == "class_definition"
+    )
+    ti = updater.factory.type_inference
+    maps: dict[str, dict[str, str]] = {}
+    for child in class_node.child_by_field_name("body").children:
+        node = (
+            child.child_by_field_name("definition")
+            if child.type == "decorated_definition"
+            else child
+        )
+        if node is None or node.type != "function_definition":
+            continue
+        name = node.child_by_field_name("name").text.decode()
+        maps[name] = ti.build_local_variable_type_map(
+            node, "proj.app", cs.SupportedLanguage.PYTHON, "proj.app.Parser"
+        )
+        if name == "shadowing":
+            inner = next(
+                n
+                for n in node.child_by_field_name("body").children
+                if n.type == "function_definition"
+            )
+            maps["shadowing.inner"] = ti.build_local_variable_type_map(
+                inner, "proj.app", cs.SupportedLanguage.PYTHON, "proj.app.Parser"
+            )
+    return maps
+
+
+def test_only_a_bound_receiver_is_seeded(tmp_path: Path) -> None:
+    # A staticmethod's `self`, a nested def's own `self` parameter, a
+    # receiver rebound in the body and a first parameter not named self/cls
+    # are caller-supplied values of unknown type: `w` must stay untyped (or
+    # take the factory's type). The plain method types `w` from the class.
+    maps = _method_maps(tmp_path)
+    assert maps["plain"].get("w") == "Widget"
+    assert "w" not in maps["static_self"]
+    assert "w" not in maps["shadowing.inner"]
+    assert maps["rebinding"].get("w") == "Banner", (
+        "the factory's type must win over the class"
+    )
+    assert "w" not in maps["other_first"]
+
+
 def test_the_seed_types_the_assigned_local_and_is_not_exported(tmp_path: Path) -> None:
     # The mechanism itself: with the class context, the method's map types
     # `w` from `self.parse()`; `self` and `cls` themselves are NOT left in
