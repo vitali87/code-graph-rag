@@ -91,6 +91,7 @@ def _apply_memory_limit(
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
+        "_node_flush_lock",
         "_executor",
         "_host",
         "_port",
@@ -140,6 +141,7 @@ class MemgraphIngestor:
         self.batch_size = batch_size
         self._use_merge = use_merge
         self._conn_lock = threading.Lock()
+        self._node_flush_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
         self.conn: ConnectionProtocol | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
@@ -534,6 +536,10 @@ class MemgraphIngestor:
             conn.close()
 
     def flush_nodes(self) -> None:
+        with self._node_flush_lock:
+            self._flush_nodes()
+
+    def _flush_nodes(self) -> None:
         if not self.node_buffer:
             return
 

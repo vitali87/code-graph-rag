@@ -1,3 +1,4 @@
+from _thread import LockType
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
@@ -175,3 +176,82 @@ def test_nodes_appended_during_flush_remain_buffered(
 
     expected = [failed_node, appended_node] if fail else [appended_node]
     assert ingestor.node_buffer == expected
+
+
+def _observe_lock_contention(ingestor: MemgraphIngestor, waiting: Event) -> None:
+    def observe(lock: LockType) -> MagicMock:
+        def enter() -> None:
+            if not lock.acquire(blocking=False):
+                waiting.set()
+                assert lock.acquire(timeout=5)
+
+        observed = MagicMock()
+        observed.__enter__.side_effect = enter
+        observed.__exit__.side_effect = lambda *_args: lock.release()
+        return observed
+
+    for slot in ingestor.__slots__:
+        value = getattr(ingestor, slot)
+        if isinstance(value, LockType):
+            setattr(ingestor, slot, observe(value))
+
+
+@pytest.mark.parametrize("auto_flush", [False, True], ids=["explicit", "auto"])
+@pytest.mark.parametrize("fail", [False, True], ids=["success", "failure"])
+def test_overlapping_flushes_do_not_replay_nodes_or_lose_new_failures(
+    graph_cursor: tuple[MemgraphIngestor, MagicMock], auto_flush: bool, fail: bool
+) -> None:
+    ingestor, cursor = graph_cursor
+    ingestor._use_merge = False
+    if auto_flush:
+        ingestor.batch_size = 3
+    started = Event()
+    release = Event()
+    second_ready = Event()
+    _observe_lock_contention(ingestor, second_ready)
+    pending = ("Function", {"qualified_name": "project.pending"})
+    ingestor.ensure_node_batch("Module", {"qualified_name": "project.a"})
+    ingestor.ensure_node_batch("Project", {"name": "project"})
+    written: list[PropertyValue] = []
+
+    def execute(query: str, params: BatchWrapper) -> None:
+        ids = [row["id"] for row in params["batch"]]
+        if ids == ["project.a"] and not started.is_set():
+            started.set()
+            assert release.wait(timeout=5)
+        if ids == ["project.pending"] and fail:
+            raise ConnectionError("transient pending node failure")
+        written.extend(ids)
+
+    def second_flush() -> None:
+        try:
+            ingestor.ensure_node_batch(*pending)
+            if not auto_flush:
+                ingestor.flush_nodes()
+        finally:
+            second_ready.set()
+
+    cursor.execute.side_effect = execute
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        first = callers.submit(ingestor.flush_nodes)
+        try:
+            assert started.wait(timeout=5)
+            second = callers.submit(second_flush)
+            assert second_ready.wait(timeout=5)
+        finally:
+            release.set()
+        first.result(timeout=5)
+        if fail:
+            with pytest.raises(ConnectionError, match="transient pending node failure"):
+                second.result(timeout=5)
+        else:
+            second.result(timeout=5)
+
+    if fail:
+        assert ingestor.node_buffer == [pending]
+        fail = False
+        ingestor.flush_nodes()
+    assert ingestor.node_buffer == []
+    assert written.count("project") == 1
+    assert written.count("project.a") == 1
+    assert written.count("project.pending") == 1
