@@ -18,20 +18,11 @@ from .utils import resolve_class_name
 # be one: an operator, `or`/`and`, or a conditional. Everything else keeps the
 # cheaper string paths. The length cap keeps a generated one-liner from being
 # parsed on every call it makes.
-_INLINE_EXPRESSION_MARKERS = (
-    " or ",
-    " and ",
-    " if ",
-    "/",
-    "+",
-    "-",
-    "*",
-    "%",
-    "|",
-    "&",
-    "^",
-    "@",
-)
+# Keywords are matched as tokens so a receiver split across lines
+# (`(a\n    or b)`) is seen; operators come from the dunder table itself so
+# none can be forgotten (`<<` and `>>` were).
+_INLINE_KEYWORD_RE = re.compile(r"\b(?:or|and|if)\b")
+_INLINE_OPERATOR_TOKENS = tuple(cs.PY_BINARY_OPERATOR_DUNDERS)
 _INLINE_EXPRESSION_NODE_TYPES = frozenset(
     {
         cs.TS_PY_BOOLEAN_OPERATOR,
@@ -363,9 +354,14 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         of a conditional's branches. Anything that is not an operator,
         boolean or conditional expression is left to the method-call path.
         """
-        if not local_var_types or len(expression) > _MAX_INLINE_EXPRESSION_CHARS:
+        # No local map is not a reason to skip: `(Factory() / Config()).run()`
+        # types from its constructor leaves alone.
+        if len(expression) > _MAX_INLINE_EXPRESSION_CHARS:
             return None
-        if not any(marker in expression for marker in _INLINE_EXPRESSION_MARKERS):
+        if not (
+            _INLINE_KEYWORD_RE.search(expression)
+            or any(token in expression for token in _INLINE_OPERATOR_TOKENS)
+        ):
             return None
         # Local import: parser_loader pulls in the language grammars.
         from ...parser_loader import load_parsers
@@ -385,7 +381,7 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         alias = self._get_assignment_alias(node)
         if alias is None:
             return None
-        inferred = self._get_alias_type(alias, local_var_types, module_qn)
+        inferred = self._get_alias_type(alias, local_var_types or {}, module_qn)
         if not inferred:
             return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})

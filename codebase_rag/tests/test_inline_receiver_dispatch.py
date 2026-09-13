@@ -54,6 +54,15 @@ _BODIES = {
         "    def pick(self, override: Path | None) -> str:\n"
         "        return (override or self.base).resolve().as_posix()\n"
     ),
+    # The same `or`, split across lines: the keyword must be found as a
+    # token, not as a space-padded substring (CodeRabbit).
+    "paren_or_multiline": (
+        "    def pick(self, override: Path | None) -> str:\n"
+        "        return (\n"
+        "            override\n"
+        "            or self.base\n"
+        "        ).resolve().as_posix()\n"
+    ),
 }
 
 
@@ -206,6 +215,48 @@ def test_an_inline_operator_on_a_project_class_reaches_its_dunder(
     }
     assert any(t.endswith("engine.Base.run") for t in calls), calls
     assert not any(t.endswith("engine.Factory.run") for t in calls), calls
+
+
+def test_constructor_only_and_shift_receivers_reach_the_rules(
+    tmp_path: Path,
+) -> None:
+    """`(Factory() / Config()).run()` has no local variables at all, and
+    `(Factory() << 1).run()` uses an operator the marker list once lacked;
+    both must reach the dispatch rules rather than the name fallback
+    (CodeRabbit)."""
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(
+        "class Config:\n    pass\n\n"
+        "class Product:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Factory:\n"
+        "    def run(self) -> int:\n        return 0\n"
+        "    def __truediv__(self, config: Config) -> Product:\n"
+        "        return Product()\n"
+        "    def __lshift__(self, n: int) -> Product:\n"
+        "        return Product()\n"
+    )
+    (repo / "app.py").write_text(
+        "from .engine import Factory, Config\n\n"
+        "def divide() -> int:\n"
+        "    return (Factory() / Config()).run()\n\n"
+        "def shift() -> int:\n"
+        "    return (Factory() << 1).run()\n"
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    by_caller: dict[str, set[str]] = {}
+    for _sl, src, rel, _tl, tgt in store.edges:
+        if rel == cs.RelationshipType.CALLS.value and str(tgt).endswith(".run"):
+            by_caller.setdefault(str(src).rsplit(".", 1)[-1], set()).add(str(tgt))
+    for caller in ("divide", "shift"):
+        targets = by_caller.get(caller, set())
+        assert any(t.endswith("engine.Product.run") for t in targets), by_caller
+        assert not any(t.endswith("engine.Factory.run") for t in targets), by_caller
 
 
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
