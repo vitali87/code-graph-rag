@@ -1329,12 +1329,14 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
             cs.NodeLabel.FUNCTION,
             resolution.qualified_name,
             module_qn,
             extract_type_facts(func_node, language),
+            func_path if isinstance(func_path, str) else None,
         )
         emit_declared_parameters(
             self.ingestor,
