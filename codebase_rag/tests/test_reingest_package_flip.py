@@ -30,6 +30,7 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.path_utils import cached_resolve_posix
 from evals.cgr_graph import _StatefulIngestor
 
 UTIL = "def helper():\n    return 1\n"
@@ -599,7 +600,12 @@ def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> Non
         {
             cs.KEY_PATH: "pkg",
             cs.KEY_NAME: "pkg",
-            cs.KEY_ABSOLUTE_PATH: str(directory.resolve()),
+            # The SAME helper production keys on, not `str(Path.resolve())`.
+            # They agree on POSIX and diverge on Windows, where one yields
+            # backslashes and the query matches neither -- the planted node
+            # was simply never found and the fixture guard failed there while
+            # passing everywhere else (CI, Windows py3.12).
+            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(directory),
         },
     )
     store.flush_all()
