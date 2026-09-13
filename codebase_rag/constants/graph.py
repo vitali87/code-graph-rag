@@ -35,6 +35,7 @@ KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
 KEY_TYPE_NAME = "type_name"
+KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
 KEY_HAS_DEFAULT = "has_default"
 KEY_NAME_START_LINE = "name_start_line"

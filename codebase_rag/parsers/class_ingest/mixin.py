@@ -31,6 +31,7 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType
@@ -200,6 +201,7 @@ class ClassIngestMixin:
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
+    pending_field_types: list[PendingFieldType]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1095,6 +1097,21 @@ class ClassIngestMixin:
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
         self.ingestor.ensure_node_batch(node_type, class_props)
+        # Declared fields ride with their owner: same gate, same props source
+        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
+        emit_declared_fields(
+            self.ingestor,
+            self.pending_field_types,
+            # `determine_node_type` returns a NodeType; every member's value is a
+            # NodeLabel value (checked when this was written), so the owner
+            # label is the same name in the graph's own enum.
+            cs.NodeLabel(node_type.value),
+            class_qn,
+            module_qn,
+            class_node,
+            language,
+            class_props,
+        )
         self.function_registry[class_qn] = node_type
         if class_name:
             self.simple_name_lookup[class_name].add(class_qn)

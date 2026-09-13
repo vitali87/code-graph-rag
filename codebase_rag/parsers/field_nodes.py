@@ -18,6 +18,8 @@ from typing import NamedTuple
 from tree_sitter import Node
 
 from .. import constants as cs
+from ..services import IngestorProtocol
+from .type_facts import TypeReferenceResolver
 from .utils import safe_decode_text
 
 # Keyword children that are modifiers in the C-family grammars. Annotations
@@ -767,4 +769,105 @@ def php_declared_fields(class_node: Node) -> list[DeclaredField]:
     return out
 
 
-__all__ = ["DeclaredField", "declared_fields"]
+# --- Emission -----------------------------------------------------------------
+#
+# The same shape as `parameter_nodes.emit_declared_parameters`, with the
+# declaring type as owner: gate on the capture selection, emit the node and its
+# HAS_FIELD edge together (never one without the other, or the node orphans),
+# and queue the declared type for the deferred OF_TYPE pass after Pass 2, when
+# every project type is registered. Mirrored rather than shared so #1804's
+# module is not edited from this branch; unifying the two is a follow-up.
+
+
+class PendingFieldType(NamedTuple):
+    """A field's declared type, held until every file's types are registered."""
+
+    field_qn: str
+    module_qn: str
+    type_name: str
+
+
+def emit_declared_fields(
+    ingestor: IngestorProtocol,
+    sink: list[PendingFieldType] | None,
+    label: cs.NodeLabel,
+    qualified_name: str,
+    module_qn: str | None,
+    class_node: Node,
+    language: cs.SupportedLanguage | None,
+    owner_props: dict,
+) -> int:
+    """Field nodes and HAS_FIELD edges for one declaring type. Returns the count."""
+    rel_gate = getattr(ingestor, "rel_enabled", None)
+    if callable(rel_gate) and not rel_gate(cs.RelationshipType.HAS_FIELD):
+        return 0
+    declared = declared_fields(class_node, language)
+    if not declared:
+        return 0
+    path = owner_props.get(cs.KEY_PATH)
+    absolute_path = owner_props.get(cs.KEY_ABSOLUTE_PATH)
+    owner = (label.value, cs.KEY_QUALIFIED_NAME, qualified_name)
+    for field in declared:
+        field_qn = f"{qualified_name}{cs.SEPARATOR_DOT}{field.name}"
+        props: dict = {
+            cs.KEY_QUALIFIED_NAME: field_qn,
+            cs.KEY_NAME: field.name,
+            cs.KEY_START_LINE: field.start_line,
+            cs.KEY_START_COL: field.start_col,
+            cs.KEY_MODIFIERS: list(field.modifiers),
+            cs.KEY_IS_STATIC: field.is_static,
+        }
+        if path is not None:
+            props[cs.KEY_PATH] = path
+        if absolute_path is not None:
+            props[cs.KEY_ABSOLUTE_PATH] = absolute_path
+        if field.type_name:
+            props[cs.KEY_TYPE_NAME] = field.type_name
+        ingestor.ensure_node_batch(cs.NodeLabel.FIELD, props)
+        ingestor.ensure_relationship_batch(
+            owner,
+            cs.RelationshipType.HAS_FIELD,
+            (cs.NodeLabel.FIELD.value, cs.KEY_QUALIFIED_NAME, field_qn),
+        )
+        if sink is not None and module_qn is not None and field.type_name:
+            sink.append(PendingFieldType(field_qn, module_qn, field.type_name))
+    return len(declared)
+
+
+def emit_field_type_edges(
+    pending: list[PendingFieldType],
+    resolver: TypeReferenceResolver,
+    ingestor: IngestorProtocol,
+) -> int:
+    """OF_TYPE edges for every queued field, after Pass 2.
+
+    One resolve per DISTINCT (declared type, module), as the parameter pass
+    does: the same annotation string recurs across a class's fields.
+    """
+    memo: dict[tuple[str, str], list[str]] = {}
+    emitted = 0
+    for fact in pending:
+        key = (fact.type_name, fact.module_qn)
+        targets = memo.get(key)
+        if targets is None:
+            targets = memo[key] = resolver.resolve_annotation(
+                fact.type_name, fact.module_qn
+            )
+        source = (cs.NodeLabel.FIELD.value, cs.KEY_QUALIFIED_NAME, fact.field_qn)
+        for target_qn in targets:
+            ingestor.ensure_relationship_batch(
+                source,
+                cs.RelationshipType.OF_TYPE,
+                (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn),
+            )
+            emitted += 1
+    return emitted
+
+
+__all__ = [
+    "DeclaredField",
+    "PendingFieldType",
+    "declared_fields",
+    "emit_declared_fields",
+    "emit_field_type_edges",
+]

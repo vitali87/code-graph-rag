@@ -706,6 +706,21 @@ class _StatefulIngestor:
                     and cs.KEY_TYPE_NAME in props
                     and _text(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
                 ]
+            case cs.CYPHER_PROJECT_FIELD_TYPES:
+                # The Field counterpart (issue #1805), read by the incremental
+                # requeue for the same reason as the Parameter query above.
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.FIELD.value
+                    and cs.KEY_TYPE_NAME in props
+                    and _text(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                ]
             case cs.CYPHER_ALL_INHERITS:
                 inherits: list[tuple[str, int, ResultRow]] = []
                 for edge in self.edges:

@@ -62,6 +62,7 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
+from .parsers.field_nodes import PendingFieldType
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -2290,6 +2291,43 @@ class GraphUpdater:
                 )
             )
 
+    def _requeue_field_types(
+        self, project_params: PropertyDict, rehydrated_owners: set[str]
+    ) -> None:
+        # The Field counterpart of _requeue_parameter_types, for the same
+        # reason and with the same guard: only owners the rehydration loop
+        # restored qualify, because by now every definition is in the registry.
+        if not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE) or not isinstance(
+            self.ingestor, QueryProtocol
+        ):
+            return
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_FIELD_TYPES, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            return
+        pending = self.factory.definition_processor.pending_field_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if qn.rpartition(cs.SEPARATOR_DOT)[0] not in rehydrated_owners:
+                continue
+            pending.append(
+                PendingFieldType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name
+                )
+            )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2407,6 +2445,7 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
         self._requeue_parameter_types(project_params, rehydrated_owners)
+        self._requeue_field_types(project_params, rehydrated_owners)
 
     def _seed_module_qns_from_graph(
         self,
