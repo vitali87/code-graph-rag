@@ -93,6 +93,7 @@ def _observe(
     updater: GraphUpdater,
     changed: list[str],
     deleted: list[str] | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     return observe(
         store.fetch_all,
@@ -100,6 +101,7 @@ def _observe(
         [*changed, *(deleted or [])],
         lambda: updater.reingest(changed, deleted=deleted or []),
         repo_root=root,
+        declared_renames=declared_renames,
     )
 
 
@@ -986,3 +988,76 @@ def test_check_refuses_a_base_that_is_not_one_commit(
     with pytest.raises(CheckError, match="one commit"):
         changed_since(root, base)
     assert changed_since(root, "HEAD") == (["pkg/extra.py"], [])
+
+
+# An EMPTY container carries no fingerprint, so the only signal the pairing
+# ever had was "one of this label left the file and one appeared" -- which an
+# unrelated replacement satisfies exactly. The contract treats an unexpected
+# rename as a failure, so an invented one rolls back a correct edit
+# (Greptile, PR #1547).
+def test_an_unrelated_empty_class_is_not_reported_as_a_rename(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    # A DIFFERENT empty class, declared lower down: not a rename of Alpha.
+    _write(root, "pkg/empty.py", "# a new file entirely\n\nclass Beta:\n    pass\n")
+    delta = _observe(root, store, updater, ["pkg/empty.py"])
+
+    assert delta["symbols"]["renamed"] == []
+    assert _qn("pkg.empty.Alpha") in delta["symbols"]["removed"]
+    assert _qn("pkg.empty.Beta") in delta["symbols"]["added"]
+
+
+def test_an_empty_class_rename_is_reported_when_the_caller_DECLARES_it(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The control. The snapshots cannot tell this from the replacement above
+    # -- they are the same edit -- so the only difference is that the
+    # operation says which pair it applied. Without this test, refusing every
+    # empty-container pairing would pass the test above while silently
+    # dropping every real empty-class rename.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Renamed:\n    pass\n")
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {(_qn("pkg.empty.Alpha"), _qn("pkg.empty.Renamed"))}
+        ),
+    )
+
+    assert delta["symbols"]["renamed"] == [
+        {
+            "old": _qn("pkg.empty.Alpha"),
+            "new": _qn("pkg.empty.Renamed"),
+            "path": "pkg/empty.py",
+        }
+    ]
+    assert delta["symbols"]["added"] == []
+    assert delta["symbols"]["removed"] == []
+
+
+def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The plain-write path (a file edited outside a rename operation) has no
+    # declaration, and the snapshots hold no evidence, so the honest answer
+    # is that one class went and another arrived.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Renamed:\n    pass\n")
+    delta = _observe(root, store, updater, ["pkg/empty.py"])
+
+    assert delta["symbols"]["renamed"] == []
+    assert _qn("pkg.empty.Alpha") in delta["symbols"]["removed"]
+    assert _qn("pkg.empty.Renamed") in delta["symbols"]["added"]

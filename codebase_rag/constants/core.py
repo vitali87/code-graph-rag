@@ -197,6 +197,14 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
 )
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
+
+# What a TransactionConflict means for a rename's rollback. Absence from the
+# history is only evidence of an undo while the history has not reached its
+# retention limit; at the limit an entry can have been EVICTED with its
+# rename still on disk.
+RENAME_UNDO_STACKED = "stacked"
+RENAME_UNDO_UNDONE = "undone"
+RENAME_UNDO_UNKNOWN = "unknown"
 EDIT_TRANSACTION_ID_LENGTH = 12
 EDIT_STAGING_PREFIX = "cgr-edit-"
 DIFF_DEV_NULL = "/dev/null"
