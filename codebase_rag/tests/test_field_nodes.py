@@ -360,7 +360,9 @@ class TestOwnerShapesFromReview:
             "interface Konst {\n  int MAX = 1;\n}\n",
             "interface_declaration",
         )
-        assert _rows(iface) == [("MAX", "int", (), False)]
+        # No keyword written, so `modifiers` is empty; still static, because
+        # every interface field is implicitly `public static final`.
+        assert _rows(iface) == [("MAX", "int", (), True)]
 
     def test_ts_interface_members_and_parameter_properties(self, parsers) -> None:
         iface = _fields(

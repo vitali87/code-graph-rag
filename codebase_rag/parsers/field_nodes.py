@@ -320,11 +320,19 @@ def java_declared_fields(class_node: Node) -> list[DeclaredField]:
         return []
     out: list[DeclaredField] = []
     for member in _java_members(body):
-        if member.type not in (cs.TS_FIELD_DECLARATION, "constant_declaration"):
+        if member.type not in (
+            cs.TS_FIELD_DECLARATION,
+            cs.TS_JAVA_CONSTANT_DECLARATION,
+        ):
             continue
         modifiers = _keyword_modifiers(member, _JAVA_KEYWORDS)
         type_name = _type_text(member.child_by_field_name(cs.FIELD_TYPE))
-        is_static = cs.TS_STATIC in modifiers
+        # `modifiers` records what was written; `is_static` records what is
+        # true. An interface field is implicitly `public static final`, so
+        # `int MAX = 1;` in an interface is static with no keyword in source.
+        is_static = (
+            cs.TS_STATIC in modifiers or member.type == cs.TS_JAVA_CONSTANT_DECLARATION
+        )
         # `int N = 1, M = 2;` is one declaration and two fields.
         for declarator in member.children_by_field_name(cs.FIELD_DECLARATOR):
             name_node = declarator.child_by_field_name(cs.FIELD_NAME)
@@ -339,7 +347,8 @@ def _java_members(body: Node) -> list[Node]:
 
     An enum's fields sit under that wrapper after the constants and `;`, so a
     walk of `body.children` alone saw none of them; an interface's constants
-    are `constant_declaration` rather than `field_declaration` (local review).
+    are `constant_declaration` rather than `field_declaration` (local review),
+    and implicitly static (bot review).
     """
     members: list[Node] = []
     for child in body.children:
