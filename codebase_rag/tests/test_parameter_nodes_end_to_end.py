@@ -16,7 +16,18 @@ from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
 
 _SRC = {
-    "models.py": "class Widget:\n    pass\n",
+    "models.py": "class Widget:\n    pass\n\nclass Gadget:\n    pass\n",
+    # No import: `Gadget` resolves by unique suffix. That makes consumer.py NOT
+    # a dependent of models.py, so a re-parse of models.py alone never
+    # re-parses it -- the one shape in which OF_TYPE has to be rebuilt from
+    # the graph rather than re-emitted by ingest.
+    "consumer.py": "def use(gadget: Gadget) -> int:\n    return 0\n",
+    # A second module with its OWN Widget: the deferred pass memoises resolution
+    # per (annotation, module), and this is the fixture that can tell a
+    # per-module key from a global one.
+    "other.py": (
+        "class Widget:\n    pass\n\ndef use(widget: Widget) -> int:\n    return 0\n"
+    ),
     "app.py": (
         "from .models import Widget\n"
         "\n"
@@ -104,6 +115,8 @@ def test_of_type_resolves_an_annotation_to_the_project_class(tmp_path: Path) -> 
     assert of_type == {
         ("proj.app.build.1", "proj.models.Widget"),
         ("proj.app.Factory.make.0", "proj.models.Widget"),
+        ("proj.other.use.0", "proj.other.Widget"),
+        ("proj.consumer.use.0", "proj.models.Gadget"),
     }
 
 
@@ -114,3 +127,85 @@ def test_a_parameter_node_is_never_left_without_its_edge(tmp_path: Path) -> None
         store = _index(tmp_path / ("on" if tokens else "off"), tokens)
         owned = {t for _s, t in _edges(store, cs.RelationshipType.HAS_PARAMETER.value)}
         assert set(_nodes(store, cs.NodeLabel.PARAMETER.value)) == owned
+
+
+def test_index_offsets_against_param_types_as_documented(tmp_path: Path) -> None:
+    """The owner keeps the receiver in `param_types`; a Parameter does not.
+
+    So on a method `param_types[index + 1]` is this parameter's annotation and
+    on a function `param_types[index]` is. The docstring says exactly that;
+    this pins it against real nodes (local review P1: an earlier docstring
+    claimed the two agreed).
+    """
+    store = _index(tmp_path, ["+parameters"])
+    owners = {
+        str(p[cs.KEY_QUALIFIED_NAME]): p
+        for (label, _uid), p in store.nodes.items()
+        if label in (cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value)
+    }
+    params = _nodes(store, cs.NodeLabel.PARAMETER.value)
+    make = params["proj.app.Factory.make.0"]
+    build = params["proj.app.build.1"]
+    assert owners["proj.app.Factory.make"][cs.KEY_PARAM_TYPES][0] == ""
+    assert (
+        owners["proj.app.Factory.make"][cs.KEY_PARAM_TYPES][make[cs.KEY_INDEX] + 1]
+        == make[cs.KEY_TYPE_NAME]
+        == "Widget"
+    )
+    assert (
+        owners["proj.app.build"][cs.KEY_PARAM_TYPES][build[cs.KEY_INDEX]]
+        == build[cs.KEY_TYPE_NAME]
+        == "Widget"
+    )
+
+
+def _reindex(store: _StatefulIngestor, repo: Path) -> None:
+    parsers, queries = load_parsers()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+parameters"]),
+    ).run(force=False)
+
+
+def test_a_reparse_takes_stale_parameters_with_their_owner(tmp_path: Path) -> None:
+    """Drop a parameter and delete a function; nothing of theirs survives.
+
+    `CYPHER_DELETE_MODULE` walks what the module DEFINES; a Parameter hangs
+    off a Function by HAS_PARAMETER, which was outside the walk, so a removed
+    parameter or a deleted function left its nodes with no owner (local
+    review P1, the shape of #1828 with the opposite remedy).
+    """
+    store = _index(tmp_path, ["+parameters"])
+    repo = tmp_path / "proj"
+    (repo / "app.py").write_text(
+        "from .models import Widget\n\n"
+        "def build(name: str, widget: Widget) -> int:\n    return 1\n"
+    )
+    _reindex(store, repo)
+
+    params = set(_nodes(store, cs.NodeLabel.PARAMETER.value))
+    owned = {t for _s, t in _edges(store, cs.RelationshipType.HAS_PARAMETER.value)}
+    assert params == owned, params - owned
+    assert {qn for qn in params if qn.startswith("proj.app.")} == {
+        "proj.app.build.0",
+        "proj.app.build.1",
+    }
+
+
+def test_of_type_survives_a_reparse_of_only_the_type_file(tmp_path: Path) -> None:
+    """Touch models.py alone: app.py is not re-parsed, so its Parameter nodes
+    are not re-emitted and their OF_TYPE has to be rebuilt from the graph,
+    the way RETURNS/ACCEPTS are (local review P1)."""
+    store = _index(tmp_path, ["+parameters"])
+    repo = tmp_path / "proj"
+    (repo / "models.py").write_text(_SRC["models.py"] + "# touched\n")
+    _reindex(store, repo)
+
+    of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
+    # app.py imports models, so it is a dependent and is re-parsed: its edges
+    # come back through ingest. consumer.py is not, and is the real test.
+    assert ("proj.app.build.1", "proj.models.Widget") in of_type, of_type
+    assert ("proj.consumer.use.0", "proj.models.Gadget") in of_type, of_type

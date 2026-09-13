@@ -67,3 +67,24 @@ def test_an_unannotated_parameter_has_no_type() -> None:
 
 def test_no_parameters_is_empty_not_an_error() -> None:
     assert _params("def f():\n    pass\n") == []
+
+
+def test_a_typed_variadic_is_declared_and_keeps_later_indices() -> None:
+    """`*args: int` wraps the splat in a typed_parameter (local review P1).
+
+    Looking for a direct identifier child found nothing, the slot was
+    skipped, and every parameter after it took the wrong index.
+    """
+    got = _params("def f(a, *args: int, b: str = '', **kw: str):\n    pass\n")
+    assert [(p.name, p.index, p.is_variadic, p.type_name) for p in got] == [
+        ("a", 0, False, None),
+        ("args", 1, True, "int"),
+        ("b", 2, False, "str"),
+        ("kw", 3, True, "str"),
+    ]
+
+
+def test_a_comment_before_self_does_not_defeat_the_exclusion() -> None:
+    """The receiver is the first BINDING, not the first child (local review P2)."""
+    got = _params("def m(  # note\n    self, x):\n    pass\n")
+    assert [p.name for p in got] == ["x"]

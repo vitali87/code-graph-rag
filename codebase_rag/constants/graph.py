@@ -585,7 +585,12 @@ CYPHER_DELETE_MODULE = (
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION*0..]->(c) "
+    # HAS_PARAMETER too: a Parameter is derived from source like everything
+    # else the module DEFINES, so it goes with its owner on re-parse. Without
+    # it a removed parameter or a deleted function left its nodes orphaned --
+    # the shape of the Gloss leak (#1828), but the opposite remedy, because a
+    # gloss is written into the graph and must survive a rebuild.
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -660,6 +665,15 @@ CYPHER_ALL_PACKAGE_PATHS = (
 # $project_prefix filter scopes it to the project being indexed; without it,
 # another project's same-named symbols pollute the resolver trie and the
 # bare-name fallback binds calls across the project boundary (issue #711).
+# Parameter nodes with an annotation, for rehydrating OF_TYPE on an
+# incremental run: the owner's file is unchanged and never re-emits them, so
+# the pending list is rebuilt from the graph the way RETURNS/ACCEPTS are.
+CYPHER_PROJECT_PARAMETER_TYPES = (
+    "MATCH (p:Parameter) WHERE p.qualified_name STARTS WITH $project_prefix "
+    "AND p.type_name IS NOT NULL "
+    "RETURN p.qualified_name AS qualified_name, p.type_name AS type_name, "
+    "p.path AS path"
+)
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "

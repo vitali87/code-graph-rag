@@ -81,6 +81,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.parameter_nodes import PendingParameterType
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -2247,6 +2248,48 @@ class GraphUpdater:
             )
         )
 
+    def _requeue_parameter_types(
+        self, project_params: PropertyDict, rehydrated_owners: set[str]
+    ) -> None:
+        # OF_TYPE for the Parameter nodes of files this run does not re-parse:
+        # their owners never re-emit them, so the pending list is rebuilt from
+        # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
+        # (issue #1527). Without this, re-parsing only the TYPE's file detaches
+        # every OF_TYPE into it and nothing puts them back. Only owners the
+        # rehydration loop restored qualify: by the time this runs EVERY
+        # definition is in the registry, so "owner in registry" cannot tell a
+        # re-parsed owner (which queued its own) from an unchanged one.
+        if not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE) or not isinstance(
+            self.ingestor, QueryProtocol
+        ):
+            return
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            return
+        pending = self.factory.definition_processor.pending_parameter_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if qn.rpartition(cs.SEPARATOR_DOT)[0] not in rehydrated_owners:
+                continue
+            pending.append(
+                PendingParameterType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name
+                )
+            )
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2257,6 +2300,7 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return
         added = 0
+        rehydrated_owners: set[str] = set()
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
             rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
@@ -2300,6 +2344,7 @@ class GraphUpdater:
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
                 # makes re-emitting the already-known edges harmless.
+                rehydrated_owners.add(qn)
                 self._requeue_type_facts(node_type, qn, path, row)
                 # Spans for hybrid expansion-call callee joins: only C/C++
                 # Function/Method rows carry a usable span.
@@ -2361,6 +2406,7 @@ class GraphUpdater:
             else:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
+        self._requeue_parameter_types(project_params, rehydrated_owners)
 
     def _seed_module_qns_from_graph(
         self,

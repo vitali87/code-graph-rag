@@ -54,43 +54,63 @@ _PY_DEFAULTED_TYPES = frozenset(
 _PY_IMPLICIT_RECEIVERS = frozenset({cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS})
 
 
-def _py_parameter_name(param: Node) -> Node | None:
-    """The identifier a parameter node binds, whatever wrapper it sits in."""
+def _py_binding(param: Node) -> tuple[Node | None, bool]:
+    """(the identifier a parameter node binds, whether it is variadic).
+
+    `*args: int` parses as `typed_parameter(list_splat_pattern, type)`, so the
+    splat can sit one level down; the variadic flag comes from the node that
+    actually carries the star, not from the wrapper.
+    """
     if param.type == cs.TS_PY_IDENTIFIER:
-        return param
+        return param, False
     if param.type in _PY_VARIADIC_TYPES:
-        # `*args` / `**kwargs`: the identifier is the only named child.
-        return next(
-            (c for c in param.named_children if c.type == cs.TS_PY_IDENTIFIER), None
+        return (
+            next(
+                (c for c in param.named_children if c.type == cs.TS_PY_IDENTIFIER), None
+            ),
+            True,
         )
     name = param.child_by_field_name(cs.TS_FIELD_NAME)
     if name is not None:
-        return name
-    # `typed_parameter` has no `name` field: the identifier is its first child.
-    return next((c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None)
+        return name, False
+    # `typed_parameter` has no `name` field: its first named child is the
+    # binding, which may itself be a splat pattern.
+    inner = next(iter(param.named_children), None)
+    if inner is not None and inner.type in _PY_VARIADIC_TYPES:
+        return _py_binding(inner)
+    return next(
+        (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
+    ), False
 
 
 def python_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     """Every formal parameter a Python function declares, in source order.
 
-    `self`/`cls` in FIRST position is excluded -- it is the receiver, not a
-    parameter the caller supplies, and it is 20% of all slots in this repo.
+    A `self`/`cls` that is the FIRST BINDING is excluded -- it is the receiver,
+    not a parameter the caller supplies, and it is 20% of all slots in this
+    repo. "First binding" rather than first child: a comment can precede it.
     The bare `*` and `/` separators bind nothing and take no index. `*args`
-    and `**kwargs` are one parameter each, flagged variadic. `index` is the
-    declaration position after the exclusion, so it agrees with the source
-    and with `param_types` on the owning Function/Method.
+    and `**kwargs` are one parameter each, flagged variadic, annotated or not.
+
+    `index` is the declaration position AFTER that exclusion. The owner's
+    `param_types` list keeps the receiver (an empty string in first place on
+    a method), so on such a method `param_types[index + 1]` is this
+    parameter's annotation and on a function `param_types[index]` is. Each
+    node also carries its own `type_name`, so nothing needs that join.
     """
     params_node = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params_node is None:
         return []
     declared: list[DeclaredParameter] = []
-    for position, param in enumerate(params_node.named_children):
+    seen_binding = False
+    for param in params_node.named_children:
         if param.type not in _PY_NAMED_PARAMETER_TYPES:
             continue
-        name_node = _py_parameter_name(param)
+        name_node, is_variadic = _py_binding(param)
         if name_node is None or not (name := safe_decode_text(name_node)):
             continue
-        if position == 0 and name in _PY_IMPLICIT_RECEIVERS:
+        first_binding, seen_binding = not seen_binding, True
+        if first_binding and name in _PY_IMPLICIT_RECEIVERS:
             continue
         type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
         declared.append(
@@ -100,7 +120,7 @@ def python_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
                 start_line=name_node.start_point[0] + 1,
                 start_col=name_node.start_point[1],
                 type_name=safe_decode_text(type_node) if type_node else None,
-                is_variadic=param.type in _PY_VARIADIC_TYPES,
+                is_variadic=is_variadic,
                 has_default=param.type in _PY_DEFAULTED_TYPES,
             )
         )
