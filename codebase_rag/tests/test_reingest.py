@@ -1278,10 +1278,19 @@ class _QueryableSink:
         return []
 
     def stale_delete_qns(self) -> set[str]:
+        # Selects the stale-delete query by the parameter it carries, not by
+        # the word EXPOSES appearing anywhere in the text. The endpoint LINK
+        # pass also writes EXPOSES and takes different parameters, and it now
+        # runs on the re-ingest path too (issue #1670) -- a text match alone
+        # raised KeyError on its params.
         return {
             qn.split(".", 1)[1]
             for c in self.execute_write.call_args_list
-            if c.args and "EXPOSES" in c.args[0]
+            if c.args
+            and "EXPOSES" in c.args[0]
+            and len(c.args) > 1
+            and isinstance(c.args[1], dict)
+            and "qns" in c.args[1]
             for qn in c.args[1]["qns"]
         }
 

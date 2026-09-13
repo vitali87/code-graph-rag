@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import json
 import sys
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from codebase_rag.config import load_ignore_patterns
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.services import QueryProtocol
+from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools import tool_descriptions as td
@@ -111,6 +114,30 @@ class MCPToolsRegistry:
         # an unrelated marker-less failure earned, whenever some recoverable
         # marker happens to be pending at guard time (#1705 review).
         self._flag_from_failed_clear: str | None = None
+        # This registry's identity in the durable marker. The ingestor lock is
+        # per INSTANCE, so two registries can index the same project at once;
+        # a marker keyed only by project meant the second run's clear deleted
+        # the first run's marker, and a partial graph then looked complete to
+        # a fresh process (issue #1709). Per registry rather than per call
+        # because the instance lock already serialises this registry's own
+        # runs, so its own marker can never overlap itself.
+        self._run_id: str = uuid.uuid4().hex
+        # WHICH project's damage `_graph_incomplete` records, when a marker
+        # does not say. The flag is registry-wide but every writer of it is
+        # project-scoped, so a successful clear for project B discarded a
+        # flag project A earned (issue #1774): `_require_marker_cleared` set
+        # it from one project's result with `self._graph_incomplete = not
+        # cleared`. The durable marker cannot cover that case, being per
+        # project -- a wipe that dies before the graph is gone writes no
+        # marker for A at all, leaving this flag the only record that A is
+        # partial, and an unrelated delete erased it.
+        #
+        # `None` means "spans every project, or owner unknown", which is what
+        # a WIPE leaves: no single project's clear may settle it. A named
+        # project means an operation on THAT project raised it and its own
+        # clear is entitled to settle it -- which is what keeps
+        # delete/index/update working, since each clears the flag it raised.
+        self._incomplete_owner: str | None = None
 
         self.parsers, self.queries = load_parsers()
 
@@ -790,6 +817,16 @@ class MCPToolsRegistry:
         # those definitions over what is left. After a completed delete the
         # project is gone and the not-indexed guard takes over.
         self._live_updater = None
+        # Claim ownership ONLY when raising the flag from clean. An
+        # already-set flag records damage an earlier failure found, and
+        # claiming it here would let this operation's own successful clear
+        # settle someone else's -- which is the #1774 defect arriving from
+        # the other side: a failed WIPE leaves owner=None, and an unrelated
+        # delete/index/update would overwrite that with its own project and
+        # then clear it (caught in review of #1846). Read before the raise,
+        # since the raise is what makes it look owned.
+        if not self._graph_incomplete:
+            self._incomplete_owner = project_name
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
@@ -802,6 +839,16 @@ class MCPToolsRegistry:
             return DeleteProjectErrorResult(success=False, error=refusal)
         self._cleanup_embeddings_then_begin_writing(project_name)
         self.ingestor.delete_project(project_name)
+        # A Gloss is unreachable from the project-delete traversal by design:
+        # that is what lets it survive an index's delete-then-rebuild, which
+        # deletes and recreates the very symbols it annotates. So the orphan
+        # sweep belongs HERE, on the deliberate delete, and not inside
+        # `delete_project` itself -- `_index_repository_sync` calls that too,
+        # and a sweep there would destroy every gloss on each reindex
+        # (issue #1828; caught in review of #1856). Exactly the rule the
+        # incomplete-run marker follows two lines below.
+        if isinstance(self.ingestor, QueryProtocol):
+            prune_orphaned_glosses(self.ingestor)
         # Invariant (b). The marker sits on its own node so `delete_project`
         # cannot reach it -- which is what lets it survive an index's
         # delete-then-rebuild -- so a deliberate delete must remove it. The
@@ -834,6 +881,11 @@ class MCPToolsRegistry:
                 self._graph_incomplete = True
                 # Not a stranded marker: this flag must not be healed by one.
                 self._flag_from_failed_clear = None
+                # A wipe spans EVERY project and writes no marker, so its
+                # damage is attributable to none of them and no single
+                # project's clear may settle it (issue #1774). The success
+                # path below clears the flag itself.
+                self._incomplete_owner = None
                 await asyncio.to_thread(self.ingestor.clean_database)
                 await asyncio.to_thread(clear_all_embeddings)
                 self._graph_incomplete = False
@@ -869,6 +921,16 @@ class MCPToolsRegistry:
         # resolve against the retained updater's definitions or against
         # whatever partial graph a failure left behind.
         self._live_updater = None
+        # Claim ownership ONLY when raising the flag from clean. An
+        # already-set flag records damage an earlier failure found, and
+        # claiming it here would let this operation's own successful clear
+        # settle someone else's -- which is the #1774 defect arriving from
+        # the other side: a failed WIPE leaves owner=None, and an unrelated
+        # delete/index/update would overwrite that with its own project and
+        # then clear it (caught in review of #1846). Read before the raise,
+        # since the raise is what makes it look owned.
+        if not self._graph_incomplete:
+            self._incomplete_owner = project_name
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
@@ -965,6 +1027,16 @@ class MCPToolsRegistry:
         # reingest refuse until an update completes, since hydrating from
         # the partial graph would be no better.
         self._live_updater = None
+        # Claim ownership ONLY when raising the flag from clean. An
+        # already-set flag records damage an earlier failure found, and
+        # claiming it here would let this operation's own successful clear
+        # settle someone else's -- which is the #1774 defect arriving from
+        # the other side: a failed WIPE leaves owner=None, and an unrelated
+        # delete/index/update would overwrite that with its own project and
+        # then clear it (caught in review of #1846). Read before the raise,
+        # since the raise is what makes it look owned.
+        if not self._graph_incomplete:
+            self._incomplete_owner = project_name
         self._graph_incomplete = True
         # Not a stranded marker: this flag must not be healed by one.
         self._flag_from_failed_clear = None
@@ -1066,7 +1138,14 @@ class MCPToolsRegistry:
         degrades this guard back to the old in-process behaviour and only the
         log would show it.
         """
-        params: dict[str, PropertyValue] = {cs.KEY_PROJECT_NAME: project_name}
+        # Both the mark and the clear carry this registry's run id, so a
+        # clear removes only the marker this registry wrote (issue #1709).
+        # The READ deliberately does not: it asks whether ANY run is
+        # outstanding, which is the same boolean question it always asked.
+        params: dict[str, PropertyValue] = {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_RUN_ID: self._run_id,
+        }
         if incomplete:
             query = cq.CYPHER_MARK_PROJECT_INCOMPLETE
             params[cs.KEY_WRITING] = writing
@@ -1078,6 +1157,57 @@ class MCPToolsRegistry:
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_FAILED.format(
                     project=project_name, incomplete=incomplete, error=error
+                )
+            )
+            return False
+        if not incomplete:
+            # A marker written before run ids existed has no `run_id`, so the
+            # run-scoped clear above cannot match it while the read still sees
+            # it -- the project would stay blocked forever after an upgrade
+            # (#1850 review). A run completing for this project has
+            # established the graph is whole, so clearing the legacy marker is
+            # the same statement its own clear makes.
+            #
+            # BEST EFFORT, and deliberately outside the try above: this run's
+            # own clear has already succeeded by here, so the run IS complete.
+            # Letting a failure in optional compatibility cleanup return False
+            # reported a completed operation as incomplete and raised the flag
+            # for a graph that is whole (#1850 review, second finding). The
+            # legacy marker simply stays for the next run to clear.
+            try:
+                self.ingestor.execute_write(
+                    cq.CYPHER_CLEAR_LEGACY_PROJECT_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
+            except Exception as error:  # noqa: BLE001 -- best effort; see above
+                logger.warning(
+                    lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                        project=project_name, incomplete=False, error=error
+                    )
+                )
+        return True
+
+    def _recover_stranded_markers(self, project_name: str) -> bool:
+        """Clear EVERY outstanding marker for the project, not just this run's.
+
+        The ordinary clear is run-scoped so a concurrent run's marker outlives
+        it (issue #1709). Recovery is the opposite case by definition: it
+        clears a marker some OTHER run stranded, so a run-scoped delete would
+        match nothing and leave the project blocked until a full update.
+
+        Safe only because the caller has already established that EVERY
+        outstanding marker says `writing=false` -- the graph is as those runs
+        found it. Returns whether the write reached the store.
+        """
+        try:
+            self.ingestor.execute_write(
+                cq.CYPHER_RECOVER_PROJECT_INCOMPLETE,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+        except Exception as error:  # noqa: BLE001 -- same contract as _persist_incomplete
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_FAILED.format(
+                    project=project_name, incomplete=False, error=error
                 )
             )
             return False
@@ -1200,15 +1330,74 @@ class MCPToolsRegistry:
         Also syncs the in-process flag to the durable state, so this process
         and the next agree. Returns None on success, or the failure message.
         """
+        flag_before = self._graph_incomplete
         cleared = self._persist_incomplete(project_name, False)
-        self._graph_incomplete = not cleared
-        # Attribute the flag to this project's stranded marker (or drop a
-        # stale attribution when the clear succeeded), so the recovery in
-        # `_hydrate_reingest_updater` heals only the flag it explains.
-        self._flag_from_failed_clear = project_name if not cleared else None
-        if cleared:
+        if not cleared:
+            self._graph_incomplete = True
+            # Attribute the flag to this project's stranded marker, so the
+            # recovery in `_hydrate_reingest_updater` heals only the flag it
+            # explains -- but ONLY when this failure is what raised it.
+            #
+            # An already-set flag belongs to whatever failure set it, and
+            # claiming it here hands this project recovery authority over
+            # someone else's damage: A fails leaving the flag up, B's clear
+            # then fails and claims the attribution, and when B's marker later
+            # recovers, `recoverable_here` is satisfied and B clears the latch
+            # A owns (caught in review of #1846). Same rule as the ownership
+            # claim below and as `_abandon_before_writing`, which already
+            # guards its attribution with `if not flag_before`.
+            if not flag_before:
+                self._incomplete_owner = project_name
+                self._flag_from_failed_clear = project_name
+            return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
+
+        # A successful clear settles only the damage THIS project owns.
+        # `self._graph_incomplete = not cleared` settled everything, so a
+        # clean clear for project B discarded a flag project A earned from a
+        # failure that wrote no marker -- and the durable marker cannot cover
+        # that, being per project (issue #1774).
+        #
+        # An unowned flag (`None`) is a WIPE's: it spans every project, no
+        # single project's clear may settle it, and the wipe's own success
+        # path clears it inline. A flag owned by another project stands until
+        # that project's own operation settles it.
+        if self._incomplete_owner == project_name or not self._graph_incomplete:
+            self._graph_incomplete = False
+            self._incomplete_owner = None
+        # The attribution is scoped the same way, and for the mirror reason.
+        # Dropping it unconditionally discarded ANOTHER project's licence to
+        # heal itself: A's failed clear strands a recoverable `writing=false`
+        # marker and attributes the flag to A, then B's clean clear wiped that
+        # attribution and A's own later reingest could no longer recover --
+        # refused forever though its graph was untouched (raised by CodeRabbit
+        # on #1846). Fails closed rather than open, but it wedges a project
+        # that has nothing wrong with it.
+        if self._flag_from_failed_clear == project_name:
+            self._flag_from_failed_clear = None
+        return None
+
+    def _marker_rows(self, project_name: str) -> list[dict] | None:
+        """Outstanding marker rows for the project, or None if unreadable.
+
+        Split out so the post-recovery re-check reads the same way the first
+        read does; `None` means the store could not answer, which every
+        caller must treat as "refuse" rather than "nothing outstanding".
+        """
+        try:
+            return list(
+                self.ingestor.fetch_all(
+                    cq.CYPHER_PROJECT_IS_INCOMPLETE,
+                    {cs.KEY_PROJECT_NAME: project_name},
+                )
+                or []
+            )
+        except Exception as error:  # noqa: BLE001 -- same contract as the caller
+            logger.warning(
+                lg.MCP_INCOMPLETE_MARKER_UNREADABLE.format(
+                    project=project_name, error=error
+                )
+            )
             return None
-        return cs.MCP_INCOMPLETE_MARKER_STUCK.format(project=project_name)
 
     def _persisted_incomplete(self, project_name: str) -> bool:
         """Whether a previous process left this project mid-update.
@@ -1253,10 +1442,21 @@ class MCPToolsRegistry:
             # a marker from before the phase existed stays fail-closed.
             if row.get("writing", True):
                 return True
-            if not self._persist_incomplete(project_name, False):
+            if not self._recover_stranded_markers(project_name):
                 # Could not clear it. The store refused a write, so the run
                 # that would follow could not mark itself either; refuse now
                 # and let the next attempt retry.
+                return True
+            # The recovery is CONDITIONAL (it deletes only markers still
+            # read-only), and a write reports no affected-row count, so
+            # "the write succeeded" does not mean "the marker is gone". A run
+            # that promoted its own marker between this method's read and
+            # that delete leaves a row the delete skipped, and returning
+            # False here would let a scoped reingest proceed over a graph
+            # being written (raised by CodeRabbit on #1850). Re-read and
+            # refuse if anything is still outstanding.
+            remaining = self._marker_rows(project_name)
+            if remaining is None or remaining:
                 return True
             logger.warning(
                 lg.MCP_INCOMPLETE_MARKER_RECOVERED.format(project=project_name)
@@ -1369,39 +1569,6 @@ class MCPToolsRegistry:
         self._live_updater = updater
         return updater
 
-    def _updater_for_reingest(self) -> GraphUpdater:
-        updater = self._live_updater
-        if updater is None:
-            # A scoped re-ingest completes a graph; it cannot stand in for
-            # the first index. After delete_project or wipe_database the
-            # project is gone, and hydrating from nothing would leave every
-            # unrelated definition missing.
-            project_name = derive_project_name(Path(self.project_root))
-            if self._graph_incomplete:
-                raise ValueError(
-                    cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
-                )
-            if project_name not in self.ingestor.list_projects():
-                raise ValueError(
-                    cs.MCP_REINGEST_NEEDS_INDEX.format(project=project_name)
-                )
-            self.ingestor.ensure_constraints()
-            # The same exclusion set the index and update paths use, or an
-            # agent-named path under a CLI-excluded directory would be
-            # indexed here and kept by every later update.
-            exclude_paths, unignore_paths = self._ignore_sets()
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-                unignore_paths=unignore_paths,
-                exclude_paths=exclude_paths,
-                project_name=project_name,
-            )
-            self._live_updater = updater
-        return updater
-
     def _reingest_sync(
         self, paths: list[str], deleted: list[str]
     ) -> ReingestToolResult:
@@ -1467,6 +1634,9 @@ class MCPToolsRegistry:
             # mid-run as "nothing changed" and clear a marker that is
             # protecting a partial graph.
             mutated = self._reingest_mutated(updater, exc)
+            # Read before the branch below raises the flag, so ownership is
+            # claimed only when this failure is what set it (#1846 review).
+            flag_before_mutation = self._graph_incomplete
             if mutated:
                 self._live_updater = None
                 self._graph_incomplete = True
@@ -1480,7 +1650,13 @@ class MCPToolsRegistry:
                 # clear would then satisfy `recoverable_here`, heal the flag,
                 # and let a scoped reingest run over the partial graph this
                 # very branch left (#1705 review, final round).
+                #
+                # Owned by this project, but only if no earlier failure
+                # already owns the flag -- claiming another owner's would let
+                # this project's clear settle it (#1846 review).
                 self._flag_from_failed_clear = None
+                if not flag_before_mutation:
+                    self._incomplete_owner = project_name
             elif marked_here is not None:
                 # Nothing was written, so the marker this call created is a
                 # lie about a run that changed nothing and must come off.
@@ -1642,25 +1818,86 @@ class MCPToolsRegistry:
         """
         root = Path(self.project_root)
         relative = sd.normalise_paths(paths, root)
+        # Set when the hydration below marks the run, so the success path can
+        # lift that marker (invariant b) -- see the comment at the call.
+        marked_here: str | None = None
         try:
             if self._live_updater is None and (
                 derive_project_name(root) not in self.ingestor.list_projects()
             ):
                 return ""
-            updater = self._updater_for_reingest()
+            # The marker-reading hydration, not `_updater_for_reingest`
+            # (issue #1783). That helper guards on `_graph_incomplete` alone,
+            # which lives on the registry and dies with the process: after a
+            # crash or an MCP restart it is False because nothing in THIS
+            # process failed, so the guard passes and hydrates from a graph a
+            # previous run left partial. `_hydrate_reingest_updater` reads the
+            # persisted marker as well, which is what survives the process
+            # that earned it (#1679).
+            #
+            # #1705 rebuilt the scoped-reingest call site onto this helper but
+            # not this one, which the #1546 stack added after that branch was
+            # written -- so the two paths refused and proceeded in the same
+            # registry state, and neither call site showed it.
+            #
+            # Invariant (b) comes with it: that helper MARKS before its
+            # destructive migration, so a completed delta has to lift the
+            # marker or every later run refuses on it -- a successful delta
+            # would durably wedge the project (caught in review of #1845).
+            # `_reingest_sync` pairs the same mark with a clear via
+            # `marked_here`; this tracks it the same way.
+            #
+            # BOTH branches mark. The retained-updater branch reaches the same
+            # mutating `reingest` below, so leaving it unmarked meant a crash
+            # mid-delta left a partially rebuilt graph that a fresh process
+            # could not tell from a complete one (raised in review of #1845).
+            # That is the fifth-path gap `_reingest_sync` closed in the #1705
+            # review, round 6, arriving on this path too. `writing=False`
+            # because the updater's prologue is read-only; the phase advances
+            # at its first delete.
+            project_name = derive_project_name(root)
+            if self._live_updater is not None:
+                updater = self._live_updater
+                if (
+                    refusal := self._require_marker(project_name, writing=False)
+                ) is not None:
+                    raise RuntimeError(refusal)
+                marked_here = project_name
+            else:
+                marked_here = project_name
+                updater = self._hydrate_reingest_updater(marked_here)
             deleted = [p for p in relative if not (root / p).exists()]
             changed = [p for p in relative if p not in deleted]
             delta = sd.observe(
                 self.ingestor.fetch_all,
                 updater.project_name,
                 relative,
-                lambda: updater.reingest(changed, deleted=deleted),
+                # Invariant (a), second half: the marks above say
+                # `writing=False`, and `reingest` starts deleting after its
+                # read-only prologue. Without advancing the phase there, a
+                # crash mid-delete left a partial graph that a fresh registry
+                # reads as recoverable, CLEARS, and hydrates as complete
+                # (raised by CodeRabbit on #1845). Same callback
+                # `_reingest_sync` passes for the same reason.
+                lambda: updater.reingest(
+                    changed,
+                    deleted=deleted,
+                    before_write=lambda: self._begin_writing_or_refuse(project_name),
+                ),
                 repo_root=root,
             )
         except (ValueError, ReingestAborted) as e:
             # Raised before any graph change (validation, an abort while the
             # paths are split): the graph is whole and the updater reusable.
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
+            # ...so the marker this call took must come off, or a graph that
+            # was never touched goes on refusing every later scoped reingest
+            # (raised by CodeRabbit on #1845). `_abandon_before_writing` is
+            # the same helper `_reingest_sync` uses for its own no-write
+            # aborts: it lifts the marker and leaves the attribution to
+            # whichever failure owns it.
+            if marked_here is not None:
+                self._abandon_before_writing(marked_here)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
         except Exception as e:
             # The re-ingest may have deleted a subtree it never rebuilt: the
@@ -1668,6 +1905,8 @@ class MCPToolsRegistry:
             # or write reuses a partial graph (issue #1525).
             logger.warning(lg.MCP_DELTA_FAILED.format(error=e))
             self._live_updater = None
+            # Read before the raise below, for the same reason.
+            flag_before_delta = self._graph_incomplete
             self._graph_incomplete = True
             # Not a stranded marker: this flag must not be healed by one.
             # This path invalidates precisely BECAUSE a subtree may have been
@@ -1678,7 +1917,20 @@ class MCPToolsRegistry:
             # Added on the rebase: this site landed on main (#1525) after the
             # attribution was written, so it had no way to know about it.
             self._flag_from_failed_clear = None
+            # Owned by this project (issue #1774), unless an earlier failure
+            # already owns the flag -- see the guard at the delete/index/update
+            # sites for why claiming another owner's is unsafe (#1846 review).
+            if not flag_before_delta:
+                self._incomplete_owner = derive_project_name(root)
             return "\n\n" + cs.MCP_DELTA_ERROR.format(error=e)
+        if marked_here is not None:
+            # Invariant (b): the hydration marked before its constraint
+            # migration, so a completed delta must lift it. A failed clear is
+            # reported in place of the delta rather than silently retained --
+            # this method never raises, so the message is the only channel.
+            if (stuck := self._require_marker_cleared(marked_here)) is not None:
+                logger.warning(lg.MCP_DELTA_FAILED.format(error=stuck))
+                return "\n\n" + cs.MCP_DELTA_ERROR.format(error=stuck)
         return (
             "\n\n"
             + cs.MCP_DELTA_HEADER
