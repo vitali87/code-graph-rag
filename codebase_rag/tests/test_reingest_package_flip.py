@@ -559,3 +559,60 @@ def test_a_FRESH_updater_still_detects_the_flip(tmp_path: Path, direction: str) 
         f"incremental={sorted(_containers(store))} "
         f"clean={sorted(_containers(clean_store))}"
     )
+
+
+def test_a_directory_recorded_as_BOTH_kinds_is_reconciled(tmp_path: Path) -> None:
+    """A duplicated directory must reconcile whatever is on disk.
+
+    `_recorded_container_kinds` reads every row, not the first. A directory
+    can already hold both a Package and a Folder node -- the unscoped
+    hydration derives the whole repo and emits the kind on disk now while the
+    old one survives (#1872) -- and row order is unspecified. Taking the
+    first row answered Package or Folder for the same graph depending on the
+    driver, and when it happened to land on the disk kind,
+    `_package_ness_changed` returned False and the reconciliation that would
+    have pruned the duplicate never ran (CodeRabbit, PR #1835).
+
+    Asserted through `_package_ness_changed` rather than through a full
+    re-ingest, because the assertion is about the DECISION: with both kinds
+    recorded it must say "changed" so the caller derives and prunes, and the
+    disk state must not be able to talk it out of that.
+    """
+    root = tmp_path / "incremental"
+    root.mkdir()
+    _fixture(root, with_init=True)
+
+    store = _StatefulIngestor()
+    updater = _updater(root, store)
+    updater.run(force=True)
+    store.flush_all()
+
+    directory = root / "pkg"
+    structure = updater.factory.structure_processor
+    assert updater._recorded_container_kinds(directory) == {"Package"}, (
+        "fixture guard: the initial index must record exactly one kind"
+    )
+
+    # Plant the second identity, which is what #1872 leaves behind.
+    store.ensure_node_batch(
+        cs.NodeLabel.FOLDER,
+        {
+            cs.KEY_PATH: "pkg",
+            cs.KEY_NAME: "pkg",
+            cs.KEY_ABSOLUTE_PATH: str(directory.resolve()),
+        },
+    )
+    store.flush_all()
+    assert updater._recorded_container_kinds(directory) == {"Package", "Folder"}, (
+        "fixture guard: the directory must now hold both identities"
+    )
+
+    # On disk it is still a package, so a first-row read that happened to
+    # return Package would say "unchanged" and leave the duplicate standing.
+    assert structure.is_package_dir(directory), (
+        "fixture guard: the directory is still a package on disk"
+    )
+    assert updater._package_ness_changed(structure, "pkg"), (
+        "a directory holding BOTH container identities was reported as "
+        "unchanged, so nothing would ever prune the stale one"
+    )

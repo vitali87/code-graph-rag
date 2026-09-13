@@ -4856,12 +4856,14 @@ class GraphUpdater:
                 siblings[key] = candidate
         return siblings
 
-    def _recorded_container_is_package(self, directory: Path) -> bool | None:
-        """What the GRAPH records for this directory: True/False, or None.
+    def _recorded_container_kinds(self, directory: Path) -> set[str]:
+        """Which container labels the GRAPH holds for this directory.
 
-        None means "cannot tell" -- no query surface, the read failed, or no
+        Empty means "cannot tell" -- no query surface, the read failed, or no
         container node exists yet -- and the caller falls back to the
-        in-memory map.
+        in-memory map. TWO entries means the directory already holds both
+        identities, which the caller must treat as changed whatever is on
+        disk, because reconciling is the only thing that clears it.
 
         The graph is asked FIRST because the in-memory map is not a record of
         the previous state on every path. A fresh updater (the MCP tool builds
@@ -4873,14 +4875,19 @@ class GraphUpdater:
         (greptile-local, PR #1835).
         """
         if not isinstance(self.ingestor, QueryProtocol):
-            return None
+            return set()
         try:
             rows = self.ingestor.fetch_all(
                 cs.CYPHER_CONTAINER_KIND,
                 {cs.KEY_PATH: cached_resolve_posix(directory)},
             )
         except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
-            return None
+            return set()
+        # EVERY row, not the first: row order is unspecified, and a
+        # directory can already hold BOTH kinds (#1872), so "the first row
+        # wins" answers Package or Folder for the same graph depending on the
+        # driver (CodeRabbit, PR #1835).
+        recorded: set[str] = set()
         for row in rows or ():
             raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
             # Narrowed to a list of str before the membership test: a result
@@ -4891,11 +4898,12 @@ class GraphUpdater:
                 if (isinstance(raw, list))
                 else []
             )
-            if cs.NodeLabel.PACKAGE.value in labels:
-                return True
-            if cs.NodeLabel.FOLDER.value in labels:
-                return False
-        return None
+            recorded.update(
+                label
+                for label in labels
+                if label in (cs.NodeLabel.PACKAGE.value, cs.NodeLabel.FOLDER.value)
+            )
+        return recorded
 
     def _package_ness_changed(self, structure: object, rel: str) -> bool:
         """Whether this directory's kind on DISK differs from the recorded one.
@@ -4909,13 +4917,21 @@ class GraphUpdater:
         directory = self.repo_path / rel if rel != "." else self.repo_path
         if not directory.is_dir():
             return False
+        is_package_now = bool(structure.is_package_dir(directory))  # type: ignore[attr-defined]
         # The graph's record first; the map only when it cannot answer. See
-        # `_recorded_container_is_package` for why the map alone is wrong on a
+        # `_recorded_container_kinds` for why the map alone is wrong on a
         # fresh updater.
-        was_package = self._recorded_container_is_package(directory)
-        if was_package is None:
+        recorded = self._recorded_container_kinds(directory)
+        if len(recorded) > 1:
+            # Already holds both identities. Whatever is on disk, this needs
+            # reconciling -- the derivation plus the prune is the only thing
+            # that removes the stale one.
+            return True
+        if recorded:
+            was_package = cs.NodeLabel.PACKAGE.value in recorded
+        else:
             was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
-        return bool(structure.is_package_dir(directory)) != was_package  # type: ignore[attr-defined]
+        return is_package_now != was_package
 
     def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
         """Directories to re-derive: the flipped ones plus their CHILDREN.
