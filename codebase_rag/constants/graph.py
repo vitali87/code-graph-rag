@@ -568,6 +568,16 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
+# Which container kind the GRAPH records for a directory, independent of what
+# is on disk now. `_package_ness_changed` cannot ask the structure map for
+# this: on a fresh updater (the MCP tool builds one per project) the map has
+# already been re-derived FROM DISK by `_hydrate_for_reingest`, so both sides
+# of the comparison are the post-change state and no flip is ever detected
+# (greptile-local, PR #1835).
+CYPHER_CONTAINER_KIND = (
+    "MATCH (n) WHERE (n:Package OR n:Folder) AND n.absolute_path = $path "
+    "RETURN labels(n) AS labels"
+)
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
 # OPTIONAL MATCH + count instead of `WHERE NOT (m)<--()`: Memgraph 3.x
