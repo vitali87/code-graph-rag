@@ -20,6 +20,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
+from os.path import normcase
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
@@ -132,7 +133,7 @@ def _project_frame(
         path, source_line = remapped
     else:
         path, source_line = generated_path, line + 1
-    if not path.startswith(root_prefix):
+    if not normcase(path).startswith(normcase(root_prefix)):
         return None
     if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
         return None

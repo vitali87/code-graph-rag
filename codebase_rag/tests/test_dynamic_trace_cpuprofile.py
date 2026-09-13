@@ -270,10 +270,19 @@ def test_file_url_authority_preserves_network_and_local_paths(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
-def test_unc_repository_keeps_profile_edges(tmp_path: Path) -> None:
-    repo_root = Path("//127.0.0.1/cgr-profile-tests/my repo 项目")
+@pytest.mark.parametrize(
+    "profile_root",
+    [
+        "//nas/cgr-profile-tests/my repo 项目",
+        "//NAS/cgr-profile-tests/my repo 项目",
+        "//nas/CGR-PROFILE-TESTS/my repo 项目",
+        "//nas/cgr-profile-tests/MY REPO 项目",
+    ],
+)
+def test_unc_repository_keeps_profile_edges(tmp_path: Path, profile_root: str) -> None:
+    repo_root = Path("//nas/cgr-profile-tests/my repo 项目")
     profile_path = tmp_path / "unc.cpuprofile"
-    profile_path.write_text(json.dumps(_profile(repo_root)), encoding="utf-8")
+    profile_path.write_text(json.dumps(_profile(Path(profile_root))), encoding="utf-8")
     output = tmp_path / "trace.jsonl"
 
     count = convert_cpuprofile(profile_path, repo_root, output)
@@ -291,9 +300,107 @@ def test_unc_repository_keeps_profile_edges(tmp_path: Path) -> None:
     }
     assert header.repo_root == str(repo_root)
     dispatch = edges[("handle", "greet")]
-    assert dispatch.caller.path == (repo_root / "src" / "registry.js").as_posix()
+    assert (
+        dispatch.caller.path == (Path(profile_root) / "src" / "registry.js").as_posix()
+    )
     assert dispatch.callee.path == dispatch.caller.path
     assert (dispatch.caller.line, dispatch.callee.line, dispatch.count) == (7, 11, 7)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize(
+    "profile_root",
+    [
+        "//other-nas/cgr-profile-tests/my repo 项目",
+        "//nas/other-share/my repo 项目",
+        "//nas/cgr-profile-tests/my repo 项目-sibling",
+    ],
+)
+def test_other_unc_repositories_stay_excluded(
+    tmp_path: Path, profile_root: str
+) -> None:
+    profile_path = tmp_path / "unc.cpuprofile"
+    profile_path.write_text(json.dumps(_profile(Path(profile_root))), encoding="utf-8")
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(
+        profile_path, Path("//nas/cgr-profile-tests/my repo 项目"), output
+    )
+    _header, records = read_trace_file(output)
+
+    assert count == 0
+    assert list(records) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize("source_directory", ["src", "node_modules"])
+def test_unc_remapped_paths_keep_case_and_scope(
+    tmp_path: Path, source_directory: str
+) -> None:
+    repo_root = Path("//nas/cgr-profile-tests/my repo 项目")
+    source_path = (
+        Path("//NAS/cgr-profile-tests/my repo 项目") / source_directory / "MixedCase.ts"
+    )
+    generated = tmp_path / "bundle.js"
+    generated.write_text("//# sourceMappingURL=bundle.js.map\n", encoding="utf-8")
+    generated.with_suffix(".js.map").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "sources": [source_path.as_posix()],
+                "names": [],
+                "mappings": "AAAA;AAKA",
+            }
+        ),
+        encoding="utf-8",
+    )
+    profile_path = tmp_path / "remapped.cpuprofile"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    _node(1, _frame("caller", generated.as_uri(), 0), children=[2]),
+                    _node(2, _frame("callee", generated.as_uri(), 1), hit_count=7),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    _header, records = read_trace_file(output)
+    edges = list(records)
+
+    if source_directory == "node_modules":
+        assert count == 0
+        assert edges == []
+    else:
+        assert count == len(edges) == 1
+        dispatch = edges[0]
+        assert (dispatch.caller.qualname, dispatch.callee.qualname) == (
+            "caller",
+            "callee",
+        )
+        assert dispatch.caller.path == dispatch.callee.path == source_path.as_posix()
+        assert (dispatch.caller.line, dispatch.callee.line, dispatch.count) == (1, 6, 7)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX repository paths are case-sensitive")
+def test_case_distinct_posix_repository_stays_excluded(tmp_path: Path) -> None:
+    repo_root = tmp_path / "project"
+    repo_root.mkdir()
+    profile_path = tmp_path / "case-distinct.cpuprofile"
+    profile_path.write_text(
+        json.dumps(_profile(tmp_path / "PROJECT")), encoding="utf-8"
+    )
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    _header, records = read_trace_file(output)
+
+    assert count == 0
+    assert list(records) == []
 
 
 def test_http_frames_stay_outside_the_project(tmp_path: Path) -> None:
