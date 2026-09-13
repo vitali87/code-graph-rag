@@ -85,12 +85,28 @@ class PythonTypeInferenceEngine(
         self._class_member_type_cache: dict[str, dict[str, str]] = {}
 
     def build_local_variable_type_map(
-        self, caller_node: Node, module_qn: str
+        self, caller_node: Node, module_qn: str, class_context: str | None = None
     ) -> dict[str, str]:
         local_var_types: dict[str, str] = {}
 
         try:
             self._infer_parameter_types(caller_node, local_var_types, module_qn)
+            # A method's `self` (and a classmethod's `cls`) IS the enclosing
+            # class. Seeded HERE, before the assignment walk, because that
+            # walk types `w = self.parse()` through the receiver's entry:
+            # without one the local stayed untyped and a later `w.render()`
+            # fell to the bare-name fallback (issue #1901). The seed is an aid
+            # to that walk only and is removed again below: `self.m()` CALLS
+            # keep their own resolution (the concrete-sibling-over-abstract-
+            # stub policy the resolver applies to self calls), which a typed
+            # `self` in the returned map would override. An annotated
+            # parameter or a body binding of that name is kept as it is.
+            seeded: list[str] = []
+            if class_context:
+                for name in (cs.PY_KEYWORD_SELF, cs.PY_KEYWORD_CLS):
+                    if name not in local_var_types:
+                        local_var_types[name] = class_context
+                        seeded.append(name)
             # Single-pass traversal avoids O(5*N) traversals for type inference.
             comprehensions, for_statements = self._traverse_single_pass(
                 caller_node, local_var_types, module_qn
@@ -109,6 +125,9 @@ class PythonTypeInferenceEngine(
                 self._analyze_for_loop(for_stmt, local_var_types, module_qn)
             aliases = self._collect_local_aliases(caller_node)
             self._expand_chained_attribute_types(local_var_types, module_qn, aliases)
+            for name in seeded:
+                if local_var_types.get(name) == class_context:
+                    del local_var_types[name]
 
         except Exception as e:
             logger.debug(lg.PY_BUILD_VAR_MAP_FAILED, error=e)

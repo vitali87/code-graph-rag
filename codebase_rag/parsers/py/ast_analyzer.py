@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     class _AstAnalyzerDeps(Protocol):
         def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str
+            self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
         def _analyze_comprehension(
