@@ -33,9 +33,9 @@ class _Alias(NamedTuple):
     which is Python's own dispatch order.
     """
 
-    candidates: tuple[ASTNode, ...]
+    candidates: list[ASTNode]
     dunder: str | None
-    reflected: tuple[ASTNode, ...]
+    reflected: list[ASTNode]
 
 
 if TYPE_CHECKING:
@@ -637,7 +637,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
 
     def _get_candidate_types(
         self,
-        candidates: tuple[ASTNode, ...],
+        candidates: list[ASTNode],
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> str | None:
@@ -832,7 +832,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         if right.type == cs.TS_PY_CALL:
             return None
         dunder: str | None = None
-        reflected: tuple[ASTNode, ...] = ()
+        reflected: list[ASTNode] = []
         if right.type == cs.TS_PY_BINARY_OPERATOR:
             operator = right.child_by_field_name(cs.FIELD_OPERATOR)
             token = safe_decode_text(operator) if operator is not None else None
@@ -841,7 +841,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
                 return None
             left = right.child_by_field_name(cs.TS_FIELD_LEFT)
             right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
-            candidates = self._get_value_leaves(left, 1) if left is not None else ()
+            candidates = self._get_value_leaves(left, 1) if left is not None else []
             if right_operand is not None:
                 reflected = self._get_value_leaves(right_operand, 1)
         else:
@@ -850,7 +850,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return None
         return _Alias(candidates, dunder, reflected)
 
-    def _get_value_leaves(self, node: ASTNode, depth: int) -> tuple[ASTNode, ...]:
+    def _get_value_leaves(self, node: ASTNode, depth: int) -> list[ASTNode]:
         """The leaf expressions an rhs can evaluate to, in preference order.
 
         Without this a variable assigned from any expression got NO type, and a
@@ -866,9 +866,9 @@ class PythonVariableAnalyzerMixin(_VarBase):
         unrelated statement elsewhere in the same function.
         """
         if depth > _MAX_ALIAS_DEPTH:
-            return ()
+            return []
         if node.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE, cs.TS_PY_CALL):
-            return (node,)
+            return [node]
         if node.type == cs.TS_PY_BOOLEAN_OPERATOR:
             picks = self._get_boolean_value_operands(node)
         elif node.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
@@ -876,22 +876,22 @@ class PythonVariableAnalyzerMixin(_VarBase):
             # named children; the middle one is the condition, whose type is
             # irrelevant. None of the three carries a field name.
             kids = node.named_children
-            picks = (kids[0], kids[-1]) if kids else ()
+            picks = [kids[0], kids[-1]] if kids else []
         elif node.type == cs.TS_PY_BINARY_OPERATOR:
             # Nested under another expression (`(a / b) or c`): the left
             # operand is the value's origin and the operator is not tracked
             # this deep -- an approximation that is right for path idioms.
             left = node.child_by_field_name(cs.TS_FIELD_LEFT)
-            picks = (left,) if left is not None else ()
+            picks = [left] if left is not None else []
         elif node.type == cs.TS_PY_PARENTHESIZED_EXPRESSION:
-            picks = tuple(node.named_children[:1])
+            picks = list(node.named_children[:1])
         else:
-            return ()
-        return tuple(
+            return []
+        return [
             leaf for pick in picks for leaf in self._get_value_leaves(pick, depth + 1)
-        )
+        ]
 
-    def _get_boolean_value_operands(self, node: ASTNode) -> tuple[ASTNode, ...]:
+    def _get_boolean_value_operands(self, node: ASTNode) -> list[ASTNode]:
         """The operands `a or b` / `a and b` can evaluate to.
 
         `or` yields whichever operand is truthy first, so both are candidates,
@@ -903,13 +903,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
         operator = node.child_by_field_name(cs.FIELD_OPERATOR)
         is_and = operator is not None and safe_decode_text(operator) == cs.PY_OP_AND
         fields = (
-            (cs.TS_FIELD_RIGHT,) if is_and else (cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT)
+            [cs.TS_FIELD_RIGHT] if is_and else [cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT]
         )
-        return tuple(
+        return [
             operand
             for field in fields
             if (operand := node.child_by_field_name(field)) is not None
-        )
+        ]
 
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, _Alias]:
         # Record what each local variable was assigned (resolver = self._resolver,
