@@ -126,20 +126,52 @@ class PythonTypeInferenceEngine(
         return False
 
     @staticmethod
-    def _rebinds(def_node: Node, name: str) -> bool:
-        """Whether the def's own body assigns to `name` (`self = pick()`)."""
+    def _binds_name(target: Node, name: str) -> bool:
+        """Whether a binding target (an identifier, or a pattern holding one) binds `name`."""
+        stack = [target]
+        while stack:
+            node = stack.pop()
+            if (
+                node.type == cs.TS_PY_IDENTIFIER
+                and node.text is not None
+                and node.text.decode(cs.ENCODING_UTF8) == name
+            ):
+                return True
+            stack.extend(node.named_children)
+        return False
+
+    @classmethod
+    def _rebinds(cls, def_node: Node, name: str) -> bool:
+        """Whether the def's OWN body rebinds `name` in any binding form.
+
+        Assignment and augmented assignment (`self = pick()`, `a, self = pair`),
+        a `for self in ...` target, a `with ... as self` / `except ... as self`
+        alias and a walrus `(self := pick())`. Nested defs, classes and lambdas
+        are not descended into: a binding there belongs to that scope, not to
+        this receiver.
+        """
         stack = list(def_node.named_children)
         while stack:
             node = stack.pop()
-            if node.type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT):
-                left = node.child_by_field_name(cs.FIELD_LEFT)
-                if (
-                    left is not None
-                    and left.type == cs.TS_PY_IDENTIFIER
-                    and left.text is not None
-                    and left.text.decode(cs.ENCODING_UTF8) == name
-                ):
-                    return True
+            if node.type in (
+                cs.TS_PY_FUNCTION_DEFINITION,
+                cs.TS_PY_CLASS_DEFINITION,
+                cs.TS_PY_LAMBDA,
+            ):
+                continue
+            target: Node | None = None
+            if node.type in (
+                cs.TS_PY_ASSIGNMENT,
+                cs.TS_PY_AUGMENTED_ASSIGNMENT,
+                cs.TS_PY_FOR_STATEMENT,
+            ):
+                target = node.child_by_field_name(cs.FIELD_LEFT)
+            elif node.type == cs.TS_PY_NAMED_EXPRESSION:
+                target = node.child_by_field_name(cs.FIELD_NAME)
+            elif node.type == cs.TS_PY_AS_PATTERN:
+                target = node.child_by_field_name(cs.FIELD_ALIAS)
+            if target is not None and cls._binds_name(target, name):
+                return True
             stack.extend(node.named_children)
         return False
 

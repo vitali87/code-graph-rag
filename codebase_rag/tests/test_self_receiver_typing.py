@@ -274,6 +274,90 @@ def _method_maps(tmp_path: Path) -> dict[str, dict[str, str]]:
     return maps
 
 
+_BINDING_FORMS = (
+    "from proj.widget import Widget\n"
+    "from proj.other import pick\n\n\n"
+    "class Parser:\n"
+    "    def parse(self) -> Widget:\n"
+    "        return Widget()\n\n"
+    "    def for_target(self) -> str:\n"
+    "        for self in [pick()]:\n"
+    "            pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def with_alias(self) -> str:\n"
+    "        with pick() as self:\n"
+    "            w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def except_alias(self) -> str:\n"
+    "        try:\n"
+    "            pass\n"
+    "        except ValueError as self:\n"
+    "            w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def walrus(self) -> str:\n"
+    "        if (self := pick()):\n"
+    "            pass\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def unpacked(self) -> str:\n"
+    "        other, self = pick(), pick()\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def nested_scope_only(self) -> str:\n"
+    "        class Inner:\n"
+    "            def go(self) -> int:\n"
+    "                self = pick()\n"
+    "                return 1\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n"
+)
+
+
+def _binding_form_maps(tmp_path: Path) -> dict[str, dict[str, str]]:
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    repo = _build(tmp_path, _BINDING_FORMS, _DECOY_CONTROL)
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater.run(force=True)
+    python = next(p for k, p in parsers.items() if str(k) == "python")
+    tree = python.parse((repo / "app.py").read_bytes())
+    class_node = next(
+        n for n in tree.root_node.children if n.type == "class_definition"
+    )
+    ti = updater.factory.type_inference
+    return {
+        node.child_by_field_name(
+            "name"
+        ).text.decode(): ti.build_local_variable_type_map(
+            node, "proj.app", cs.SupportedLanguage.PYTHON, "proj.app.Parser"
+        )
+        for node in class_node.child_by_field_name("body").children
+        if node.type == "function_definition"
+    }
+
+
+def test_every_binding_form_of_the_receiver_suppresses_the_seed(tmp_path: Path) -> None:
+    # A receiver rebound by ANY binding form in the method's own body is a
+    # value the seed must not type: `w` must not be a Widget in those methods.
+    maps = _binding_form_maps(tmp_path)
+    for method in ("for_target", "with_alias", "except_alias", "walrus", "unpacked"):
+        assert maps[method].get("w") != "Widget", method
+
+
+def test_a_rebinding_in_a_nested_scope_does_not_suppress_the_seed(
+    tmp_path: Path,
+) -> None:
+    # `Inner.go` rebinds ITS OWN `self`; the enclosing method's receiver is
+    # untouched and still types `w` (found by the bot's execution).
+    maps = _binding_form_maps(tmp_path)
+    assert maps["nested_scope_only"].get("w") == "Widget"
+
+
 def test_only_a_bound_receiver_is_seeded(tmp_path: Path) -> None:
     # A staticmethod's `self`, a nested def's own `self` parameter, a
     # receiver rebound in the body and a first parameter not named self/cls
