@@ -165,8 +165,8 @@ class PythonTypeInferenceEngine(
         a `for self in ...` target, a `with ... as self` / `except ... as self`
         alias and a walrus `(self := pick())`. Nested def, lambda and class
         BODIES are not descended into (a binding there belongs to that scope);
-        their parameter defaults and superclass arguments are, because those
-        evaluate in this scope. An attribute or subscript target
+        their parameter defaults, annotations, return annotation and
+        superclass arguments are, because those evaluate in this scope. An attribute or subscript target
         (`self.cache = value`) is a mutation, not a rebinding.
         """
         stack = list(def_node.named_children)
@@ -174,10 +174,14 @@ class PythonTypeInferenceEngine(
             node = stack.pop()
             if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
                 # The body is the inner scope; the PARAMETERS (default values
-                # such as `x=(self := pick())`) evaluate in this one.
+                # and annotations such as `x=(self := pick())`) and the
+                # RETURN ANNOTATION (`-> (self := pick())`) evaluate in this one.
                 params = node.child_by_field_name(cs.FIELD_PARAMETERS)
                 if params is not None:
                     stack.append(params)
+                returns = node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+                if returns is not None:
+                    stack.append(returns)
                 continue
             if node.type == cs.TS_PY_CLASS_DEFINITION:
                 # Same split: the superclass arguments evaluate here.

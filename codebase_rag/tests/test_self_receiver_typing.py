@@ -314,6 +314,16 @@ _BINDING_FORMS = (
     "            return 1\n"
     "        w = self.parse()\n"
     "        return w.render()\n\n"
+    "    def nested_return_annotation(self) -> str:\n"
+    "        def inner() -> (self := pick()):\n"
+    "            return 1\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def nested_param_annotation(self) -> str:\n"
+    "        def inner(x: (self := pick())) -> int:\n"
+    "            return 1\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
     "    def nested_scope_only(self) -> str:\n"
     "        class Inner:\n"
     "            def go(self) -> int:\n"
@@ -360,6 +370,11 @@ def test_every_binding_form_of_the_receiver_suppresses_the_seed(tmp_path: Path) 
     # A nested def's DEFAULT evaluates in the method's scope: a walrus there
     # rebinds the receiver even though the def's body is another scope.
     assert maps["nested_default"].get("w") != "Widget"
+    # So do its RETURN ANNOTATION and parameter ANNOTATIONS (the bot found
+    # the return annotation: the def is skipped as a scope, but the
+    # annotation is evaluated by the enclosing method).
+    assert maps["nested_return_annotation"].get("w") != "Widget"
+    assert maps["nested_param_annotation"].get("w") != "Widget"
 
 
 def test_an_attribute_or_subscript_target_is_not_a_rebinding(tmp_path: Path) -> None:
