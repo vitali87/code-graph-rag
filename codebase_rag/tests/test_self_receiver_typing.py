@@ -304,6 +304,16 @@ _BINDING_FORMS = (
     "        other, self = pick(), pick()\n"
     "        w = self.parse()\n"
     "        return w.render()\n\n"
+    "    def attribute_target(self) -> str:\n"
+    "        self.cache = pick()\n"
+    "        self.items[0] = pick()\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
+    "    def nested_default(self) -> str:\n"
+    "        def inner(x=(self := pick())) -> int:\n"
+    "            return 1\n"
+    "        w = self.parse()\n"
+    "        return w.render()\n\n"
     "    def nested_scope_only(self) -> str:\n"
     "        class Inner:\n"
     "            def go(self) -> int:\n"
@@ -347,6 +357,17 @@ def test_every_binding_form_of_the_receiver_suppresses_the_seed(tmp_path: Path) 
     maps = _binding_form_maps(tmp_path)
     for method in ("for_target", "with_alias", "except_alias", "walrus", "unpacked"):
         assert maps[method].get("w") != "Widget", method
+    # A nested def's DEFAULT evaluates in the method's scope: a walrus there
+    # rebinds the receiver even though the def's body is another scope.
+    assert maps["nested_default"].get("w") != "Widget"
+
+
+def test_an_attribute_or_subscript_target_is_not_a_rebinding(tmp_path: Path) -> None:
+    # `self.cache = ...` and `self.items[0] = ...` mutate through the
+    # receiver; they do not rebind it, so the seed must stay (found by the
+    # bot: nearly every method assigns an attribute of self).
+    maps = _binding_form_maps(tmp_path)
+    assert maps["attribute_target"].get("w") == "Widget"
 
 
 def test_a_rebinding_in_a_nested_scope_does_not_suppress_the_seed(

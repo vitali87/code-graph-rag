@@ -25,6 +25,18 @@ if TYPE_CHECKING:
     from ..js_ts import JsTypeInferenceEngine
 
 
+# Destructuring targets whose identifiers are bindings; anything else under a
+# target (attribute, subscript, call) is a mutation, not a rebinding.
+_PATTERN_TYPES = frozenset(
+    {
+        cs.TS_PY_PATTERN_LIST,
+        cs.TS_PY_TUPLE_PATTERN,
+        cs.TS_PY_LIST_PATTERN,
+        cs.TS_PY_AS_PATTERN_TARGET,
+    }
+)
+
+
 class PythonTypeInferenceEngine(
     PythonExpressionAnalyzerMixin,
     PythonAstAnalyzerMixin,
@@ -127,17 +139,22 @@ class PythonTypeInferenceEngine(
 
     @staticmethod
     def _binds_name(target: Node, name: str) -> bool:
-        """Whether a binding target (an identifier, or a pattern holding one) binds `name`."""
+        """Whether a binding target binds `name` as a plain local.
+
+        A bare identifier, or one inside a destructuring pattern
+        (`a, self = pair`). An identifier inside an attribute or subscript
+        target (`self.cache = value`, `self[k] = v`) mutates something the
+        receiver refers to and rebinds nothing, so those are not entered.
+        """
         stack = [target]
         while stack:
             node = stack.pop()
-            if (
-                node.type == cs.TS_PY_IDENTIFIER
-                and node.text is not None
-                and node.text.decode(cs.ENCODING_UTF8) == name
-            ):
-                return True
-            stack.extend(node.named_children)
+            if node.type == cs.TS_PY_IDENTIFIER:
+                if node.text is not None and node.text.decode(cs.ENCODING_UTF8) == name:
+                    return True
+                continue
+            if node.type in _PATTERN_TYPES:
+                stack.extend(node.named_children)
         return False
 
     @classmethod
@@ -146,18 +163,27 @@ class PythonTypeInferenceEngine(
 
         Assignment and augmented assignment (`self = pick()`, `a, self = pair`),
         a `for self in ...` target, a `with ... as self` / `except ... as self`
-        alias and a walrus `(self := pick())`. Nested defs, classes and lambdas
-        are not descended into: a binding there belongs to that scope, not to
-        this receiver.
+        alias and a walrus `(self := pick())`. Nested def, lambda and class
+        BODIES are not descended into (a binding there belongs to that scope);
+        their parameter defaults and superclass arguments are, because those
+        evaluate in this scope. An attribute or subscript target
+        (`self.cache = value`) is a mutation, not a rebinding.
         """
         stack = list(def_node.named_children)
         while stack:
             node = stack.pop()
-            if node.type in (
-                cs.TS_PY_FUNCTION_DEFINITION,
-                cs.TS_PY_CLASS_DEFINITION,
-                cs.TS_PY_LAMBDA,
-            ):
+            if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
+                # The body is the inner scope; the PARAMETERS (default values
+                # such as `x=(self := pick())`) evaluate in this one.
+                params = node.child_by_field_name(cs.FIELD_PARAMETERS)
+                if params is not None:
+                    stack.append(params)
+                continue
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                # Same split: the superclass arguments evaluate here.
+                bases = node.child_by_field_name(cs.FIELD_SUPERCLASSES)
+                if bases is not None:
+                    stack.append(bases)
                 continue
             target: Node | None = None
             if node.type in (
