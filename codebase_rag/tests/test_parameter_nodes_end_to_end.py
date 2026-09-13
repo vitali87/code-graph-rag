@@ -339,9 +339,65 @@ def test_the_deferred_pass_runs_for_parameter_facts_alone(tmp_path: Path) -> Non
     assert not processor.pending_type_facts and not processor.pending_parameter_types
 
     processor.pending_parameter_types.append(
-        PendingParameterType("proj.app.build.1", "proj.app", "Widget")
+        PendingParameterType("proj.app.build.1", "proj.app", "Widget", "app.py")
     )
     emitted = processor.emit_type_edges()
 
     assert emitted == 1
     assert processor.pending_parameter_types == []
+
+
+def test_scoped_reingest_keeps_a_colliding_modules_facts(tmp_path: Path) -> None:
+    """`foo.py` and `foo/__init__.py` both map to `proj.foo`. Re-ingesting
+    `foo.py` together with the type's file detaches `foo/__init__.py`'s
+    OF_TYPE (its target is recreated); the rehydrated facts for that
+    UNCHANGED file must survive the stale filter, which keys on the file and
+    not on the module qn (Greptile, round 3)."""
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "models.py").write_text("class Gadget:\n    pass\n")
+    (repo / "foo.py").write_text("def use(gadget: Gadget) -> int:\n    return 0\n")
+    (repo / "foo").mkdir()
+    (repo / "foo" / "__init__.py").write_text(
+        "def other(gadget: Gadget) -> int:\n    return 1\n"
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    capture = resolve_capture(["+parameters"])
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).run(force=True)
+
+    # Same-stem siblings get distinct module qns (one of them is renamed, per
+    # #1569), so the edges are matched by the parameter's own name rather than
+    # by a hard-coded module spelling. What the STALE FILTER sees is neither:
+    # it derives a module qn from each file's PATH, and both paths give the
+    # same one.
+    def of_type_for(owner: str) -> set[tuple[str, str]]:
+        return {
+            (src, tgt)
+            for src, tgt in _edges(store, cs.RelationshipType.OF_TYPE.value)
+            if src.endswith(f".{owner}.0")
+        }
+
+    assert {t for _s, t in of_type_for("other")} == {"proj.models.Gadget"}
+
+    (repo / "models.py").write_text("class Gadget:\n    pass\n# touched\n")
+    (repo / "foo.py").write_text("def use(gadget: Gadget) -> int:\n    return 2\n")
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=capture,
+    ).reingest([repo / "models.py", repo / "foo.py"])
+
+    assert {t for _s, t in of_type_for("other")} == {"proj.models.Gadget"}, (
+        "the unchanged colliding file's OF_TYPE was not rebuilt"
+    )
+    assert {t for _s, t in of_type_for("use")} == {"proj.models.Gadget"}

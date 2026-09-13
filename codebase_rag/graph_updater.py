@@ -2290,7 +2290,7 @@ class GraphUpdater:
                 continue
             pending.append(
                 PendingParameterType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
                 )
             )
 
@@ -5236,10 +5236,14 @@ class GraphUpdater:
         pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
         # The same for parameter annotations: the scoped prologue rehydrates
         # them from the graph before this delete, so a changed annotation
-        # would otherwise emit OF_TYPE to both the old and the new type.
+        # would otherwise emit OF_TYPE to both the old and the new type. Keyed
+        # on the FILE, not the module qn: `foo.py` and `foo/__init__.py` share
+        # `proj.foo`, and a module-qn filter dropped the unchanged file's
+        # facts with the re-parsed one's, leaving its detached OF_TYPE unbuilt.
+        stale_keys = {*reparse, *gone}
         pending_params = self.factory.definition_processor.pending_parameter_types
         pending_params[:] = [
-            fact for fact in pending_params if fact.module_qn not in stale_modules
+            fact for fact in pending_params if fact.path not in stale_keys
         ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
