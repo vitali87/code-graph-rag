@@ -110,3 +110,78 @@ def test_an_untyped_receiver_keeps_the_name_fallback(tmp_path: Path) -> None:
     app = "def run(p) -> int:\n    return p.go()\n"
     repo = _build(tmp_path, _PRODUCT_WITHOUT_GO, _DECOY_COLLIDES, app)
     assert _go_edges(repo) == {"proj.elsewhere.Elsewhere.go"}
+
+
+def test_same_named_local_classes_are_left_to_the_fallback(tmp_path: Path) -> None:
+    # Two functions each define a local `Analyzer`; the bare type name
+    # resolves to ONE of them, and judging absence against the wrong one
+    # dropped `second`'s real call (found by the local review).
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "app.py").write_text(
+        "def first() -> int:\n"
+        "    class Analyzer:\n"
+        "        def size(self) -> int:\n"
+        "            return 1\n"
+        "    return Analyzer().size()\n\n\n"
+        "def second() -> int:\n"
+        "    class Analyzer:\n"
+        "        def go(self) -> int:\n"
+        "            return 2\n"
+        "    a = Analyzer()\n"
+        "    return a.go()\n",
+        encoding="utf-8",
+    )
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    edges = {
+        (str(src), str(tgt))
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value and str(tgt).endswith(".go")
+    }
+    assert edges == {("proj.app.second", "proj.app.second.Analyzer.go")}
+
+
+def test_a_rust_method_from_another_modules_impl_still_binds(tmp_path: Path) -> None:
+    # Rust registers impl-block methods under the impl's module, not the
+    # struct's qn, so "no method under the class qn" is not absence there.
+    parsers, _queries = load_parsers()
+    if "rust" not in {str(k) for k in parsers}:
+        pytest.skip("rust parser not available")
+    repo = tmp_path / "proj"
+    (repo / "src").mkdir(parents=True)
+    (repo / "Cargo.toml").write_text(
+        '[package]\nname = "proj"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    (repo / "src" / "lib.rs").write_text(
+        "pub mod models;\npub mod ext;\npub mod app;\n", encoding="utf-8"
+    )
+    (repo / "src" / "models.rs").write_text("pub struct Product;\n", encoding="utf-8")
+    (repo / "src" / "ext.rs").write_text(
+        "use crate::models::Product;\nimpl Product { pub fn go(&self) -> i32 { 3 } }\n",
+        encoding="utf-8",
+    )
+    (repo / "src" / "app.rs").write_text(
+        "use crate::models::Product;\n\npub fn run(p: Product) -> i32 {\n    p.go()\n}\n",
+        encoding="utf-8",
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    edges = {
+        str(tgt)
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and str(src).endswith(".app.run")
+        and str(tgt).endswith(".go")
+    }
+    assert edges == {"proj.src.ext.Product.go"}

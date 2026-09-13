@@ -1384,9 +1384,11 @@ class CallResolver:
         # inline receiver paths already drop this shape; the plain-variable path
         # let it fall to the bare-name trie, which bound `p.go()` on a `Product`
         # without `go` to an unrelated class's `go` (issue #1897).
-        if self._typed_receiver_lacks_method(call_name, module_qn, local_var_types):
-            if use_cache:
-                self._remember(cache_key, None)
+        # Never cached: the guard can only fire with a non-empty local type map,
+        # and `use_cache` is already False whenever that map is non-empty.
+        if self._typed_receiver_lacks_method(
+            call_name, module_qn, local_var_types, language
+        ):
             return None
 
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
@@ -1649,6 +1651,7 @@ class CallResolver:
         call_name: str,
         module_qn: str,
         local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None,
     ) -> bool:
         # True for `obj.method` where `obj` has a known type that IS an indexed
         # first-party class, and neither that class nor any base it inherits
@@ -1658,6 +1661,12 @@ class CallResolver:
         # false edge. An untyped receiver, an external type (the guard above)
         # or a type that resolves to no indexed class stays out of this: their
         # method is unknown rather than known-absent.
+        # Rust registers an `impl` block's methods under the module the impl
+        # sits in and a trait's default methods under the trait, so a type's
+        # method set is not readable from its own qn; "not under the class qn"
+        # proves nothing there and the fallback stays.
+        if language == cs.SupportedLanguage.RUST:
+            return False
         var_type = self._two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
             return False
@@ -1670,13 +1679,31 @@ class CallResolver:
             return False
         if self.function_registry[registered] != cs.NodeLabel.CLASS.value:
             return False
+        simple_type = var_type.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        # A bare type name that several classes in this module carry (two
+        # functions each defining a local `Analyzer`) resolved to ONE of them
+        # above, possibly the wrong one; judging absence against it would drop
+        # a real call. Ambiguous names are left to the fallback.
+        same_named_here = [
+            qn
+            for qn in self.function_registry.find_ending_with(simple_type)
+            if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            and self.function_registry[qn] == cs.NodeLabel.CLASS.value
+        ]
+        if len(same_named_here) > 1:
+            return False
         method_name = call_name.split(cs.SEPARATOR_DOT)[1]
-        # Own or inherited. The precise local-type path has normally already
-        # answered both, so this re-check matters only where that path used a
-        # class qn spelling the registry does not hold (an unprefixed import):
-        # then the method is present under the registered spelling and the
-        # call is left to the fallback rather than dropped.
-        return self._try_resolve_method(registered, method_name) is None
+        # Own or inherited under the registered spelling. The precise
+        # local-type path has normally already answered both, so this
+        # re-check matters where that path used an unprefixed class qn.
+        if self._try_resolve_method(registered, method_name) is not None:
+            return False
+        # Last, any registered `<Type>.<method>` anywhere (a method emitted
+        # under a different module than its type, as some frontends do) means
+        # the method exists for a type of this name; leave it to the fallback.
+        return not self.function_registry.find_ending_with(
+            f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
+        )
 
     def _receiver_type_is_external(
         self,
