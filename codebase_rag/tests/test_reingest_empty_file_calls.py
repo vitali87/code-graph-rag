@@ -30,14 +30,14 @@ UTIL = "def helper():\n    return 1\n"
 APP = "from pkg.util import helper\n\n\ndef run():\n    return helper()\n"
 
 
-def _fixture(root: Path) -> None:
+def _write_fixture_tree(root: Path) -> None:
     (root / "pkg").mkdir()
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "pkg" / "util.py").write_text(UTIL, encoding="utf-8")
     (root / "pkg" / "app.py").write_text(APP, encoding="utf-8")
 
 
-def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
+def _call_edges(store: _StatefulIngestor) -> set[tuple[str, str]]:
     return {
         (str(src), str(dst))
         for (_sl, src, rel, _tl, dst) in store.edges
@@ -45,7 +45,7 @@ def _calls(store: _StatefulIngestor) -> set[tuple[str, str]]:
     }
 
 
-def _built(root: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
+def _indexed_project(root: Path) -> tuple[GraphUpdater, _StatefulIngestor]:
     parsers, queries = load_parsers()
     if "python" not in {str(k) for k in parsers}:
         pytest.skip("python parser not available")
@@ -80,10 +80,10 @@ def test_a_file_parsing_to_no_definitions_retracts_its_calls(
     tree whose captures are empty. A fix guarding only on `content == ""`
     would pass the first and fail the second.
     """
-    _fixture(tmp_path)
-    updater, store = _built(tmp_path)
+    _write_fixture_tree(tmp_path)
+    updater, store = _indexed_project(tmp_path)
 
-    assert _calls(store) == {("proj.pkg.app.run", "proj.pkg.util.helper")}, (
+    assert _call_edges(store) == {("proj.pkg.app.run", "proj.pkg.util.helper")}, (
         "fixture guard: the initial index must emit the edge that is later "
         "expected to be retracted, or this test proves nothing"
     )
@@ -92,9 +92,9 @@ def test_a_file_parsing_to_no_definitions_retracts_its_calls(
     updater.reingest(["pkg/app.py"])
     store.flush_all()
 
-    assert _calls(store) == set(), (
+    assert _call_edges(store) == set(), (
         f"a {label} file left a CALLS edge out of a function that no longer "
-        f"exists in the source: {sorted(_calls(store))}"
+        f"exists in the source: {sorted(_call_edges(store))}"
     )
 
 
@@ -106,21 +106,21 @@ def test_the_incremental_result_matches_a_clean_index(tmp_path: Path) -> None:
     incremental and batch together whatever the correct answer turns out to
     be, which is the invariant the issue is really about.
     """
-    _fixture(tmp_path)
-    updater, store = _built(tmp_path)
+    _write_fixture_tree(tmp_path)
+    updater, store = _indexed_project(tmp_path)
     (tmp_path / "pkg" / "app.py").write_text("", encoding="utf-8")
     updater.reingest(["pkg/app.py"])
     store.flush_all()
 
     clean_root = tmp_path.parent / "clean"
     clean_root.mkdir()
-    _fixture(clean_root)
+    _write_fixture_tree(clean_root)
     (clean_root / "pkg" / "app.py").write_text("", encoding="utf-8")
-    _, clean_store = _built(clean_root)
+    _, clean_store = _indexed_project(clean_root)
 
-    assert _calls(store) == _calls(clean_store), (
+    assert _call_edges(store) == _call_edges(clean_store), (
         "the incremental path and a clean index disagree about CALLS: "
-        f"incremental={sorted(_calls(store))} clean={sorted(_calls(clean_store))}"
+        f"incremental={sorted(_call_edges(store))} clean={sorted(_call_edges(clean_store))}"
     )
 
 
@@ -133,8 +133,8 @@ def test_a_still_defined_function_keeps_its_calls(tmp_path: Path) -> None:
     must SURVIVE -- and the issue records that this shape was already handled
     correctly, so it must stay that way.
     """
-    _fixture(tmp_path)
-    updater, store = _built(tmp_path)
+    _write_fixture_tree(tmp_path)
+    updater, store = _indexed_project(tmp_path)
 
     (tmp_path / "pkg" / "app.py").write_text(
         "from pkg.util import helper\n\n\ndef run():\n    return helper() + 1\n",
@@ -143,7 +143,7 @@ def test_a_still_defined_function_keeps_its_calls(tmp_path: Path) -> None:
     updater.reingest(["pkg/app.py"])
     store.flush_all()
 
-    assert _calls(store) == {("proj.pkg.app.run", "proj.pkg.util.helper")}, (
+    assert _call_edges(store) == {("proj.pkg.app.run", "proj.pkg.util.helper")}, (
         "a still-present call was retracted, so the fix over-corrected and "
         "drops live edges on every re-parse"
     )
@@ -165,16 +165,16 @@ def test_a_module_level_reference_survives_the_re_parse(tmp_path: Path) -> None:
     guards this behaviour, so rewriting that test would silently un-fix this
     branch (greptile-local, #1794).
     """
-    _fixture(tmp_path)
+    _write_fixture_tree(tmp_path)
     (tmp_path / "pkg" / "dispatch.py").write_text(
         "from pkg.util import helper\n\nTABLE = {'h': helper}\n", encoding="utf-8"
     )
-    updater, store = _built(tmp_path)
+    updater, store = _indexed_project(tmp_path)
 
     edge = ("proj.pkg.dispatch", "proj.pkg.util.helper")
-    assert edge in _calls(store), (
+    assert edge in _call_edges(store), (
         "fixture guard: the module-level reference must be emitted by the "
-        f"initial index, or the re-parse below proves nothing: {sorted(_calls(store))}"
+        f"initial index, or the re-parse below proves nothing: {sorted(_call_edges(store))}"
     )
 
     # Re-parse the dispatch module itself. Its captures are empty -- the
@@ -183,9 +183,9 @@ def test_a_module_level_reference_survives_the_re_parse(tmp_path: Path) -> None:
     updater.reingest(["pkg/dispatch.py"])
     store.flush_all()
 
-    assert edge in _calls(store), (
+    assert edge in _call_edges(store), (
         "a module-level reference was dropped by the re-parse: the file's "
-        f"captures are empty, so the call walk skipped it entirely: {sorted(_calls(store))}"
+        f"captures are empty, so the call walk skipped it entirely: {sorted(_call_edges(store))}"
     )
 
 
@@ -212,13 +212,13 @@ def test_an_unavailable_query_is_not_cached_as_an_empty_result(
     from codebase_rag import constants as cs
     from codebase_rag.parsers import definition_processor as dp
 
-    _fixture(tmp_path)
+    _write_fixture_tree(tmp_path)
     (tmp_path / "pkg" / "caller.py").write_text(
         "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
         encoding="utf-8",
     )
-    _, with_query = _built(tmp_path)
-    expected = _calls(with_query)
+    _, with_query = _indexed_project(tmp_path)
+    expected = _call_edges(with_query)
     assert expected, (
         "fixture guard: the working-query index must emit at least one call "
         "edge, or the comparison below is vacuous"
@@ -227,11 +227,11 @@ def test_an_unavailable_query_is_not_cached_as_an_empty_result(
     monkeypatch.setitem(
         dp.COMBINED_FUNC_CLASS_IMPORT_QUERIES, cs.SupportedLanguage.PYTHON, None
     )
-    _, without_query = _built(tmp_path)
+    _, without_query = _indexed_project(tmp_path)
 
-    assert _calls(without_query) == expected, (
+    assert _call_edges(without_query) == expected, (
         "an unavailable combined query changed the call edges: "
-        f"without={sorted(_calls(without_query))} with={sorted(expected)}"
+        f"without={sorted(_call_edges(without_query))} with={sorted(expected)}"
     )
 
 
@@ -252,13 +252,13 @@ def test_a_removed_call_is_retracted_while_its_function_remains(
     edges would retract the edge AND lose `run`, satisfying half of this and
     failing the other (CodeRabbit, #1833).
     """
-    _fixture(tmp_path)
+    _write_fixture_tree(tmp_path)
     (tmp_path / "pkg" / "app.py").write_text(
         "from pkg.util import helper\n\n\ndef run():\n    return helper()\n",
         encoding="utf-8",
     )
-    updater, store = _built(tmp_path)
-    assert ("proj.pkg.app.run", "proj.pkg.util.helper") in _calls(store), (
+    updater, store = _indexed_project(tmp_path)
+    assert ("proj.pkg.app.run", "proj.pkg.util.helper") in _call_edges(store), (
         "fixture guard: the initial index must emit the edge that is expected "
         "to be retracted below"
     )
@@ -275,10 +275,10 @@ def test_a_removed_call_is_retracted_while_its_function_remains(
     # here so a future change cannot break the already-correct direction
     # silently. Do not read its greenness as evidence the fix works; the
     # three tests above are what pin that (greptile-local, PR #1833).
-    assert _calls(store) == set(), (
+    assert _call_edges(store) == set(), (
         "control: a removed call must stay retracted regardless of the "
         "#1794 populator change, but its edge survives: "
-        f"{sorted(_calls(store))}"
+        f"{sorted(_call_edges(store))}"
     )
     functions = {str(uid) for (label, uid) in store.nodes if label == "Function"}
     assert "proj.pkg.app.run" in functions, (
