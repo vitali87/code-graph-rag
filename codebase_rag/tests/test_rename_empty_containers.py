@@ -219,6 +219,7 @@ def test_declaration_read_failure_reports_the_committed_rename(
 
     assert report.applied
     assert report.verdict is None
+    assert report.graph_incomplete
     assert "declaration lookup unavailable" in report.message
     assert (root / "pkg/util.py").read_text() == source.replace("Helper", "Assist")
     assert len(load_history(root)) == 1
