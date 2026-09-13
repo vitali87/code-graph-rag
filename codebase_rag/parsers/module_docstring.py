@@ -69,6 +69,12 @@ class ModuleDocSpec(NamedTuple):
     # type nor a binding statement, and was still taken as the file's doc
     # (greptile-local on #1887).
     definition_value_types: frozenset[str] = frozenset()
+    # Wrappers that change nothing about what a value IS: `(() => {})`,
+    # TypeScript's `expr as T`, `expr satisfies T`, `expr!`. The definition
+    # pass binds the inner value as the definition, so the module must look
+    # through them too or the adjacent doc is claimed here as the file's and
+    # the function is left undocumented (Greptile and CodeRabbit on #1889).
+    transparent_types: frozenset[str] = frozenset()
 
 
 _C_STYLE_BLOCK = frozenset({"comment", "block_comment"})
@@ -186,6 +192,16 @@ _JS_DECLS = frozenset(
 _JS_BINDINGS = frozenset(
     {"lexical_declaration", "variable_declaration", "expression_statement"}
 )
+# Wrappers the definition pass looks through; see `ModuleDocSpec.transparent_types`.
+_JS_TRANSPARENT = frozenset(
+    {
+        "parenthesized_expression",
+        "as_expression",
+        "satisfies_expression",
+        "non_null_expression",
+        "type_assertion",
+    }
+)
 # The value node types that make such a binding a definition.
 _JS_FUNCTION_VALUES = frozenset(
     {
@@ -228,6 +244,7 @@ _JS_STYLE = ModuleDocSpec(
     declaration_types=_JS_DECLS,
     binding_types=_JS_BINDINGS,
     definition_value_types=_JS_FUNCTION_VALUES,
+    transparent_types=_JS_TRANSPARENT,
 )
 
 MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
@@ -534,7 +551,7 @@ def _documents_declaration(
             continue
         if candidate.start_point[0] > end_row + 1:
             return False
-        unwrapped = _unwrap_export(candidate)
+        unwrapped = _unwrap_transparent(_unwrap_export(candidate), spec)
         if unwrapped.type in spec.declaration_types:
             return True
         # An anonymous `export default function () {}` / `() => {}` / `class {}`
@@ -569,7 +586,26 @@ def _binds_a_definition(node: ASTNode, spec: ModuleDocSpec) -> bool:
     else:
         declarators = [c for c in node.children if c.type == "variable_declarator"]
         values = [d.child_by_field_name("value") for d in declarators]
-    return any(v is not None and v.type in spec.definition_value_types for v in values)
+    return any(
+        v is not None
+        and _unwrap_transparent(v, spec).type in spec.definition_value_types
+        for v in values
+    )
+
+
+def _unwrap_transparent(node: ASTNode, spec: ModuleDocSpec) -> ASTNode:
+    """The value inside any number of transparent wrappers, or the node itself.
+
+    `(() => {})` is a `parenthesized_expression` around an `arrow_function`;
+    `x as T` an `as_expression` whose FIRST named child is `x`. Each wrapper's
+    first named child is the wrapped value, so the loop descends there.
+    """
+    while node.type in spec.transparent_types:
+        inner = next((c for c in node.children if c.is_named), None)
+        if inner is None:
+            return node
+        node = inner
+    return node
 
 
 def _unwrap_export(node: ASTNode) -> ASTNode:

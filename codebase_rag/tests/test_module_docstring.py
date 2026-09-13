@@ -634,6 +634,18 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             ("javascript", b"/** Default fn */\nexport default function () {}\n"),
             ("javascript", b"/** Default arrow */\nexport default () => {};\n"),
             ("typescript", b"/** Default class */\nexport default class {}\n"),
+            # Transparent wrappers around the value: parentheses, and
+            # TypeScript's `as` / `satisfies` / `!`. The definition pass binds
+            # the inner value, so the module must look through them too
+            # (Greptile and CodeRabbit on #1889).
+            ("javascript", b"/** Paren arrow */\nconst f = (() => {});\n"),
+            (
+                "typescript",
+                b"/** Cast arrow */\nexport const f = (() => {}) as Handler;\n",
+            ),
+            ("typescript", b"/** Satisfies */\nconst g = (() => {}) satisfies Fn;\n"),
+            ("typescript", b"/** Non-null */\nconst h = (function () {})!;\n"),
+            ("javascript", b"/** Default paren */\nexport default (() => {});\n"),
         ],
         ids=[
             "js-arrow",
@@ -645,6 +657,11 @@ class TestAFunctionValuedBindingOwnsItsDoc:
             "js-default-anon-fn",
             "js-default-arrow",
             "ts-default-anon-class",
+            "js-paren-arrow",
+            "ts-cast-arrow",
+            "ts-satisfies",
+            "ts-non-null",
+            "js-default-paren",
         ],
     )
     def test_an_adjacent_doc_above_a_function_binding_is_not_the_files(
@@ -657,6 +674,13 @@ class TestAFunctionValuedBindingOwnsItsDoc:
     ) -> None:
         """The control: the blank line keeps deciding, exactly as for classes."""
         src = b"/** File docs */\n\nconst arrow = () => {};\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_parenthesised_plain_value_is_still_the_files(
+        self, parsers: dict
+    ) -> None:
+        """The control for the unwrap: `(1)` unwraps to a number, not a definition."""
+        src = b"/** File docs */\nconst c = (1);\n"
         assert self._module_doc(parsers, "javascript", src) == "File docs"
 
     def test_a_plain_constant_is_unchanged(self, parsers: dict) -> None:
