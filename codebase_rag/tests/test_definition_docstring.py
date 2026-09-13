@@ -252,15 +252,6 @@ class TestTheMarkersDifferByLevel:
 class TestInterleavedNodes:
     """Attributes, annotations and metadata sit between a doc and its subject."""
 
-    def test_a_java_annotation_does_not_detach_the_doc(self, parsers: dict) -> None:
-        node = _declaration(
-            parsers,
-            Lang.JAVA,
-            "class C {\n  /** DOC */\n  @Override\n  void g() {}\n}\n",
-            "method_declaration",
-        )
-        assert extract_definition_docstring(node, Lang.JAVA) == "DOC"
-
     def test_a_rust_attribute_does_not_detach_the_doc(self, parsers: dict) -> None:
         node = _declaration(
             parsers,
@@ -270,14 +261,32 @@ class TestInterleavedNodes:
         )
         assert extract_definition_docstring(node, Lang.RUST) == "DOC"
 
-    def test_a_csharp_attribute_does_not_detach_the_doc(self, parsers: dict) -> None:
-        node = _declaration(
+    def test_an_annotation_absorbed_by_the_declaration_still_keeps_the_doc(
+        self, parsers: dict
+    ) -> None:
+        """Java and C# keep the doc, but NOT via the interleaved walk.
+
+        Named for what it actually exercises. Both grammars make the
+        annotation a CHILD of the declaration, so the comment is already the
+        preceding sibling and the skip walk never runs -- which mutation
+        proved: disabling that walk leaves these green and reddens only Rust.
+        Still worth asserting, because the doc must survive the annotation;
+        just not evidence about the walk.
+        """
+        java = _declaration(
+            parsers,
+            Lang.JAVA,
+            "class C {\n  /** DOC */\n  @Override\n  void g() {}\n}\n",
+            "method_declaration",
+        )
+        assert extract_definition_docstring(java, Lang.JAVA) == "DOC"
+        csharp = _declaration(
             parsers,
             Lang.CSHARP,
             "class C {\n  /// DOC\n  [Obsolete]\n  void G() {}\n}\n",
             "method_declaration",
         )
-        assert extract_definition_docstring(node, Lang.CSHARP) == "DOC"
+        assert extract_definition_docstring(csharp, Lang.CSHARP) == "DOC"
 
 
 class TestMultiLineAndNoise:
