@@ -211,6 +211,40 @@ def test_a_same_named_class_in_another_module_does_not_rescue_the_call(
     assert _go_edges(repo) == set()
 
 
+def test_a_same_named_class_in_a_child_module_does_not_rescue_the_call(
+    tmp_path: Path,
+) -> None:
+    # The caller lives in the package module `proj.app`; `proj.app.util` is a
+    # CHILD module whose `Product.go` shares the qn prefix but is unrelated.
+    # Ownership is decided by the defining module, not the prefix.
+    repo = tmp_path / "proj"
+    (repo / "app").mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "app" / "__init__.py").write_text(
+        "class Product:\n    def size(self) -> int:\n        return 1\n\n\n"
+        "def run(p: Product) -> int:\n    return p.go()\n",
+        encoding="utf-8",
+    )
+    (repo / "app" / "util.py").write_text(
+        "class Product:\n    def go(self) -> int:\n        return 9\n", encoding="utf-8"
+    )
+    parsers, queries = load_parsers()
+    if "python" not in {str(k) for k in parsers}:
+        pytest.skip("python parser not available")
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    edges = {
+        (str(src), str(tgt))
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value
+        and str(src).endswith(".run")
+        and str(tgt).endswith(".go")
+    }
+    assert edges == set()
+
+
 def test_a_same_module_function_of_that_name_is_not_bound_either(
     tmp_path: Path,
 ) -> None:

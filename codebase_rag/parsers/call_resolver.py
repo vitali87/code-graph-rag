@@ -1690,18 +1690,38 @@ class CallResolver:
             return False
         # A bare type name that several classes in THIS module carry (two
         # functions each defining a local `Analyzer`) resolved to one of them
-        # above, possibly the wrong one; if any same-named class here defines
-        # the method, the call is left to the fallback. A same-named class in
-        # another module is unrelated and does not rescue the call. The
-        # annotation is reduced first: `Product | None` names `Product`.
+        # above, possibly the wrong one; if any same-named class defined in
+        # this module has the method, the call is left to the fallback. A
+        # same-named class in another module, a CHILD module of a package
+        # included, is unrelated and does not rescue the call. The annotation
+        # is reduced first: `Product | None` names `Product`.
         simple_type = self._strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        here = f"{module_qn}{cs.SEPARATOR_DOT}"
         return not any(
-            qn.startswith(here)
+            self._defined_in_module(qn, module_qn)
             for qn in self.function_registry.find_ending_with(
                 f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
             )
         )
+
+    def _defined_in_module(self, qn: str, module_qn: str) -> bool:
+        """Whether `qn` is defined in `module_qn` itself (any scope depth).
+
+        `qn` must extend `module_qn`, and no longer prefix of it may be a
+        module of its own: `proj.app.second.Analyzer.go` is in `proj.app`
+        (`second` is a function), `proj.app.util.Product.go` is not
+        (`proj.app.util` is a module, a child of the `proj.app` package).
+        """
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        if not qn.startswith(prefix):
+            return False
+        modules = self.type_inference.module_qn_to_file_path
+        segments = qn[len(prefix) :].split(cs.SEPARATOR_DOT)
+        scope = module_qn
+        for segment in segments[:-1]:
+            scope = f"{scope}{cs.SEPARATOR_DOT}{segment}"
+            if scope in modules:
+                return False
+        return True
 
     def _receiver_type_is_external(
         self,
