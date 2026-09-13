@@ -555,6 +555,30 @@ _UNTYPED_SHADOWS = {
         "    return w.render()\n",
         None,
     ),
+    # A body-level import of a PROJECT name is a re-import the import map
+    # resolves, not a shadow (CodeRabbit); `import os as helpers` above is
+    # the external one the map cannot place, and stays a shadow.
+    "body_from_import_function_resolves": (
+        "def use(supplied) -> int:\n"
+        "    from .helpers import make_pair\n"
+        "    _n, w = make_pair()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
+    "body_from_import_module_resolves": (
+        "def use(supplied) -> int:\n"
+        "    from . import helpers\n"
+        "    _n, w = helpers.make_pair()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
+    "body_import_alias_resolves": (
+        "def use(supplied) -> int:\n"
+        "    from .helpers import make_pair as mp\n"
+        "    _n, w = mp()\n"
+        "    return w.render()\n",
+        "Banner",
+    ),
     "nested_def_name_over_module": (
         "from . import helpers\n"
         "\n"

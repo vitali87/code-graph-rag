@@ -197,14 +197,60 @@ def _bindings_in(scope: Node) -> Iterator[tuple[Node, Node]]:
             stack.extend(node.children)
 
 
-def _locally_bound_names(caller: Node) -> frozenset[str]:
+def _import_bound_leaf(item: Node, name: str, from_import: bool) -> str | None:
+    """The path an import item binds `name` to, or None when it binds another
+    name: the target of `x as name`, `name` itself in `from m import name`,
+    the package `a` in `import a.b`."""
+    if item.type == cs.TS_ALIASED_IMPORT:
+        alias = item.child_by_field_name(cs.FIELD_ALIAS)
+        target = item.child_by_field_name(cs.FIELD_NAME)
+        if alias is None or target is None or safe_decode_text(alias) != name:
+            return None
+        return safe_decode_text(target) or None
+    if item.type != cs.TS_DOTTED_NAME:
+        return None
+    text = safe_decode_text(item) or ""
+    bound = text if from_import else text.split(cs.SEPARATOR_DOT)[0]
+    return bound if bound == name else None
+
+
+def _import_binding_path(statement: Node, name: str) -> str | None:
+    """The dotted path a body-level import binds `name` to, leading dots
+    dropped: `helpers.make_pair` for `from .helpers import make_pair`,
+    `helpers` for `from . import helpers`, `os` for `import os as helpers`."""
+    module = statement.child_by_field_name(cs.FIELD_MODULE_NAME)
+    prefix = (safe_decode_text(module) or "").lstrip(cs.SEPARATOR_DOT) if module else ""
+    for item in statement.named_children:
+        if module is not None and item.id == module.id:
+            continue
+        if leaf := _import_bound_leaf(item, name, module is not None):
+            return cs.SEPARATOR_DOT.join(part for part in (prefix, leaf) if part)
+    return None
+
+
+def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
+    """Whether a body-level import binds `name` to what the import map says
+    it is: then the name is a re-import the map resolves, not a shadow. The
+    map keeps a module-level entry over a body import it could not place
+    (`import os as helpers` under `from . import helpers`), so the two must
+    agree on the path, or the name means something the project does not
+    hold (CodeRabbit)."""
+    if binder.type not in _PY_IMPORT_TYPES:
+        return False
+    path = _import_binding_path(binder, name)
+    qn = import_map.get(name)
+    return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
+
+
+def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
     each enclosing def binds (a closure's free names), typed or not. Python
     makes a name bound ANYWHERE in a body local for the whole body, so an
     imported module or function it shadows is unreachable there even before
     the binding runs (Greptile P1). An enclosing CLASS body is skipped, as
-    Python skips it."""
+    Python skips it; a body-level import the import map reflects is a
+    re-import, not a shadow."""
     names: set[str] = set()
     scope: Node | None = caller
     while scope is not None:
@@ -212,8 +258,9 @@ def _locally_bound_names(caller: Node) -> frozenset[str]:
             names.update(_parameter_names(scope))
             names.update(
                 name
-                for _binder, identifier in _bindings_in(scope)
+                for binder, identifier in _bindings_in(scope)
                 if (name := safe_decode_text(identifier))
+                and not _reimports(binder, name, import_map)
             )
         scope = scope.parent
     return frozenset(names)
@@ -475,7 +522,8 @@ class PythonAstAnalyzerMixin(_AstBase):
         ]
         if not unpackings:
             return
-        bound = _locally_bound_names(caller)
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        bound = _locally_bound_names(caller, import_map)
         for assignment in unpackings:
             self._bind_unpacked_targets(
                 assignment, caller, bound, local_var_types, module_qn
