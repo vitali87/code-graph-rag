@@ -1738,6 +1738,34 @@ class MCPToolsRegistry:
         # every failure as mutated (measured).
         return not isinstance(exc, ValueError | ReingestAborted)
 
+    def _recover_then_persisted_incomplete(self, project_name: str) -> bool:
+        """Recover a stranded marker, then report the durable state.
+
+        Shared by the hydrating and the retained-updater paths. It has to be
+        shared rather than restated: reading the latch WITHOUT first letting
+        `_persisted_incomplete` clear a recoverable `writing=false` marker
+        makes the same project refuse on a warm updater and proceed on a cold
+        one, for identical state -- the warm/cold asymmetry this PR already
+        fixed once, arriving back in the refusing direction (Greptile,
+        PR #1547).
+
+        A widened flag records damage to a SECOND project and this recovery
+        is evidence about one, so it may not retire a refusal another project
+        earned -- the same rule as the clear in `_require_marker_cleared`.
+        """
+        recoverable_here = self._flag_from_failed_clear == project_name
+        persisted_incomplete = self._persisted_incomplete(project_name)
+        if (
+            not persisted_incomplete
+            and recoverable_here
+            and not self._incomplete_unbounded
+            and not self._incomplete_projects
+        ):
+            self._graph_incomplete = False
+            self._incomplete_project = None
+            self._flag_from_failed_clear = None
+        return persisted_incomplete
+
     def _hydrate_reingest_updater(self, project_name: str) -> GraphUpdater:
         """Build a scoped updater when none is retained.
 
@@ -1775,21 +1803,7 @@ class MCPToolsRegistry:
         # failure that could not persist a marker at all, and the next
         # reingest would drop a `_graph_incomplete` that is the only record
         # the graph is partial.
-        recoverable_here = self._flag_from_failed_clear == project_name
-        persisted_incomplete = self._persisted_incomplete(project_name)
-        # A widened flag records damage to a SECOND project, and this recovery
-        # is evidence about one. Same reasoning as the clear in
-        # `_require_marker_cleared`, and the same trap: without this the
-        # recovered marker retires a refusal another project earned.
-        if (
-            not persisted_incomplete
-            and recoverable_here
-            and not self._incomplete_unbounded
-            and not self._incomplete_projects
-        ):
-            self._graph_incomplete = False
-            self._incomplete_project = None
-            self._flag_from_failed_clear = None
+        persisted_incomplete = self._recover_then_persisted_incomplete(project_name)
         # Scoped exactly as `_incomplete_refusal` scopes a read: a latch
         # attributed to ANOTHER project says nothing about this one, and a
         # scoped reingest is how a project recovers, so refusing here would
@@ -2543,11 +2557,15 @@ class MCPToolsRegistry:
         # either (greptile-local, PR #1547).
         retained = self._live_updater
         if retained is not None and retained.project_name == project_name:
+            # Recovery FIRST, then the latch: reading the latch before
+            # `_persisted_incomplete` can clear a stranded recoverable marker
+            # left this path refusing a rename the cold path allows.
+            persisted_incomplete = self._recover_then_persisted_incomplete(project_name)
             latched_here = self._graph_incomplete and self._incomplete_project in (
                 None,
                 project_name,
             )
-            if latched_here or self._persisted_incomplete(project_name):
+            if latched_here or persisted_incomplete:
                 raise ValueError(
                     cs.MCP_REINGEST_AFTER_FAILED_RUN.format(project=project_name)
                 )

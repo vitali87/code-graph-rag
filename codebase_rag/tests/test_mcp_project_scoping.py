@@ -4206,6 +4206,63 @@ def test_a_retained_updater_still_refuses_on_a_durable_marker() -> None:
     ), "a warm updater re-ingested over a graph a previous process left partial"
 
 
+def test_warm_and_cold_agree_on_a_RECOVERABLE_marker() -> None:
+    """The two paths must reach the same verdict from the same state.
+
+    `_persisted_incomplete` is not only a read: it CLEARS a stranded
+    `writing=false` marker, and the hydrating path relies on that, recovering
+    before it reads the latch. My first version of the retained-updater guard
+    read the latch first, so a project whose marker was recoverable refused on
+    a warm updater and proceeded on a cold one -- the same warm/cold
+    asymmetry this PR had just fixed, arriving back in the refusing direction
+    (Greptile, PR #1547).
+
+    Both paths now go through `_recover_then_persisted_incomplete`, which is
+    shared rather than restated, because restating it is how they diverged.
+    """
+    from unittest.mock import MagicMock, patch
+
+    def registry() -> object:
+        handler = _registry_for_marker_clear(cleared=True)
+        handler.ingestor.list_projects = MagicMock(return_value=[ALPHA])
+        # A failed CLEAR left the flag up and attributed to this project...
+        handler._graph_incomplete = True
+        handler._incomplete_project = ALPHA
+        handler._flag_from_failed_clear = ALPHA
+        # ...and the durable marker is gone, so the flag is recoverable.
+        handler._persisted_incomplete = MagicMock(return_value=False)
+        handler._require_marker = MagicMock(return_value=None)
+        handler._require_marker_cleared = MagicMock(return_value=None)
+        handler._begin_writing_or_refuse = MagicMock()
+        # The cold path builds a real updater, so it needs the fields
+        # `__init__` would have set on a registry this test creates by hand.
+        handler._ignore_sets = MagicMock(return_value=(None, None))
+        handler.project_root = "/repo"
+        handler.parsers = {}
+        handler.queries = {}
+        handler._run_id = "test-run-id"
+        return handler
+
+    cold = registry()
+    cold._live_updater = None
+    with patch("codebase_rag.mcp.tools.GraphUpdater"):
+        assert cold._guarded_rename_reingest(ALPHA) is not None, (
+            "fixture guard: the cold path must recover and proceed, or the "
+            "comparison below is vacuous"
+        )
+
+    warm = registry()
+    retained = MagicMock()
+    retained.project_name = ALPHA
+    warm._live_updater = retained
+
+    assert warm._guarded_rename_reingest(ALPHA) is not None, (
+        "a warm updater refused a rename the cold path allows from identical "
+        "state, so the outcome depends on whether an updater happens to be "
+        "warm rather than on the graph"
+    )
+
+
 def test_a_retained_updater_is_still_reused_on_a_clean_durable_state() -> None:
     """The control: the refusal above must not cost the warm path.
 
