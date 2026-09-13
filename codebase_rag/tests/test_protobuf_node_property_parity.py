@@ -73,9 +73,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # as zero positional parameters, so no false mismatch is produced -- but it
     # is a real loss of capability, not a non-issue. Exporting it needs a proto
     # field plus regenerated bindings, which needs protoc; #1490 carries that.
+    # `anchor_hash` (issue #1808) grades whether a Gloss note is stale against
+    # the definition's current text; it is recomputed on every parse and a
+    # graph round-tripped through protobuf simply grades no note until the
+    # next parse, so it stays off the wire.
     "Function": frozenset(
         {
             "absolute_path",
+            "anchor_hash",
             "is_macro",
             "modifiers",
             "name_start_col",
@@ -88,6 +93,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Method": frozenset(
         {
             "absolute_path",
+            "anchor_hash",
             "is_exported",
             "is_property",
             "modifiers",

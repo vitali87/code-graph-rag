@@ -50,12 +50,12 @@ def _node(
 
 NODES: list[ResultRow] = [
     _node("Module", f"{P}.app", "app.py", 1, 20),
-    _node("Function", RUN, "app.py", 3, 8, ast_fingerprint="fp-run"),
+    _node("Function", RUN, "app.py", 3, 8, anchor_hash="fp-run"),
     _node("Class", STORE, "app.py", 10, 18),
-    _node("Method", STORE_GET, "app.py", 11, 13, ast_fingerprint="fp-store-get"),
+    _node("Method", STORE_GET, "app.py", 11, 13, anchor_hash="fp-store-get"),
     _node("Module", f"{P}.util", "util.py", 1, 10),
     _node("Function", UTIL_GET, "util.py", 1, 4),
-    _node("Function", VALIDATE, "util.py", 6, 9, ast_fingerprint="fp-validate"),
+    _node("Function", VALIDATE, "util.py", 6, 9, anchor_hash="fp-validate"),
 ]
 
 
@@ -106,7 +106,7 @@ class FakeGraph:
         elif query == cq.CYPHER_GLOSS_TARGET:
             n = self.nodes.get(str(p[cs.KEY_QN]))
             if n is not None:
-                out.append({cs.KEY_TARGET_HASH: n.get(cs.KEY_AST_FINGERPRINT)})
+                out.append({cs.KEY_TARGET_HASH: n.get(cs.KEY_ANCHOR_HASH)})
         elif query == cq.CYPHER_GLOSS_READ:
             key = str(p[cs.KEY_QN])
             if key in self.glosses:
@@ -751,11 +751,38 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     assert store.writes == [
         cq.CYPHER_REANCHOR_GLOSSES,
         cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
+        cq.CYPHER_GRADE_GLOSS_ANCHORS,
     ]
     assert "g.target_qn" in cq.CYPHER_REANCHOR_GLOSSES
     assert "g.mention_qns" in cq.CYPHER_REANCHOR_GLOSS_MENTIONS
     # Only an unattached note is re-anchored; an attached one is left alone.
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
+
+
+def test_grading_compares_the_recorded_hash_with_the_subjects_current_one() -> None:
+    # After re-anchoring, a note whose recorded hash no longer matches the
+    # subject's `anchor_hash` reads STALE; a match reads EXACT again; a
+    # subject or note without a hash is left as it is, never guessed at.
+    q = cq.CYPHER_GRADE_GLOSS_ANCHORS
+    assert "g.target_hash = t.anchor_hash" in q
+    assert (
+        f"THEN '{cs.GlossAnchorState.EXACT.value}' ELSE '{cs.GlossAnchorState.STALE.value}'"
+        in q
+    )
+    assert "g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL" in q
+    # A note that recorded a pre-format hash (stage two wrote the clone
+    # skeleton) is not comparable and is left alone, not read as STALE.
+    assert f"g.target_hash STARTS WITH '{cs.ANCHOR_HASH_VERSION}'" in q
+    assert "SET g.anchor_state" in q
+    assert "DELETE" not in q
+
+
+def test_a_note_records_the_subjects_anchor_hash_not_the_clone_skeleton() -> None:
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    assert row["target_hash"] == "fp-run"
+    assert "n.anchor_hash AS target_hash" in cq.CYPHER_GLOSS_TARGET
+    assert "ast_fingerprint" not in cq.CYPHER_GLOSS_TARGET
 
 
 def test_reanchoring_failure_is_logged_not_raised(tmp_path: Path) -> None:

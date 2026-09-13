@@ -27,6 +27,7 @@ from ..types_defs import (
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
+from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
@@ -804,6 +805,7 @@ class FunctionIngestMixin:
             # Computed here, not at flush: the tree (and this node) is gone by
             # the time deferred methods are written out.
             props.update(fingerprint_props(func_node))
+            props.update(anchor_hash_props(func_node, decorators))
             if not hasattr(self, "_deferred_cpp_methods"):
                 self._deferred_cpp_methods = []
             self._deferred_cpp_methods.append(
@@ -1494,6 +1496,7 @@ class FunctionIngestMixin:
             )
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
+        props.update(anchor_hash_props(func_node, decorators))
         return props
 
     def _create_function_relationships(

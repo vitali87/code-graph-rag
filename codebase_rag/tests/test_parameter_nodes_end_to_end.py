@@ -336,7 +336,8 @@ def test_the_deferred_pass_runs_for_parameter_facts_alone(tmp_path: Path) -> Non
     )
     updater.run(force=True)
     processor = updater.factory.definition_processor
-    assert not processor.pending_type_facts and not processor.pending_parameter_types
+    assert not processor.pending_type_facts
+    assert not processor.pending_parameter_types
 
     processor.pending_parameter_types.append(
         PendingParameterType("proj.app.build.1", "proj.app", "Widget", "app.py")

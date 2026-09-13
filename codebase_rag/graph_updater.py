@@ -5430,8 +5430,14 @@ class GraphUpdater:
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
-        self._reanchor_glosses()
+        # Flush FIRST: the re-parsed definitions are still buffered in the
+        # ingestor here, and the grading statement compares a note against
+        # its subject's current `anchor_hash` in the store. Graded before the
+        # flush it finds no subject (the old node is already deleted, the new
+        # one not yet written) and the note on the very file that was just
+        # edited stays EXACT until the following sync (issue #1808).
         self.ingestor.flush_all()
+        self._reanchor_glosses()
 
     def _reingest_update_hashes(
         self,
@@ -5724,7 +5730,7 @@ class GraphUpdater:
             self.finding_analyzer.analyze(scoped)
 
     def _reanchor_glosses(self) -> None:
-        """Re-attach every Gloss to the definitions its own record names.
+        """Re-attach every Gloss to the definitions its own record names, then grade it.
 
         A gloss lives only in the graph, so a rebuild that deletes and
         recreates a definition, or an inbound-edge capture that could not be
@@ -5740,6 +5746,10 @@ class GraphUpdater:
         try:
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+            # Then grade: the subject's `anchor_hash` was just re-emitted by
+            # the parse, so comparing it with the note's recorded hash here
+            # is what makes a note about changed code read STALE.
+            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
