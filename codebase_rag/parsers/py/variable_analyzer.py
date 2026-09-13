@@ -81,6 +81,13 @@ def _non_none_members(type_str: str) -> frozenset[str]:
     return frozenset(_union_members(type_str))
 
 
+class _DunderLookup(NamedTuple):
+    """Where an operator method was found up a class's bases, and what it returns."""
+
+    owner: str | None  # the class that defines it, None when nothing does
+    returned: str | None
+
+
 def _reflected_dunder(dunder: str) -> str:
     """`__truediv__` -> `__rtruediv__`: the method the RIGHT operand supplies."""
     return f"__r{dunder[2:]}"
@@ -655,54 +662,60 @@ class PythonVariableAnalyzerMixin(_VarBase):
         with the return type of the operator method found anywhere up its
         bases (`Sub / cfg` where `Base.__truediv__ -> Product` is a Product);
         a type outside the project -- `pathlib.Path`, `str` -- keeps its own
-        type, which is right for `Path / "sub"`. A project class that defines
-        the method nowhere hands the operation to the RIGHT operand's
+        type, which is right for `Path / "sub"`. A right operand whose class
+        is a strict subclass of the left's and provides its OWN reflected
+        method goes before the left's forward one. A project class that
+        defines the method nowhere hands the operation to the right operand's
         reflected method, exactly as the interpreter would; if that answers
         nothing either the receiver stays untyped rather than guessing.
         """
         results: dict[str, None] = {}
-        forward_missing = False
         left_members = _union_members(left) if left else []
-        right_classes = [
-            qn
-            for member in (_union_members(right) if right else [])
-            if (qn := self._get_project_class_qn(member, module_qn)) is not None
-        ]
+        right_classes = self._get_project_classes(right, module_qn)
+        forward_missing = not left_members
         for member in left_members:
             class_qn = self._get_project_class_qn(member, module_qn)
             if class_qn is None:
                 results.setdefault(member, None)
                 continue
-            # A right operand whose class is a STRICT subclass of the left's
-            # gets its reflected method called first, before the left's
-            # forward one -- `base / derived` runs `Derived.__rtruediv__`
-            # even though `Base.__truediv__` exists.
-            subclass_result = self._get_subclass_reflected_type(
-                class_qn, right_classes, dunder
-            )
-            if subclass_result is not None:
-                found, returned = subclass_result
-                if returned:
-                    results.setdefault(returned, None)
-                continue
-            found, returned = self._get_dunder_return_type(class_qn, dunder)
-            if not found:
-                forward_missing = True
-            elif returned:
+            lookup, missing = self._get_forward_result(class_qn, right_classes, dunder)
+            forward_missing = forward_missing or missing
+            if lookup.returned:
+                results.setdefault(lookup.returned, None)
+        if forward_missing:
+            for returned in self._get_reflected_results(right_classes, dunder):
                 results.setdefault(returned, None)
-        if forward_missing or not left_members:
-            for member in _union_members(right) if right else []:
-                class_qn = self._get_project_class_qn(member, module_qn)
-                if class_qn is None:
-                    continue
-                found, returned = self._get_dunder_return_type(
-                    class_qn, _reflected_dunder(dunder)
-                )
-                if found and returned:
-                    results.setdefault(returned, None)
         if not results:
             return None
         return f" {cs.PY_UNION_SEPARATOR} ".join(results)
+
+    def _get_project_classes(self, union: str | None, module_qn: str) -> list[str]:
+        return [
+            qn
+            for member in (_union_members(union) if union else [])
+            if (qn := self._get_project_class_qn(member, module_qn)) is not None
+        ]
+
+    def _get_forward_result(
+        self, class_qn: str, right_classes: list[str], dunder: str
+    ) -> tuple[_DunderLookup, bool]:
+        """(the lookup that decides for this left class, is the forward method missing)."""
+        priority = self._get_subclass_reflected_type(class_qn, right_classes, dunder)
+        if priority is not None:
+            return priority, False
+        lookup = self._get_dunder_return_type(class_qn, dunder)
+        return lookup, lookup.owner is None
+
+    def _get_reflected_results(
+        self, right_classes: list[str], dunder: str
+    ) -> list[str]:
+        reflected = _reflected_dunder(dunder)
+        results: list[str] = []
+        for right_qn in right_classes:
+            returned = self._get_dunder_return_type(right_qn, reflected).returned
+            if returned:
+                results.append(returned)
+        return results
 
     def _get_project_class_qn(self, type_name: str, module_qn: str) -> str | None:
         """The registry qn of a class THIS project defines, else None.
@@ -720,33 +733,37 @@ class PythonVariableAnalyzerMixin(_VarBase):
 
     def _get_subclass_reflected_type(
         self, left_qn: str, right_classes: list[str], dunder: str
-    ) -> tuple[bool, str | None] | None:
+    ) -> _DunderLookup | None:
         """The reflected method of a right operand that subclasses the left.
 
-        Returns None when no right class is a strict subclass of `left_qn`
-        that defines the reflected dunder, so the caller falls through to the
-        left's forward method. Python applies this priority only when the
-        subclass actually provides the reflected method.
+        Python gives it priority only when the subclass PROVIDES the reflected
+        method -- a distinct implementation, not one inherited from the left's
+        own class. `Base` defining both `__truediv__ -> First` and
+        `__rtruediv__ -> Second` with `Derived(Base)` defining neither runs
+        the forward method for `base / derived` and yields First; the
+        inherited `__rtruediv__` is Base's, not Derived's. Returns None when
+        no right class qualifies, so the caller falls through to the forward
+        method.
         """
+        reflected = _reflected_dunder(dunder)
+        left_owner = self._get_dunder_return_type(left_qn, reflected).owner
         for right_qn in right_classes:
             if right_qn == left_qn or left_qn not in self._get_mro(right_qn):
                 continue
-            found, returned = self._get_dunder_return_type(
-                right_qn, _reflected_dunder(dunder)
-            )
-            if found:
-                return found, returned
+            lookup = self._get_dunder_return_type(right_qn, reflected)
+            if lookup.owner is not None and lookup.owner != left_owner:
+                return lookup
         return None
 
-    def _get_dunder_return_type(
-        self, class_qn: str, dunder: str
-    ) -> tuple[bool, str | None]:
-        """(defined anywhere up the bases?, its return type if known)."""
+    def _get_dunder_return_type(self, class_qn: str, dunder: str) -> _DunderLookup:
+        """The first class up the bases that defines `dunder`, and its return type."""
         for cls in self._get_mro(class_qn):
             method_qn = f"{cls}{cs.SEPARATOR_DOT}{dunder}"
             if self._find_method_ast_node(method_qn) is not None:
-                return True, self._get_method_return_type_from_ast(method_qn)
-        return False, None
+                return _DunderLookup(
+                    cls, self._get_method_return_type_from_ast(method_qn)
+                )
+        return _DunderLookup(None, None)
 
     def _get_mro(self, class_qn: str) -> list[str]:
         """Python's method resolution order for a project class.
@@ -814,22 +831,21 @@ class PythonVariableAnalyzerMixin(_VarBase):
         """
         if right.type == cs.TS_PY_CALL:
             return None
-        if right.type != cs.TS_PY_BINARY_OPERATOR:
+        dunder: str | None = None
+        reflected: tuple[ASTNode, ...] = ()
+        if right.type == cs.TS_PY_BINARY_OPERATOR:
+            operator = right.child_by_field_name(cs.FIELD_OPERATOR)
+            token = safe_decode_text(operator) if operator is not None else None
+            dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
+            if dunder is None:
+                return None
+            left = right.child_by_field_name(cs.TS_FIELD_LEFT)
+            right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
+            candidates = self._get_value_leaves(left, 1) if left is not None else ()
+            if right_operand is not None:
+                reflected = self._get_value_leaves(right_operand, 1)
+        else:
             candidates = self._get_value_leaves(right, 0)
-            return _Alias(candidates, None, ()) if candidates else None
-        operator = right.child_by_field_name(cs.FIELD_OPERATOR)
-        token = safe_decode_text(operator) if operator is not None else None
-        dunder = cs.PY_BINARY_OPERATOR_DUNDERS.get(token or "")
-        if dunder is None:
-            return None
-        left = right.child_by_field_name(cs.TS_FIELD_LEFT)
-        right_operand = right.child_by_field_name(cs.TS_FIELD_RIGHT)
-        candidates = self._get_value_leaves(left, 1) if left is not None else ()
-        reflected = (
-            self._get_value_leaves(right_operand, 1)
-            if right_operand is not None
-            else ()
-        )
         if not candidates and not reflected:
             return None
         return _Alias(candidates, dunder, reflected)

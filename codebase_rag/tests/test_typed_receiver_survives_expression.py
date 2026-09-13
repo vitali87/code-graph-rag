@@ -395,6 +395,27 @@ def test_operator_lookup_follows_c3_not_breadth_first(tmp_path: Path) -> None:
     assert not any(t.endswith("engine.FromB.run") for t in calls), calls
 
 
+def test_an_inherited_reflected_method_gives_no_priority(tmp_path: Path) -> None:
+    """`Base` defines both `__truediv__ -> First` and `__rtruediv__ -> Second`;
+    `Derived(Base)` defines neither. For `base / derived` Python runs the
+    FORWARD method: the subclass only inherits the reflected one, which is
+    Base's own, so it earns no priority (Greptile, round 4, executed)."""
+    repo = _operator_repo(
+        tmp_path,
+        "class First:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Second:\n    def run(self) -> int:\n        return 2\n\n"
+        "class Base:\n"
+        "    def __truediv__(self, other: object) -> First:\n        return First()\n"
+        "    def __rtruediv__(self, other: object) -> Second:\n        return Second()\n\n"
+        "class Derived(Base):\n    pass\n",
+        "def exercise(base: Base, derived: Derived) -> int:\n"
+        "    result = base / derived\n    return result.run()\n",
+    )
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.First.run") for t in calls), calls
+    assert not any(t.endswith("engine.Second.run") for t in calls), calls
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """A known-positive: the bare-name fallback DOES fire when the type is
     genuinely unknowable, so the assertions above are not vacuously green.
