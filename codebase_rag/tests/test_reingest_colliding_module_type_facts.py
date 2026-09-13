@@ -111,9 +111,7 @@ def test_the_unchanged_colliding_files_fact_survives_the_stale_filter(
     # the edge: with it on, both filters end with the edge present.
     with (
         patch.object(GraphUpdater, "_reingest_delete", spy_delete),
-        patch.object(
-            GraphUpdater, "_restore_inbound_edges", lambda self, captured: None
-        ),
+        patch.object(GraphUpdater, "_restore_inbound_edges", return_value=None),
     ):
         _touch_and_reingest(repo, store)
 
