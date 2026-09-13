@@ -1367,8 +1367,14 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
-        type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
+        type_fact_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        type_facts,
+        method_path if isinstance(method_path, str) else None,
     )
     method_props.update(fingerprint_props(method_node))
     method_props.update(anchor_hash_props(method_node, decorators))

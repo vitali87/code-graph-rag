@@ -851,6 +851,13 @@ class PendingTypeFact(NamedTuple):
     module_qn: str
     return_type: str | None
     param_types: list[str] | None
+    # The owning file's relative path. Scoped re-ingestion discards the facts
+    # of the files it re-parses by THIS, not by module_qn: `foo.py` and
+    # `foo/__init__.py` share `proj.foo`, and keying on the qn dropped the
+    # unchanged file's facts with the re-parsed one's, leaving its detached
+    # RETURNS/ACCEPTS unbuilt (issue #1892). None only when the definition
+    # was ingested without a file, in which case the module qn is the key.
+    path: str | None = None
 
 
 class DeferredImportEdge(NamedTuple):

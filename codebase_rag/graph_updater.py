@@ -2259,6 +2259,7 @@ class GraphUpdater:
                 [str(p) for p in param_types]
                 if isinstance(param_types, list)
                 else None,
+                path,
             )
         )
 
@@ -5311,20 +5312,30 @@ class GraphUpdater:
         # the files re-parsed or dropped here describe the old source, and
         # the re-parse queues the new ones, so without this both the stale
         # and the fresh RETURNS/ACCEPTS edge would be emitted (issue #1527).
+        # Keyed on the FILE, not the module qn: `foo.py` and `foo/__init__.py`
+        # share `proj.foo`, and a module-qn filter dropped the unchanged
+        # file's facts with the re-parsed one's, leaving its detached
+        # RETURNS/ACCEPTS unbuilt (issue #1892). A fact ingested without a
+        # file (no path) falls back to the module-qn key.
+        stale_keys = {*reparse, *gone}
         qn_to_path = self.factory.definition_processor.module_qn_to_file_path
         stale_paths = {*reparse.values(), *gone.values()}
         stale_modules = {
-            base_module_qn(Path(key), self.project_name) for key in (*reparse, *gone)
+            base_module_qn(Path(key), self.project_name) for key in stale_keys
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
-        pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
+        pending[:] = [
+            fact
+            for fact in pending
+            if (
+                fact.path not in stale_keys
+                if fact.path is not None
+                else fact.module_qn not in stale_modules
+            )
+        ]
         # The same for parameter annotations: the scoped prologue rehydrates
         # them from the graph before this delete, so a changed annotation
-        # would otherwise emit OF_TYPE to both the old and the new type. Keyed
-        # on the FILE, not the module qn: `foo.py` and `foo/__init__.py` share
-        # `proj.foo`, and a module-qn filter dropped the unchanged file's
-        # facts with the re-parsed one's, leaving its detached OF_TYPE unbuilt.
-        stale_keys = {*reparse, *gone}
+        # would otherwise emit OF_TYPE to both the old and the new type.
         pending_params = self.factory.definition_processor.pending_parameter_types
         pending_params[:] = [
             fact for fact in pending_params if fact.path not in stale_keys
