@@ -25,6 +25,17 @@ if TYPE_CHECKING:
     from ..js_ts import JsTypeInferenceEngine
 
 
+# Node types whose BODY is an inner scope; the named fields listed are the
+# parts that still evaluate in the enclosing scope.
+_INNER_SCOPE_OUTER_FIELDS: dict[str, tuple[str, ...]] = {
+    cs.TS_PY_FUNCTION_DEFINITION: (cs.FIELD_PARAMETERS, cs.FIELD_RETURN_TYPE),
+    cs.TS_PY_LAMBDA: (cs.FIELD_PARAMETERS, cs.FIELD_RETURN_TYPE),
+    cs.TS_PY_CLASS_DEFINITION: (cs.FIELD_SUPERCLASSES,),
+}
+# Binding nodes whose target is the `left` field.
+_LEFT_TARGET_TYPES = frozenset(
+    {cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT}
+)
 # Destructuring targets whose identifiers are bindings; anything else under a
 # target (attribute, subscript, call) is a mutation, not a rebinding. A plain
 # `tuple` / `list` appears only under `as_pattern_target`
@@ -170,72 +181,93 @@ class PythonTypeInferenceEngine(
         alias, a walrus `(self := pick())`, a `case` capture (`case self:`,
         `case Foo(x=self):`, `case [self, *rest]:`, `case Foo() as self:`)
         and an import (`import self`, `from m import f as self`). Nested def,
-        lambda and class
-        BODIES are not descended into (a binding there belongs to that scope);
-        their parameter defaults, annotations, return annotation and
-        superclass arguments are, because those evaluate in this scope. An attribute or subscript target
-        (`self.cache = value`) is a mutation, not a rebinding.
+        lambda and class BODIES are not descended into (a binding there
+        belongs to that scope); their parameter defaults, annotations, return
+        annotation and superclass arguments are, because those evaluate in
+        this scope. An attribute or subscript target (`self.cache = value`)
+        is a mutation, not a rebinding.
         """
         stack = list(def_node.named_children)
         while stack:
             node = stack.pop()
-            if node.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_LAMBDA):
-                # The body is the inner scope; the PARAMETERS (default values
-                # and annotations such as `x=(self := pick())`) and the
-                # RETURN ANNOTATION (`-> (self := pick())`) evaluate in this one.
-                params = node.child_by_field_name(cs.FIELD_PARAMETERS)
-                if params is not None:
-                    stack.append(params)
-                returns = node.child_by_field_name(cs.FIELD_RETURN_TYPE)
-                if returns is not None:
-                    stack.append(returns)
+            if node.type in _INNER_SCOPE_OUTER_FIELDS:
+                stack.extend(cls._outer_scope_parts(node))
                 continue
-            if node.type == cs.TS_PY_CLASS_DEFINITION:
-                # Same split: the superclass arguments evaluate here.
-                bases = node.child_by_field_name(cs.FIELD_SUPERCLASSES)
-                if bases is not None:
-                    stack.append(bases)
-                continue
-            target: Node | None = None
-            if node.type in (
-                cs.TS_PY_ASSIGNMENT,
-                cs.TS_PY_AUGMENTED_ASSIGNMENT,
-                cs.TS_PY_FOR_STATEMENT,
-            ):
-                target = node.child_by_field_name(cs.FIELD_LEFT)
-            elif node.type == cs.TS_PY_NAMED_EXPRESSION:
-                target = node.child_by_field_name(cs.FIELD_NAME)
-            elif node.type == cs.TS_PY_AS_PATTERN:
-                target = node.child_by_field_name(cs.FIELD_ALIAS)
-                if target is None:
-                    # `case <pattern> as self:` has no alias field; the
-                    # capture is the trailing identifier.
-                    target = node.named_children[-1] if node.named_children else None
-            elif node.type == cs.TS_PY_ALIASED_IMPORT:
-                target = node.child_by_field_name(cs.FIELD_ALIAS)
-            elif node.type in (cs.TS_PY_CASE_PATTERN, cs.TS_PY_KEYWORD_PATTERN):
-                if cls._case_pattern_captures(node, name):
-                    return True
-            elif node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
-                # `from m import self` binds the bare name; an aliased import
-                # is handled as its own node above.
-                for imported in node.children_by_field_name(cs.FIELD_NAME):
-                    if cls._is_bare_name(imported, name):
-                        return True
-            elif node.type == cs.TS_PY_IMPORT_STATEMENT:
-                # `import self` / `import self.sub` bind the FIRST component
-                # (the bot's finding); `import a as self` is the aliased node.
-                for imported in node.children_by_field_name(cs.FIELD_NAME):
-                    if (
-                        imported.type == cs.TS_PY_DOTTED_NAME
-                        and imported.named_children
-                    ):
-                        if cls._is_bare_name(imported.named_children[0], name):
-                            return True
-            if target is not None and cls._binds_name(target, name):
+            if cls._node_binds(node, name):
                 return True
             stack.extend(node.named_children)
         return False
+
+    @staticmethod
+    def _outer_scope_parts(node: Node) -> list[Node]:
+        """The children of a nested def, lambda or class that evaluate OUTSIDE it.
+
+        The body is the inner scope. The PARAMETERS (default values and
+        annotations such as `x=(self := pick())`), the RETURN ANNOTATION
+        (`-> (self := pick())`) and a class's superclass arguments evaluate
+        in the enclosing scope, so the walk continues into those alone.
+        """
+        parts = (
+            node.child_by_field_name(field)
+            for field in _INNER_SCOPE_OUTER_FIELDS[node.type]
+        )
+        return [part for part in parts if part is not None]
+
+    @classmethod
+    def _node_binds(cls, node: Node, name: str) -> bool:
+        """Whether this ONE node, ignoring its descendants, binds `name`."""
+        target = cls._binding_target(node)
+        if target is not None:
+            return cls._binds_name(target, name)
+        if node.type in (cs.TS_PY_CASE_PATTERN, cs.TS_PY_KEYWORD_PATTERN):
+            return cls._case_pattern_captures(node, name)
+        if node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
+            # `from m import self` binds the bare name; an aliased import
+            # is handled as its own node by `_binding_target`.
+            return any(
+                cls._is_bare_name(imported, name)
+                for imported in node.children_by_field_name(cs.FIELD_NAME)
+            )
+        if node.type == cs.TS_PY_IMPORT_STATEMENT:
+            return any(
+                cls._import_binds(imported, name)
+                for imported in node.children_by_field_name(cs.FIELD_NAME)
+            )
+        return False
+
+    @staticmethod
+    def _binding_target(node: Node) -> Node | None:
+        """The target subtree of a binding node, or None for a non-binding node.
+
+        Assignment, augmented assignment and `for` bind their left side; a
+        walrus its name; a `with`/`except`/`case ... as` its alias; an
+        `import a as b` its alias.
+        """
+        if node.type in _LEFT_TARGET_TYPES:
+            return node.child_by_field_name(cs.FIELD_LEFT)
+        if node.type == cs.TS_PY_NAMED_EXPRESSION:
+            return node.child_by_field_name(cs.FIELD_NAME)
+        if node.type == cs.TS_PY_ALIASED_IMPORT:
+            return node.child_by_field_name(cs.FIELD_ALIAS)
+        if node.type == cs.TS_PY_AS_PATTERN:
+            alias = node.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None:
+                return alias
+            # `case <pattern> as self:` has no alias field; the capture is
+            # the trailing identifier.
+            return node.named_children[-1] if node.named_children else None
+        return None
+
+    @classmethod
+    def _import_binds(cls, imported: Node, name: str) -> bool:
+        """Whether `import self` / `import self.sub` binds `name`.
+
+        A plain import binds its FIRST component; `import a as self` is the
+        `aliased_import` node, handled by `_binding_target`.
+        """
+        if imported.type != cs.TS_PY_DOTTED_NAME or not imported.named_children:
+            return False
+        return cls._is_bare_name(imported.named_children[0], name)
 
     @staticmethod
     def _is_bare_name(node: Node, name: str) -> bool:
