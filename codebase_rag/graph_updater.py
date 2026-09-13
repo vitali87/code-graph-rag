@@ -4983,19 +4983,34 @@ class GraphUpdater:
         new_dirs: set[str] = set()
         diverged: set[str] = set()
         for key in present:
-            parent = Path(key).parent
-            while True:
-                rel = parent.as_posix()
-                if rel in new_dirs or rel in diverged:
-                    break
-                needs = self._container_needs_deriving(rel)
-                if needs is None:
-                    break
-                (diverged if needs else new_dirs).add(rel)
-                if rel == ".":
-                    break
-                parent = parent.parent
+            self._climb_uncontained(Path(key).parent, new_dirs, diverged)
         return new_dirs, diverged
+
+    def _climb_uncontained(
+        self, start: Path, new_dirs: set[str], diverged: set[str]
+    ) -> None:
+        """Climb from one file's directory to the first correct ancestor.
+
+        Stops at the first directory the graph already records correctly --
+        everything above it is correct too, since an ancestor is only wrong
+        if something changed it, and that change would have been caught on
+        its own climb.
+
+        Split out of `_uncontained_dirs` to keep it under the
+        cognitive-complexity limit; the nested loop was the whole cost.
+        """
+        parent = start
+        while True:
+            rel = parent.as_posix()
+            if rel in new_dirs or rel in diverged:
+                return
+            needs = self._container_needs_deriving(rel)
+            if needs is None:
+                return
+            (diverged if needs else new_dirs).add(rel)
+            if rel == ".":
+                return
+            parent = parent.parent
 
     def _container_needs_deriving(self, rel: str) -> bool | None:
         """Whether this directory needs deriving, and if so which kind of need.

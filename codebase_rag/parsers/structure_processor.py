@@ -197,50 +197,54 @@ class StructureProcessor:
         package_indicators = self.package_indicator_names()
 
         for root in sorted(directories):
-            relative_root = cached_relative_path(root, self.repo_path)
+            self._derive_one_directory(root, package_indicators, emit=emit)
 
-            parent_rel_path = relative_root.parent
-            parent_container_qn = self.structural_elements.get(parent_rel_path)
+    def _derive_one_directory(
+        self, root: Path, package_indicators: set[str], *, emit: bool
+    ) -> None:
+        """Record one directory's kind in the map, and emit it when asked.
 
-            is_package = False
-            for indicator in package_indicators:
-                if (root / indicator).exists():
-                    is_package = True
-                    break
+        Split out of `identify_structure` to keep it under the
+        cognitive-complexity limit: the loop, the indicator scan and the two
+        emission branches nest three deep together, and the per-directory
+        decision stands on its own.
+        """
+        relative_root = cached_relative_path(root, self.repo_path)
+        parent_rel_path = relative_root.parent
+        parent_container_qn = self.structural_elements.get(parent_rel_path)
 
-            if is_package:
-                package_qn = cs.SEPARATOR_DOT.join(
-                    [self.project_name] + list(relative_root.parts)
+        is_package = any(
+            (root / indicator).exists() for indicator in package_indicators
+        )
+
+        if is_package:
+            package_qn = cs.SEPARATOR_DOT.join(
+                [self.project_name] + list(relative_root.parts)
+            )
+            self.structural_elements[relative_root] = package_qn
+            logger.info(logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn))
+            if emit:
+                self._emit_package(
+                    root,
+                    relative_root,
+                    package_qn,
+                    parent_rel_path,
+                    parent_container_qn,
                 )
-                self.structural_elements[relative_root] = package_qn
-                logger.info(
-                    logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
-                )
-                if emit:
-                    self._emit_package(
-                        root,
-                        relative_root,
-                        package_qn,
-                        parent_rel_path,
-                        parent_container_qn,
-                    )
-            else:
-                # Recorded for the ROOT too, which the Folder emission below
-                # deliberately skips. Without this the root's stale package qn
-                # survived a re-derivation, so a root that stopped being a
-                # package still read as one and its Package node was never
-                # pruned (greptile-local, issue #1798). The repo root gets no
-                # Folder node -- its parent is the Project -- but it still
-                # needs an accurate entry.
-                self.structural_elements[relative_root] = None
-            if not is_package and root != self.repo_path:
-                logger.info(
-                    logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
-                )
-                if emit:
-                    self._emit_folder(
-                        root, relative_root, parent_rel_path, parent_container_qn
-                    )
+            return
+
+        # Recorded for the ROOT too, which the Folder emission below
+        # deliberately skips. Without this the root's stale package qn
+        # survived a re-derivation, so a root that stopped being a package
+        # still read as one and its Package node was never pruned
+        # (greptile-local, issue #1798). The repo root gets no Folder node --
+        # its parent is the Project -- but it still needs an accurate entry.
+        self.structural_elements[relative_root] = None
+        if root == self.repo_path:
+            return
+        logger.info(logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root))
+        if emit:
+            self._emit_folder(root, relative_root, parent_rel_path, parent_container_qn)
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
         relative_filepath = cached_relative_path(file_path, self.repo_path).as_posix()
