@@ -140,6 +140,135 @@ def test_a_long_operator_chain_does_not_void_the_whole_function(
     )
 
 
+def _calls_from(repo: Path, caller: str) -> set[str]:
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(ingestor=store, repo_path=repo, parsers=parsers, queries=queries).run(
+        force=True
+    )
+    return {
+        str(tgt)
+        for _sl, src, rel, _tl, tgt in store.edges
+        if rel == cs.RelationshipType.CALLS.value and str(src).endswith(caller)
+    }
+
+
+def test_and_takes_the_guarded_value_not_the_guard(tmp_path: Path) -> None:
+    """`flag and Engine()` evaluates to the Engine whenever it is called on.
+
+    Left-first aliasing typed the receiver as the bool guard and DROPPED the
+    call (Greptile P2 and CodeRabbit Major on PR #1870, both executed). The
+    decoy `Other.start` proves the edge comes from the receiver's type, not
+    from bare-name matching, which would emit both.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(
+        "class Engine:\n    def start(self) -> int:\n        return 1\n\n"
+        "class Other:\n    def start(self) -> int:\n        return 2\n"
+    )
+    (repo / "app.py").write_text(
+        "from engine import Engine\n"
+        "\n"
+        "def run(flag: bool) -> int:\n"
+        "    resolved = flag and Engine()\n"
+        "    return resolved.start()\n"
+    )
+
+    calls = _calls_from(repo, "app.run")
+    assert any(t.endswith("engine.Engine.start") for t in calls), calls
+    assert not any(t.endswith("engine.Other.start") for t in calls), calls
+
+
+_TWO_CLASSES = (
+    "class Widget:\n    def run(self) -> int:\n        return 1\n\n"
+    "class Engine:\n    def run(self) -> int:\n        return 2\n"
+)
+
+
+def _pick_calls(tmp_path: Path, name: str, signature: str, body: str) -> set[str]:
+    # A RELATIVE import: the fixture is a package, so `from engine import X`
+    # names a top-level module that does not exist and the class never
+    # resolves to its registry qn -- every receiver would then go through
+    # the bare-name fallback and the test could not see typed resolution.
+    repo = tmp_path / name
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_TWO_CLASSES)
+    (repo / "app.py").write_text(
+        f"from .engine import Widget, Engine\n\ndef pick({signature}) -> int:\n{body}"
+    )
+    return _calls_from(repo, "app.pick")
+
+
+def test_branches_of_different_types_behave_like_a_union_annotation(
+    tmp_path: Path,
+) -> None:
+    """`widget if flag else engine` IS `Widget | Engine`, and is treated as one.
+
+    Typing the receiver as only the first branch keeps `Widget.run` and drops
+    `Engine.run`; leaving it untyped hands it to the bare-name fallback, which
+    picks ONE of the two arbitrarily (measured on this fixture: `Engine.run`
+    alone). Neither is right. The receiver is typed as the union an annotation
+    would spell, so whatever the resolver does for `chosen: Widget | Engine`
+    -- today it emits no edge, and per-member emission would be the
+    improvement for both -- it does identically here. The plain assignment is
+    the known-positive that proves the harness observes edges at all.
+    """
+    both = "flag: bool, widget: Widget, engine: Engine"
+    direct = _pick_calls(
+        tmp_path, "direct", both, "    chosen = widget\n    return chosen.run()\n"
+    )
+    annotated = _pick_calls(
+        tmp_path, "annotated", "chosen: Widget | Engine", "    return chosen.run()\n"
+    )
+    ternary = _pick_calls(
+        tmp_path,
+        "ternary",
+        both,
+        "    chosen = widget if flag else engine\n    return chosen.run()\n",
+    )
+
+    assert any(t.endswith("engine.Widget.run") for t in direct), direct
+    assert ternary == annotated, (ternary, annotated)
+    assert not (
+        len(ternary) == 1 and next(iter(ternary)).endswith("engine.Engine.run")
+    ), "the bare-name fallback picked one branch arbitrarily"
+
+
+def test_an_overloaded_operator_yields_its_return_type(tmp_path: Path) -> None:
+    """`factory / config` is whatever `Factory.__truediv__` returns.
+
+    Treating every operator as returning its left operand's type indexed
+    `product.run()` as `Factory.run` and never as `Product.run` (Greptile P2 on
+    PR #1870, executed). `Factory.run` exists precisely so the wrong answer is
+    observable rather than merely absent.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(
+        "class Config:\n    pass\n\n"
+        "class Product:\n    def run(self) -> int:\n        return 1\n\n"
+        "class Factory:\n"
+        "    def run(self) -> int:\n        return 0\n"
+        "    def __truediv__(self, config: Config) -> Product:\n"
+        "        return Product()\n"
+    )
+    (repo / "app.py").write_text(
+        "from .engine import Factory, Config\n"
+        "\n"
+        "def exercise(factory: Factory, config: Config) -> int:\n"
+        "    product = factory / config\n"
+        "    return product.run()\n"
+    )
+
+    calls = _calls_from(repo, "app.exercise")
+    assert any(t.endswith("engine.Product.run") for t in calls), calls
+    assert not any(t.endswith("engine.Factory.run") for t in calls), calls
+
+
 def test_the_fixture_can_go_red(tmp_path: Path) -> None:
     """A known-positive: the bare-name fallback DOES fire when the type is
     genuinely unknowable, so the assertions above are not vacuously green.

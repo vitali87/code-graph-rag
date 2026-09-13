@@ -93,6 +93,26 @@ TS_FIELD_ARGUMENT = "argument"
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
+PY_OP_AND = "and"
+PY_OP_OR = "or"
+# `left <op> right` dispatches to `left.__dunder__`, so the expression's type is
+# whatever that method returns -- which an overloaded operator can make a
+# different class from either operand (`Factory / Config -> Product`).
+PY_BINARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "+": "__add__",
+    "-": "__sub__",
+    "*": "__mul__",
+    "/": "__truediv__",
+    "//": "__floordiv__",
+    "%": "__mod__",
+    "@": "__matmul__",
+    "**": "__pow__",
+    "|": "__or__",
+    "&": "__and__",
+    "^": "__xor__",
+    "<<": "__lshift__",
+    ">>": "__rshift__",
+}
 PY_BUILTIN_LEN = "len"
 PY_BUILTIN_GETATTR = "getattr"
 TS_PY_STRING_CONTENT = "string_content"
