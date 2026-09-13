@@ -383,6 +383,22 @@ def test_rename_refuses_silently_rewritten_heuristic_sites() -> None:
     assert verify(allowed, delta, rewritten=rewritten).ok
 
 
+def test_change_signature_refuses_silently_rewritten_heuristic_sites() -> None:
+    # The same leave a rename carries: without it, `allow_heuristic` on a
+    # signature change rewrote the guessed site and the contract then undid
+    # the whole change for having done what it was told.
+    delta = _delta(
+        symbols={"added": [], "removed": [], "renamed": [], "changed": ["p.h"]}
+    )
+    rewritten = [("pkg/app.py:5", "exact"), ("pkg/other.py:9", "heuristic")]
+    strict = verify(change_signature_expectation([]), delta, rewritten=rewritten)
+    assert strict.failures == (
+        cs.CONTRACT_HEURISTIC_REWRITTEN.format(sites="pkg/other.py:9"),
+    )
+    allowed = change_signature_expectation([], heuristic_allowed=True)
+    assert verify(allowed, delta, rewritten=rewritten).ok
+
+
 def test_change_signature_requires_every_site_mapped_or_listed() -> None:
     change = {
         "qualified_name": "p.pkg.util.helper",

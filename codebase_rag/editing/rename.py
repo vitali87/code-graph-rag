@@ -44,6 +44,7 @@ from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
+from .sites import AMBIGUOUS, call_node_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -55,13 +56,6 @@ from .transaction import (
 
 QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
 
-_AMBIGUOUS = frozenset(
-    {
-        cs.EdgeResolution.HEURISTIC.value,
-        cs.EdgeResolution.OVERLOAD.value,
-        cs.EdgeResolution.DYNAMIC.value,
-    }
-)
 _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 
@@ -137,20 +131,6 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
-def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
-    """`qn` plus every method it overrides or is overridden by, transitively."""
-    seen: list[str] = [qn]
-    frontier = [qn]
-    while frontier:
-        current = frontier.pop()
-        for row in graph_query.overrides(fetch_all, project, current):
-            other = row["qualified_name"]
-            if other not in seen:
-                seen.append(other)
-                frontier.append(other)
-    return seen
-
-
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -192,39 +172,6 @@ def _name_token(
     return None
 
 
-def _best_call_at(
-    root: Node, line: int, col: int, recorded_end: tuple[int, int] | None
-) -> Node | None:
-    """The call node at (line, col) that the graph site refers to.
-
-    Several calls can share a start point -- `helper(helper(1))`,
-    `helper(2).upper()`, and both links of `obj.helper(1).helper(2)` -- so the
-    right one is the call ending where the site recorded its end, or the
-    outermost when no end was recorded.
-
-    Extracted from `_callee_span` to keep it under the cognitive complexity
-    limit (S3776). This walk is where that complexity lives: a loop with
-    three levels of nested branching, and nesting multiplies the cost.
-    Extracting the straight-line setup around it would not have helped.
-    """
-    best: Node | None = None
-    stack: list[Node] = [root]
-    while stack:
-        node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    return node
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
-            stack.extend(node.children)
-    return best
-
-
 def _callee_span(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -252,7 +199,7 @@ def _callee_span(
         if end_line is not None and end_col is not None
         else None
     )
-    best = _best_call_at(root, line, col, recorded_end)
+    best = call_node_at(root, line, col, recorded_end)
     if best is None:
         return None
     func = best.child_by_field_name(cs.FIELD_FUNCTION)
@@ -609,11 +556,11 @@ class Renamer:
         """Collect everything a rename touches; refuse on ambiguity."""
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             raise RenameRefused(cs.RENAME_BAD_NAME.format(name=new_name), [], [])
-        hierarchy = _hierarchy(self.fetch_all, self.project, qn)
+        members = hierarchy(self.fetch_all, self.project, qn)
         sites: list[RenameSite] = []
         unlocatable: list[str] = []
         old_name: str | None = None
-        for member in hierarchy:
+        for member in members:
             member_sites, member_unlocatable, member_name, _label = self._collect(
                 member
             )
@@ -645,7 +592,7 @@ class Renamer:
                 unlocatable,
             )
         ambiguous = [
-            s for s in sites if s.resolution in _AMBIGUOUS or s.resolution == _CHAIN
+            s for s in sites if s.resolution in AMBIGUOUS or s.resolution == _CHAIN
         ]
         if ambiguous and not allow_heuristic:
             raise RenameRefused(
@@ -653,7 +600,7 @@ class Renamer:
                 ambiguous,
                 unlocatable,
             )
-        for member in hierarchy:
+        for member in members:
             for site, module in self._import_sites(member, old_name):
                 sites.append(
                     RenameSite(
@@ -680,7 +627,7 @@ class Renamer:
             ambiguous=tuple(ambiguous),
             unlocatable=tuple(unlocatable),
             doc_mentions=tuple(self._doc_mentions(old_name)),
-            hierarchy=tuple(hierarchy),
+            hierarchy=tuple(members),
             diff="",
             message=cs.RENAME_PLANNED.format(count=len(sites)),
         )

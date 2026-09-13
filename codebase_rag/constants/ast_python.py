@@ -51,6 +51,24 @@ TS_PY_LIST_SPLAT_PATTERN = "list_splat_pattern"
 TS_PY_DICTIONARY_SPLAT_PATTERN = "dictionary_splat_pattern"
 TS_PY_POSITIONAL_SEPARATOR = "positional_separator"
 TS_PY_KEYWORD_SEPARATOR = "keyword_separator"
+# A definition's parameter list node, and the splats an argument list can
+# carry (`f(*args)`, `f(**opts)`); the `_pattern` forms above are the
+# definition-side spellings.
+TS_PY_PARAMETERS = "parameters"
+TS_PY_LIST_SPLAT = "list_splat"
+TS_PY_DICTIONARY_SPLAT = "dictionary_splat"
+# Scopes nested in a function body, where a parameter's name may be re-bound
+# rather than read, and the statements that re-bind a name in place.
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
+# `typing` names a literal-versus-annotation check understands.
+PY_TYPING_OPTIONAL = "Optional"
+PY_TYPING_UNION = "Union"
+# The first parameter of a method that names the instance or class; a
+# signature change keeps it in place and never remaps it.
+PY_RECEIVER_NAMES = frozenset({"self", "cls"})
 TS_PY_SUBSCRIPT = "subscript"
 # The `subscript` node's index field (`os.environ["K"]` -> the `"K"` string).
 TS_PY_FIELD_SUBSCRIPT = "subscript"
