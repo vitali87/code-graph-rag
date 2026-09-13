@@ -115,7 +115,9 @@ class StructureProcessor:
                 directories.add(path)
         return directories
 
-    def identify_structure(self, only: set[str] | None = None) -> None:
+    def identify_structure(
+        self, only: set[str] | None = None, *, emit: bool = True
+    ) -> None:
         """Derive every directory's kind, emitting Package and Folder nodes.
 
         `only` restricts BOTH the walk and the emission to the given
@@ -126,6 +128,15 @@ class StructureProcessor:
         directory whose `__init__.py` had been removed elsewhere gained a
         Folder node while keeping its Package node -- two container identities
         for one directory (Greptile, PR #1835).
+
+        `emit=False` populates `structural_elements` and writes NOTHING. A
+        re-ingest's hydration needs the whole map, because a re-parsed
+        module's parent lookup reads it for the enclosing package, so it
+        cannot use `only` -- but it has no business emitting a node for every
+        directory in the repository. Doing both in one pass gave a directory
+        the scoped call never named a second container identity, which is the
+        same defect `only` exists to prevent arriving from the hydration path
+        (issue #1872).
         """
         directories = self._directories_to_derive(only)
         package_indicators = self.package_indicator_names()
@@ -150,23 +161,24 @@ class StructureProcessor:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
                 )
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.PACKAGE,
-                    {
-                        cs.KEY_QUALIFIED_NAME: package_qn,
-                        cs.KEY_NAME: root.name,
-                        cs.KEY_PATH: relative_root.as_posix(),
-                        cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-                    },
-                )
-                parent_identifier = self._get_parent_identifier(
-                    parent_rel_path, parent_container_qn
-                )
-                self.ingestor.ensure_relationship_batch(
-                    parent_identifier,
-                    cs.RelationshipType.CONTAINS_PACKAGE,
-                    (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
-                )
+                if emit:
+                    self.ingestor.ensure_node_batch(
+                        cs.NodeLabel.PACKAGE,
+                        {
+                            cs.KEY_QUALIFIED_NAME: package_qn,
+                            cs.KEY_NAME: root.name,
+                            cs.KEY_PATH: relative_root.as_posix(),
+                            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
+                        },
+                    )
+                    parent_identifier = self._get_parent_identifier(
+                        parent_rel_path, parent_container_qn
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        parent_identifier,
+                        cs.RelationshipType.CONTAINS_PACKAGE,
+                        (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, package_qn),
+                    )
             else:
                 # Recorded for the ROOT too, which the Folder emission below
                 # deliberately skips. Without this the root's stale package qn
@@ -180,26 +192,27 @@ class StructureProcessor:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_FOLDER.format(relative_root=relative_root)
                 )
-                self.ingestor.ensure_node_batch(
-                    cs.NodeLabel.FOLDER,
-                    {
-                        cs.KEY_PATH: relative_root.as_posix(),
-                        cs.KEY_NAME: root.name,
-                        cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
-                    },
-                )
-                parent_identifier = self._get_parent_identifier(
-                    parent_rel_path, parent_container_qn
-                )
-                self.ingestor.ensure_relationship_batch(
-                    parent_identifier,
-                    cs.RelationshipType.CONTAINS_FOLDER,
-                    (
+                if emit:
+                    self.ingestor.ensure_node_batch(
                         cs.NodeLabel.FOLDER,
-                        cs.KEY_ABSOLUTE_PATH,
-                        cached_resolve_posix(root),
-                    ),
-                )
+                        {
+                            cs.KEY_PATH: relative_root.as_posix(),
+                            cs.KEY_NAME: root.name,
+                            cs.KEY_ABSOLUTE_PATH: cached_resolve_posix(root),
+                        },
+                    )
+                    parent_identifier = self._get_parent_identifier(
+                        parent_rel_path, parent_container_qn
+                    )
+                    self.ingestor.ensure_relationship_batch(
+                        parent_identifier,
+                        cs.RelationshipType.CONTAINS_FOLDER,
+                        (
+                            cs.NodeLabel.FOLDER,
+                            cs.KEY_ABSOLUTE_PATH,
+                            cached_resolve_posix(root),
+                        ),
+                    )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
         relative_filepath = cached_relative_path(file_path, self.repo_path).as_posix()

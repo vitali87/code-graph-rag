@@ -4670,7 +4670,18 @@ class GraphUpdater:
         # delombok overlay are per-run inputs run() computes before Pass 2;
         # a fresh updater must compute them too or a Lombok class re-parses
         # without its generated members.
-        self.factory.structure_processor.identify_structure()
+        #
+        # `emit=False`: the MAP is what hydration needs, and it needs all of
+        # it -- a parent lookup can reach any directory, so `only` is not an
+        # option here. Emitting is a different matter. The unrestricted walk
+        # writes a node for every directory as it is on disk NOW, so a
+        # directory whose package-ness changed since the last index gained a
+        # node of the new kind beside its surviving old one -- two
+        # contradictory container identities, for a directory this scoped
+        # call never named (issue #1872). The scoped re-derivation inside
+        # `reingest` is what legitimately emits, and it restricts itself to
+        # the flipped directories and their children.
+        self.factory.structure_processor.identify_structure(emit=False)
         self._rehydrate_registry_from_graph()
         self._rehydrate_function_locations()
         self._reingest_hydrated = True
