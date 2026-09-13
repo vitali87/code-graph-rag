@@ -43,18 +43,47 @@ import sys
 from typing import Any
 
 REPO = "vitali87/code-graph-rag"
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
+
+# A CI run in one of these states has not finished, so its check contexts are
+# still coming. `queued` is the one that matters: it contributes no rollup
+# entry at all, which is indistinguishable from "never ran" without this
+# (#1848).
+CI_RUN_UNFINISHED_STATUSES = frozenset(
+    {"queued", "in_progress", "waiting", "pending", "requested"}
+)
+
+# The events whose runs create a PR's check contexts. `workflow_dispatch` and
+# `push` runs can sit at the same head SHA and report under their own event,
+# so they are evidence about themselves, not about this PR (#1848). Defaulted
+# to `pull_request` when absent, so a response without the field behaves as
+# before rather than silently dropping every run.
+CI_RUN_PR_EVENTS = frozenset({"pull_request", "pull_request_target"})
 
 # The one context the active ruleset requires on the default branch. It
 # aggregates the jobs below and asserts each result == "success", so a
 # skipped or cancelled job fails it rather than passing silently.
 REQUIRED_CONTEXT = "All Checks Pass"
 
+# Every job `all-checks-pass` declares in `needs:`, by DISPLAY name -- the
+# rollup carries names, not job ids. Five were listed and four were missing,
+# so a head where only a missing one had reported looked like "no dependency
+# reported at all" (#1848). `Unit Tests (base install)` needs no entry of its
+# own: the matrix rule matches it under `Unit Tests`.
+#
+# This list must stay in step with ci.yml's `needs:` block. It cannot be
+# derived at runtime -- the rollup gives display names and `needs:` gives job
+# ids, with no mapping available without parsing the workflow -- so the
+# coupling is real and worth stating rather than hiding.
 AGGREGATED_JOBS = (
     "Lint & Format",
     "Type Check",
     "Unit Tests",
     "Integration Tests",
     "Binary Smoke Test",
+    "Wheel Smoke (unlocked resolution)",
+    "Go Frontend",
+    "Sonar Zero Issues Gate",
 )
 
 # A review artifact must POSITIVELY carry a verdict. The alternative --
@@ -88,6 +117,87 @@ TRUSTED_REVIEWERS = frozenset(
 )
 
 
+# A reviewer that could not RUN anything still produces a full-looking
+# review: the same verdict line, the same confidence score, findings that
+# read identically to executed ones. The blocked-validation note lands in a
+# collapsed log section that a reader skims past and a gate never opens
+# (#1824). These substrings are how that note has actually been worded on
+# this repo, in the reviewers' own text:
+#
+#   "the test suite remains blocked in this environment"
+#   "failed during import with ModuleNotFoundError: No module named ..."
+#
+# A marker must be SELF-ANCHORING: it can only describe the reviewer's own
+# situation, never the reviewed code's. That rules out any phrase naming a
+# failure mode an application can also have. Three rounds of narrowing, each
+# after a false positive was demonstrated:
+#
+#   "could not start" / "modulenotfounderror"  -- "the server could not
+#       start; it raises KeyError" is a finding about a BUG.
+#   "failed during import with modulenotfounderror" -- still a bug when the
+#       reviewed code is what failed to import.
+#   "dependency installation is blocked"       -- an installer defect.
+#   "validation blocked"                       -- a validation FEATURE
+#       rejecting input is normal application behaviour.
+#
+# What survives names the environment a review runs IN, which reviewed code
+# has no occasion to discuss. Flagging an executed review as unexecuted
+# discredits work that was actually done, so a false positive costs more
+# than a miss.
+#
+# Unlike REVIEW_VERDICT_MARKERS this IS a blocklist, and it fails in the
+# permissive direction on purpose. A missed variant reports the review as
+# ordinary -- exactly today's behaviour -- while a false positive would
+# nag about a review that ran fine. Non-execution is also legitimate and
+# common: a YAML-only PR has no Python surface to exercise, so this can
+# never be a merge blocker. It is surfaced as a caveat, not a reason.
+BLOCKED_VALIDATION_MARKERS = (
+    "blocked in this environment",
+    "could not be behaviorally disproved",
+    "without a runnable import/test environment",
+)
+
+
+def validation_was_blocked(body: str) -> bool:
+    """Whether a review says its own checks could not execute.
+
+    Positive detection on the reviewer's own wording. Absence means "no
+    such note was recognised", NOT "the review executed" -- the wording is
+    not a closed set, so this understates rather than overstates. See
+    BLOCKED_VALIDATION_MARKERS for why that direction is the safe one.
+    """
+    lowered = body.strip().lower()
+    return any(marker in lowered for marker in BLOCKED_VALIDATION_MARKERS)
+
+
+def review_execution_caveats(real_reviews: list[tuple[str, str]]) -> list[str]:
+    """Caveats about reviews that say their own checks could not execute.
+
+    Separate from `check` so the WIRING is testable, not only the
+    detector. A test that exercises `validation_was_blocked` alone stays
+    green when the caveat is never consulted, which is coverage that
+    cannot fail for its stated reason.
+    """
+    if not real_reviews:
+        return []
+    blocked_by = sorted(
+        {author for body, author in real_reviews if validation_was_blocked(body)}
+    )
+    if not blocked_by:
+        return []
+    if all(validation_was_blocked(body) for body, _ in real_reviews):
+        return [
+            f"every review artifact present says its own checks could not "
+            f"execute ({', '.join(blocked_by)}); its findings may be right, "
+            "but they rest on reasoning the reviewer could not confirm -- "
+            "verify them yourself rather than reading the score as checked"
+        ]
+    return [
+        f"a review by {', '.join(blocked_by)} says its own checks could "
+        "not execute; treat its findings as reasoning-only"
+    ]
+
+
 def _gh_stdout_or_empty(*args: str) -> str:
     """`gh` stdout, or "" when the call fails.
 
@@ -119,6 +229,118 @@ def context_name(entry: dict[str, object]) -> str:
     return ""
 
 
+def aggregated_job_for(name: str) -> str | None:
+    """The `AGGREGATED_JOBS` entry `name` belongs to, or None.
+
+    A bare prefix match is too loose. The matrix jobs carry their platform in
+    a PARENTHESISED suffix (`Unit Tests (ubuntu-latest, py3.12)`), so an exact
+    comparison matches none of them -- but `startswith` alone also claims
+    `Unit Tests Coverage` and `Unit Testsimposter`, and an unrelated pending
+    check misread as a dependency flips the verdict from "investigate" to
+    "wait", which is the defect this function was added to fix (#1827).
+
+    So: the exact name, or the name followed by ` (`. Nothing else.
+    """
+    for job in AGGREGATED_JOBS:
+        if name == job or name.startswith(f"{job} ("):
+            return job
+    return None
+
+
+def absent_context_reason(
+    context: str,
+    rollup: list[dict[str, object]],
+    ci_runs: list[dict[str, Any]] | None = None,
+) -> str:
+    """Why `context` is missing: still running, not yet started, or absent.
+
+    "Absent" collapses states that need opposite responses. `All Checks Pass`
+    is an aggregate that reports only once its dependencies finish, so it is
+    legitimately missing for a whole run -- yet the same sentence covered the
+    #1582 case, where every job concluded and the aggregate never appeared.
+    One says wait, the other says investigate, and the reassuring reading is
+    the one a reader defaults to (#1827).
+
+    EVERY FACT IS GATHERED BEFORE ANY ARM RUNS, and the arms are ordered
+    most-specific first. Three separate review findings on this function were
+    all the same defect -- a new early-return arm silently stealing cases from
+    the arms after it -- because the conditions OVERLAP: a running dependency
+    and an unfinished run are both true at once, and whichever was tested
+    first won regardless of which was more informative. Computing the facts
+    up front makes the overlap visible instead of implicit in the order
+    (#1848).
+
+    The three facts, and why each is ordered where it is:
+
+    * `pending` -- a dependency of the aggregate is unfinished. The MOST
+      specific, because it names the job the reader is waiting for.
+    * `unstarted` -- a `pull_request` CI run exists but has produced no
+      contexts. Less specific: it says the run is coming without saying what.
+      Only a pull-request run counts; a `workflow_dispatch` or `push` run at
+      the same SHA reports under its own event and creates none of this PR's
+      contexts, so it is evidence about itself.
+    * neither -- then either no dependency ever reported, or all of them
+      concluded and the aggregate genuinely never arrived (#1582).
+    """
+    # Only the jobs the aggregate WAITS ON can explain its absence. Any
+    # unfinished entry used to count, so a single unrelated pending check --
+    # CodeRabbit is pending on nearly every PR here -- flipped the verdict
+    # from "investigate" to "wait" while every dependency had concluded.
+    pending = [
+        entry
+        for entry in rollup
+        if not entry_finished(entry) and aggregated_job_for(context_name(entry))
+    ]
+    unstarted = [
+        run
+        for run in ci_runs or ()
+        if str(run.get("status", "")) in CI_RUN_UNFINISHED_STATUSES
+        and str(run.get("event", "pull_request")) in CI_RUN_PR_EVENTS
+    ]
+    any_dependency_reported = any(
+        aggregated_job_for(context_name(entry)) for entry in rollup
+    )
+
+    # MOST SPECIFIC: a named dependency is still running.
+    if pending:
+        names = sorted(name for name in map(context_name, pending) if name)
+        shown = ", ".join(names[:3]) + ("..." if len(names) > 3 else "")
+        named = f" ({shown})" if names else ""
+        return (
+            f"'{context}' has not reported YET: {len(pending)} check(s) at the "
+            f"head are still running{named}. This is CI in flight, not a "
+            "missing run -- re-check rather than investigate"
+        )
+    # The run exists but has created no contexts yet. Checked after `pending`
+    # so a running dependency is named rather than described as "no entries".
+    if unstarted:
+        statuses = sorted({str(run.get("status", "")) for run in unstarted})
+        return (
+            f"'{context}' has not reported YET: the CI run at the head is "
+            f"{', '.join(statuses)} and has produced no check entries so far. "
+            "This is CI not yet started, not a missing run -- re-check rather "
+            "than investigate, and do NOT push an empty commit (it moves the "
+            "head and discards any review anchored to it)"
+        )
+    if not rollup:
+        return f"no check reported at the head at all, so '{context}' cannot appear"
+    # Without this guard the sentence below claims every dependency concluded
+    # when none was ever seen -- a claim about an empty set.
+    if not any_dependency_reported:
+        return (
+            f"'{context}' is absent and NO check it aggregates reported at the "
+            "head at all, so whether it is coming cannot be told from the "
+            "rollup -- check whether CI ran for this head"
+        )
+    # "every check" would overclaim: `pending` counts only the entries this
+    # aggregate DEPENDS on, so an unrelated pending check is deliberately
+    # excluded and may still be running. Say what was actually examined.
+    return (
+        f"'{context}' is absent although every check it aggregates has "
+        "concluded, so it is not going to appear"
+    )
+
+
 def is_concluded(entry: dict[str, object]) -> bool:
     """Whether a check has finished.
 
@@ -128,6 +350,25 @@ def is_concluded(entry: dict[str, object]) -> bool:
     """
     conclusion = entry.get("conclusion")
     return isinstance(conclusion, str) and conclusion != ""
+
+
+def entry_finished(entry: dict[str, object]) -> bool:
+    """Whether a rollup entry has finished, whichever shape it is.
+
+    `is_concluded` reads `conclusion`, which a `StatusContext` does not
+    have -- it carries `state`. Judged by that predicate every third-party
+    status is unfinished forever, so a rollup containing one can never
+    reach the all-concluded branch and #1582 reports as "still running":
+    the reassuring reading, in the one case that needs investigating.
+
+    The older call site is guarded by a name test that only ever matches a
+    `CheckRun`, so the gap was latent until `absent_context_reason` began
+    judging EVERY entry (Greptile-local, PR for #1827).
+    """
+    if "conclusion" in entry or entry.get("__typename") == "CheckRun":
+        return is_concluded(entry)
+    state = entry.get("state")
+    return isinstance(state, str) and state not in ("", "PENDING", "EXPECTED")
 
 
 def unit_test_contexts(rollup: list[dict[str, object]]) -> list[str]:
@@ -303,9 +544,76 @@ def _unresolved_thread_count(pr: str) -> tuple[int, str]:
     )
 
 
-def check(pr: str) -> list[str]:
-    """Every reason `pr` is not verifiably gated, in order. Empty means gated."""
+def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
+    """The CI runs at exactly `head`, asked of the API by SHA.
+
+    Listing recent runs and filtering client-side cannot answer this: the
+    listing is a fixed-size window over the WHOLE repo, so on a busy repo a
+    run drops out of it while the PR is still open and the PR then reports
+    as having no CI run at all -- the "never ran" verdict, produced by a
+    run that did happen and passed. Measured on #1826: its run was 36
+    minutes old, every one of the 40 most recent runs was newer, and the
+    tool called a fully green PR ungated.
+
+    The `head_sha` parameter is exact, so age and repo traffic cannot
+    affect the answer. It is NOT unbounded -- it pages at 30 by default,
+    which is why this paginates; an unpaginated query would reintroduce
+    the same bug once a SHA carried enough runs.
+
+    The run is identified by workflow PATH rather than display name: a
+    name is a string any workflow file may declare, so a second file
+    named `CI` would satisfy a name check without running a test. The
+    repo's own require-ci-at-head.yml matches on path for this reason.
+    """
+    raw = _gh_stdout_or_empty(
+        "api",
+        "--paginate",
+        f"repos/{REPO}/actions/runs?head_sha={head}&per_page=100",
+    )
+    runs: list[dict[str, Any]] = []
+    # `--paginate` without `--jq` concatenates one JSON object per page, so
+    # this is a stream of objects rather than one document. `--jq` would
+    # flatten it, but `gh` rejects the `--slurp` needed to rebuild an array
+    # alongside `--jq`, so decode the pages here instead.
+    decoder = json.JSONDecoder()
+    index = 0
+    while index < len(raw):
+        # Skip separators BEFORE decoding, not only after, and do not
+        # reorder these two steps. `raw_decode` does not tolerate leading
+        # whitespace: skipping only after a successful decode means a
+        # response opening with a newline raises on the first pass and
+        # returns no runs at all, reported as "no CI run exists at the head
+        # SHA" -- the exact false verdict this function was rewritten to
+        # stop producing. Trailing-only skipping looks equivalent and is
+        # not; `test_leading_whitespace_does_not_discard_every_page` fails
+        # if these are swapped back.
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            break
+        try:
+            page, offset = decoder.raw_decode(raw, index)
+        except ValueError:
+            break
+        if isinstance(page, dict):
+            found = page.get("workflow_runs", [])
+            if isinstance(found, list):
+                runs.extend(r for r in found if isinstance(r, dict))
+        index = offset
+    return [run for run in runs if str(run.get("path", "")) == CI_WORKFLOW_PATH]
+
+
+def check(pr: str) -> tuple[list[str], list[str]]:
+    """Reasons `pr` is not verifiably gated, and caveats on the evidence.
+
+    Reasons block: empty means gated. Caveats do not block -- they name
+    evidence that is weaker than it looks, so a reader can weigh it. A
+    review whose own checks could not execute is the caveat this exists
+    for: its findings may be perfectly correct, but they rest on reasoning
+    the reviewer could not confirm (#1824).
+    """
     reasons: list[str] = []
+    caveats: list[str] = []
 
     view = _json_dict(
         _gh_stdout_or_empty(
@@ -319,7 +627,7 @@ def check(pr: str) -> list[str]:
         )
     )
     if not view:
-        return [f"could not read PR #{pr} (is `gh` authenticated?)"]
+        return ([f"could not read PR #{pr} (is `gh` authenticated?)"], [])
 
     head = str(view.get("headRefOid", ""))
     base = str(view.get("baseRefName", ""))
@@ -335,32 +643,14 @@ def check(pr: str) -> list[str]:
             "so nothing is enforced on this PR regardless of its check list"
         )
 
-    runs = _json_list(
-        _gh_stdout_or_empty(
-            "run",
-            "list",
-            "--repo",
-            REPO,
-            "--workflow",
-            "CI",
-            "--limit",
-            "40",
-            "--json",
-            "headSha,databaseId",
-        )
-    )
-    at_head = [
-        r for r in runs if isinstance(r, dict) and str(r.get("headSha", "")) == head
-    ]
+    at_head = ci_runs_at_head(head)
     if not at_head:
         reasons.append(f"no CI run exists at the head SHA {head[:8]}")
     else:
         owners: set[str] = set()
         for run in at_head:
             detail = _json_dict(
-                _gh_stdout_or_empty(
-                    "api", f"repos/{REPO}/actions/runs/{run.get('databaseId')}"
-                )
+                _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
             )
             owners.update(
                 str(p.get("number"))
@@ -381,7 +671,10 @@ def check(pr: str) -> list[str]:
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
-        reasons.append(f"required context absent at the head: {missing}")
+        reasons.append(
+            f"required context absent at the head: {missing}; "
+            + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
+        )
     else:
         for entry in rollup:
             if context_name(entry) != REQUIRED_CONTEXT:
@@ -407,13 +700,18 @@ def check(pr: str) -> list[str]:
         for a in view.get(key, [])
         if isinstance(a, dict)
     ]
-    if not any(is_real_review(body, author) for body, author in artifacts):
+    real_reviews = [
+        (body, author) for body, author in artifacts if is_real_review(body, author)
+    ]
+    if not real_reviews:
         reasons.append(
             f"no review artifact carries a verdict from a reviewing account "
             f"({len(artifacts)} comment(s)/review(s) present, none of which is a "
             "review by one of "
             f"{sorted(a for a in TRUSTED_REVIEWERS if not a.endswith('[bot]'))})"
         )
+    else:
+        caveats.extend(review_execution_caveats(real_reviews))
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
@@ -421,7 +719,7 @@ def check(pr: str) -> list[str]:
     elif unresolved:
         reasons.append(f"{unresolved} unresolved review thread(s)")
 
-    return reasons
+    return reasons, caveats
 
 
 def main(argv: list[str]) -> int:
@@ -429,9 +727,19 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"usage: {argv[0]} <pr-number>\n")
         return 2
     pr = argv[1]
-    reasons = check(pr)
+    reasons, caveats = check(pr)
+
+    # Caveats print in BOTH outcomes, and above the verdict line when the PR
+    # is otherwise gated. A caveat under a "gated" line is the one a reader
+    # skips, which is the whole failure this reports on (#1824).
+    for caveat in caveats:
+        sys.stdout.write(f"  ! {caveat}\n")
+
     if not reasons:
-        sys.stdout.write(f"PR #{pr}: gated (every check present and satisfied)\n")
+        sys.stdout.write(
+            f"PR #{pr}: gated (every check present and satisfied"
+            f"{'; see caveat(s) above' if caveats else ''})\n"
+        )
         return 0
     sys.stdout.write(f"PR #{pr}: NOT verifiably gated -- {len(reasons)} reason(s)\n")
     for reason in reasons:
