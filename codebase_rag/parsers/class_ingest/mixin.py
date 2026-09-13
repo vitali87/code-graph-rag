@@ -33,6 +33,7 @@ from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
+from ..parameter_nodes import PendingParameterType
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -198,6 +199,7 @@ class ClassIngestMixin:
     rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1412,6 +1414,7 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             # Record where this method landed, same as the generic method
             # path: the registered qn (a collision deduplicates it to
@@ -1562,6 +1565,7 @@ class ClassIngestMixin:
                 annotated_override_sink=annotated_override_sink,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             if (
                 ingested_qn is not None

@@ -1247,6 +1247,7 @@ def ingest_method(
     skip_cpp_artifact_check: bool = False,
     pending_endpoints: list | None = None,
     type_fact_sink: list | None = None,
+    parameter_type_sink: list | None = None,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1365,6 +1366,19 @@ def ingest_method(
     method_props.update(type_facts_props(type_facts))
     queue_type_facts(
         type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
+    )
+    # Local import for the same reason as type_facts above.
+    from .parameter_nodes import emit_declared_parameters
+
+    emit_declared_parameters(
+        ingestor,
+        parameter_type_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        method_node,
+        language,
+        method_props,
     )
     method_props.update(fingerprint_props(method_node))
 
