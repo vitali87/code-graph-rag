@@ -28,12 +28,14 @@ from .module_docstring import (
 )
 from .utils import safe_decode_with_fallback
 
-# Outer doc markers: the forms that document the NEXT item rather than the
-# enclosing one. For most languages these are the same strings the module
-# table uses, because `/**` documents whatever follows it wherever it sits.
-# Rust is the exception and the reason this table exists at all.
+# Rust's OUTER doc markers: the forms that document the NEXT item. `///` and
+# `/**` only -- `//!` and `/*!` are the INNER forms that describe the enclosing
+# module, and both stay with the module spec. The first version listed `/*!`
+# here too (copied from the C-family table, where it is Doxygen's alternative
+# block form), so a `/*! ... */` opening a Rust file was stored on the module
+# AND on the first item beneath it (Greptile and CodeRabbit on PR #1888).
 _OUTER_LINE_MARKERS = ("///",)
-_OUTER_BLOCK_MARKERS = ("/**", "/*!")
+_OUTER_BLOCK_MARKERS = ("/**",)
 
 # Node types that legally sit BETWEEN a doc comment and the declaration it
 # documents, as SIBLINGS of that declaration. A walk that stopped at the first
@@ -185,23 +187,33 @@ def _doc_block_start(
         return None
     if is_block:
         return index
-    # A line-comment doc is written a line at a time, so walk up through the
-    # consecutive marked comments to find where the block opens.
-    while index - 1 >= 0:
-        above = siblings[index - 1]
-        above_text = safe_decode_with_fallback(above).strip()
-        if above.type not in spec.line_types:
-            break
-        if not _is_marked(above_text, spec.line_markers):
-            break
-        if siblings[index].start_point[0] - _last_row(above) > 1:
-            break
-        # The same rule going up: a trailing comment on the line above the
-        # block belongs to that line, and must not open the block.
-        if _is_trailing(siblings, index - 1):
-            break
+    return _line_block_opener(siblings, index, spec)
+
+
+def _line_block_opener(siblings: list[ASTNode], index: int, spec: ModuleDocSpec) -> int:
+    """Walk up from the marked line comment at `index` to where its block opens.
+
+    A line-comment doc is written a line at a time. The block extends upward
+    while the sibling above is a marked line comment on the adjacent row that
+    is not itself trailing some earlier line -- the same rule going up that
+    `_doc_block_start` applies going down. Split out for Sonar's cognitive
+    complexity limit, not for reuse.
+    """
+    while index - 1 >= 0 and _continues_block(siblings, index, spec):
         index -= 1
     return index
+
+
+def _continues_block(siblings: list[ASTNode], index: int, spec: ModuleDocSpec) -> bool:
+    above = siblings[index - 1]
+    if above.type not in spec.line_types:
+        return False
+    if not _is_marked(safe_decode_with_fallback(above).strip(), spec.line_markers):
+        return False
+    if siblings[index].start_point[0] - _last_row(above) > 1:
+        return False
+    # A trailing comment on the line above the block belongs to that line.
+    return not _is_trailing(siblings, index - 1)
 
 
 def _is_trailing(siblings: list[ASTNode], index: int) -> bool:
@@ -323,4 +335,42 @@ def _line_doc_for(
     return "\n".join(lines).strip() or None
 
 
-__all__ = ["extract_definition_docstring"]
+# Doxygen forms libclang reports through `Cursor.raw_comment`: the comment text
+# exactly as written, block or consecutive lines, or None when the cursor has
+# none. libclang has already decided ownership (it attaches a comment to the
+# declaration it documents), so this only cleans.
+_LIBCLANG_LINE_MARKERS = ("///", "//!")
+_LIBCLANG_BLOCK_MARKERS = ("/**", "/*!")
+
+
+def libclang_docstring(raw_comment: object) -> str | None:
+    """The docstring for a libclang cursor's `raw_comment`, or None.
+
+    The pure-libclang C++ frontend emits definitions without going through the
+    tree-sitter walk above, so documented classes and functions came out with
+    `docstring=None` whenever `CPP_FRONTEND=libclang` (Greptile on PR #1888).
+    `raw_comment` is typed loosely because a test double's attribute is not a
+    string; anything that is not one yields None rather than a repr.
+    """
+    if not isinstance(raw_comment, str):
+        return None
+    text = raw_comment.strip()
+    if not text:
+        return None
+    if _is_marked(text, _LIBCLANG_BLOCK_MARKERS):
+        cleaned = _clean_block(text)
+        return cleaned or None
+    lines = [
+        _strip_line(line.strip(), _LIBCLANG_LINE_MARKERS)
+        for line in text.splitlines()
+        if _is_marked(line.strip(), _LIBCLANG_LINE_MARKERS)
+        and not _is_separator(line.strip(), _LIBCLANG_LINE_MARKERS)
+    ]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines).strip() or None
+
+
+__all__ = ["extract_definition_docstring", "libclang_docstring"]

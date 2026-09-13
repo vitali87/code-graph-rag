@@ -24,7 +24,10 @@ import pytest
 
 from codebase_rag.constants import SupportedLanguage as Lang
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.parsers.definition_docstring import extract_definition_docstring
+from codebase_rag.parsers.definition_docstring import (
+    extract_definition_docstring,
+    libclang_docstring,
+)
 from codebase_rag.parsers.module_docstring import extract_module_docstring
 from codebase_rag.types_defs import ASTNode
 
@@ -211,8 +214,18 @@ class TestTheTwoLevelsAreACoherentPair:
         assert extract_module_docstring(root, Lang.JAVA) == "DOC"
 
     def test_rust_inner_doc_is_the_files_at_any_distance(self, parsers: dict) -> None:
-        """`//!` documents the enclosing module whether or not it is adjacent."""
-        for source in ("//! FILEDOC\nfn f() {}\n", "//! FILEDOC\n\nfn f() {}\n"):
+        """`//!` and `/*! */` document the enclosing module, adjacent or not.
+
+        The block form is the one the first version got wrong: `/*!` was in the
+        definition marker set too, so an adjacent `/*! FILEDOC */` was stored on
+        the module and on `f` (both bots on PR #1888).
+        """
+        for source in (
+            "//! FILEDOC\nfn f() {}\n",
+            "//! FILEDOC\n\nfn f() {}\n",
+            "/*! FILEDOC */\nfn f() {}\n",
+            "/*! FILEDOC */\n\nfn f() {}\n",
+        ):
             root = _parse(parsers, Lang.RUST, source)
             node = _declaration(parsers, Lang.RUST, source, "function_item")
             assert extract_definition_docstring(node, Lang.RUST) is None
@@ -549,3 +562,44 @@ class TestReachesTheGraph:
         )
         updater.run()
         assert self._node_props(updater, "Function", "Trail").get("docstring") is None
+
+
+class TestLibclangDocstring:
+    """The pure-libclang C++ path: `Cursor.raw_comment` text -> docstring.
+
+    libclang has already attached the comment to the right cursor, so this is
+    cleaning only. Found by Greptile on PR #1888: `_node_props` hard-coded
+    `docstring=None`, so with `CPP_FRONTEND=libclang` every documented C++
+    definition lost its documentation.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("/** Adds. */", "Adds."),
+            ("/*! Adds. */", "Adds."),
+            ("/**\n * Adds two.\n * Second line.\n */", "Adds two.\nSecond line."),
+            ("/// Adds.\n/// Second.", "Adds.\nSecond."),
+            ("//! Inner-style. ", "Inner-style."),
+            ("////////\n/// Real.", "Real."),
+        ],
+        ids=[
+            "block",
+            "block-bang",
+            "block-multiline",
+            "lines",
+            "line-bang",
+            "separator-skipped",
+        ],
+    )
+    def test_doxygen_forms_are_cleaned(self, raw: str, expected: str) -> None:
+        assert libclang_docstring(raw) == expected
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", "/**/", "// ordinary comment"])
+    def test_nothing_or_an_ordinary_comment_is_none(self, raw) -> None:
+        assert libclang_docstring(raw) is None
+
+    def test_a_test_double_attribute_is_none_not_its_repr(self) -> None:
+        from unittest.mock import MagicMock
+
+        assert libclang_docstring(MagicMock().raw_comment) is None
