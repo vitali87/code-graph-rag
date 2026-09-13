@@ -15,9 +15,10 @@ Three decisions from the issue are load-bearing here:
   the wrong function is a false invariant, which is worse than no note.
   A `path:line` LOCATION takes the innermost definition spanning the line,
   which is what "the line is in" means and is how `resolve` orders them.
-* The node and its `ANNOTATES` edge are one statement, and the write is
-  confirmed by reading the node back. A subject that left the graph between
-  resolving and writing therefore reports "not written", not success.
+* The node, its `ANNOTATES` edge and every `MENTIONS` edge are one statement,
+  and the write is confirmed by reading the node back. A subject or mention
+  that left the graph between resolving and writing therefore reports "not
+  written", not success, and never a note with half its edges.
 
 Anchoring beyond the qualified name (the text quote, the graded repair chain
 that turns a moved or edited subject into MOVED / STALE / LOST) is the next
@@ -167,7 +168,7 @@ def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _sorted(rows: list[ResultRow]) -> list[GlossRow]:
+def _sort_gloss_rows(rows: list[ResultRow]) -> list[GlossRow]:
     # Oldest first, then by key: the store's return order is not a contract.
     return sorted(
         (_gloss_row(row) for row in rows),
@@ -188,8 +189,11 @@ def write_gloss(
 ) -> GlossRow | GlossRefusal:
     """Attach a note to the definition `target` names and return it as stored.
 
-    Every input is resolved and validated BEFORE anything is written, so a
-    refusal always means the graph is unchanged. `mentions` is a
+    Every input is resolved and validated BEFORE anything is written, and the
+    write itself is one all-or-nothing statement, so an error or a refusal
+    always means the graph is unchanged. A repeat write of the same note
+    (same subject, kind and body) updates it in place and keeps its original
+    author and creation time. `mentions` is a
     comma-separated list of further definitions the note talks about; each
     becomes a `MENTIONS` edge and each is held to the same resolution rule as
     the subject.
@@ -221,14 +225,14 @@ def write_gloss(
 
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
-    prefix = _prefix(project_name)
     # A None here unsets the property (Cypher SET with null), so a gloss on a
     # target without a fingerprint, or written outside a checkout, simply
     # lacks that property rather than carrying a placeholder.
     params: PropertyDict = {
         cs.KEY_QN: key,
-        cs.KEY_PROJECT_PREFIX: prefix,
+        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
         cs.KEY_TARGET_QN: target_qn,
+        cs.KEY_MENTION_QNS: sorted({m["qualified_name"] for m in mentioned}),
         cs.KEY_KIND: kind,
         cs.KEY_STATUS: cs.GLOSS_STATUS_ACCEPTED,
         cs.KEY_BODY: text,
@@ -238,34 +242,15 @@ def write_gloss(
         cs.KEY_TARGET_HASH: _target_hash(fetch_all, project_name, target_qn),
         cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
     }
-    existed = bool(fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key}))
+    # One statement writes the node and every edge, or nothing (see the
+    # query). The statement is silent either way, so the node's presence
+    # afterwards is the only evidence the write landed: the subject or a
+    # mentioned definition may have left the graph between resolving and
+    # writing, and that must read as "not written", not as success.
     execute_write(cq.CYPHER_GLOSS_WRITE, params)
-    # Read back before adding mentions: a MATCH on a vanished subject writes
-    # nothing and raises nothing, so the node's presence is the only evidence
-    # the write landed, and a MENTIONS edge must not be hung on a node that
-    # was never created.
     stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     if not stored:
         return GlossRefusal(error=cs.MCP_GLOSS_NOT_WRITTEN.format(target=target))
-    try:
-        for mention in mentioned:
-            execute_write(
-                cq.CYPHER_GLOSS_MENTION,
-                {
-                    cs.KEY_QN: key,
-                    cs.KEY_TARGET_QN: mention["qualified_name"],
-                    cs.KEY_PROJECT_PREFIX: prefix,
-                },
-            )
-    except Exception:
-        # "An error means nothing was written" must stay true: a node this
-        # call created is removed before the error surfaces. A note that
-        # already existed is not this call's to delete and is left as it was.
-        if not existed:
-            execute_write(cq.CYPHER_GLOSS_DELETE, {cs.KEY_QN: key})
-        raise
-    if mentioned:
-        stored = fetch_all(cq.CYPHER_GLOSS_READ, {cs.KEY_QN: key})
     return _gloss_row(stored[0])
 
 
@@ -286,6 +271,6 @@ def glosses_for(
     params: PropertyDict = {cs.KEY_QN: subject_row["qualified_name"]}
     return GlossesResult(
         target=subject_row,
-        annotating=_sorted(fetch_all(cq.CYPHER_GLOSSES_ANNOTATING, params)),
-        mentioning=_sorted(fetch_all(cq.CYPHER_GLOSSES_MENTIONING, params)),
+        annotating=_sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ANNOTATING, params)),
+        mentioning=_sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_MENTIONING, params)),
     )

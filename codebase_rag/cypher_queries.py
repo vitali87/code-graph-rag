@@ -490,13 +490,18 @@ RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
 LIMIT 1"""
-# Gloss nodes (issue #1808). The node and its ANNOTATES edge are written in ONE
-# statement: a subject MATCH that finds nothing writes nothing, so a gloss can
-# never exist unattached, and the caller reads the node back to learn whether
-# the write landed rather than trusting a silent statement.
-# Every property is SET by name (a null unsets it): the ingestor's parameter
-# type carries scalars and string lists, not a nested map, so `SET g += $props`
-# would need a value the wire format cannot express.
+# Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
+# edge are ONE statement, so a write is all or nothing: the subject and every
+# mentioned definition are matched first, the `WHERE size(...)` gate drops the
+# row when any of them is missing, and nothing after it runs. A gloss can thus
+# never exist unattached or with a partial set of mentions, and a failed
+# request leaves the graph exactly as it was. The caller reads the node back to
+# learn whether the write landed rather than trusting a silent statement.
+# `ON CREATE SET` keeps the original author and creation time on a repeat write
+# of the same deterministic key; the other properties are SET by name (a null
+# unsets one): the ingestor's parameter type carries scalars and string lists,
+# not a nested map, so `SET g += $props` is not expressible on the wire.
+# `UNWIND` of an empty list yields no rows; the MERGEs above it have already run.
 _GLOSS = NodeLabel.GLOSS.value
 _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
@@ -506,18 +511,19 @@ RETURN n.ast_fingerprint AS target_hash
 LIMIT 1"""
 CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
+WHERE m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
+WITH t, collect(DISTINCT m) AS mentioned
+WHERE size(mentioned) = size($mention_qns)
 MERGE (g:{_GLOSS} {{qualified_name: $qn}})
+ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
 SET g.kind = $kind, g.status = $status, g.body = $body,
-    g.created_by = $created_by, g.created_at = $created_at,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
     g.target_hash = $target_hash, g.anchor_state = $anchor_state
-MERGE (g)-[:{_ANNOTATES}]->(t)"""
-CYPHER_GLOSS_MENTION = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-MATCH (m:{_GRAPH_DEFINITION_LABELS})
-WHERE m.qualified_name = $target_qn AND m.qualified_name STARTS WITH $project_prefix
+MERGE (g)-[:{_ANNOTATES}]->(t)
+WITH g, mentioned
+UNWIND mentioned AS m
 MERGE (g)-[:{_MENTIONS}]->(m)"""
-CYPHER_GLOSS_DELETE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
-DETACH DELETE g"""
 _GLOSS_ROW = (
     "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
     "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "

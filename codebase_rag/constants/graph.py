@@ -835,6 +835,7 @@ KEY_COMMIT_SHA = "commit_sha"
 KEY_TARGET_HASH = "target_hash"
 KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
+KEY_MENTION_QNS = "mention_qns"
 GLOSS_ID_PREFIX = "gloss:"
 GLOSS_ID_HEX_LENGTH = 24
 GLOSS_STATUS_ACCEPTED = "accepted"

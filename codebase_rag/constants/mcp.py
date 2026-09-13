@@ -179,8 +179,8 @@ MCP_GLOSS_MENTION_REFUSED = "mention {name!r}: {error}"
 MCP_GLOSS_KIND_UNKNOWN = "Unknown gloss kind {kind!r}. Kinds: {kinds}"
 MCP_GLOSS_BODY_EMPTY = "A gloss needs a non-empty body."
 MCP_GLOSS_NOT_WRITTEN = (
-    "The gloss on {target!r} was not written: its subject left the graph "
-    "between resolving and writing. Re-index and retry."
+    "The gloss on {target!r} was not written: its subject or a mentioned "
+    "definition left the graph between resolving and writing. Re-index and retry."
 )
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."

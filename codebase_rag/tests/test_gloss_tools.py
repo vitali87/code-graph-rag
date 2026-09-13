@@ -71,8 +71,6 @@ class FakeGraph:
         self.root = root
         # When set, the subject is gone by the time the write statement runs.
         self.vanish_on_write = False
-        # When set, every MENTIONS statement fails at the store.
-        self.fail_mentions = False
 
     def _gloss_row(self, key: str) -> ResultRow:
         row: ResultRow = dict(self.glosses[key])
@@ -123,35 +121,51 @@ class FakeGraph:
         return list(reversed(out))
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        """The single write statement, all or nothing.
+
+        Mirrors the real query's gate: the subject and EVERY mentioned
+        definition must be present, or the row is dropped before any MERGE
+        and nothing changes. `ON CREATE SET` keeps the first author and
+        creation time; every other property is replaced (a null unsets it).
+        """
         p = params or {}
         self.writes.append((query, p))
-        key = str(p[cs.KEY_QN])
-        target = str(p.get(cs.KEY_TARGET_QN, ""))
-        subject_present = target in self.nodes and target.startswith(
-            str(p.get(cs.KEY_PROJECT_PREFIX, ""))
-        )
-        if query == cq.CYPHER_GLOSS_WRITE:
-            if self.vanish_on_write or not subject_present:
-                return
-            # Every property is SET by name and a null unsets it, so a
-            # rewrite REPLACES the stored properties rather than merging.
-            self.glosses[key] = {
-                k: v
-                for k, v in p.items()
-                if k not in (cs.KEY_QN, cs.KEY_PROJECT_PREFIX) and v is not None
-            }
-            self.annotates.add((key, target))
-        elif query == cq.CYPHER_GLOSS_MENTION:
-            if self.fail_mentions:
-                raise RuntimeError("store down")
-            if key in self.glosses and subject_present:
-                self.mentions.add((key, target))
-        elif query == cq.CYPHER_GLOSS_DELETE:
-            self.glosses.pop(key, None)
-            self.annotates = {(g, qn) for g, qn in self.annotates if g != key}
-            self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
-        else:
+        if query != cq.CYPHER_GLOSS_WRITE:
             raise AssertionError(f"unexpected write: {query[:60]}")
+        key = str(p[cs.KEY_QN])
+        prefix = str(p[cs.KEY_PROJECT_PREFIX])
+        target = str(p[cs.KEY_TARGET_QN])
+        wanted = [str(m) for m in p[cs.KEY_MENTION_QNS]]  # type: ignore[union-attr]
+        present = [
+            qn for qn in [target, *wanted] if qn in self.nodes and qn.startswith(prefix)
+        ]
+        if self.vanish_on_write or len(present) != 1 + len(wanted):
+            return
+        created = {
+            k: p[k]
+            for k in (cs.KEY_CREATED_BY, cs.KEY_CREATED_AT)
+            if key not in self.glosses
+        }
+        kept = {
+            k: v
+            for k, v in self.glosses.get(key, {}).items()
+            if k in (cs.KEY_CREATED_BY, cs.KEY_CREATED_AT)
+        }
+        skip = {
+            cs.KEY_QN,
+            cs.KEY_PROJECT_PREFIX,
+            cs.KEY_MENTION_QNS,
+            cs.KEY_CREATED_BY,
+            cs.KEY_CREATED_AT,
+        }
+        self.glosses[key] = {
+            **kept,
+            **created,
+            **{k: v for k, v in p.items() if k not in skip and v is not None},
+        }
+        self.annotates.add((key, target))
+        for qn in wanted:
+            self.mentions.add((key, qn))
 
 
 def _write(graph: FakeGraph, target: str, **kw: Any) -> Any:
@@ -275,8 +289,8 @@ def test_a_subject_that_vanished_before_the_write_is_reported_not_written() -> N
     assert _is_refusal(result)
     assert "not written" in result[cs.DICT_KEY_ERROR]
     assert graph.glosses == {}
-    # No MENTIONS edge was attempted on a node that was never created.
-    assert [q for q, _ in graph.writes] == [cq.CYPHER_GLOSS_WRITE]
+    assert graph.annotates == set()
+    assert graph.mentions == set()
 
 
 def test_author_and_commit_are_recorded_when_given() -> None:
@@ -287,27 +301,56 @@ def test_author_and_commit_are_recorded_when_given() -> None:
     bare = _write(graph, VALIDATE)
     assert bare["commit_sha"] is None
     # Rewriting the same note without a commit unsets the one it had.
-    again = _write(graph, RUN, author="cgr-1")
+    again = _write(graph, RUN)
     assert again["qualified_name"] == row["qualified_name"]
     assert again["commit_sha"] is None
 
 
-def test_a_failed_mention_write_removes_the_node_this_call_created() -> None:
+def test_a_mention_that_vanished_before_the_write_writes_nothing() -> None:
+    # The write is one statement gated on every mentioned definition being
+    # present, so a peer re-index removing one between resolving and writing
+    # leaves no note at all, never a note with half its edges.
     graph = FakeGraph()
-    graph.fail_mentions = True
-    with pytest.raises(RuntimeError, match="store down"):
-        _write(graph, RUN, mentions=VALIDATE)
-    assert graph.glosses == {}
-    assert graph.annotates == set()
+    _write(graph, VALIDATE, body="pure; no I/O")  # an unrelated note survives
+    original_fetch = graph.fetch_all
+
+    def fetch_then_drop(
+        query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        rows = original_fetch(query, params)
+        if query == cq.CYPHER_GLOSS_TARGET:
+            # The last read before the write: the mention resolved, then left.
+            graph.nodes.pop(UTIL_GET, None)
+        return rows
+
+    result = gloss.write_gloss(
+        fetch_then_drop,
+        graph.execute_write,
+        P,
+        RUN,
+        body=BODY,
+        kind=cs.GlossKind.MIRRORS.value,
+        mentions=UTIL_GET,
+    )
+    assert _is_refusal(result)
+    assert "not written" in result[cs.DICT_KEY_ERROR]
+    assert len(graph.glosses) == 1, "only the unrelated note remains"
+    assert not any(qn == RUN for _, qn in graph.annotates)
 
 
-def test_a_failed_mention_write_leaves_a_pre_existing_note_alone() -> None:
+def test_a_repeat_write_keeps_the_original_author_and_time() -> None:
     graph = FakeGraph()
-    first = _write(graph, RUN)
-    graph.fail_mentions = True
-    with pytest.raises(RuntimeError, match="store down"):
-        _write(graph, RUN, mentions=VALIDATE)
-    assert set(graph.glosses) == {first["qualified_name"]}
+    first = _write(graph, RUN, author="first-agent")
+    graph.glosses[first["qualified_name"]][cs.KEY_CREATED_AT] = (
+        "2026-01-01T00:00:00+00:00"
+    )
+    again = _write(graph, RUN, author="retry-agent", commit_sha="c2", mentions=VALIDATE)
+    assert again["qualified_name"] == first["qualified_name"]
+    assert again["created_by"] == "first-agent"
+    assert again["created_at"] == "2026-01-01T00:00:00+00:00"
+    # Everything that is not creation metadata follows the latest write.
+    assert again["commit_sha"] == "c2"
+    assert again["mentions"] == [VALIDATE]
 
 
 def test_a_target_without_a_fingerprint_stores_no_hash() -> None:
