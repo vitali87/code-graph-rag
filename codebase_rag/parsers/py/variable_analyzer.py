@@ -558,6 +558,50 @@ class PythonVariableAnalyzerMixin(_VarBase):
             if not added:
                 break
 
+    def _alias_referent(self, right: ASTNode) -> str | None:
+        """The name an assignment's rhs aliases, or None if it aliases nothing.
+
+        A plain name or attribute reference IS the referent. `a or b` binds one
+        of its operands, so it aliases whichever one is itself a reference --
+        the left, which is the operand a truthy value comes from, falling back
+        to the right for `None or default`. Both operands are normally the same
+        type, and where they are not, the left is the one the expression is
+        written to prefer.
+
+        Without this the variable gets NO type, and a later `var.method()`
+        falls back to matching the bare method name against every class that
+        defines it (issue #1868): `resolved = target or Path("x")` followed by
+        `resolved.resolve()` emitted a CALLS edge to every `resolve` method in
+        the project.
+        """
+        if right.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            return safe_decode_text(right)
+        if right.type == cs.TS_PY_BOOLEAN_OPERATOR:
+            for field in (cs.TS_FIELD_LEFT, cs.TS_FIELD_RIGHT):
+                operand = right.child_by_field_name(field)
+                if operand is not None and (referent := self._alias_referent(operand)):
+                    return referent
+            return None
+        if right.type == cs.TS_PY_CONDITIONAL_EXPRESSION:
+            # `a if cond else b` -- the VALUE operands are the first and last
+            # named children; the middle one is the condition, whose type is
+            # irrelevant (and is usually the same name, so matching it by
+            # position rather than by field matters).
+            operands = right.named_children
+            for operand in (operands[0], operands[-1]) if operands else ():
+                if (referent := self._alias_referent(operand)) is not None:
+                    return referent
+            return None
+        if right.type == cs.TS_PY_BINARY_OPERATOR:
+            # `base / "sub"` is the pathlib idiom, and operators generally
+            # return their LEFT operand's type for this purpose (`Path/str` is
+            # a Path, `str+str` a str). Only the left is consulted: for
+            # `"prefix" + name` the right operand's type would be wrong.
+            left_operand = right.child_by_field_name(cs.TS_FIELD_LEFT)
+            if left_operand is not None:
+                return self._alias_referent(left_operand)
+        return None
+
     def _collect_local_aliases(self, caller_node: ASTNode) -> dict[str, str]:
         # Record local-variable aliases (resolver = self._resolver) where the rhs is
         # a plain name/attribute reference, so its type propagates. Skip nested
@@ -576,9 +620,8 @@ class PythonVariableAnalyzerMixin(_VarBase):
                     left is not None
                     and left.type == cs.TS_PY_IDENTIFIER
                     and right is not None
-                    and right.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE)
                     and (local := safe_decode_text(left))
-                    and (referent := safe_decode_text(right))
+                    and (referent := self._alias_referent(right))
                     and local not in aliases
                 ):
                     aliases[local] = referent
