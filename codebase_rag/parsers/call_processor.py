@@ -8331,7 +8331,7 @@ class CallProcessor:
         return is_method_node(func_node, lang_config)
 
     def _class_pass_owns(
-        self, func_node: Node, lang_config: LanguageSpec, language: str
+        self, func_node: Node, lang_config: LanguageSpec, language: cs.SupportedLanguage
     ) -> bool:
         # Mirrors _process_calls_in_classes: a class with a body that it can
         # name gets a class pass; everything inside it is that pass's.
