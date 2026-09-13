@@ -837,6 +837,11 @@ KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
 KEY_ANCHOR_HASH = "anchor_hash"
+# Prefix on every anchor hash. A Gloss written before this format existed
+# recorded the clone skeleton (`ast_fingerprint`) as its target hash; the two
+# are not comparable, so grading is gated on the prefix and a legacy note is
+# left as it was rather than read as STALE. Bump when the hashing changes.
+ANCHOR_HASH_VERSION = "ah1:"
 KEY_WRITE_ID = "write_id"
 GLOSS_ID_PREFIX = "gloss:"
 GLOSS_ID_HEX_LENGTH = 24

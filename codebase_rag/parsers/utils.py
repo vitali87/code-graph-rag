@@ -1515,7 +1515,7 @@ def module_function_props(
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
     props.update(fingerprint_props(function_node))
-    props.update(anchor_hash_props(function_node, props[cs.KEY_DECORATORS]))
+    props.update(anchor_hash_props(function_node))
     return props
 
 

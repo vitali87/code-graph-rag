@@ -63,8 +63,10 @@ def _hash(source: str) -> str:
 def test_the_hash_is_a_stable_hex_digest() -> None:
     first, second = _hash(BASE), _hash(BASE)
     assert first == second
-    assert len(first) == 64
-    int(first, 16)
+    assert first.startswith(cs.ANCHOR_HASH_VERSION)
+    digest = first.removeprefix(cs.ANCHOR_HASH_VERSION)
+    assert len(digest) == 64
+    int(digest, 16)
 
 
 @pytest.mark.parametrize(
@@ -106,7 +108,8 @@ def test_it_sees_what_the_clone_skeleton_cannot() -> None:
     for variant in (RENAMED_LOCAL, LITERAL_CHANGED):
         base_fp = compute_ast_fingerprint(_python_definition(BASE))
         variant_fp = compute_ast_fingerprint(_python_definition(variant))
-        assert base_fp is not None and variant_fp is not None
+        assert base_fp is not None
+        assert variant_fp is not None
         assert base_fp.fingerprint == variant_fp.fingerprint
         assert _hash(variant) != _hash(BASE)
 
@@ -119,6 +122,37 @@ def test_removing_a_decorator_changes_it() -> None:
     assert anchor_hash(node, ["property"]) == anchor_hash(node, ["property"])
     assert anchor_hash(node, ["cache", "property"]) != anchor_hash(
         node, ["property", "cache"]
+    )
+
+
+DART_ONE = "int f() {\n  return 1;\n}\n"
+DART_TWO = "int f() {\n  return 2;\n}\n"
+DART_ONE_REFORMATTED = "int f() { return 1; }\n"
+
+
+def _dart_signature(source: str):
+    parsers, _queries = load_parsers()
+    dart = next((p for k, p in parsers.items() if str(k) == "dart"), None)
+    if dart is None:
+        pytest.skip("dart parser not available")
+    tree = dart.parse(source.encode("utf-8"))
+    stack = list(tree.root_node.children)
+    while stack:
+        node = stack.pop(0)
+        if node.type in cs.DART_SIGNATURE_TYPES:
+            return node
+        stack.extend(node.children)
+    raise AssertionError("no Dart signature node found")
+
+
+def test_a_dart_body_change_is_seen_through_the_sibling_body_node() -> None:
+    # Dart's captured definition node is the signature; its body is the next
+    # sibling, so walking the node alone would miss every body edit.
+    assert anchor_hash(_dart_signature(DART_ONE)) != anchor_hash(
+        _dart_signature(DART_TWO)
+    )
+    assert anchor_hash(_dart_signature(DART_ONE)) == anchor_hash(
+        _dart_signature(DART_ONE_REFORMATTED)
     )
 
 
@@ -252,7 +286,7 @@ def test_indexed_functions_and_methods_carry_the_hash(tmp_path: Path) -> None:
     assert run_props[cs.KEY_ANCHOR_HASH] == _hash(BASE)
     label, get_props = by_qn["proj.mod.Store.get"]
     assert label == "Method"
-    assert len(get_props[cs.KEY_ANCHOR_HASH]) == 64
+    assert get_props[cs.KEY_ANCHOR_HASH].startswith(cs.ANCHOR_HASH_VERSION)
     # The class itself is not hashed in this stage: a note on it is not graded.
     _label, class_props = by_qn["proj.mod.Store"]
     assert cs.KEY_ANCHOR_HASH not in class_props

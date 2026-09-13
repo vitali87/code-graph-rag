@@ -27,6 +27,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..types_defs import PropertyDict
+from .dart.utils import dart_body_node
 
 _SEPARATOR = b"\x00"
 _OPEN = b"\x01"
@@ -34,7 +35,7 @@ _CLOSE = b"\x02"
 
 
 def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
-    """Hex digest of the definition's named-node tree with leaf text.
+    """Versioned hex digest of the definition's named-node tree with leaf text.
 
     `decorators` are the already-extracted decorator / annotation names. In
     Python and TypeScript they are siblings or parents of the definition
@@ -46,10 +47,17 @@ def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
     digest = hashlib.sha256()
     for decorator in decorators:
         digest.update(decorator.encode(cs.ENCODING_UTF8) + _SEPARATOR)
+    # Dart splits a definition into a signature node and a SIBLING
+    # function_body; the captured node is the signature, so the body is
+    # walked too or a `return 1` to `return 2` edit would not be seen.
+    roots = [definition]
+    dart_body = dart_body_node(definition)
+    if dart_body is not None:
+        roots.append(dart_body)
     # Iterative: deep trees overflow Python recursion, as `ast_fingerprint`
     # found. Open/close markers keep the nesting in the digest so moving a
     # statement into or out of a block changes it.
-    stack: list[tuple[Node, bool]] = [(definition, False)]
+    stack: list[tuple[Node, bool]] = [(root, False) for root in reversed(roots)]
     while stack:
         node, closing = stack.pop()
         if closing:
@@ -70,7 +78,7 @@ def anchor_hash(definition: Node, decorators: Sequence[str] = ()) -> str:
         stack.append((node, True))
         # Reversed so children are visited in source order.
         stack.extend((child, False) for child in reversed(node.children))
-    return digest.hexdigest()
+    return f"{cs.ANCHOR_HASH_VERSION}{digest.hexdigest()}"
 
 
 def anchor_hash_props(definition: Node, decorators: Sequence[str] = ()) -> PropertyDict:

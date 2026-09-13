@@ -1,4 +1,5 @@
 from .constants import (
+    ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     GlossAnchorState,
     NodeLabel,
@@ -564,13 +565,17 @@ MERGE (g)-[:{_MENTIONS}]->(m)"""
 # Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
 # `target_hash` when it was written; after a sync the two are compared and the
 # note graded EXACT or STALE. A subject with no hash (a class, a module) or a
-# note written before hashes existed is left as it is rather than guessed at,
-# and a STALE note goes back to EXACT if the code is reverted. Nothing here
+# note written before hashes existed is left as it is rather than guessed at.
+# So is a note whose recorded hash is not in the current format (the prefix
+# gate): stage two recorded the clone skeleton, which is not comparable, and
+# reading it as STALE would be wrong for an unchanged definition. A STALE
+# note goes back to EXACT if the code is reverted. Nothing here
 # moves a note or deletes one.
 _STATE_EXACT = GlossAnchorState.EXACT.value
 _STATE_STALE = GlossAnchorState.STALE.value
 CYPHER_GRADE_GLOSS_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
 WHERE g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
+  AND g.target_hash STARTS WITH '{ANCHOR_HASH_VERSION}'
 SET g.anchor_state = CASE WHEN g.target_hash = t.anchor_hash
     THEN '{_STATE_EXACT}' ELSE '{_STATE_STALE}' END"""
 _GLOSS_ROW = (

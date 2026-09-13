@@ -770,6 +770,9 @@ def test_grading_compares_the_recorded_hash_with_the_subjects_current_one() -> N
         in q
     )
     assert "g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL" in q
+    # A note that recorded a pre-format hash (stage two wrote the clone
+    # skeleton) is not comparable and is left alone, not read as STALE.
+    assert f"g.target_hash STARTS WITH '{cs.ANCHOR_HASH_VERSION}'" in q
     assert "SET g.anchor_state" in q
     assert "DELETE" not in q
 
