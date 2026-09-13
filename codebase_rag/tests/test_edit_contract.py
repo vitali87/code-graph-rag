@@ -20,7 +20,7 @@ from codebase_rag.editing import (
 )
 from codebase_rag.editing.rename import rename
 from codebase_rag.editing.transaction import load_history
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta
 from evals.cgr_graph import _StatefulIngestor
@@ -875,6 +875,81 @@ def test_a_failed_rollback_reingest_is_reported_not_raised(temp_repo: Path) -> N
     assert report.graph_incomplete
     assert "memgraph went away" in report.message
     assert (root / "pkg" / "util.py").read_text() == before
+
+
+def _rename_with_failing_initial_reingest(temp_repo, error: Exception):
+    """Drive the INITIAL postcondition re-ingest to `error` and return the report.
+
+    Not the rollback path: this is the one the caller reaches while `applied`
+    is still True, so what the report says about the graph is the only signal
+    there is.
+    """
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, _ = _real_project(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def assist(a):\n    return a\n\n\ndef helper(a):\n    return a\n",
+            "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
+        },
+    )
+
+    def failing_reingest(paths: list[str]) -> None:
+        raise error
+
+    return rename(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=failing_reingest,
+    )
+
+
+def test_an_initial_reingest_that_WROTE_flags_the_graph(temp_repo) -> None:
+    """A mutating failure on the initial path must say the graph may be partial.
+
+    `measure()` catches and returns `verdict=None`, which says "could not
+    measure" -- a different claim from "the graph may be damaged". Without
+    the flag the caller saw a clean report, re-marked nothing, and returned
+    `applied` over a possibly-partial graph.
+    """
+    report = _rename_with_failing_initial_reingest(
+        temp_repo, RuntimeError("memgraph went away")
+    )
+
+    assert report.graph_incomplete, (
+        "a re-ingest that may have written left no record that the graph "
+        "might be partial"
+    )
+    assert report.verdict is None
+
+
+def test_an_initial_reingest_that_wrote_NOTHING_does_not_flag(temp_repo) -> None:
+    """The other direction, and the one that stops this becoming a worse bug.
+
+    `reingest` converts every prologue failure to `ReingestAborted` and
+    rejects bad paths with `ValueError` before touching anything, so neither
+    means the graph changed. Flagging them unconditionally made the caller
+    re-mark a graph the failure never touched, and every later scoped
+    re-ingest was refused until a full update.
+
+    The interaction is what makes it a P1 rather than an over-report: the
+    guarded callback CLEARS its marker on exactly this path, so an
+    unconditional flag here re-created the marker it had just correctly
+    removed (Greptile, PR #1547).
+    """
+    report = _rename_with_failing_initial_reingest(
+        temp_repo, ReingestAborted("prologue read failed")
+    )
+
+    assert not report.graph_incomplete, (
+        "a failure that wrote nothing flagged the graph as partial, so every "
+        "later scoped re-ingest is refused for a run that changed nothing"
+    )
+    assert report.verdict is None
 
 
 def test_change_signature_does_not_accept_an_unknown_verdict() -> None:

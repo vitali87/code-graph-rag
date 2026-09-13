@@ -36,6 +36,7 @@ from tree_sitter import Node
 from .. import constants as cs
 from .. import cypher_queries as cq
 from .. import graph_query
+from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
 from ..types_defs import PropertyDict, ResultRow
@@ -1087,15 +1088,26 @@ class Renamer:
             logger.warning(cs.RENAME_CONTRACT_UNMEASURED.format(error=error))
             return report._replace(
                 verdict=None,
-                # The re-ingest may have written before it failed, so the
-                # graph may be partial. The ROLLBACK path already says so;
-                # this path did not, and it is the one the caller reaches
-                # while `applied` is still True -- so `_run_rename` saw a
-                # clean report and re-marked nothing, leaving no record at
-                # all. `verdict=None` says "could not measure", which is not
-                # the same claim as "the graph may be damaged" (found by a
-                # peer review session, PR #1547).
-                graph_incomplete=True,
+                # Only when the re-ingest may have WRITTEN. The ROLLBACK path
+                # already reported this; the initial path did not, and it is
+                # the one the caller reaches while `applied` is still True --
+                # so `_run_rename` saw a clean report and re-marked nothing,
+                # leaving no record that the graph might be partial.
+                # `verdict=None` says "could not measure", which is not the
+                # same claim as "the graph may be damaged" (found by a peer
+                # review session, PR #1547).
+                #
+                # Classified, not unconditional. `reingest` converts every
+                # prologue failure to `ReingestAborted` and rejects bad paths
+                # with `ValueError` before touching anything, so those two
+                # mean nothing was written -- the same rule `_reingest_sync`
+                # and the guarded callback apply. Setting the flag for them
+                # made the caller re-mark a graph the failure never touched,
+                # and every later scoped re-ingest was refused until a full
+                # update (Greptile, PR #1547). Matching the callback matters:
+                # it CLEARS its marker on that path, so an unconditional flag
+                # here re-created the marker it had just correctly removed.
+                graph_incomplete=not isinstance(error, ValueError | ReingestAborted),
                 message=cs.RENAME_CONTRACT_UNMEASURED.format(error=error),
             )
         verdict = verify(
