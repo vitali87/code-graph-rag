@@ -462,9 +462,7 @@ DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
 # a different label. Kept separate from DEFINITION_NODE_LABELS because a
 # Section is not a definition for the graph-query and gloss lookups, which
 # never matched one.
-SNIPPET_NODE_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS | {
-    NodeLabel.SECTION
-}
+SNIPPET_NODE_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS | {NodeLabel.SECTION}
 
 
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
