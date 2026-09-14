@@ -657,7 +657,7 @@ def test_two_sites_on_one_pair_are_captured_and_restored_separately() -> None:
 
 
 def test_the_validated_capture_is_the_one_the_run_uses(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Validating a selection and then running under a different one is no
     validation at all: the updater would fall back to the configured
@@ -674,26 +674,27 @@ def test_the_validated_capture_is_the_one_the_run_uses(
         seen.append(kwargs.get("capture"))
         original(self, *args, **kwargs)
 
-    GraphUpdater.__init__ = record  # type: ignore[method-assign]
-    try:
-        run_check(
-            root,
-            "HEAD",
-            PROJECT,
-            store,
-            parsers,
-            queries,
-            isolated=True,
-            capture=selection,
-        )
-    finally:
-        GraphUpdater.__init__ = original  # type: ignore[method-assign]
+    # monkeypatch, not a manual save/restore: it undoes the patch even when
+    # the body raises, where a `finally` only runs if control reaches it
+    # (python:S8067).
+    monkeypatch.setattr(GraphUpdater, "__init__", record)
+
+    run_check(
+        root,
+        "HEAD",
+        PROJECT,
+        store,
+        parsers,
+        queries,
+        isolated=True,
+        capture=selection,
+    )
 
     assert seen == [selection]
 
 
 def test_an_unreadable_hash_cache_is_left_alone(
-    indexed: tuple[Path, _StatefulIngestor],
+    indexed: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Absent and unreadable are different states. Collapsing them made the
     restore DELETE a cache it merely could not read (Greptile, #1718)."""
@@ -708,11 +709,11 @@ def test_an_unreadable_hash_cache_is_left_alone(
             raise PermissionError(13, "Permission denied")
         return real_read_bytes(self, *args, **kwargs)
 
-    Path.read_bytes = refuse  # type: ignore[method-assign]
-    try:
+    # Undone by the fixture, including on a failure inside the block, and
+    # restored before the assertions below read the file (python:S8067).
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_bytes", refuse)
         snapshot = _FileSnapshot(cache)
-    finally:
-        Path.read_bytes = real_read_bytes  # type: ignore[method-assign]
 
     snapshot.put_back()
 
