@@ -16,6 +16,7 @@ Memgraph in the integration tier.
 from __future__ import annotations
 
 import copy
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import CheckError, _FileSnapshot, run_check
 from codebase_rag.structural_delta import StructuralDelta
+from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "iso_fixture"
@@ -542,6 +544,49 @@ def test_a_findings_properties_come_back_when_its_name_survives(
     smell = store.nodes.get((cs.NodeLabel.CODE_SMELL.value, qn))
     assert smell is not None, "the captured finding was deleted"
     assert smell.get(cs.KEY_SNIPPET) == "original snippet"
+
+
+def test_the_capture_walks_exactly_what_the_delete_walks() -> None:
+    """The capture's relation list must equal the module delete's.
+
+    The re-ingest deletes a module subtree with `CYPHER_DELETE_MODULE`; the
+    guard restores what it captured. Any relation the delete walks and the
+    capture does not is a node deleted and never restored, which is silent
+    data loss in the one mode that promises none.
+
+    This drifted once already: `HAS_FIELD` joined the delete with Field
+    nodes (#1899) and the capture kept its older list (CodeRabbit, #1718).
+    Asserted against the query text so the next addition to either side
+    fails here rather than in a graph.
+    """
+    pattern = re.compile(r"\[:([A-Z_|]+)\*")
+    delete = pattern.search(cs.CYPHER_DELETE_MODULE)
+    capture = pattern.search(cq.CYPHER_CHECK_SCOPE_NODES)
+    assert delete is not None, cs.CYPHER_DELETE_MODULE
+    assert capture is not None, cq.CYPHER_CHECK_SCOPE_NODES
+
+    assert set(capture.group(1).split("|")) == set(delete.group(1).split("|"))
+
+
+def test_the_emulator_walks_every_relation_the_capture_does() -> None:
+    """The unit tier's double models the subtree walk in Python, so it
+    drifts independently of the queries. A relation the capture reads but
+    the double does not makes every unit test here blind to nodes the real
+    store would lose.
+
+    Asserted as containment rather than equality: the double omits
+    `CONTAINS_SECTION`, which the delete does walk, and that gap is
+    pre-existing on `origin/main` and filed separately. Requiring equality
+    would make this branch's test fail for a defect it did not introduce.
+    """
+    pattern = re.compile(r"\[:([A-Z_|]+)\*")
+    capture = pattern.search(cq.CYPHER_CHECK_SCOPE_NODES)
+    assert capture is not None
+    walked = set(capture.group(1).split("|")) - {
+        cs.RelationshipType.CONTAINS_SECTION.value
+    }
+
+    assert walked <= set(cgr_graph._MODULE_SUBTREE_RELS)
 
 
 # --- refusals -----------------------------------------------------------------
