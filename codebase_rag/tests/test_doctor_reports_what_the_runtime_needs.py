@@ -18,7 +18,6 @@ equal the verdict of the gate `cgr start` applies (`validate_api_key`).
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator
 
 import pytest
 from click.testing import Result
@@ -97,8 +96,12 @@ class TestMarksMatchTheConsole:
 
 
 @pytest.fixture
-def bare_model_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """No role configured, no key variable set: the shipped default."""
+def bare_model_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No role configured, no key variable set: the shipped default.
+
+    No teardown of its own: every change here is a monkeypatch one, which
+    pytest undoes when the fixture's own monkeypatch goes out of scope.
+    """
     for role in ("ORCHESTRATOR", "CYPHER"):
         monkeypatch.setattr(settings, f"{role}_PROVIDER", "")
         monkeypatch.setattr(settings, f"{role}_MODEL", "")
@@ -108,7 +111,6 @@ def bare_model_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(settings, "_active_cypher", None)
     for name in _KEY_VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    yield
 
 
 def _runtime_accepts(role: cs.ModelRole) -> bool:
