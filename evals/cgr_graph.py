@@ -73,7 +73,10 @@ _DEFINES_RELS = frozenset(
 # What CYPHER_DELETE_MODULE walks: the definitions plus what hangs off them
 # by ownership. Kept separate from _DEFINES_RELS, which the definition
 # queries use and which must not see a Parameter as a definition.
-_MODULE_SUBTREE_RELS = _DEFINES_RELS | {cs.RelationshipType.HAS_PARAMETER.value}
+_MODULE_SUBTREE_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
@@ -713,6 +716,23 @@ class _StatefulIngestor:
                     }
                     for (label, _uid), props in self.nodes.items()
                     if label == cs.NodeLabel.PARAMETER.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
+            case cs.CYPHER_PROJECT_FIELD_TYPES:
+                # The Field counterpart (issue #1805), read by the incremental
+                # requeue for the same reason as the Parameter query above.
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.FIELD.value
                     and cs.KEY_TYPE_NAME in props
                     and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
                         prefix

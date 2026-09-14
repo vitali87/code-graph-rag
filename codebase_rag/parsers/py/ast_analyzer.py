@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import abstractmethod
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
@@ -13,12 +14,281 @@ from ...types_defs import FunctionRegistryTrieProtocol, LanguageQueries, NodeTyp
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import get_cached_query, safe_decode_text, sorted_captures
 
+_PY_SCOPE_TYPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_MODULE}
+)
+
 _PY_TRAVERSE_QUERY = (
     f"({cs.TS_PY_ASSIGNMENT}) @assignment "
     f"({cs.TS_PY_LIST_COMPREHENSION}) @comprehension "
     f"({cs.TS_PY_FOR_STATEMENT}) @for_stmt "
     f"({cs.TS_PY_RETURN_STATEMENT}) @return_stmt"
 )
+
+
+def _split_top_level(inner: str, separator: str = cs.CHAR_COMMA) -> list[str]:
+    """Split `A, dict[str, B], C` on the separators outside any brackets --
+    the commas between positions, or the `|` between union members, which a
+    plain `str.split` would also find INSIDE `tuple[Widget | None, Banner]`."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for char in inner:
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth = max(0, depth - 1)
+        if char == separator and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+# Target shapes that bind plain names, and so are descended into for them:
+# `a, (b, c)`, `[a, b]`, `a, *rest`, and a with statement's `as` target,
+# which tree-sitter parses as a `tuple` / `list` EXPRESSION, not a pattern.
+# An attribute or subscript target (`self.x = ...`, `p[0] = ...`) binds no
+# local.
+_PY_BINDING_PATTERN_TYPES = cs.PY_UNPACKING_TARGET_TYPES | {
+    cs.TS_PY_LIST_SPLAT_PATTERN,
+    cs.TS_PY_AS_PATTERN_TARGET,
+    cs.TS_PY_TUPLE,
+    cs.TS_PY_LIST,
+}
+# Statements whose `left` field is the target they bind.
+_PY_LEFT_BINDERS = frozenset(
+    {cs.TS_PY_ASSIGNMENT, cs.TS_PY_AUGMENTED_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT}
+)
+# Nodes whose `name` field is the one identifier they bind: a walrus, and a
+# def or class, whose NAME is the enclosing body's while its body is not.
+_PY_NAME_BINDERS = frozenset(
+    {cs.TS_PY_NAMED_EXPRESSION, cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION}
+)
+_PY_IMPORT_TYPES = frozenset(
+    {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT}
+)
+# A body of its own: what is bound inside it is not the enclosing body's.
+_PY_NESTED_SCOPE_TYPES = frozenset(
+    {cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION, cs.TS_PY_LAMBDA}
+)
+
+
+def _identifiers_in(target: Node) -> Iterator[Node]:
+    """The local names a binding target binds: itself, or every one inside a
+    pattern; nothing for an attribute or subscript target."""
+    if target.type == cs.TS_PY_IDENTIFIER:
+        yield target
+    elif target.type in _PY_BINDING_PATTERN_TYPES:
+        for child in target.named_children:
+            yield from _identifiers_in(child)
+
+
+def _with_aliases(statement: Node) -> Iterator[Node]:
+    """The `as` targets of a with statement's items."""
+    for clause in statement.named_children:
+        for item in clause.named_children:
+            value = item.child_by_field_name(cs.FIELD_VALUE)
+            if value is None or value.type != cs.TS_PY_AS_PATTERN:
+                continue
+            alias = value.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None:
+                yield alias
+
+
+def _except_aliases(clause: Node) -> Iterator[Node]:
+    """The `as` target of an except clause."""
+    for child in clause.named_children:
+        if child.type == cs.TS_PY_AS_PATTERN:
+            alias = child.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None:
+                yield alias
+
+
+def _import_targets(statement: Node) -> Iterator[Node]:
+    """The identifiers an import binds: `a` for `import a.b`, `y` for
+    `from m import y`, the alias for `... as z`; never a `from` module."""
+    module = statement.child_by_field_name(cs.FIELD_MODULE_NAME)
+    for child in statement.named_children:
+        if module is not None and child.id == module.id:
+            continue
+        if child.type == cs.TS_ALIASED_IMPORT:
+            alias = child.child_by_field_name(cs.FIELD_ALIAS)
+            if alias is not None:
+                yield alias
+        elif child.type == cs.TS_DOTTED_NAME and child.named_children:
+            yield child.named_children[0]
+
+
+def _capture_targets(pattern: Node) -> Iterator[Node]:
+    """The identifier a `case` pattern captures: a bare name, which is a
+    one-segment `dotted_name`. `_` captures nothing; `Color.RED` matches a
+    value."""
+    for child in pattern.named_children:
+        if (
+            child.type == cs.TS_PY_DOTTED_NAME
+            and len(child.named_children) == 1
+            and safe_decode_text(child) != cs.TS_PY_WILDCARD_NODE
+        ):
+            yield child.named_children[0]
+
+
+def _binding_targets(node: Node) -> Iterator[Node]:
+    """The targets ONE statement or expression binds, without its body:
+    assignment, augmented assignment, `for`, `with ... as`, walrus,
+    `except ... as`, `import`, a `case` capture, a nested def or class.
+    Not modelled: `global` / `nonlocal` declarations and `del`."""
+    if node.type in _PY_LEFT_BINDERS:
+        left = node.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None:
+            yield left
+    elif node.type in _PY_NAME_BINDERS:
+        name = node.child_by_field_name(cs.FIELD_NAME)
+        if name is not None:
+            yield name
+    elif node.type == cs.TS_PY_WITH_STATEMENT:
+        yield from _with_aliases(node)
+    elif node.type == cs.TS_PY_EXCEPT_CLAUSE:
+        yield from _except_aliases(node)
+    elif node.type in _PY_IMPORT_TYPES:
+        yield from _import_targets(node)
+    elif node.type == cs.TS_PY_CASE_PATTERN:
+        yield from _capture_targets(node)
+
+
+def _parameter_names(function: Node) -> Iterator[str]:
+    """Every name a def's parameter list binds, annotated or not."""
+    parameters = function.child_by_field_name(cs.TS_FIELD_PARAMETERS)
+    for parameter in parameters.named_children if parameters is not None else ():
+        # `x`, `x: T`, `x=1`, `x: T = 1`, `*args`, `**kw`: the identifier is
+        # the node itself or its first named child; a bare `/` or `*` has none.
+        candidates = (parameter, *parameter.named_children)
+        if (
+            first := next(
+                (c for c in candidates if c.type == cs.TS_PY_IDENTIFIER), None
+            )
+        ) is not None and (name := safe_decode_text(first)):
+            yield name
+
+
+def _scope_of(node: Node) -> int | None:
+    """Id of the def, class or module whose body a node sits in directly."""
+    current = node.parent
+    while current is not None and current.type not in _PY_SCOPE_TYPES:
+        current = current.parent
+    return current.id if current is not None else None
+
+
+def _bindings_in(scope: Node) -> Iterator[tuple[Node, Node]]:
+    """(binding node, identifier bound) for every name the statements
+    directly in `scope` bind, without entering a nested def, class or
+    lambda."""
+    stack = list(scope.children)
+    while stack:
+        node = stack.pop()
+        for target in _binding_targets(node):
+            for identifier in _identifiers_in(target):
+                yield node, identifier
+        if node.type not in _PY_NESTED_SCOPE_TYPES:
+            stack.extend(node.children)
+
+
+def _import_bound_leaf(item: Node, name: str, from_import: bool) -> str | None:
+    """The path an import item binds `name` to, or None when it binds another
+    name: the target of `x as name`, `name` itself in `from m import name`,
+    the package `a` in `import a.b`."""
+    if item.type == cs.TS_ALIASED_IMPORT:
+        alias = item.child_by_field_name(cs.FIELD_ALIAS)
+        target = item.child_by_field_name(cs.FIELD_NAME)
+        if alias is None or target is None or safe_decode_text(alias) != name:
+            return None
+        return safe_decode_text(target) or None
+    if item.type != cs.TS_DOTTED_NAME:
+        return None
+    text = safe_decode_text(item) or ""
+    bound = text if from_import else text.split(cs.SEPARATOR_DOT)[0]
+    return bound if bound == name else None
+
+
+def _import_binding_path(statement: Node, name: str) -> str | None:
+    """The dotted path a body-level import binds `name` to, leading dots
+    dropped: `helpers.make_pair` for `from .helpers import make_pair`,
+    `helpers` for `from . import helpers`, `os` for `import os as helpers`."""
+    module = statement.child_by_field_name(cs.FIELD_MODULE_NAME)
+    prefix = (safe_decode_text(module) or "").lstrip(cs.SEPARATOR_DOT) if module else ""
+    for item in statement.named_children:
+        if module is not None and item.id == module.id:
+            continue
+        if leaf := _import_bound_leaf(item, name, module is not None):
+            return cs.SEPARATOR_DOT.join(part for part in (prefix, leaf) if part)
+    return None
+
+
+def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
+    """Whether a body-level import binds `name` to what the import map says
+    it is: then the name is a re-import the map resolves, not a shadow. The
+    map keeps a module-level entry over a body import it could not place
+    (`import os as helpers` under `from . import helpers`), so the two must
+    agree on the path, or the name means something the project does not
+    hold (CodeRabbit)."""
+    if binder.type not in _PY_IMPORT_TYPES:
+        return False
+    path = _import_binding_path(binder, name)
+    qn = import_map.get(name)
+    return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
+
+
+def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
+    """Every name the caller's body reads as a local rather than as the
+    module's: its parameters, whatever its own statements bind, and whatever
+    each enclosing def binds (a closure's free names), typed or not. Python
+    makes a name bound ANYWHERE in a body local for the whole body, so an
+    imported module or function it shadows is unreachable there even before
+    the binding runs (Greptile P1). An enclosing CLASS body is skipped, as
+    Python skips it; a body-level import the import map reflects is a
+    re-import, not a shadow."""
+    names: set[str] = set()
+    scope: Node | None = caller
+    while scope is not None:
+        if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
+            names.update(_parameter_names(scope))
+            names.update(
+                name
+                for binder, identifier in _bindings_in(scope)
+                if (name := safe_decode_text(identifier))
+                and not _reimports(binder, name, import_map)
+            )
+        scope = scope.parent
+    return frozenset(names)
+
+
+def _call_bound_by(binder: Node) -> Node | None:
+    """The call a plain `p = call()` binds to its WHOLE target, else None:
+    `p, q = fw()`, `p += x`, `for p in xs`, `with cm as p`, `(p := x)` and
+    an annotation alone all bind p to something other than a call."""
+    if binder.type != cs.TS_PY_ASSIGNMENT:
+        return None
+    target = binder.child_by_field_name(cs.TS_FIELD_LEFT)
+    value = binder.child_by_field_name(cs.TS_FIELD_RIGHT)
+    if target is None or target.type != cs.TS_PY_IDENTIFIER:
+        return None
+    return value if value is not None and value.type == cs.TS_PY_CALL else None
+
+
+def _binding_events(
+    name: str, before: int, caller: Node
+) -> list[tuple[int, Node | None]]:
+    """(position, the call bound, or None for any other binding), for every
+    binding of `name` in the caller's own scope before byte `before`."""
+    return [
+        (identifier.start_byte, _call_bound_by(binder))
+        for binder, identifier in _bindings_in(caller)
+        if identifier.end_byte <= before and safe_decode_text(identifier) == name
+    ]
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -45,12 +315,24 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from ..factory import ASTCacheProtocol
+    from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
     class _AstAnalyzerDeps(Protocol):
+        import_processor: ImportProcessor
+
         def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str
+            self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
+
+        def _extract_full_method_call(self, node: Node) -> str | None: ...
+
+        def _resolve_method_qualified_name(
+            self,
+            method_call: str,
+            module_qn: str,
+            local_var_types: dict[str, str] | None = None,
+        ) -> str | None: ...
 
         def _analyze_comprehension(
             self, node: Node, local_var_types: dict[str, str], module_qn: str
@@ -154,6 +436,9 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        self._process_assignment_unpacking(
+            node, assignments, local_var_types, module_qn
+        )
 
         for comp in comprehensions:
             self._analyze_comprehension(comp, local_var_types, module_qn)
@@ -206,6 +491,207 @@ class PythonAstAnalyzerMixin(_AstBase):
         ):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
+
+    def _process_assignment_unpacking(
+        self,
+        caller: Node,
+        assignments: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """`_ol, _oc, inner = parsed`: bind each target to its element type.
+
+        The single-name processors above ignore a `pattern_list` /
+        `tuple_pattern` target, so an unpacked local had no type and a call on
+        it fell to the bare-name fallback (issue #1896, the real shape of
+        trace/sourcemap.py:225). The right-hand side is a call annotated
+        `tuple[A, B, C]`, or a local that was assigned such a call earlier in
+        the same body; the annotation is read RAW here because
+        `_annotated_return_type` deliberately refuses a heterogeneous tuple,
+        which is exactly what unpacking consumes position by position. The
+        walk captures every assignment under the caller, including a nested
+        def's, whose targets are that def's locals, not the caller's
+        (CodeRabbit).
+        """
+        unpackings = [
+            assignment
+            for assignment in assignments
+            if _scope_of(assignment) == caller.id
+            and (left := assignment.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
+            and left.type in cs.PY_UNPACKING_TARGET_TYPES
+        ]
+        if not unpackings:
+            return
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        bound = _locally_bound_names(caller, import_map)
+        for assignment in unpackings:
+            self._bind_unpacked_targets(
+                assignment, caller, bound, local_var_types, module_qn
+            )
+
+    def _bind_unpacked_targets(
+        self,
+        assignment: Node,
+        caller: Node,
+        bound: frozenset[str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+        right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
+        if (
+            left is None
+            or right is None
+            or (call := self._defining_call(right, caller)) is None
+        ):
+            return
+        elements = self._tuple_return_elements(call, module_qn, local_var_types, bound)
+        targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
+        if len(elements) == 1 and elements[0][1]:
+            elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
+        if len(elements) != len(targets):
+            return  # a count mismatch, or no tuple annotation at all
+        for target, (element, _homogeneous) in zip(targets, elements, strict=True):
+            # A nested pattern or a starred target binds no one type.
+            name = (
+                safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
+            )
+            if name and name not in local_var_types:
+                local_var_types[name] = element
+
+    def _defining_call(self, right: Node, caller: Node) -> Node | None:
+        """The call an unpacking's right-hand side comes from, or None.
+
+        Either the call itself, or -- for `parsed = f(); a, b = parsed` -- the
+        call that the nearest earlier binding of the name IN THE SAME SCOPE
+        gave it. A nearer binding to anything but a call clears it: after
+        `p = fw(); p = supplied` (or `p += x`, `for p in xs`, `with cm as p`),
+        `p` is not fw's result. Captures are not guaranteed to come back in
+        document order, so the nearest binding is the max position, not the
+        last seen.
+        """
+        if right.type == cs.TS_PY_CALL:
+            return right
+        if right.type != cs.TS_PY_IDENTIFIER or not (name := safe_decode_text(right)):
+            return None
+        events = _binding_events(name, right.start_byte, caller)
+        if not events:
+            return None
+        return max(events, key=lambda event: event[0])[1]
+
+    def _tuple_return_elements(
+        self,
+        call: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
+    ) -> list[tuple[str, bool]]:
+        """(element type, is `...`-homogeneous) per position of the callee's
+        `tuple[...]` return annotation, Optional stripped; empty if the callee
+        cannot be found or does not return a tuple."""
+        callee = self._callee_definition(call, module_qn, local_var_types, bound)
+        if callee is None:
+            return []
+        callee_node, callee_qn = callee
+        type_node = callee_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
+        if type_node is None:
+            return []
+        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        members = [
+            member
+            for part in _split_top_level(text, cs.PY_UNION_SEPARATOR)
+            if (member := part.strip()) and member != cs.PY_NONE
+        ]
+        if len(members) != 1:
+            return []
+        candidate = members[0]
+        if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
+            candidate = optional.group("inner").strip()
+        container = re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate)
+        if container is None or container.group("name") not in cs.PY_TUPLE_CONTAINERS:
+            return []
+        parts = _split_top_level(container.group("inner"))
+        if len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS:
+            return [(self._element_type(parts[0], callee_qn, module_qn), True)]
+        return [
+            (self._element_type(part, callee_qn, module_qn), False) for part in parts
+        ]
+
+    def _element_type(self, element: str, callee_qn: str, module_qn: str) -> str:
+        # A name the scope resolves to a project class becomes that class;
+        # anything else (`int`, `list[str]`) keeps its annotation text, which
+        # is what a typed parameter stores too.
+        element = element.strip().strip("\"'")
+        return self._trusted_annotation_name(element, callee_qn, module_qn) or element
+
+    def _callee_definition(
+        self,
+        call: Node,
+        module_qn: str,
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
+    ) -> tuple[Node, str] | None:
+        """(definition node, qualified name) of what a call invokes, or None.
+
+        A name bound in the caller's own scope -- a parameter, an assignment,
+        a loop or with target, typed or not -- is that local, never the
+        imported module or function of the same name. An earlier guard asked
+        the type map, which an untyped local never reaches (Greptile P1).
+        """
+        func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+        if func is None:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        if func.type == cs.TS_PY_IDENTIFIER:
+            return self._free_function_definition(func, module_qn, import_map, bound)
+        if func.type == cs.TS_PY_ATTRIBUTE:
+            return self._method_definition(
+                func, module_qn, import_map, local_var_types, bound
+            )
+        return None
+
+    def _free_function_definition(
+        self,
+        func: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+        bound: frozenset[str],
+    ) -> tuple[Node, str] | None:
+        name = safe_decode_text(func)
+        if not name or name in bound:
+            return None
+        for qn in (import_map.get(name), f"{module_qn}{cs.SEPARATOR_DOT}{name}"):
+            if qn and (node := self._find_function_ast_node(qn)) is not None:
+                return node, qn
+        return None
+
+    def _method_definition(
+        self,
+        func: Node,
+        module_qn: str,
+        import_map: dict[str, str],
+        local_var_types: dict[str, str],
+        bound: frozenset[str],
+    ) -> tuple[Node, str] | None:
+        text = self._extract_full_method_call(func)
+        if not text:
+            return None
+        # `helpers.make_pair()`: the receiver is an imported MODULE, which the
+        # method resolver (built for typed receivers) cannot name; the import
+        # map can, and the qn it gives is a function's.
+        receiver, _, leaf = text.rpartition(cs.SEPARATOR_DOT)
+        if (
+            cs.SEPARATOR_DOT not in receiver
+            and receiver not in bound
+            and (module := import_map.get(receiver))
+        ):
+            qn = f"{module}{cs.SEPARATOR_DOT}{leaf}"
+            if (node := self._find_function_ast_node(qn)) is not None:
+                return node, qn
+        qn = self._resolve_method_qualified_name(text, module_qn, local_var_types)
+        if qn and (node := self._find_method_ast_node(qn)) is not None:
+            return node, qn
+        return None
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
@@ -547,7 +1033,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             return qn_parts[-2] if len(qn_parts) >= 2 else None
 
         if method_node := self._find_callable_ast_node(method_qn):
-            local_vars = self.build_local_variable_type_map(method_node, module_qn)
+            # The enclosing class, when there is one, so `w = self.parse();
+            # return w` types the return the same way the call pass types
+            # the body (issue #1901). The seed is inert for a free function.
+            owner = method_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            class_context = (
+                owner if self.function_registry.get(owner) == NodeType.CLASS else None
+            )
+            local_vars = self.build_local_variable_type_map(
+                method_node, module_qn, class_context
+            )
             if identifier in local_vars:
                 logger.debug(
                     lg.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]

@@ -68,6 +68,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
         {"absolute_path", "end_line", "start_line", "unresolved_specifiers"}
     ),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
+    "Field": frozenset({"absolute_path"}),
     # `positional_params` (issue #227) is the one entry here added with a
     # known cost rather than as a record of the past: a graph round-tripped
     # through protobuf loses it, so arity diagnosis on an IMPORTED graph

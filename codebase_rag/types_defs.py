@@ -934,6 +934,22 @@ _PARAMETER_NODE_PROPS = (
     "type_name: string?, is_variadic: boolean?, has_default: boolean?}"
 )
 
+# A field's owner is any label that can declare one; its OF_TYPE targets are
+# the Parameter set, for the same reason (issue #1805).
+_FIELD_OWNER_LABELS = (
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+
+_FIELD_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, type_name: string?, "
+    "modifiers: list[string]?, is_static: boolean?, docstring: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -1013,6 +1029,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
+    NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
 )
 
 
@@ -1252,7 +1269,12 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.PARAMETER,),
     ),
     RelationshipSchema(
-        (NodeLabel.PARAMETER,),
+        _FIELD_OWNER_LABELS,
+        RelationshipType.HAS_FIELD,
+        (NodeLabel.FIELD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER, NodeLabel.FIELD),
         RelationshipType.OF_TYPE,
         _PARAMETER_TYPE_LABELS,
     ),

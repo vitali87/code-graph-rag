@@ -147,7 +147,7 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -282,8 +282,12 @@ RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
        n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
+# Fields and Parameters share the `<owner>.<name>` key space with Methods (a
+# Python class may have a field and a method both called `total`), and this
+# lookup is label-less with LIMIT 1, so without the exclusion a Field row --
+# which has no `end` -- could win a definition lookup (local review of #1805).
 CYPHER_FIND_BY_QUALIFIED_NAME = """
-MATCH (n) WHERE n.qualified_name = $qn
+MATCH (n) WHERE n.qualified_name = $qn AND NOT n:Field AND NOT n:Parameter
 OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring

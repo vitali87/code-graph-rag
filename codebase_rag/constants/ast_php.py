@@ -32,6 +32,11 @@ TS_PHP_ATTRIBUTE_LIST = "attribute_list"
 TS_PHP_ATTRIBUTE = "attribute"
 TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
 TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+TS_PHP_STATIC_MODIFIER = "static_modifier"
+TS_PHP_PROPERTY_DECLARATION = "property_declaration"
+TS_PHP_PROPERTY_ELEMENT = "property_element"
+TS_PHP_DECLARATION_LIST = "declaration_list"
+TS_PHP_VARIABLE_NAME = "variable_name"
 TS_PHP_USE_DECLARATION = "use_declaration"
 
 # FLOWS_TO lean-walk node types (issue #1174). PHP variables carry a `$` prefix

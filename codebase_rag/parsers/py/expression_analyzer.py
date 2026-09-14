@@ -44,7 +44,7 @@ if TYPE_CHECKING:
         ) -> None: ...
 
         def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str
+            self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
         def _find_method_ast_node(self, method_qn: str) -> Node | None: ...
@@ -467,6 +467,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     def _resolve_class_method(
         self, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
+        # A receiver typed with a full class qn (`self`, seeded from the
+        # enclosing class, issue #1901) is looked up as it is; a bare name
+        # goes through the module, the imports and the simple-name index.
+        if cs.SEPARATOR_DOT in class_name and (
+            result := self._try_resolve_method(class_name, method_name)
+        ):
+            return result
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
         if result := self._try_resolve_method(local_class_qn, method_name):
             return result

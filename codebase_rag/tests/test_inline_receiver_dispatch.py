@@ -7,8 +7,8 @@ Issue #1893. #1870 typed a variable from the expression it was assigned
 string, matched nothing, and fell back to the bare method name, emitting a
 CALLS edge to every class defining `resolve`. Every shape here is one from
 `codebase_rag/trace/sourcemap.py`, where five unrelated frame resolvers
-define `resolve` -- except two, pinned below as strict expected failures with
-their real causes, which this change does not reach.
+define `resolve` -- except one, pinned below as a strict expected failure with
+its real cause, which no rule can reach without stub knowledge.
 
 Every defect test is paired with a control whose decoy method is renamed, so
 a green result means the edge was suppressed rather than the harness seeing
@@ -70,9 +70,9 @@ _BODIES = {
 
 # sourcemap.py:225, as a whole module: `inner` is a TUPLE-UNPACKED local
 # (`_ol, _oc, inner = parsed`, from a call annotated
-# `-> tuple[int, int, SourceMap] | None`). Tuple unpacking from an annotated
-# return is never typed, so `inner.base_dir` has no type and the fallback
-# still fires (#1896). Pinned strict so it flips when unpacking is typed.
+# `-> tuple[int, int, SourceMap] | None`), typed position by position from
+# that annotation since #1896 -- the assignments sit inside a `for` loop, which
+# is what the real line does and what a document-order assumption missed.
 _TUPLE_UNPACKED_SRC = (
     "from dataclasses import dataclass\n"
     "from pathlib import Path\n"
@@ -164,12 +164,11 @@ def test_an_attribute_of_an_external_receiver_is_still_matched_by_name(
     assert not _decoy_resolve_edges(repo)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a tuple-unpacked local is never typed, so the receiver has no type "
-    "and the bare-name fallback still fires -- see _TUPLE_UNPACKED_SRC (#1896)",
-)
-def test_a_tuple_unpacked_receiver_is_still_matched_by_name(tmp_path: Path) -> None:
+def test_a_tuple_unpacked_receiver_is_typed_from_the_annotated_call(
+    tmp_path: Path,
+) -> None:
+    """Pinned as a strict expected failure by #1898; #1896 types the unpacked
+    local from the call's `tuple[...]` annotation, so the shape now holds."""
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / "__init__.py").touch()
