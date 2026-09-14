@@ -267,6 +267,7 @@ def emit_declared_constants(
     path = module_props.get(cs.KEY_PATH)
     absolute_path = module_props.get(cs.KEY_ABSOLUTE_PATH)
     owner = (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, module_qn)
+    typed: dict[str, PendingConstantType | None] = {}
     for constant in declared:
         constant_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constant.name}"
         ingestor.ensure_node_batch(
@@ -278,10 +279,21 @@ def emit_declared_constants(
             cs.RelationshipType.DEFINES_CONSTANT,
             (cs.NodeLabel.CONSTANT.value, cs.KEY_QUALIFIED_NAME, constant_qn),
         )
-        if sink is not None and constant.type_name and isinstance(path, str):
-            sink.append(
+        if sink is not None and isinstance(path, str):
+            # A repeated declaration (`THING: A = A()` then `THING: B = B()`)
+            # MERGEs onto one node whose properties the last one wins, so its
+            # type edge must follow the same rule. Appending one fact per
+            # declaration emitted OF_TYPE to BOTH classes while `type_name`
+            # said B (bot review). Keyed by qualified name, last in source
+            # order wins; a later declaration without a type clears the
+            # earlier one rather than leaving a contradicting edge.
+            typed[constant_qn] = (
                 PendingConstantType(constant_qn, module_qn, constant.type_name, path)
+                if constant.type_name
+                else None
             )
+    if sink is not None:
+        sink.extend(fact for fact in typed.values() if fact is not None)
     return len(declared)
 
 

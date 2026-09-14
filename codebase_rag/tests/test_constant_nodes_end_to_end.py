@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -84,6 +85,37 @@ def test_the_default_index_emits_no_constant_and_no_edge(tmp_path: Path) -> None
     # The control: absence is only evidence if presence was possible.
     assert _nodes(store, cs.NodeLabel.MODULE.value), "the index produced nothing"
     assert _nodes(store, cs.NodeLabel.CLASS.value), "the index produced nothing"
+
+
+def test_a_constant_never_wins_the_source_lookup_from_a_real_definition() -> None:
+    """`VALUE = 1` and `def VALUE()` share one qualified name.
+
+    Identity constraints are label-scoped, so both nodes exist. The source
+    lookup takes `LIMIT 1` with no ordering, and a Constant carries no
+    `end_line`, so if it were returned the retriever would report missing
+    location data for a definition that is indexed (reproduced by the bot
+    review). Constant is excluded for the same reason Field and Parameter
+    are: it is not span-bearing.
+
+    This is a denylist and denylists fail open, so the assertion is written
+    against the PROPERTY that decides membership -- a label with no
+    `end_line` must not be reachable here -- rather than against today's
+    three names. #1925 replaces this with a span-bearing allowlist; when it
+    lands, Constant joins that set and this exclusion goes away.
+    """
+    query = cq.CYPHER_FIND_BY_QUALIFIED_NAME
+    for label in (
+        cs.NodeLabel.CONSTANT,
+        cs.NodeLabel.FIELD,
+        cs.NodeLabel.PARAMETER,
+    ):
+        assert f"NOT n:{label.value}" in query, (
+            f"{label.value} carries no end_line and would break source retrieval"
+        )
+    # The control: a span-bearing label must NOT be excluded, or the lookup
+    # would return nothing at all and the assertions above would be vacuous.
+    for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS):
+        assert f"NOT n:{label.value}" not in query
 
 
 def test_the_constant_label_is_owned_by_its_capture_group() -> None:
@@ -173,6 +205,45 @@ def test_of_type_resolves_a_constant_annotation_to_the_project_class(
     assert next(iter(default_edges))[1].endswith(".models.Widget")
     # `int` is not a project class: no OF_TYPE for MAX_SIZE.
     assert not any(s.endswith(".app.MAX_SIZE") for s, _t in of_type)
+
+
+def test_a_repeated_declaration_keeps_only_the_last_type_edge(
+    tmp_path: Path,
+) -> None:
+    """`THING: A = A()` then `THING: B = B()` is ONE node and one type edge.
+
+    Both declarations share a qualified name, so the node MERGEs and the last
+    one's properties win -- but each queued its own pending type, so OF_TYPE
+    was emitted to BOTH classes while `type_name` said `B` (bot review,
+    reproduced: `of_type_count: 2`). A reader following the edge would reach a
+    class the constant is not.
+
+    The third case is the one that makes this more than a dedupe: a later
+    declaration with NO annotation must CLEAR the earlier edge, not leave it
+    contradicting the node's own `type_name`.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "app.py").write_text(
+        "class A:\n    pass\n\nclass B:\n    pass\n\nTHING: A = A()\nTHING: B = B()\n"
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+constants", "+parameters"]),
+    ).run(force=True)
+
+    of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
+    thing = {(src, tgt) for src, tgt in of_type if src.endswith(".app.THING")}
+    assert len(thing) == 1, f"expected one type edge, got {thing}"
+    assert next(iter(thing))[1].endswith(".app.B")
+    # The control: the node really was indexed, so "one edge" is not "no index".
+    assert _nodes(store, cs.NodeLabel.CONSTANT.value), "the index produced nothing"
 
 
 def test_a_constant_node_is_never_left_without_its_edge(tmp_path: Path) -> None:
