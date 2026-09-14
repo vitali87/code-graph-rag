@@ -246,6 +246,25 @@ class _StatefulIngestor:
         """Every edge with its site, one entry per site."""
         return {edge for edges in self._out.values() for edge in edges}
 
+    def props_for(self, edge: _RelTuple | _EdgeKey) -> PropertyDict:
+        """Properties of an edge, given either its keyed or its endpoint form.
+
+        Readers that snapshot the endpoint view still need the properties, and
+        `edge_props` is keyed by site -- a five-element lookup would silently
+        return `{}` and turn a property comparison into a comparison of
+        nothing. An endpoint form can cover several sites; their props are
+        merged in site order, which is what such a reader saw before sites
+        existed.
+        """
+        if len(edge) == 6:
+            return dict(self.edge_props.get(edge, {}))  # type: ignore[arg-type]
+        merged: PropertyDict = {}
+        for keyed in sorted(
+            (e for e in self.keyed_edges if e[:5] == tuple(edge)), key=repr
+        ):
+            merged.update(self.edge_props.get(keyed, {}))
+        return merged
+
     @property
     def edges(self) -> set[_RelTuple]:
         """Every edge by endpoints alone, one entry per node pair.
@@ -395,7 +414,7 @@ class _StatefulIngestor:
             label, uid = node_id
             if label != module or not _str(uid).startswith(prefix):
                 continue
-            for _fl, fv, rel, tl, tv in self._out.get(node_id, ()):
+            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module

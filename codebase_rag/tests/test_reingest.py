@@ -157,7 +157,9 @@ def _snapshot(store: _StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
         (str(fl), str(fv), str(rel), str(tl), str(tv))
-        + tuple(sorted(f"{k}={v}" for k, v in store.edge_props.get(e, {}).items()))
+        # props_for, not edge_props[...]: the store keys properties by SITE,
+        # so an endpoint-shaped lookup returns {} and compares nothing.
+        + tuple(sorted(f"{k}={v}" for k, v in store.props_for(e).items()))
         for e in store.edges
         for (fl, fv, rel, tl, tv) in [e]
     )

@@ -164,3 +164,67 @@ def test_a_row_with_no_site_merges_on_its_endpoints() -> None:
     store.ensure_relationship_batch(caller, cs.RelationshipType.CALLS.value, callee)
 
     assert len(store.keyed_edges) == 1
+
+
+def test_a_module_import_delta_read_does_not_crash(tmp_path: Path) -> None:
+    # `_delta_module_imports` reads the adjacency index directly, which now
+    # holds site-keyed edges. Unpacking it five ways raised ValueError on any
+    # incremental run over a module with an IMPORTS edge -- found in review.
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "helpers.py").write_text("def a():\n    pass\n", encoding="utf-8")
+    (repo / "mod.py").write_text("from helpers import a\n", encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, repo)
+
+    from codebase_rag import cypher_queries as cq
+
+    rows = store.fetch_all(cq.CYPHER_DELTA_MODULE_IMPORTS, {"prefix": "proj"})
+
+    assert isinstance(rows, list)
+
+
+def test_endpoint_shaped_readers_still_see_properties() -> None:
+    # The re-ingest and fuzz snapshots iterate the endpoint view and look the
+    # properties up per edge. Keying `edge_props` by site made a five-element
+    # lookup return {} -- the comparison still ran, and compared nothing.
+    store = _StatefulIngestor()
+    caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
+    callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
+    store.ensure_relationship_batch(
+        caller,
+        cs.RelationshipType.CALLS.value,
+        callee,
+        {cs.KEY_LINE: 3, cs.KEY_COL: 11},
+    )
+
+    (endpoint_edge,) = store.edges
+
+    assert store.props_for(endpoint_edge) == {cs.KEY_LINE: 3, cs.KEY_COL: 11}
+    assert store.props_for(next(iter(store.keyed_edges))) == {
+        cs.KEY_LINE: 3,
+        cs.KEY_COL: 11,
+    }
+
+
+def test_endpoint_properties_cover_every_site() -> None:
+    # Two sites between the same pair: an endpoint-shaped reader must not see
+    # one of them silently, which is what a bare `edge_props[edge5]` would
+    # have done once the key changed.
+    store = _StatefulIngestor()
+    caller = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.run")
+    callee = (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.mod.helper")
+    for line, extra in ((3, "first"), (4, "second")):
+        store.ensure_relationship_batch(
+            caller,
+            cs.RelationshipType.CALLS.value,
+            callee,
+            {cs.KEY_LINE: line, "note": extra},
+        )
+
+    (endpoint_edge,) = store.edges
+    merged = store.props_for(endpoint_edge)
+
+    assert len(store.keyed_edges) == 2
+    assert merged["note"] in {"first", "second"}
+    assert merged[cs.KEY_LINE] in {3, 4}
