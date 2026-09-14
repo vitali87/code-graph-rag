@@ -51,6 +51,9 @@ def test_missing_setuptools_table_yields_no_remaps(tmp_path: Path) -> None:
 
 def test_non_string_remap_value_is_skipped(tmp_path: Path) -> None:
     (tmp_path / "lib").mkdir()
+    # `3` names a real directory, so only the isinstance guard can reject the
+    # non-string value; without it, str(3) would resolve and be kept.
+    (tmp_path / "3").mkdir()
     path = _pyproject(tmp_path, PYPROJECT + 'bad = 3\ngood = "lib"\n')
     assert _package_dir_remaps(path, tmp_path) == [("good", "lib")]
 
