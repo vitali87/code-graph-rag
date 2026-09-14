@@ -448,6 +448,42 @@ def _annotates(binder: Node) -> bool:
     )
 
 
+def _nonlocal_names(scope: Node) -> frozenset[str]:
+    """Names any nested body in `scope` declares `nonlocal`.
+
+    A `nonlocal x` makes an assignment to `x` in that body rebind the
+    enclosing function's `x`, so the binding belongs to the enclosing map
+    even though it sits in a nested scope (#1922). `global` is different:
+    it binds the module's name, leaving the enclosing local alone.
+    """
+    names: set[str] = set()
+    stack: list[Node] = [scope]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_PY_NONLOCAL_STATEMENT:
+            names.update(
+                text
+                for child in current.named_children
+                if child.type == cs.TS_PY_IDENTIFIER
+                and (text := safe_decode_text(child))
+            )
+        stack.extend(current.children)
+    return frozenset(names)
+
+
+def _rebinds_nonlocal(assignment: Node, nonlocal_names: frozenset[str]) -> bool:
+    """Whether a nested assignment rebinds a name declared `nonlocal`."""
+    if not nonlocal_names:
+        return False
+    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+    if left is None:
+        return False
+    return any(
+        safe_decode_text(identifier) in nonlocal_names
+        for identifier in _identifiers_in(left)
+    )
+
+
 def _homogeneous_element(name: str, inner: str) -> str | None:
     """The single element type a container annotation guarantees, else ``None``.
 
@@ -613,7 +649,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         # reached through the class, never as a bare name in the function
         # around it. The unpacking and annotation passes apply the same rule
         # themselves, for the same reason.
-        assignments = [a for a in assignments if _scope_of(a) == node.id]
+        #
+        # The exception is `nonlocal`: it makes a nested assignment rebind
+        # THIS body's name rather than create one of its own, so that
+        # binding does belong here (Greptile, #1922). `global` is not an
+        # exception -- it binds the module name, and the enclosing
+        # function's local of the same name is untouched.
+        nonlocal_names = _nonlocal_names(node)
+        assignments = [
+            a
+            for a in assignments
+            if _scope_of(a) == node.id or _rebinds_nonlocal(a, nonlocal_names)
+        ]
 
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)

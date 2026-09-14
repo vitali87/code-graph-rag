@@ -141,3 +141,47 @@ def test_a_nested_def_still_types_its_own_binding(tmp_path: Path) -> None:
     )
 
     assert types["v"] == "Banner"
+
+
+def test_a_nonlocal_rebinding_does_type_the_outer_name(tmp_path: Path) -> None:
+    """`nonlocal` is the exception the scope filter must admit.
+
+    It makes the nested assignment rebind the ENCLOSING function's name
+    rather than create a local of its own, so after `inner()` runs the
+    outer `v` really does hold the nested binding's value. Filtering it out
+    left the outer map holding the earlier type (Greptile, #1922).
+    """
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    def inner() -> None:\n"
+        "        nonlocal v\n"
+        "        v = Banner()\n"
+        "    inner()\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Banner"
+
+
+def test_a_global_rebinding_does_not_type_the_outer_name(tmp_path: Path) -> None:
+    """`global` is NOT that exception: it binds the module's name, and the
+    enclosing function's local of the same name is untouched.
+
+    `origin/main` types the outer `v` as `Banner` here, which is wrong for
+    the same reason the nested-def case is.
+    """
+    types = _local_types(
+        tmp_path,
+        "def outer(v) -> int:\n"
+        "    def inner() -> None:\n"
+        "        global v\n"
+        "        v = Banner()\n"
+        "    inner()\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert "v" not in types
