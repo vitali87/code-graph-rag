@@ -242,6 +242,74 @@ def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
     return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
 
 
+def _guards_an_optional_import(
+    binder: Node, name: str, import_map: dict[str, str]
+) -> bool:
+    """Whether `binder` is the fallback of an optional-import idiom:
+
+        try:
+            from . import helpers
+        except ImportError:
+            helpers = None
+
+    The handler's binding is real, but on the path where the name resolves
+    to anything the graph can reach, the `try` body's import bound it. The
+    union over both branches would otherwise put the name back into the
+    shadow set and drop a call edge the module genuinely has (issue #1907
+    review). Only a re-import the map already reflects counts, so a handler
+    guarding an import of something else still shadows.
+    """
+    node: Node | None = binder
+    while node is not None and node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        if node.type == cs.TS_PY_EXCEPT_CLAUSE:
+            try_statement = node.parent
+            if try_statement is None:
+                return False
+            body = try_statement.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                return False
+            return any(
+                _reimports(statement, name, import_map)
+                for statement in body.named_children
+            )
+        node = node.parent
+    return False
+
+
+def _declared_non_local(scope: Node) -> set[str]:
+    """Names a `global` or `nonlocal` statement declares in this scope.
+
+    Such a name is NOT local however often the body assigns it: `global
+    helpers` makes every `helpers = ...` write the module's binding, so an
+    imported module of that name stays reachable and its calls still
+    resolve. Treating the assignment as a shadow dropped a real edge
+    (Greptile on #1907).
+    """
+    declared: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        for child in node.named_children:
+            if child.type in _PY_NESTED_SCOPE_TYPES:
+                # A nested scope's declarations bind in ITS scope, not here:
+                # `class C: global helpers` inside a function leaves that
+                # function's own `helpers = ...` an ordinary local. Uses the
+                # same set as _bindings_in, so the two cannot disagree.
+                continue
+            if child.type in (
+                cs.TS_PY_GLOBAL_STATEMENT,
+                cs.TS_PY_NONLOCAL_STATEMENT,
+            ):
+                declared.update(
+                    name
+                    for identifier in child.named_children
+                    if (name := safe_decode_text(identifier))
+                )
+            else:
+                stack.append(child)
+    return declared
+
+
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
@@ -256,11 +324,14 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     while scope is not None:
         if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
             names.update(_parameter_names(scope))
+            declared = _declared_non_local(scope)
             names.update(
                 name
                 for binder, identifier in _bindings_in(scope)
                 if (name := safe_decode_text(identifier))
+                and name not in declared
                 and not _reimports(binder, name, import_map)
+                and not _guards_an_optional_import(binder, name, import_map)
             )
         scope = scope.parent
     return frozenset(names)
@@ -442,6 +513,22 @@ else:
 
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
+
+    def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
+        """The import-map names the caller's body binds as locals.
+
+        `helpers = supplied` (or `def use(helpers)`, `for helpers in xs`, a
+        `case [helpers]` capture, an enclosing def's local, ...) makes
+        `helpers` local for the WHOLE body, so `helpers.make_pair()` can
+        never reach the module the import map holds under that name
+        (issue #1907). A body-level import the map reflects is a re-import,
+        not a shadow, and stays out of the set.
+        """
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return frozenset()
+        return _locally_bound_names(caller, import_map) & frozenset(import_map)
+
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
