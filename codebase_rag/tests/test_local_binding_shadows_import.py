@@ -182,8 +182,8 @@ _NONLOCAL_OVER_A_REIMPORT = (
     "    from . import helpers\n"
     "    def use(supplied) -> int:\n"
     "        nonlocal helpers\n"
-    "        helpers = supplied\n"
     "        w = helpers.make_pair()\n"
+    "        helpers = supplied\n"
     "        return w[0]\n"
     "    return use\n"
 )
@@ -221,10 +221,16 @@ def test_a_nonlocal_over_a_reimport_keeps_the_edge(tmp_path: Path) -> None:
     """`nonlocal` is load-bearing when the enclosing binding is one this
     module already exempts. `outer` re-imports the module, so its binding is
     not a shadow; `use` declares `nonlocal helpers`, so its own assignment
-    writes that same cell rather than a local. Removing the declaration flips
-    the edge off, which is what makes this a test of the keyword
-    (greptile-local: an earlier version of this file claimed no such source
-    existed)."""
+    writes that same cell rather than creating a local. Removing the
+    declaration flips the edge off, which is what makes this a test of the
+    keyword (greptile-local: an earlier version of this file claimed no such
+    source existed).
+
+    The call is placed BEFORE the rebind deliberately: at that point the cell
+    still holds the module, so the asserted edge is the one the program
+    actually takes. With the call after the rebind it would reach `supplied`
+    instead, and the test would be asserting something false about the
+    code."""
     calls = _calls_from_use(_build(tmp_path, _NONLOCAL_OVER_A_REIMPORT))
     assert "proj.helpers.make_pair" in calls, sorted(calls)
 
