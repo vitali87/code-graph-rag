@@ -835,9 +835,14 @@ DETACH DELETE n"""
 # back the ones its own re-ingest sweeps: `reingest` runs the repo-wide
 # CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES itself, which collects a
 # pre-existing orphan anywhere in the graph, not only in the scope (#1718).
+# The OPTIONAL MATCH + count rewrite, not `NOT ()-->(n)`: a pattern
+# expression in a WHERE clause is not portable to Memgraph 3, and
+# `test_no_pattern_expressions_in_where_clauses` enforces that repo-wide.
 CYPHER_CHECK_ORPHAN_SHARED_NODES = f"""MATCH (n)
-WHERE (n:{NodeLabel.EXTERNAL_MODULE.value} OR n:{NodeLabel.RESOURCE.value})
-  AND NOT ()-->(n)
+WHERE n:{NodeLabel.EXTERNAL_MODULE.value} OR n:{NodeLabel.RESOURCE.value}
+OPTIONAL MATCH (x)-->(n)
+WITH n, count(x) AS inbound
+WHERE inbound = 0
 RETURN head(labels(n)) AS label, properties(n) AS props"""
 
 # One shared node (ExternalModule, Resource) the isolated check created and
