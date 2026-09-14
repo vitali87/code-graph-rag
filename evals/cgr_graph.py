@@ -164,11 +164,17 @@ _INHERITS_REL = cs.RelationshipType.INHERITS.value
 # module subtrees, and the far-end labels whose properties the capture
 # carries (issue #1718); both mirror the production query's label lists.
 _CHECK_PATH_LABELS = frozenset({_FILE_LABEL, _FOLDER_LABEL, _PACKAGE_LABEL})
+_SHARED_ORPHAN_LABELS = frozenset({_EXTERNAL_MODULE_LABEL, cs.NodeLabel.RESOURCE.value})
 _CHECK_FAR_PROP_LABELS = frozenset(
     {
         _EXTERNAL_MODULE_LABEL,
         cs.NodeLabel.RESOURCE.value,
         cs.NodeLabel.GLOSS.value,
+        # A finding the re-parse rewrites in place keeps its qualified name,
+        # so only its captured properties can restore it (#1718).
+        cs.NodeLabel.CODE_SMELL.value,
+        cs.NodeLabel.SECURITY_ISSUE.value,
+        cs.NodeLabel.PATTERN.value,
     }
 )
 _CHECK_FINDING_LABELS = frozenset(
@@ -649,6 +655,12 @@ class _StatefulIngestor:
                         key=lambda n: (n[0], _str(n[1])),
                     )
                 ]
+            case cq.CYPHER_CHECK_ORPHAN_SHARED_NODES:
+                return [
+                    {cs.KEY_LABEL: label, cs.KEY_PROPS: dict(props)}
+                    for (label, uid), props in self.nodes.items()
+                    if label in _SHARED_ORPHAN_LABELS and not self._in.get((label, uid))
+                ]
             case cq.CYPHER_CHECK_SCOPE_EDGES:
                 return self._check_scope_edges(params or {})
             case cs.CYPHER_INBOUND_EDGES:
@@ -1092,6 +1104,12 @@ class _StatefulIngestor:
                 self._delete_orphan_external_modules()
             case cq.CYPHER_CHECK_DELETE_FINDINGS:
                 self._delete_check_findings(params or {})
+            case cq.CYPHER_CHECK_DELETE_SHARED_NODE:
+                # One shared node the isolated check created, addressed by
+                # label and qualified name (#1718).
+                label = _str(params.get(cs.KEY_LABEL)) if params else ""
+                uid = params.get(cs.KEY_QUALIFIED_NAME) if params else None
+                self._detach_delete({(label, uid)} & set(self.nodes))
             case _:
                 return None
 

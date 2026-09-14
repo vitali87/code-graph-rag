@@ -202,19 +202,30 @@ class _FileSnapshot:
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._content: bytes | None
-        self._times: tuple[int, int] | None
+        self._content: bytes | None = None
+        self._times: tuple[int, int] | None = None
+        # Absent and unreadable are different states and must not share one
+        # representation: treating a permission error as absence made the
+        # restore DELETE a cache it could not read (Greptile, #1718). Only a
+        # confirmed absence licenses the unlink.
+        self._absent = False
+        self._readable = False
         try:
             self._content = path.read_bytes()
             stat = path.stat()
             self._times = (stat.st_atime_ns, stat.st_mtime_ns)
+            self._readable = True
+        except FileNotFoundError:
+            self._absent = True
         except OSError:
-            self._content = None
-            self._times = None
+            # Unreadable: leave whatever is there alone.
+            pass
 
     def put_back(self) -> None:
-        if self._content is None or self._times is None:
+        if self._absent:
             self._path.unlink(missing_ok=True)
+            return
+        if not self._readable or self._content is None or self._times is None:
             return
         self._path.write_bytes(self._content)
         os.utime(self._path, ns=self._times)
@@ -302,6 +313,11 @@ def run_check(
         project_name=project_name,
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
+        # The selection isolated mode validated must be the one the run
+        # uses; without it the updater falls back to the configured default,
+        # which can enable the IO links `_refuse_unrestorable_capture` just
+        # refused (Greptile, #1718).
+        capture=capture,
     )
     fetch_all = getattr(ingestor, "fetch_all")
 

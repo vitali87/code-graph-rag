@@ -40,7 +40,6 @@ from typing import Protocol
 
 from . import constants as cs
 from . import cypher_queries as cq
-from .services.resource_cleanup import prune_unanchored_resources
 from .types_defs import PropertyDict, PropertyValue, ResultRow
 from .utils.path_utils import cached_file_identity_posix, cached_resolve_posix
 
@@ -78,6 +77,15 @@ _PATH_NODE_DELETES: dict[str, str] = {
     cs.NodeLabel.FOLDER.value: cs.CYPHER_DELETE_FOLDER,
     cs.NodeLabel.PACKAGE.value: cs.CYPHER_DELETE_PACKAGE,
 }
+# Shared nodes that hang off a module without being defined by it, so the
+# subtree delete never reaches them and the restore must remove the ones
+# this check created itself.
+_SHARED_LABELS = frozenset(
+    {
+        cs.NodeLabel.EXTERNAL_MODULE.value,
+        cs.NodeLabel.RESOURCE.value,
+    }
+)
 _FINDING_LABELS = frozenset(
     {
         cs.NodeLabel.CODE_SMELL.value,
@@ -147,6 +155,7 @@ class IsolationGuard:
         self._edges: dict[_EdgeKey, _Edge] = {}
         self._path_nodes: set[tuple[str, str]] = set()
         self._finding_qns: set[str] = set()
+        self._orphans: list[tuple[str, PropertyDict]] = []
         self._captured = False
 
     @property
@@ -170,6 +179,14 @@ class IsolationGuard:
                 self._path_nodes.add((label, str(props.get(cs.KEY_ABSOLUTE_PATH))))
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_EDGES, params):
             self._capture_edge(row)
+        # Orphaned shared nodes: the re-ingest runs a repo-wide orphan
+        # sweep of its own, which collects pre-existing orphans anywhere in
+        # the graph. Captured here so the restore can put them back (#1718).
+        for row in self._store.fetch_all(cq.CYPHER_CHECK_ORPHAN_SHARED_NODES):
+            label = row.get(cs.KEY_LABEL)
+            props = row.get(cs.KEY_PROPS)
+            if isinstance(label, str) and isinstance(props, dict):
+                self._orphans.append((label, dict(props)))
         self._captured = True
 
     def _capture_edge(self, row: ResultRow) -> None:
@@ -223,6 +240,9 @@ class IsolationGuard:
         store = self._store
         _discard_pending(store)
         params = self._params()
+        # Before any delete: once the subtrees go, the edges that reach
+        # these shared nodes go with them and they become unfindable.
+        created = self._shared_nodes_the_check_created(params)
         store.execute_write(
             cq.CYPHER_CHECK_DELETE_FINDINGS,
             {
@@ -246,11 +266,14 @@ class IsolationGuard:
                 },
             )
         self._delete_new_path_nodes(params)
-        # What the check created beside the subtrees and the deletes above
-        # just orphaned; the captured ones are re-emitted below.
-        store.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
-        prune_unanchored_resources(store)
+        for label, value in created:
+            store.execute_write(
+                cq.CYPHER_CHECK_DELETE_SHARED_NODE,
+                {cs.KEY_LABEL: label, cs.KEY_QUALIFIED_NAME: value},
+            )
         for label, props in self._nodes:
+            store.ensure_node_batch(label, props)
+        for label, props in self._orphans:
             store.ensure_node_batch(label, props)
         for (label, _key, _value), props in self._far_nodes.items():
             store.ensure_node_batch(label, props)
@@ -259,6 +282,36 @@ class IsolationGuard:
                 source, rel, target, properties=props or None
             )
         store.flush_all()
+
+    def _shared_nodes_the_check_created(
+        self, params: PropertyDict
+    ) -> list[tuple[str, PropertyValue]]:
+        """The shared nodes now reachable from the scope that the capture did not see.
+
+        An ExternalModule or Resource the re-parse created hangs off the
+        scope without being defined by it, so the subtree delete leaves it
+        behind. The repo-wide sweeps (`CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES`,
+        `prune_unanchored_resources`) would collect it -- along with every
+        pre-existing orphan elsewhere in the graph this check never touched,
+        which an isolated run must not delete (Greptile, #1718).
+
+        Read BEFORE the first delete: once the subtrees go, the edges that
+        reach these nodes go with them and nothing can find them again.
+        """
+        captured = {
+            (label, value) for (label, _key, value), _props in self._far_nodes.items()
+        }
+        created: list[tuple[str, PropertyValue]] = []
+        for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_EDGES, params):
+            far_label = row.get(cs.KEY_FAR_LABEL)
+            if str(far_label) not in _SHARED_LABELS:
+                continue
+            far = _node_spec(far_label, row, prefix=cs.FAR_END_PREFIX)
+            if far is None or (far[0], far[2]) in captured:
+                continue
+            if (far[0], far[2]) not in created:
+                created.append((far[0], far[2]))
+        return created
 
     def _delete_new_path_nodes(self, params: PropertyDict) -> None:
         # File and container nodes now at the scope's paths that were not

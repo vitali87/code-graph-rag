@@ -28,7 +28,7 @@ from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import CheckError, run_check
+from codebase_rag.structural_check import CheckError, _FileSnapshot, run_check
 from codebase_rag.structural_delta import StructuralDelta
 from evals.cgr_graph import _StatefulIngestor
 
@@ -481,6 +481,69 @@ def test_the_finding_cleanup_spares_another_projects_findings(
     )
 
 
+def test_an_unrelated_orphan_survives_an_isolated_check(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The restore removes the shared nodes THIS check created, not every
+    orphan in the graph (Greptile, #1718).
+
+    A repo-wide `CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES` plus an unanchored
+    Resource sweep would collect a pre-existing orphan the check never
+    touched, which is a persistent change to shared state made by a mode
+    whose whole purpose is to make none.
+    """
+    root, store = indexed
+    store.ensure_node_batch(
+        cs.NodeLabel.EXTERNAL_MODULE.value,
+        {cs.KEY_QUALIFIED_NAME: "unrelated_orphan"},
+    )
+    orphan = (cs.NodeLabel.EXTERNAL_MODULE.value, "unrelated_orphan")
+    assert orphan in store.nodes
+    _edit(root)
+
+    _check(root, store, isolated=True)
+
+    assert orphan in store.nodes, "an unrelated orphan was swept by the restore"
+
+
+def test_a_findings_properties_come_back_when_its_name_survives(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """A finding is keyed on file, line, column and rule, so an edit that
+    moves the code without moving the match keeps the qualified name. The
+    cleanup spares it as captured, so only its captured PROPERTIES can undo
+    the re-parse's rewrite of its snippet and span (Greptile, #1718)."""
+    root, store = indexed
+    qn = f"{PROJECT}.pkg.util.1.0.bare_except"
+    store.ensure_node_batch(
+        cs.NodeLabel.CODE_SMELL.value,
+        {
+            cs.KEY_QUALIFIED_NAME: qn,
+            cs.KEY_PATH: "pkg/util.py",
+            cs.KEY_SNIPPET: "original snippet",
+        },
+    )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, f"{PROJECT}.pkg.util"),
+        cs.RelationshipType.HAS_SMELL.value,
+        (cs.NodeLabel.CODE_SMELL.value, cs.KEY_QUALIFIED_NAME, qn),
+    )
+    guard = IsolationGuard(store, PROJECT, root)
+
+    guard.capture(["pkg/util.py"])
+    # What a re-parse does to a finding whose key survives: same node,
+    # rewritten detail.
+    store.ensure_node_batch(
+        cs.NodeLabel.CODE_SMELL.value,
+        {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_SNIPPET: "rewritten by the check"},
+    )
+    guard.restore()
+
+    smell = store.nodes.get((cs.NodeLabel.CODE_SMELL.value, qn))
+    assert smell is not None, "the captured finding was deleted"
+    assert smell.get(cs.KEY_SNIPPET) == "original snippet"
+
+
 # --- refusals -----------------------------------------------------------------
 
 
@@ -587,6 +650,87 @@ def test_two_sites_on_one_pair_are_captured_and_restored_separately() -> None:
     guard.restore()
 
     assert [props[cs.KEY_COL] for _s, _r, _t, props in captured if props] == [11, 23]
+
+
+def test_the_validated_capture_is_the_one_the_run_uses(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Validating a selection and then running under a different one is no
+    validation at all: the updater would fall back to the configured
+    default, which can enable the IO links isolated mode just refused
+    (Greptile, #1718)."""
+    root, store = indexed
+    _edit(root)
+    parsers, queries = load_parsers()
+    selection = resolve_capture(["none", "structure", "calls"])
+    seen: list[CaptureSelection | None] = []
+    original = GraphUpdater.__init__
+
+    def record(self: GraphUpdater, *args: Any, **kwargs: Any) -> None:
+        seen.append(kwargs.get("capture"))
+        original(self, *args, **kwargs)
+
+    GraphUpdater.__init__ = record  # type: ignore[method-assign]
+    try:
+        run_check(
+            root,
+            "HEAD",
+            PROJECT,
+            store,
+            parsers,
+            queries,
+            isolated=True,
+            capture=selection,
+        )
+    finally:
+        GraphUpdater.__init__ = original  # type: ignore[method-assign]
+
+    assert seen == [selection]
+
+
+def test_an_unreadable_hash_cache_is_left_alone(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Absent and unreadable are different states. Collapsing them made the
+    restore DELETE a cache it merely could not read (Greptile, #1718)."""
+    root, _store = indexed
+    cache = root / cs.HASH_CACHE_FILENAME
+    assert cache.is_file()
+    content = cache.read_bytes()
+    real_read_bytes = Path.read_bytes
+
+    def refuse(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if self == cache:
+            raise PermissionError(13, "Permission denied")
+        return real_read_bytes(self, *args, **kwargs)
+
+    Path.read_bytes = refuse  # type: ignore[method-assign]
+    try:
+        snapshot = _FileSnapshot(cache)
+    finally:
+        Path.read_bytes = real_read_bytes  # type: ignore[method-assign]
+
+    snapshot.put_back()
+
+    assert cache.is_file(), "an unreadable cache was deleted by the restore"
+    assert cache.read_bytes() == content
+
+
+def test_a_missing_hash_cache_is_removed_again(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The control for the test above: a cache that genuinely did not exist
+    when the snapshot was taken must still be removed if the check created
+    one, or the distinction would be achieved by never unlinking at all."""
+    root, _store = indexed
+    cache = root / cs.HASH_CACHE_FILENAME
+    cache.unlink()
+
+    snapshot = _FileSnapshot(cache)
+    cache.write_bytes(b"{}")
+    snapshot.put_back()
+
+    assert not cache.exists()
 
 
 # --- the updater's side of the contract ---------------------------------------

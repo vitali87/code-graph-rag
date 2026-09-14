@@ -800,9 +800,12 @@ RETURN labels(c)[0] AS label, properties(c) AS props"""
 # Every relationship with at least one end in the scope, either direction,
 # with each end addressed by the three key fields the batch writer can key
 # a node on (the label decides which one applies). The far end's properties
-# come along only for the labels the check can prune or re-grade: an
-# ExternalModule a new import created, a Resource an endpoint anchored, a
-# Gloss whose anchor the re-parse re-graded.
+# come along only for the labels the check can prune, re-grade or rewrite:
+# an ExternalModule a new import created, a Resource an endpoint anchored, a
+# Gloss whose anchor the re-parse re-graded, and a finding whose qualified
+# name (file, line, column, rule) survives the re-parse while its snippet
+# and span move with the edited source -- that node is not deleted by the
+# cleanup, so only its captured properties can put it back (#1718).
 CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
 MATCH (c)-[r]-(x)
 RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
@@ -811,7 +814,9 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
        labels(x)[0] AS far_label, x.qualified_name AS far_qualified_name,
        x.absolute_path AS far_absolute_path, x.name AS far_name,
        CASE WHEN x:{NodeLabel.EXTERNAL_MODULE.value} OR x:{NodeLabel.RESOURCE.value}
-            OR x:{_GLOSS} THEN properties(x) END AS far_props"""
+            OR x:{_GLOSS} OR x:{NodeLabel.CODE_SMELL.value}
+            OR x:{NodeLabel.SECURITY_ISSUE.value} OR x:{NodeLabel.PATTERN.value}
+            THEN properties(x) END AS far_props"""
 # Findings hang off a Module without being DEFINED by it, keyed on their
 # file, line, column and rule: the ones at the scope's paths that the
 # capture did not see were written by the check itself. Project-scoped for
@@ -824,6 +829,23 @@ CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLa
 WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
   AND (n.qualified_name = $project_name
        OR n.qualified_name STARTS WITH $project_prefix)
+DETACH DELETE n"""
+
+# Shared nodes with no inbound edge, captured so the isolated check can put
+# back the ones its own re-ingest sweeps: `reingest` runs the repo-wide
+# CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES itself, which collects a
+# pre-existing orphan anywhere in the graph, not only in the scope (#1718).
+CYPHER_CHECK_ORPHAN_SHARED_NODES = f"""MATCH (n)
+WHERE (n:{NodeLabel.EXTERNAL_MODULE.value} OR n:{NodeLabel.RESOURCE.value})
+  AND NOT ()-->(n)
+RETURN head(labels(n)) AS label, properties(n) AS props"""
+
+# One shared node (ExternalModule, Resource) the isolated check created and
+# must remove again. Addressed by label and qualified name rather than by an
+# orphan sweep, so a pre-existing orphan elsewhere in the graph -- which this
+# check never touched -- is not collected with it (#1718).
+CYPHER_CHECK_DELETE_SHARED_NODE = """MATCH (n)
+WHERE head(labels(n)) = $label AND n.qualified_name = $qualified_name
 DETACH DELETE n"""
 
 # Trace write-back (issue #1526): a static edge the runtime observed is
