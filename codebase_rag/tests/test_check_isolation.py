@@ -589,6 +589,39 @@ def test_the_emulator_walks_every_relation_the_capture_does() -> None:
     assert walked <= set(cgr_graph._MODULE_SUBTREE_RELS)
 
 
+def test_a_dangling_subtree_edge_does_not_crash_the_capture() -> None:
+    """The eval store accepts an edge without its endpoints, so an edge can
+    point at a node it never recorded. The scope walk read that child
+    directly and raised KeyError (CodeRabbit, #1718).
+
+    A real graph cannot hold a dangling edge, so this is a property of the
+    double rather than of production -- but a capture that raises takes the
+    isolated check down with it, and the double is what the unit tier runs.
+    """
+    store = _StatefulIngestor()
+    store.ensure_node_batch(
+        cs.NodeLabel.MODULE.value,
+        {cs.KEY_QUALIFIED_NAME: "p.app", cs.KEY_PATH: "app.py"},
+    )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "p.app"),
+        cs.RelationshipType.DEFINES.value,
+        (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "p.app.ghost"),
+    )
+
+    rows = store.fetch_all(
+        cq.CYPHER_CHECK_SCOPE_NODES,
+        {
+            cs.CYPHER_PARAM_PATHS: ["app.py"],
+            cs.KEY_PROJECT_NAME: "p",
+            cs.KEY_PROJECT_PREFIX: "p.",
+            cs.CYPHER_PARAM_ABSOLUTE_PATHS: [],
+        },
+    )
+
+    assert [r[cs.KEY_LABEL] for r in rows] == [cs.NodeLabel.MODULE.value]
+
+
 # --- refusals -----------------------------------------------------------------
 
 

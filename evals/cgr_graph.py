@@ -1150,7 +1150,16 @@ class _StatefulIngestor:
             node = frontier.pop()
             for _fl, _fv, rel_type, to_label, to_val in self._out.get(node, ()):
                 child = (to_label, to_val)
-                if rel_type in _MODULE_SUBTREE_RELS and child not in scope:
+                # `child in self.nodes` because this store accepts an edge
+                # without requiring its endpoints to exist, so an edge can
+                # outlive the node it points at. A real graph cannot hold
+                # that, and reading such a child would raise KeyError in
+                # the scope-node branch (CodeRabbit, #1718).
+                if (
+                    rel_type in _MODULE_SUBTREE_RELS
+                    and child not in scope
+                    and child in self.nodes
+                ):
                     scope.add(child)
                     frontier.append(child)
         return scope
