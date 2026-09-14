@@ -267,9 +267,19 @@ def emit_declared_constants(
     path = module_props.get(cs.KEY_PATH)
     absolute_path = module_props.get(cs.KEY_ABSOLUTE_PATH)
     owner = (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, module_qn)
-    typed: dict[str, PendingConstantType | None] = {}
+    # A repeated declaration (`THING: A = A()` then `THING = 1`) is ONE node:
+    # the writes MERGE on the qualified name. But the merge is ADDITIVE, so
+    # emitting both rows left the node carrying `type_name` from the first and
+    # `value` from the second -- a state no source ever had (bot review). The
+    # same applied to the type edge, which was emitted once per declaration.
+    #
+    # So collapse FIRST and emit once. Last in source order wins the whole
+    # row, which is what the binding does at runtime, and an absent property
+    # then genuinely clears rather than leaving the earlier one showing.
+    final: dict[str, DeclaredConstant] = {}
     for constant in declared:
-        constant_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constant.name}"
+        final[f"{module_qn}{cs.SEPARATOR_DOT}{constant.name}"] = constant
+    for constant_qn, constant in final.items():
         ingestor.ensure_node_batch(
             cs.NodeLabel.CONSTANT,
             _constant_props(constant, constant_qn, path, absolute_path),
@@ -279,22 +289,11 @@ def emit_declared_constants(
             cs.RelationshipType.DEFINES_CONSTANT,
             (cs.NodeLabel.CONSTANT.value, cs.KEY_QUALIFIED_NAME, constant_qn),
         )
-        if sink is not None and isinstance(path, str):
-            # A repeated declaration (`THING: A = A()` then `THING: B = B()`)
-            # MERGEs onto one node whose properties the last one wins, so its
-            # type edge must follow the same rule. Appending one fact per
-            # declaration emitted OF_TYPE to BOTH classes while `type_name`
-            # said B (bot review). Keyed by qualified name, last in source
-            # order wins; a later declaration without a type clears the
-            # earlier one rather than leaving a contradicting edge.
-            typed[constant_qn] = (
+        if sink is not None and constant.type_name and isinstance(path, str):
+            sink.append(
                 PendingConstantType(constant_qn, module_qn, constant.type_name, path)
-                if constant.type_name
-                else None
             )
-    if sink is not None:
-        sink.extend(fact for fact in typed.values() if fact is not None)
-    return len(declared)
+    return len(final)
 
 
 def _constant_props(

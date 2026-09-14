@@ -244,6 +244,43 @@ def test_a_repeated_declaration_keeps_only_the_last_type_edge(
     assert next(iter(thing))[1].endswith(".app.B")
     # The control: the node really was indexed, so "one edge" is not "no index".
     assert _nodes(store, cs.NodeLabel.CONSTANT.value), "the index produced nothing"
+    # The node's own row must describe the SAME declaration as its edge.
+    nodes = _nodes(store, cs.NodeLabel.CONSTANT.value)
+    row = next(v for k, v in nodes.items() if str(k).endswith(".app.THING"))
+    assert row.get(cs.KEY_TYPE_NAME) == "B"
+
+
+def test_a_later_untyped_declaration_clears_the_earlier_type(
+    tmp_path: Path,
+) -> None:
+    """`THING: A = A()` then `THING = 1` leaves NO type anywhere.
+
+    The node writes MERGE additively, so emitting both declarations left the
+    node carrying `type_name` from the first and `value` from the second -- a
+    row no source ever had, and one the type edge (correctly removed) then
+    contradicted. Collapsing to the final declaration before emitting fixes
+    the row and the edge together (bot review).
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "__init__.py").touch()
+    (repo / "app.py").write_text("class A:\n    pass\n\nTHING: A = A()\nTHING = 1\n")
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+constants", "+parameters"]),
+    ).run(force=True)
+
+    nodes = _nodes(store, cs.NodeLabel.CONSTANT.value)
+    row = next(v for k, v in nodes.items() if str(k).endswith(".app.THING"))
+    assert row.get(cs.KEY_VALUE) == "1", "the last declaration owns the value"
+    assert not row.get(cs.KEY_TYPE_NAME), "the first declaration's type survived"
+    of_type = _edges(store, cs.RelationshipType.OF_TYPE.value)
+    assert not [s for s, _t in of_type if s.endswith(".app.THING")]
 
 
 def test_a_constant_node_is_never_left_without_its_edge(tmp_path: Path) -> None:

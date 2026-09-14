@@ -145,11 +145,21 @@ def test_an_optional_label_is_off_by_default_and_on_with_its_group() -> None:
         NL.RESOURCE: cs.CaptureGroup.IO,
         NL.SECURITY_ISSUE: cs.CaptureGroup.FINDINGS,
     }
-    owner_of = {
-        label: group
-        for group, labels in cs.CAPTURE_GROUP_NODE_LABELS.items()
-        for label in labels
+    # Flattening to {label: group} is last-entry-wins, so a label owned by TWO
+    # groups compares equal to the expected mapping while `_node_labels_for`
+    # silently honours only the later one. Collect the owners first and reject
+    # a duplicate before flattening (bot review).
+    owners: dict[cs.NodeLabel, list[cs.CaptureGroup]] = {}
+    for group, labels in cs.CAPTURE_GROUP_NODE_LABELS.items():
+        for label in labels:
+            owners.setdefault(label, []).append(group)
+    duplicated = {
+        label.value: [g.value for g in groups]
+        for label, groups in owners.items()
+        if len(groups) > 1
     }
+    assert not duplicated, f"a label owned by two capture groups: {duplicated}"
+    owner_of = {label: groups[0] for label, groups in owners.items()}
     # Both directions: nothing expected-optional has lost its group, and
     # nothing new became optional without being listed here.
     assert owner_of == must_be_gated
