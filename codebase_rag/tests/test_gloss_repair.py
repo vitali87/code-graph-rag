@@ -128,6 +128,10 @@ class FakeStore:
             )
             if len(targets) != 1:
                 return
+            # ... and a note that gained a subject since the pass's read is
+            # left alone rather than given a second one.
+            if key in self.attached:
+                return
             new_qn = targets[0]
             origin = props.get(cs.KEY_MOVED_FROM) or props[cs.KEY_TARGET_QN]
             if origin == new_qn:
@@ -402,6 +406,34 @@ def test_two_nodes_sharing_one_name_and_the_hash_are_ambiguous() -> None:
     assert "gloss:1" not in store.attached
 
 
+def test_a_note_attached_by_another_writer_meanwhile_is_left_alone() -> None:
+    # Between the pass's lookup and its write an agent files the same note
+    # against a definition of its own, so the note now HAS a subject. The
+    # statement re-checks that precondition itself and does nothing; a MERGE
+    # here would have given the note two subjects. The pass reads it back,
+    # finds it recording the other writer's target, reports nothing and
+    # writes no MARK.
+    store = FakeStore()
+    store.define(f"{A}.new.place", H)
+    store.define(f"{A}.chosen.place", "ah1:other")
+    store.note("gloss:1", f"{A}.old.place", H)
+
+    def attach_elsewhere() -> None:
+        store.glosses["gloss:1"][cs.KEY_TARGET_QN] = f"{A}.chosen.place"
+        store.attached.add("gloss:1")
+
+    store.after_lookup = attach_elsewhere
+    report = _run(store)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert len(_writes(store, cq.CYPHER_GLOSS_MOVE)) == 1, "the move was attempted"
+    assert _writes(store, cq.CYPHER_GLOSS_MARK) == []
+    g = store.glosses["gloss:1"]
+    assert g[cs.KEY_TARGET_QN] == f"{A}.chosen.place"
+    assert g[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.EXACT.value
+    assert g[cs.KEY_MOVED_FROM] is None
+    assert "gloss:1" in store.attached
+
+
 def test_a_move_declined_at_write_time_is_neither_moved_nor_marked() -> None:
     # Between the pass's lookup and its write another updater adds a second
     # definition with the hash. The statement counts its targets itself,
@@ -498,6 +530,12 @@ def test_the_move_binds_the_edge_to_the_matched_definition_only() -> None:
     assert "t.qualified_name STARTS WITH $project_prefix" in q
     assert "WITH g, collect(t) AS targets" in q
     assert "WHERE size(targets) = 1" in q
+    # The note's own precondition is re-checked inside the write: a note that
+    # gained a subject since the pass's read is not given a second one. Asked
+    # with an OPTIONAL MATCH and a count, never a pattern in WHERE (Memgraph 3).
+    assert "OPTIONAL MATCH (g)-[held:ANNOTATES]->()" in q
+    assert "WITH g, t, origin, count(held) AS subjects" in q
+    assert "WHERE subjects = 0" in q
     # The origin is read in a WITH before the SETs, so neither SET can see
     # the other's new value.
     assert "WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin" in q

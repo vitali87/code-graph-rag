@@ -603,6 +603,10 @@ RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
 # qualified name) is refused rather than given two edges, and a match that
 # appeared or a hash that changed between the repair pass's read and this
 # write makes the statement a no-op instead of a wrong binding (bot review).
+# The note's own precondition is re-checked here too: the pass selected it
+# while it had no subject, but a writer may have attached it since, and a
+# MERGE would then give it a second subject. A note that already has one is
+# left exactly as the other writer left it (bot review, second round).
 # `origin` is the name the note was first written against (its first move
 # recorded it in `moved_from`). Following the hash back to that name is a
 # return home, not another move: the note is EXACT again with no `moved_from`.
@@ -613,6 +617,9 @@ WHERE t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_pre
 WITH g, collect(t) AS targets
 WHERE size(targets) = 1
 WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
+OPTIONAL MATCH (g)-[held:{_ANNOTATES}]->()
+WITH g, t, origin, count(held) AS subjects
+WHERE subjects = 0
 SET g.anchor_state = CASE WHEN origin = t.qualified_name
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
     g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END,
