@@ -26,7 +26,7 @@ from typer.testing import CliRunner
 
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
-from codebase_rag.config import settings
+from codebase_rag.config import PROVIDER_ENV_KEYS, settings
 from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.tools.health_checker import HealthChecker
 
@@ -206,3 +206,35 @@ class TestRunAllChecksMeasuresOnlyWhatMatters:
         assert not any("Gemini" in n or "OpenAI" in n for n in names), names
         assert sum("model" in n for n in names) == len(cs.ModelRole), names
         assert checker.get_summary() == (len(names) - 1, len(names))
+
+
+@pytest.mark.parametrize("provider", sorted(p.value for p in cs.Provider))
+def test_the_remediation_names_a_variable_the_gate_accepts(
+    monkeypatch: pytest.MonkeyPatch, bare_model_env: None, provider: str
+) -> None:
+    """Doctor's advice must name a credential the runtime will actually read.
+
+    The expectation is taken from the gate's own map, not restated here: for
+    a provider it covers, that variable satisfies `validate_api_key` and the
+    message must offer it; for any other, only the role variable does
+    (CodeRabbit on #1910).
+    """
+    monkeypatch.setattr(settings, "CYPHER_PROVIDER", provider)
+    monkeypatch.setattr(settings, "CYPHER_MODEL", "test-model")
+    result = HealthChecker().check_model_role(cs.ModelRole.CYPHER)
+    if result.passed:
+        pytest.skip(f"{provider} needs no key")
+
+    error = result.error or ""
+    assert "CYPHER_API_KEY" in error, error
+
+    provider_var = PROVIDER_ENV_KEYS.get(provider)
+    if provider_var:
+        assert provider_var in error, (provider, error)
+        # ...and it really is accepted, so the advice is not just plausible.
+        monkeypatch.setenv(provider_var, "placeholder-for-test")
+        monkeypatch.setattr(settings, "_active_cypher", None)
+        assert HealthChecker().check_model_role(cs.ModelRole.CYPHER).passed
+    else:
+        # Naming one the gate refuses would send the user in a circle.
+        assert f"{provider.upper()}_API_KEY" not in error, (provider, error)

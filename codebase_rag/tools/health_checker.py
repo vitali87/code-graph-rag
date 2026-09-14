@@ -10,7 +10,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import graph_audit
-from ..config import settings
+from ..config import PROVIDER_ENV_KEYS, settings
 from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
@@ -215,15 +215,22 @@ class HealthChecker:
         try:
             config.validate_api_key(role)
         except ValueError:
+            role_var = cs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(role=role.value.upper())
+            # The gate accepts a provider-owned variable for some providers;
+            # read its map rather than restating the rule here.
+            provider_var = PROVIDER_ENV_KEYS.get(config.provider.lower())
+            error = (
+                cs.HEALTH_CHECK_MODEL_KEY_MISSING_EITHER.format(
+                    env_name=role_var, provider_env=provider_var
+                )
+                if provider_var
+                else cs.HEALTH_CHECK_MODEL_KEY_MISSING_ERROR.format(env_name=role_var)
+            )
             return HealthCheckResult(
                 name=cs.HEALTH_CHECK_MODEL_NOT_READY.format(**label),
                 passed=False,
                 message=cs.HEALTH_CHECK_MODEL_KEY_MISSING_MSG,
-                error=cs.HEALTH_CHECK_MODEL_KEY_MISSING_ERROR.format(
-                    env_name=cs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(
-                        role=role.value.upper()
-                    )
-                ),
+                error=error,
             )
         return HealthCheckResult(
             name=cs.HEALTH_CHECK_MODEL_READY.format(**label),

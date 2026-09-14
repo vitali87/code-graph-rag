@@ -47,6 +47,13 @@ HEALTH_CHECK_MODEL_KEY_MISSING_MSG = "API key not set"
 HEALTH_CHECK_MODEL_KEY_MISSING_ERROR = (
     "Set {env_name} in your environment or .env file, or choose a local model."
 )
+# Some providers are also satisfied by their own variable; naming both stops
+# the remediation from pointing at a credential the runtime will not read
+# (CodeRabbit on #1910). The alternative comes from the gate's own map.
+HEALTH_CHECK_MODEL_KEY_MISSING_EITHER = (
+    "Set {env_name} (or {provider_env}) in your environment or .env file, "
+    "or choose a local model."
+)
 HEALTH_MODEL_ROLE_NAMES = {"orchestrator": "Orchestrator", "cypher": "Cypher"}
 HEALTH_MODEL_ROLE_KEY_VARIABLE = "{role}_API_KEY"
 
