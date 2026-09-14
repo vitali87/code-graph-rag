@@ -972,6 +972,32 @@ def test_the_nearest_declaration_wins_when_a_name_is_declared_twice(
     assert types["q"] == "tuple[int, Banner]"
 
 
+def test_a_second_declaration_covers_its_own_assignment(tmp_path: Path) -> None:
+    """The declaration a binding answers to is the NEAREST one before it,
+    not the first in the body (Greptile, #1919).
+
+    Here the second declaration is followed by a call the engine cannot
+    read, so only that declaration can type the unpack. Taking the earliest
+    declaration instead would make this assignment "not the first after the
+    declaration", supersede the annotation, and leave `b` unbound.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use() -> int:\n"
+        "    q: tuple[int, Widget]\n"
+        "    q = opaque(0)\n"
+        "    q: tuple[int, Banner]\n"
+        "    q = opaque(1)\n"
+        "    _n, b = q\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert types.get("b") == "Banner"
+
+
 def test_a_declaration_covers_only_the_assignment_it_was_made_for(
     tmp_path: Path,
 ) -> None:
