@@ -100,3 +100,26 @@ included, are re-ingested and the delta printed as JSON. With
 callers, `too_many` arity findings, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.
+
+The re-ingest is also what brings the graph up to the working tree, so a
+second run on the same edit reports nothing. `--isolated` measures without
+keeping the write:
+
+```bash
+cgr check --base origin/main --isolated --fail-on-found
+```
+
+The subgraph the re-ingest replaces (the changed files' module subtrees
+and their dependents', the File nodes at those paths, the containers above
+them and every relationship touching any of it) is captured inside the
+re-ingest's own prologue, so the scope is the updater's rather than a
+guess from the diff, and put back once the delta is computed; the hash
+cache is restored byte for byte, timestamps included. Nodes the check
+creates beside the subtrees (a new file's File node, a new directory's
+Folder, a new finding, an ExternalModule for a new import) are removed, and
+nodes outside the scope that the check prunes or re-grades (ExternalModule,
+Resource, Gloss) come back with their captured properties. The graph then
+reads exactly as it did, the same edit measures the same way on every run,
+and a re-ingest that fails after its first write is rolled back the same
+way. The cost is proportional to the changed files' subgraph, not to the
+project.

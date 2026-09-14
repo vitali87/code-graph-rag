@@ -781,6 +781,44 @@ RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
        r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
        r.alias AS alias, r.imported_name AS imported_name"""
 
+# Isolated check (issue #1718): the subgraph a scoped re-ingest is about to
+# replace, read in full so it can be put back afterwards. The scope is the
+# module subtrees at the re-parsed paths, walked exactly as
+# `CYPHER_DELETE_MODULE` walks them so the capture equals the delete, plus
+# the File nodes at those paths and the containers above them (a package
+# indicator appearing or vanishing flips the directory's node kind).
+_CHECK_SCOPE = f"""MATCH (n)
+WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
+       AND (n.qualified_name = $project_name
+            OR n.qualified_name STARTS WITH $project_prefix))
+   OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
+        OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER*0..]->(c)
+WITH DISTINCT c"""
+CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
+RETURN labels(c)[0] AS label, properties(c) AS props"""
+# Every relationship with at least one end in the scope, either direction,
+# with each end addressed by the three key fields the batch writer can key
+# a node on (the label decides which one applies). The far end's properties
+# come along only for the labels the check can prune or re-grade: an
+# ExternalModule a new import created, a Resource an endpoint anchored, a
+# Gloss whose anchor the re-parse re-graded.
+CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
+MATCH (c)-[r]-(x)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
+       c.absolute_path AS absolute_path, c.name AS name,
+       type(r) AS rel, startNode(r) = c AS outgoing, properties(r) AS props,
+       labels(x)[0] AS far_label, x.qualified_name AS far_qualified_name,
+       x.absolute_path AS far_absolute_path, x.name AS far_name,
+       CASE WHEN x:{NodeLabel.EXTERNAL_MODULE.value} OR x:{NodeLabel.RESOURCE.value}
+            OR x:{_GLOSS} THEN properties(x) END AS far_props"""
+# Findings hang off a Module without being DEFINED by it, keyed on their
+# file, line, column and rule: the ones at the scope's paths that the
+# capture did not see were written by the check itself.
+CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
+WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+DETACH DELETE n"""
+
 # Trace write-back (issue #1526): a static edge the runtime observed is
 # upgraded in place, on every site it has, so the upgrade never creates a
 # site-less duplicate beside the located ones.
