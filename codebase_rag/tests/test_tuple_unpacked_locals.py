@@ -864,7 +864,8 @@ def test_a_tuple_typed_local_unpacks_positionally(tmp_path: Path) -> None:
         "    return b.render()\n",
         "use",
     )
-    assert types.get("w") == "Widget" and types.get("b") == "Banner", types
+    assert types.get("w") == "Widget", types
+    assert types.get("b") == "Banner", types
 
 
 def test_a_tuple_typed_local_assigned_from_an_untyped_call_unpacks(
@@ -905,7 +906,8 @@ def test_a_declared_but_unassigned_name_carries_its_annotation(
         "    return w.render()\n",
         "use",
     )
-    assert types.get("q") == "tuple[int, Banner]" and types.get("w") == "Banner", types
+    assert types.get("q") == "tuple[int, Banner]", types
+    assert types.get("w") == "Banner", types
 
 
 def test_the_value_outranks_the_annotation_and_the_annotation_fills_the_gap(
