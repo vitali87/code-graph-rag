@@ -8,6 +8,8 @@ from typing import TypedDict
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+
 WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "version-bump.yml"
 )
@@ -165,6 +167,7 @@ def _execute(
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
         timeout=15,
     )
