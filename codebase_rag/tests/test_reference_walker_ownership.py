@@ -51,11 +51,12 @@ def _reference_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
 
 
 # One shape per walker that consults _is_unowned_js_scope and is reachable
-# from a JS fixture: assignment, return and collection. In each, the recorded
-# `x` holds the reference, so `A.m` must not also claim it.
+# from a plain .js fixture: assignment, return and collection. In each, the
+# recorded `x` holds the reference, so `A.m` must not also claim it.
 #
-# The JSX walker takes the same predicate and is fixed by the same change, but
-# needs a .jsx tree to reach and is not covered here.
+# The JSX walker takes the same predicate; its behaviour is pinned by
+# test_jsx_component_references.py, including the `cell:` arrow that must
+# keep bubbling (see the arrow control below).
 _RECORDED = {
     "assignment": (
         "class A {\n"
@@ -133,4 +134,24 @@ def test_an_anonymous_callback_still_bubbles_its_reference(
     suppressing the descent entirely would drop this edge rather than
     de-duplicate it."""
     edges = _reference_edges(tmp_path, _ANONYMOUS[shape])
+    assert edges[("repo.app.A.m", "repo.app.target")] >= 1, edges
+
+
+_ARROW_IN_A_CONFIG_OBJECT = (
+    "class A {\n"
+    "  m() {\n"
+    "    const cols = [{ cell: () => target }];\n"
+    "    return cols;\n"
+    "  }\n"
+    "}\n"
+)
+
+
+def test_an_arrow_in_a_config_object_still_bubbles(tmp_path: Path) -> None:
+    """An arrow that is an object value is registered under its key too, so
+    `is_named` alone would silence it -- but a component rendered only in
+    such a callback (`{ cell: ({row}) => <CopyId/> }`) would then report as
+    dead. The ownership clause is therefore limited to function expressions;
+    this is the control that keeps it limited (greptile-local on #1932)."""
+    edges = _reference_edges(tmp_path, _ARROW_IN_A_CONFIG_OBJECT)
     assert edges[("repo.app.A.m", "repo.app.target")] >= 1, edges

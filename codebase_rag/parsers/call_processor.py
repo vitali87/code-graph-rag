@@ -7516,12 +7516,20 @@ class CallProcessor:
             return False
         if self._get_node_name(node) or self._js_ts_arrow_binding_name(node):
             return False
-        # A nameless function expression the definition pass registered under
+        # A nameless FUNCTION EXPRESSION the definition pass registered under
         # a name (`x: function () {}`) has neither, but IS a node with its own
         # walk, so a reference inside it belongs to that node alone. Without
         # this the enclosing scope emitted a second copy of every REFERENCES
-        # edge (issue #1932). Same rule the call passes apply through
-        # _attributable_func_nodes, so the two notions of ownership agree.
+        # edge (issue #1932).
+        #
+        # Deliberately NOT extended to arrows. An arrow that is an object
+        # value in a config array (`{ cell: ({row}) => <CopyId/> }`, TanStack
+        # columns) is registered under its key too, but the module walk must
+        # still descend through it or a component used only in config
+        # callbacks reports as dead -- the case this helper was written for,
+        # and the one `cell` in the comment above names.
+        if node.type != cs.TS_FUNCTION_EXPRESSION:
+            return True
         recorded = self._recorded_caller(node, module_qn)
         return recorded is None or not recorded.is_named
 
