@@ -35,6 +35,7 @@ KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
 KEY_TYPE_NAME = "type_name"
+KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
 KEY_HAS_DEFAULT = "has_default"
 KEY_NAME_START_LINE = "name_start_line"
@@ -187,6 +188,7 @@ ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
+ONEOF_FIELD = "field"
 
 
 class UniqueKeyType(StrEnum):
@@ -234,6 +236,7 @@ class NodeLabel(StrEnum):
     GLOSS = "Gloss"
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
+    FIELD = "Field"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -270,6 +273,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # <callable qn>.<index>: one node per declared slot, keyed so a rename of
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -325,6 +329,7 @@ class RelationshipType(StrEnum):
     MENTIONS = "MENTIONS"
     # Function|Method -> Parameter, carrying {index} (issue #1804).
     HAS_PARAMETER = "HAS_PARAMETER"
+    HAS_FIELD = "HAS_FIELD"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
 
@@ -342,6 +347,7 @@ class CaptureGroup(StrEnum):
     # else, rather than becoming a second, parallel mechanism.
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
+    FIELDS = "fields"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -415,6 +421,13 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.OF_TYPE,
         }
     ),
+    # Opt-in (issue #1805), like parameters. OF_TYPE is NOT listed here: the
+    # capture contract puts every relationship in exactly one group (a
+    # relationship in two would make "enabled" ambiguous), and OF_TYPE already
+    # belongs to `parameters`. A field's type edge is therefore captured
+    # whenever the `parameters` group is on -- one relationship, one switch --
+    # and `fields` alone yields Field nodes and HAS_FIELD only.
+    CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -427,6 +440,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     ),
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
+    CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -590,7 +604,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -673,6 +687,13 @@ CYPHER_PROJECT_PARAMETER_TYPES = (
     "AND p.type_name IS NOT NULL "
     "RETURN p.qualified_name AS qualified_name, p.type_name AS type_name, "
     "p.path AS path"
+)
+# The Field counterpart, read by the incremental requeue for the same reason.
+CYPHER_PROJECT_FIELD_TYPES = (
+    "MATCH (f:Field) WHERE f.qualified_name STARTS WITH $project_prefix "
+    "AND f.type_name IS NOT NULL "
+    "RETURN f.qualified_name AS qualified_name, f.type_name AS type_name, "
+    "f.path AS path"
 )
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "

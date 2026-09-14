@@ -128,6 +128,7 @@ message GraphCodeIndex {
       SecurityIssue security_issue = 21;
       Gloss gloss = 22;
       Parameter parameter = 23;
+      Field field = 24;
     }
   }
 
@@ -175,6 +176,8 @@ message GraphCodeIndex {
       // Declared parameters (issue #1804).
       HAS_PARAMETER = 32;
       OF_TYPE = 33;
+      // Declared fields (issue #1805). OF_TYPE is shared with Parameter.
+      HAS_FIELD = 34;
     }
 
     RelationshipType type = 1;
@@ -367,6 +370,27 @@ message GraphCodeIndex {
     string type_name = 8;
     bool is_variadic = 9;
     bool has_default = 10;
+  }
+
+  // A field, attribute, property or member variable a Class, Interface, Enum,
+  // Type or Union declares (issue #1805).
+  message Field {
+    // Primary Key: <owner qn>.<name>
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+    // 4 was absolute_path. Deliberately not on the wire, like every other
+    // definition label: the canonical export must not differ per checkout.
+    reserved 4;
+    int32 start_line = 5;
+    int32 start_col = 6;
+    // The declared type as written, "" when there is none.
+    string type_name = 7;
+    // Keyword modifiers in source order (visibility, static, final, ...).
+    repeated string modifiers = 8;
+    bool is_static = 9;
+    string docstring = 10;
   }
 
   // An external I/O resource a callable reads from or writes to
