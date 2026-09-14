@@ -950,6 +950,13 @@ _FIELD_NODE_PROPS = (
     "modifiers: list[string]?, is_static: boolean?, docstring: string?}"
 )
 
+# A module-level constant (issue #1806). `value` is the right-hand side as
+# written, absent when it is longer than CONSTANT_VALUE_MAX_CHARS.
+_CONSTANT_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, type_name: string?, value: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -1029,6 +1036,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
     NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
+    NodeSchema(NodeLabel.CONSTANT, _CONSTANT_NODE_PROPS),
 )
 
 
@@ -1272,8 +1280,15 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
     ),
+    # Only a Module declares one today: a class-level member is a Field
+    # (issue #1805), so the two labels never share a qualified name.
     RelationshipSchema(
-        (NodeLabel.PARAMETER, NodeLabel.FIELD),
+        (NodeLabel.MODULE,),
+        RelationshipType.DEFINES_CONSTANT,
+        (NodeLabel.CONSTANT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER, NodeLabel.FIELD, NodeLabel.CONSTANT),
         RelationshipType.OF_TYPE,
         _PARAMETER_TYPE_LABELS,
     ),
