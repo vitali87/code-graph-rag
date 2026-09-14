@@ -101,12 +101,15 @@ def _snapshot(store: _StatefulIngestor) -> tuple[frozenset, frozenset]:
         for (label, uid), props in store.nodes.items()
     )
     edges = frozenset(
-        (str(fl), str(fv), str(rel), str(tl), str(tv))
-        # props_for, not edge_props[...]: the store keys properties by SITE,
-        # so an endpoint-shaped lookup returns {} and compares nothing.
+        # keyed_edges, not edges: the endpoint view collapses every site
+        # between one pair of nodes into a single entry, so adding or losing a
+        # call site left this snapshot identical. The site is part of the
+        # identity the production store MERGEs on, so it is part of the
+        # identity being compared.
+        (str(fl), str(fv), str(rel), str(tl), str(tv), repr(site))
         + tuple(sorted(f"{k}={v}" for k, v in store.props_for(e).items()))
-        for e in store.edges
-        for (fl, fv, rel, tl, tv) in [e]
+        for e in store.keyed_edges
+        for (fl, fv, rel, tl, tv, site) in [e]
     )
     return nodes, edges
 

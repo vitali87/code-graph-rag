@@ -156,14 +156,50 @@ Snapshot = tuple[frozenset[tuple[str, str]], frozenset[tuple[str, ...]]]
 def _snapshot(store: _StatefulIngestor) -> Snapshot:
     nodes = frozenset((label, str(uid)) for (label, uid) in store.nodes)
     edges = frozenset(
-        (str(fl), str(fv), str(rel), str(tl), str(tv))
-        # props_for, not edge_props[...]: the store keys properties by SITE,
-        # so an endpoint-shaped lookup returns {} and compares nothing.
+        # keyed_edges, not edges: the endpoint view collapses every site
+        # between one pair of nodes into a single entry, so adding or losing a
+        # call site left this snapshot identical. The site is part of the
+        # identity the production store MERGEs on, so it is part of the
+        # identity being compared.
+        (str(fl), str(fv), str(rel), str(tl), str(tv), repr(site))
         + tuple(sorted(f"{k}={v}" for k, v in store.props_for(e).items()))
-        for e in store.edges
-        for (fl, fv, rel, tl, tv) in [e]
+        for e in store.keyed_edges
+        for (fl, fv, rel, tl, tv, site) in [e]
     )
     return nodes, edges
+
+
+def test_the_snapshot_sees_a_call_site_that_disappeared() -> None:
+    """The snapshot is the oracle every test below compares against, so a
+    change it cannot see is a test that cannot fail.
+
+    Two CALLS rows between the same pair of functions are two distinct sites in
+    the store -- `_site_key` drops props a row does not carry, so a row with
+    only `line` and a row with `line` + `col` key differently. Read through the
+    endpoint view (`store.edges`) they collapse into one entry and `props_for`
+    merges them, and here the merge of the two equals the second one alone: the
+    two graphs snapshotted identically and losing a call site was invisible.
+    """
+
+    def build(sites: list[dict[str, object]]) -> _StatefulIngestor:
+        store = _StatefulIngestor()
+        store.ensure_node_batch("Function", {cs.KEY_QUALIFIED_NAME: "m.a"})
+        store.ensure_node_batch("Function", {cs.KEY_QUALIFIED_NAME: "m.b"})
+        for props in sites:
+            store.ensure_relationship_batch(
+                ("Function", cs.KEY_QUALIFIED_NAME, "m.a"),
+                "CALLS",
+                ("Function", cs.KEY_QUALIFIED_NAME, "m.b"),
+                dict(props),
+            )
+        return store
+
+    both = _snapshot(build([{"line": 10}, {"line": 10, "col": 4}]))
+    one = _snapshot(build([{"line": 10, "col": 4}]))
+
+    assert both != one
+    # And the surviving site is still described in full, not just counted.
+    assert one[1] < both[1]
 
 
 def _updater(store: _StatefulIngestor, root: Path) -> GraphUpdater:
