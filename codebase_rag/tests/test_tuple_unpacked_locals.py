@@ -942,6 +942,36 @@ def test_a_tuple_typed_local_assigned_from_an_untyped_call_unpacks(
     assert types.get("w") == "Banner", types
 
 
+def test_the_nearest_declaration_wins_when_a_name_is_declared_twice(
+    tmp_path: Path,
+) -> None:
+    """A body may declare one name twice; the later declaration describes
+    the value bound after it (Greptile, #1919).
+
+    The annotation pass yielded to any existing entry, so the FIRST
+    declaration was stored and the second skipped, leaving the map holding
+    a shape the name no longer had. Among annotations the last wins; an
+    inferred type from the value still wins over both.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def two() -> tuple[int, Banner]:\n    return (0, Banner())\n"
+        "\n"
+        "def use() -> int:\n"
+        "    q: tuple[int, Widget]\n"
+        "    q = opaque(0)\n"
+        "    q: tuple[int, Banner]\n"
+        "    q = two()\n"
+        "    _n, b = q\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert types["q"] == "tuple[int, Banner]"
+
+
 def test_a_declaration_covers_only_the_assignment_it_was_made_for(
     tmp_path: Path,
 ) -> None:

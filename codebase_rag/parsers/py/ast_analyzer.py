@@ -341,19 +341,21 @@ def _declared_before(name: str, binder: Node, caller: Node) -> bool:
     described, so a later assignment supersedes it like any other rebinding
     (Greptile, #1919).
     """
+    # The NEAREST declaration before this binding, not the earliest: a body
+    # may declare the same name twice, and the later declaration is the one
+    # describing the value bound after it (Greptile, #1919).
     declarations = [
         other.end_byte
         for other, identifier in _bindings_in(caller)
         if safe_decode_text(identifier) == name
         and _annotates(other)
         and other.child_by_field_name(cs.TS_FIELD_RIGHT) is None
+        and other.end_byte <= binder.start_byte
     ]
     if not declarations:
         return False
-    declared = min(declarations)
-    if binder.start_byte < declared:
-        return False
-    # The first binding after the declaration, and nothing later.
+    declared = max(declarations)
+    # The first binding after THAT declaration, and nothing later.
     first = min(
         (
             other.start_byte
@@ -621,7 +623,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         `v = Banner()` in a nested def reaches the enclosing map on `main`
         too, with no annotation involved (issue #1922).
         """
-        for assignment in assignments:
+        # In document order, so that among SEVERAL annotations of one name
+        # the last wins: a body may declare `q: A` and later `q: B`, and it
+        # is the later one that describes the value bound after it
+        # (Greptile, #1919). `written` tracks what THIS pass stored, so a
+        # second annotation may replace its own earlier entry while an
+        # inferred type from the value passes still wins over both.
+        written: set[str] = set()
+        for assignment in sorted(assignments, key=lambda node: node.start_byte):
             type_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
             left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
             if type_node is None or left is None:
@@ -629,11 +638,14 @@ class PythonAstAnalyzerMixin(_AstBase):
             if _scope_of(assignment) != caller.id:
                 continue
             var_name = self._extract_assignment_variable_name(left)
-            if not var_name or var_name in local_var_types:
+            if not var_name:
+                continue
+            if var_name in local_var_types and var_name not in written:
                 continue
             annotation = safe_decode_text(type_node) or ""
             if annotated := self._type_of_annotated_name(annotation, module_qn):
                 local_var_types[var_name] = annotated
+                written.add(var_name)
 
     def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None:
         text = text.strip().strip("\"'")
