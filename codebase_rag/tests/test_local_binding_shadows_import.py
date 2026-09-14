@@ -169,6 +169,57 @@ def test_an_optional_import_fallback_is_not_a_shadow(tmp_path: Path) -> None:
     assert "proj.helpers.make_pair" in calls, sorted(calls)
 
 
+_GLOBAL_DECLARED = (
+    "def use() -> int:\n"
+    "    global helpers\n"
+    "    w = helpers.make_pair()\n"
+    "    helpers = None\n"
+    "    return w[0]\n"
+)
+
+_NONLOCAL_DECLARED = (
+    "def outer():\n"
+    "    def use() -> int:\n"
+    "        nonlocal helpers\n"
+    "        return helpers.make_pair()[0]\n"
+    "    return use\n"
+)
+
+_GLOBAL_IN_A_NESTED_DEF = (
+    "def use(supplied) -> int:\n"
+    "    def inner():\n"
+    "        global helpers\n"
+    "        helpers = None\n"
+    "    helpers = supplied\n"
+    "    return helpers.make_pair()[0]\n"
+)
+
+
+@pytest.mark.parametrize("shape", ["global_declared", "nonlocal_declared"])
+def test_a_declared_non_local_name_is_not_a_shadow(tmp_path: Path, shape: str) -> None:
+    """`global helpers` makes every assignment in the body write the module's
+    binding, so the name is not local and the imported module stays
+    reachable. Treating the assignment as a shadow dropped an edge `main`
+    resolves (Greptile on #1907)."""
+    body = {
+        "global_declared": _GLOBAL_DECLARED,
+        "nonlocal_declared": _NONLOCAL_DECLARED,
+    }[shape]
+    calls = _calls_from_use(_build(tmp_path, body))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+def test_a_declaration_in_a_nested_def_does_not_reach_its_parent(
+    tmp_path: Path,
+) -> None:
+    """The discriminating control: a `global` inside a nested function binds
+    in THAT scope. The enclosing function's own `helpers = supplied` is still
+    an ordinary shadow, so a green above cannot come from exempting any body
+    that merely contains the keyword."""
+    calls = _calls_from_use(_build(tmp_path, _GLOBAL_IN_A_NESTED_DEF))
+    assert "proj.helpers.make_pair" not in calls, sorted(calls)
+
+
 def test_a_handler_guarding_another_import_still_shadows(tmp_path: Path) -> None:
     """The discriminating case: the exemption is for a handler guarding an
     import of THIS name. Guarding some other import leaves `helpers = None`

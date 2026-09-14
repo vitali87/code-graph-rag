@@ -276,6 +276,37 @@ def _guards_an_optional_import(
     return False
 
 
+def _declared_non_local(scope: Node) -> set[str]:
+    """Names a `global` or `nonlocal` statement declares in this scope.
+
+    Such a name is NOT local however often the body assigns it: `global
+    helpers` makes every `helpers = ...` write the module's binding, so an
+    imported module of that name stays reachable and its calls still
+    resolve. Treating the assignment as a shadow dropped a real edge
+    (Greptile on #1907).
+    """
+    declared: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        for child in node.named_children:
+            if child.type == cs.TS_PY_FUNCTION_DEFINITION:
+                # A nested def's declarations bind in ITS scope, not here.
+                continue
+            if child.type in (
+                cs.TS_PY_GLOBAL_STATEMENT,
+                cs.TS_PY_NONLOCAL_STATEMENT,
+            ):
+                declared.update(
+                    name
+                    for identifier in child.named_children
+                    if (name := safe_decode_text(identifier))
+                )
+            else:
+                stack.append(child)
+    return declared
+
+
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
@@ -290,10 +321,12 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     while scope is not None:
         if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
             names.update(_parameter_names(scope))
+            declared = _declared_non_local(scope)
             names.update(
                 name
                 for binder, identifier in _bindings_in(scope)
                 if (name := safe_decode_text(identifier))
+                and name not in declared
                 and not _reimports(binder, name, import_map)
                 and not _guards_an_optional_import(binder, name, import_map)
             )
