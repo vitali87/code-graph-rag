@@ -35,13 +35,13 @@ def _node(node_id, frame, children=(), hit_count=0):
     }
 
 
-def _profile(tmp_path):
+def _profile(tmp_path, dependency_directory="node_modules"):
     """(root)->(main toplevel)->runAll->[handle->greet, forEach->callback]."""
     # Build file URLs with as_uri() so a Windows drive path yields a valid
     # `file:///C:/...` URI (drive kept out of the authority) on any platform.
     main = (tmp_path / "main.js").as_uri()
     registry = (tmp_path / "src" / "registry.js").as_uri()
-    vendored = (tmp_path / "node_modules" / "lib" / "index.js").as_uri()
+    vendored = (tmp_path / dependency_directory / "lib" / "index.js").as_uri()
     return {
         "nodes": [
             _node(1, _frame("(root)", "", 0), children=[2]),
@@ -121,6 +121,37 @@ def test_vendored_and_internal_frames_never_appear(tmp_path):
         assert "node_modules" not in record.callee.path
         assert not record.caller.path.startswith("node:")
         assert not record.callee.path.startswith("node:")
+
+
+@pytest.mark.parametrize(
+    ("directory", "excluded_on_posix"),
+    [
+        ("node_modules", True),
+        ("NODE_MODULES", False),
+        ("Node_Modules", False),
+        ("site-packages", True),
+        ("SITE-PACKAGES", False),
+        (".venv", True),
+        (".VENV", False),
+    ],
+)
+def test_dependency_directory_case_follows_platform(
+    tmp_path: Path, directory: str, excluded_on_posix: bool
+) -> None:
+    count = _convert_raw(tmp_path, _profile(tmp_path, directory))
+    _header, records = read_trace_file(tmp_path / "out.jsonl")
+    edges = {(record.caller.qualname, record.callee.qualname) for record in records}
+    expected = {
+        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        ("runAll", "handle"),
+        ("handle", "greet"),
+        ("runAll", "callback"),
+    }
+    if os.name != "nt" and not excluded_on_posix:
+        expected.add(("runAll", "vendored"))
+
+    assert edges == expected
+    assert count == len(expected)
 
 
 def test_workload_label_lands_on_every_record(tmp_path):
@@ -270,6 +301,7 @@ def test_file_url_authority_preserves_network_and_local_paths(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize("dependency_directory", ["node_modules", "NODE_MODULES"])
 @pytest.mark.parametrize(
     "profile_root",
     [
@@ -279,10 +311,14 @@ def test_file_url_authority_preserves_network_and_local_paths(
         "//nas/cgr-profile-tests/MY REPO 项目",
     ],
 )
-def test_unc_repository_keeps_profile_edges(tmp_path: Path, profile_root: str) -> None:
+def test_unc_repository_keeps_profile_edges(
+    tmp_path: Path, profile_root: str, dependency_directory: str
+) -> None:
     repo_root = Path("//nas/cgr-profile-tests/my repo 项目")
     profile_path = tmp_path / "unc.cpuprofile"
-    profile_path.write_text(json.dumps(_profile(Path(profile_root))), encoding="utf-8")
+    profile_path.write_text(
+        json.dumps(_profile(Path(profile_root), dependency_directory)), encoding="utf-8"
+    )
     output = tmp_path / "trace.jsonl"
 
     count = convert_cpuprofile(profile_path, repo_root, output)
@@ -333,7 +369,9 @@ def test_other_unc_repositories_stay_excluded(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
-@pytest.mark.parametrize("source_directory", ["src", "node_modules"])
+@pytest.mark.parametrize(
+    "source_directory", ["src", "node_modules", "NODE_MODULES", "Node_Modules"]
+)
 def test_unc_remapped_paths_keep_case_and_scope(
     tmp_path: Path, source_directory: str
 ) -> None:
@@ -372,7 +410,7 @@ def test_unc_remapped_paths_keep_case_and_scope(
     _header, records = read_trace_file(output)
     edges = list(records)
 
-    if source_directory == "node_modules":
+    if source_directory != "src":
         assert count == 0
         assert edges == []
     else:

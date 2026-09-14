@@ -135,7 +135,7 @@ def _project_frame(
         path, source_line = generated_path, line + 1
     if not normcase(path).startswith(normcase(root_prefix)):
         return None
-    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
+    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(normcase(path)).parts):
         return None
     # Only project frames count toward the resolution rate; the source-map
     # outcome categorises whether each landed on its source or fell back.
