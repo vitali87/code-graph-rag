@@ -164,6 +164,34 @@ def test_no_nesting_shape_leaks_a_constant_into_module_scope() -> None:
     assert _names("MAX = 1\n") == ["MAX"]
 
 
+def test_the_declaration_predicate_holds_at_its_awkward_edges() -> None:
+    """Both directions at the boundary, not just the suppressed side.
+
+    A peer session narrowed an ownership predicate and suppressed a
+    neighbouring case it should have kept: the property was right and its
+    extension wrong, because the distinguishing attribute was true of both.
+    The mirror risk here is `_module_assignment`, the one place that decides
+    what counts as a declaration.
+
+    So each pair below fixes one side against the other: a walrus binds but
+    is not a declaration statement; a starred or subscript target binds no
+    single module name; an annotated alias and a multi-line value are
+    ordinary declarations that a stricter predicate would wrongly drop.
+    """
+    # Not declarations, though each binds or resembles one.
+    assert _names("print(MAX := 1)\n") == []
+    assert _names("*MAX, REST = [1, 2]\n") == []
+    assert _names("d[K] = 1\n") == []
+    assert _names("try:\n    pass\nexcept E:\n    pass\nelse:\n    MAX = 1\n") == []
+    # Declarations, though each is an awkward shape.
+    assert _names("MAX: TypeAlias = int\n") == ["MAX"]
+    assert _names("MAX: 'int' = 1\n") == ["MAX"]
+    assert _names("MAX = (\n    1 + 2\n)\n") == ["MAX"]
+    assert _names("MAX = 1; MIN = 2\n") == ["MAX", "MIN"]
+    # A chain whose inner target binds no module name keeps the outer one.
+    assert _names("MAX = obj.X = 5\n") == ["MAX"]
+
+
 def test_a_statement_nested_in_an_if_or_try_is_skipped() -> None:
     """Direct children of the module node only.
 
