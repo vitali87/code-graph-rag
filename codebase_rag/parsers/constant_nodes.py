@@ -40,11 +40,15 @@ _DUNDER = re.compile(r"^__.*__$")
 # `Final`, `Final[int]`, `typing.Final`, `t.Final[str]`. The annotation makes a
 # constant regardless of case: `Final` is the language saying so explicitly,
 # where UPPER_CASE is only a convention.
-_FINAL = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*Final(?:\s*\[.*\])?$", re.DOTALL)
+#
+# The module prefix is `[^\W\d]\w*`, not `[A-Za-z_][A-Za-z0-9_]*`: Python
+# identifiers may be non-ASCII (`café.Final` is legal and `'café'.isidentifier()`
+# is True), so the ASCII form silently refused a valid annotation. `[^\W\d]`
+# is "a word character that is not a digit", which is the leading-character
+# rule; a bare `\w*` would wrongly admit a leading digit.
+_FINAL = re.compile(r"^(?:[^\W\d]\w*\.)*Final(?:\s*\[.*\])?$", re.DOTALL)
 # The argument of a `Final[...]` wrapper, so `x: Final[int]` has type `int`.
-_FINAL_ARG = re.compile(
-    r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*Final\s*\[(?P<arg>.*)\]$", re.DOTALL
-)
+_FINAL_ARG = re.compile(r"^(?:[^\W\d]\w*\.)*Final\s*\[(?P<arg>.*)\]$", re.DOTALL)
 
 
 class DeclaredConstant(NamedTuple):

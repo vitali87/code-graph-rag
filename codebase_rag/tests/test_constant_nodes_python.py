@@ -13,6 +13,7 @@ from __future__ import annotations
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.constant_nodes import (
+    _FINAL,
     DeclaredConstant,
     declared_constants,
     python_declared_constants,
@@ -162,6 +163,27 @@ def test_no_nesting_shape_leaks_a_constant_into_module_scope() -> None:
     # The control is only meaningful if the same declaration IS picked up at
     # module scope: otherwise every case above passes by finding nothing.
     assert _names("MAX = 1\n") == ["MAX"]
+
+
+def test_a_final_annotation_is_recognised_through_a_unicode_module() -> None:
+    """Python identifiers are not ASCII-only, and the annotation match knows it.
+
+    `café.Final` is a legal annotation (`'café'.isidentifier()` is True), and
+    the original ASCII-only module prefix silently refused it, so the name
+    would have been skipped unless it also happened to be UPPER_CASE. Widened
+    to `[^\\W\\d]\\w*`, which is the real leading-character rule; a bare
+    `\\w*` would admit a leading digit, so both directions are asserted.
+    """
+    assert _names("café_mod = None\nvalue: café_mod.Final = 1\n") == ["value"]
+    assert [c.type_name for c in _constants("v: café_mod.Final[int] = 1\n")] == ["int"]
+    # The leading-digit half is asserted against the PATTERN, not through a
+    # source fixture: `value: 1bad.Final = 1` is not valid Python (CPython
+    # rejects it), and tree-sitter error-recovers it into an ERROR node plus
+    # the annotation `bad.Final`, which legitimately matches. A fixture the
+    # language rejects tests the recovery, not the rule.
+    assert _FINAL.match("1bad.Final") is None
+    assert _FINAL.match(".Final") is None
+    assert _FINAL.match("café_mod.Final") is not None
 
 
 def test_the_declaration_predicate_holds_at_its_awkward_edges() -> None:
