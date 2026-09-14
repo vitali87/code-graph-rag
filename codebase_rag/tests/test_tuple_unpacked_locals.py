@@ -22,6 +22,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
 from evals.cgr_graph import _StatefulIngestor
 
 _DECOY_COLLIDES = "class Engine:\n    def resolve(self) -> int:\n        return 1\n"
@@ -223,14 +224,14 @@ def _functions(node: Node) -> Iterator[Node]:
         yield from _functions(child)
 
 
-def _walk(node: Node) -> Iterator[Node]:
+def _nodes_under(node: Node) -> Iterator[Node]:
     """Every node under `node`, itself included."""
     yield node
     for child in node.children:
-        yield from _walk(child)
+        yield from _nodes_under(child)
 
 
-def _engine(tmp_path: Path):
+def _type_inference_engine(tmp_path: Path) -> PythonTypeInferenceEngine:
     """A built analyzer, for calling one pass in isolation."""
     repo = tmp_path / "engine_only"
     repo.mkdir()
@@ -414,12 +415,12 @@ def test_the_annotation_pass_reads_only_the_analysed_scope(
     )
     annotated = [
         node
-        for node in _walk(outer)
+        for node in _nodes_under(outer)
         if node.type == cs.TS_PY_ASSIGNMENT
         and node.child_by_field_name(cs.TS_FIELD_TYPE) is not None
     ]
     assert annotated, "fixture must contain the nested annotated assignment"
-    engine = _engine(tmp_path)
+    engine = _type_inference_engine(tmp_path)
     types: dict[str, str] = {}
 
     engine._process_assignment_annotation(outer, annotated, types, "proj.app")
@@ -939,6 +940,33 @@ def test_a_tuple_typed_local_assigned_from_an_untyped_call_unpacks(
         "use",
     )
     assert types.get("w") == "Banner", types
+
+
+def test_a_declaration_covers_only_the_assignment_it_was_made_for(
+    tmp_path: Path,
+) -> None:
+    """`q: T` declares the name for the assignment that follows it, and for
+    that one only (Greptile, #1919).
+
+    After `q = opaque(0); q = opaque(1)` the name holds the second call's
+    result, which the declaration never described. Treating every later
+    assignment as covered by the declaration let a stale tuple shape unpack
+    into a name the value no longer had.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use() -> int:\n"
+        "    q: tuple[int, Banner]\n"
+        "    q = opaque(0)\n"
+        "    q = opaque(1)\n"
+        "    _n, b = q\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert "b" not in types
 
 
 def test_a_declared_but_unassigned_name_carries_its_annotation(

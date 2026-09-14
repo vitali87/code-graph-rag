@@ -332,19 +332,39 @@ def _supersedes_annotation(name: str, before: int, caller: Node) -> bool:
 
 
 def _declared_before(name: str, binder: Node, caller: Node) -> bool:
-    """Whether a bare `name: T` declaration precedes `binder`.
+    """Whether `binder` is the assignment a bare `name: T` was declared for.
 
-    A declaration binds no value, so the assignment that follows is what it
-    was declared for and the annotation is still the only thing that can
-    type the name.
+    A declaration binds no value, so the FIRST assignment after it is what
+    it was declared for and the annotation is still the only thing that can
+    type the name. Only that one: after `q: T; q = opaque(0); q = opaque(1)`
+    the name holds the second call's result, which the declaration never
+    described, so a later assignment supersedes it like any other rebinding
+    (Greptile, #1919).
     """
-    return any(
-        _annotates(other)
-        and other.child_by_field_name(cs.TS_FIELD_RIGHT) is None
-        and other.end_byte <= binder.start_byte
+    declarations = [
+        other.end_byte
         for other, identifier in _bindings_in(caller)
         if safe_decode_text(identifier) == name
+        and _annotates(other)
+        and other.child_by_field_name(cs.TS_FIELD_RIGHT) is None
+    ]
+    if not declarations:
+        return False
+    declared = min(declarations)
+    if binder.start_byte < declared:
+        return False
+    # The first binding after the declaration, and nothing later.
+    first = min(
+        (
+            other.start_byte
+            for other, identifier in _bindings_in(caller)
+            if safe_decode_text(identifier) == name
+            and not _annotates(other)
+            and other.start_byte >= declared
+        ),
+        default=None,
     )
+    return first is not None and binder.start_byte == first
 
 
 def _annotates(binder: Node) -> bool:
