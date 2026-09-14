@@ -146,7 +146,8 @@ def _matching_roots(
     return matches
 
 
-def _joined(dotted_dir: str, rest: str) -> str:
+def _dotted_module_path(dotted_dir: str, rest: str) -> str:
+    """The dotted QN for `rest` inside the root at `dotted_dir`."""
     return f"{dotted_dir}{cs.SEPARATOR_DOT}{rest}" if rest else dotted_dir
 
 
@@ -171,8 +172,8 @@ def resolve_via_source_roots(
     matches = _matching_roots(roots.get(top_level, []), module_name)
     for rest, dotted_dir in matches:
         if _exists_on_disk(repo_path, dotted_dir, rest):
-            return _joined(dotted_dir, rest)
+            return _dotted_module_path(dotted_dir, rest)
     if len(matches) == 1:
         rest, dotted_dir = matches[0]
-        return _joined(dotted_dir, rest)
+        return _dotted_module_path(dotted_dir, rest)
     return None
