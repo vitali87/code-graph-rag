@@ -86,6 +86,16 @@ _RECORDED = {
         "  }\n"
         "}\n"
     ),
+    # A generator expression is registered under its key like a function
+    # expression and has no config-callback consumer, so it is owned too.
+    "generator": (
+        "class A {\n"
+        "  m() {\n"
+        "    const h = { x: function* () { const f = target; return f; } };\n"
+        "    return h.x();\n"
+        "  }\n"
+        "}\n"
+    ),
 }
 
 # The control: a genuinely anonymous function gets no node, so its reference

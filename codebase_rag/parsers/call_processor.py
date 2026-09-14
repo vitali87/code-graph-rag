@@ -7527,8 +7527,13 @@ class CallProcessor:
         # columns) is registered under its key too, but the module walk must
         # still descend through it or a component used only in config
         # callbacks reports as dead -- the case this helper was written for,
-        # and the one `cell` in the comment above names.
-        if node.type != cs.TS_FUNCTION_EXPRESSION:
+        # and the one `cell` in the comment above names. A generator
+        # expression has no such consumer and duplicates exactly as a
+        # function expression does, so it is included.
+        if node.type not in (
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
             return True
         recorded = self._recorded_caller(node, module_qn)
         return recorded is None or not recorded.is_named
