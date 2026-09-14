@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
@@ -36,11 +37,7 @@ PROJECT = "iso_fixture"
 FIXTURE: dict[str, str] = {
     "pkg/__init__.py": "",
     "pkg/util.py": "def helper(a):\n    return a + 1\n",
-    # Two sites on one caller/callee pair: per-site edges share their
-    # endpoints and differ only in their properties.
-    "pkg/app.py": (
-        "from pkg.util import helper\n\n\ndef run():\n    helper(0)\n    return helper(1)\n"
-    ),
+    "pkg/app.py": "from pkg.util import helper\n\n\ndef run():\n    return helper(1)\n",
     "main.py": "from pkg.app import run\n\n\ndef main():\n    run()\n",
     "tests/__init__.py": "",
     "tests/test_app.py": (
@@ -325,6 +322,67 @@ def test_an_applied_check_rewrites_the_hash_cache(
     _check(root, store, isolated=False)
 
     assert cache.read_bytes() != content
+
+
+# --- per-site edges -----------------------------------------------------------
+
+
+def test_two_sites_on_one_pair_are_captured_and_restored_separately() -> None:
+    """Parallel edges differ only in their site properties.
+
+    `MERGE_KEY_PROPS_BY_REL` makes `(line, col)` part of a CALLS edge's
+    identity, so one caller/callee pair carries one edge per site (#1522).
+    The guard must key its capture the same way or the second site's row
+    replaces the first and the restore re-emits one edge where there were
+    two.
+
+    Driven against a hand-built store rather than a parsed fixture: the
+    eval double collapses parallel edges into one (issue #1921), so a
+    fixture with two call sites cannot express the case it is meant to
+    test. The rows here are the shape the production query returns.
+    """
+    captured: list[tuple[object, str, object, dict | None]] = []
+
+    class _Store:
+        def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
+            if query == cq.CYPHER_CHECK_SCOPE_NODES:
+                return []
+            return [
+                {
+                    cs.KEY_LABEL: cs.NodeLabel.FUNCTION.value,
+                    cs.KEY_QUALIFIED_NAME: "p.app.run",
+                    cs.KEY_REL: cs.RelationshipType.CALLS.value,
+                    cs.KEY_OUTGOING: True,
+                    cs.KEY_PROPS: {cs.KEY_LINE: 5, cs.KEY_COL: col},
+                    cs.KEY_FAR_LABEL: cs.NodeLabel.FUNCTION.value,
+                    cs.FAR_END_PREFIX + cs.KEY_QUALIFIED_NAME: "p.util.helper",
+                }
+                for col in (11, 23)
+            ]
+
+        def execute_write(self, query: str, params: dict | None = None) -> None:
+            return None
+
+        def ensure_node_batch(self, label: str, properties: dict) -> None:
+            return None
+
+        def ensure_relationship_batch(
+            self,
+            from_spec: tuple,
+            rel_type: str,
+            to_spec: tuple,
+            properties: dict | None = None,
+        ) -> None:
+            captured.append((from_spec, rel_type, to_spec, properties))
+
+        def flush_all(self) -> None:
+            return None
+
+    guard = IsolationGuard(_Store(), "p", Path("/nonexistent"))
+    guard.capture(["app.py"])
+    guard.restore()
+
+    assert [props[cs.KEY_COL] for _s, _r, _t, props in captured if props] == [11, 23]
 
 
 # --- the updater's side of the contract ---------------------------------------

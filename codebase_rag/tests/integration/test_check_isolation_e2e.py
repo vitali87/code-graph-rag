@@ -32,10 +32,11 @@ PROJECT = "isorepo"
 FIXTURE: dict[str, str] = {
     "pkg/__init__.py": "",
     "pkg/util.py": "def helper(a):\n    return a + 1\n",
-    # Two sites on one caller/callee pair: per-site edges share their
-    # endpoints and differ only in their properties.
+    # Two sites on one caller/callee pair: per-site edges (issue #1522)
+    # share their endpoints and differ only in their properties, which the
+    # real store keys on and the unit tier's double cannot (issue #1921).
     "pkg/app.py": (
-        "from pkg.util import helper\n\n\ndef run():\n    helper(0)\n    return helper(1)\n"
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(0) + helper(1)\n"
     ),
     "main.py": "from pkg.app import run\n\n\ndef main():\n    run()\n",
     "tests/__init__.py": "",
