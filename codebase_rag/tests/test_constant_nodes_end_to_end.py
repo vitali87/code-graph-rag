@@ -69,9 +69,21 @@ def _index(tmp_path: Path, tokens: list[str]) -> _StatefulIngestor:
 
 
 def test_the_default_index_emits_no_constant_and_no_edge(tmp_path: Path) -> None:
+    """Opt-in: nothing for Constant unless the group is asked for.
+
+    Both assertions below pass just as well if the index produced NOTHING --
+    a broken fixture, a parser that never loaded -- so an empty result would
+    read as suppression working (a peer session found 11 of its own absence
+    assertions in this shape). The control pins that the index really ran:
+    the same source yields Modules and a Class either way, and those are not
+    gated by any capture group.
+    """
     store = _index(tmp_path, [])
     assert _nodes(store, cs.NodeLabel.CONSTANT.value) == {}
     assert _edges(store, cs.RelationshipType.DEFINES_CONSTANT.value) == set()
+    # The control: absence is only evidence if presence was possible.
+    assert _nodes(store, cs.NodeLabel.MODULE.value), "the index produced nothing"
+    assert _nodes(store, cs.NodeLabel.CLASS.value), "the index produced nothing"
 
 
 def test_the_constant_label_is_owned_by_its_capture_group() -> None:
