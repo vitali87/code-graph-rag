@@ -654,6 +654,17 @@ QUERY_SUMMARY_TIMEOUT = (
 )
 QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
 
+# Rich substitutes ASCII box characters when a stream cannot encode them, but
+# it does not touch CELL TEXT, so a glyph written into a cell reaches the
+# terminal's codec unchanged and a code page that lacks it raises
+# UnicodeEncodeError instead of printing (#1914, the same class as #1910 on a
+# different path). The ASCII pair is what the cell falls back to; it is two
+# characters wide on purpose, so a column of mixed marks stays aligned.
+HEALTH_MARK_PASS = "\u2713"
+HEALTH_MARK_FAIL = "\u2717"
+HEALTH_MARK_PASS_ASCII = "OK"
+HEALTH_MARK_FAIL_ASCII = "NO"
+
 MSG_SEMANTIC_NO_RESULTS = (
     "No semantic matches found for query: '{query}'. This could mean:\n"
     "1. No functions match this description\n"
