@@ -821,10 +821,17 @@ class PythonAstAnalyzerMixin(_AstBase):
         def's, whose targets are that def's locals, not the caller's
         (CodeRabbit).
         """
+        # `nonlocal` is the same exception the value passes make: an
+        # unpacking in a nested body whose target is declared `nonlocal`
+        # rebinds THIS caller's name, so it belongs here (CodeRabbit).
+        nonlocal_names = _nonlocal_names(caller)
         unpackings = [
             assignment
             for assignment in assignments
-            if _scope_of(assignment) == caller.id
+            if (
+                _scope_of(assignment) == caller.id
+                or _rebinds_nonlocal(assignment, nonlocal_names)
+            )
             and (left := assignment.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
             and left.type in cs.PY_UNPACKING_TARGET_TYPES
         ]

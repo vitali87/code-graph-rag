@@ -185,3 +185,55 @@ def test_a_global_rebinding_does_not_type_the_outer_name(tmp_path: Path) -> None
     )
 
     assert "v" not in types
+
+
+def test_a_nonlocal_unpacking_types_the_outer_names(tmp_path: Path) -> None:
+    """The unpacking pass applies the same `nonlocal` exception as the
+    value passes (CodeRabbit, #1922).
+
+    `_process_assignment_unpacking` filters on scope exactly as
+    `_traverse_single_pass` does, so without the exception a nested
+    `nonlocal a, b; a, b = pair()` was admitted by the assignment filter
+    and then dropped by the unpacking filter. The simple and complex
+    passes cannot bind tuple targets, so nothing typed the names at all.
+    """
+    types = _local_types(
+        tmp_path,
+        "def pair() -> tuple[Widget, Banner]:\n"
+        "    return (Widget(), Banner())\n"
+        "\n"
+        "def outer() -> int:\n"
+        "    a = None\n"
+        "    b = None\n"
+        "    def inner() -> None:\n"
+        "        nonlocal a, b\n"
+        "        a, b = pair()\n"
+        "    inner()\n"
+        "    return b.render()\n",
+        "outer",
+    )
+
+    assert types["a"] == "Widget"
+    assert types["b"] == "Banner"
+
+
+def test_an_unrelated_nested_unpacking_still_types_nothing(tmp_path: Path) -> None:
+    """The control: without a `nonlocal`, a nested unpacking binds that
+    body's own locals and must not reach the enclosing map, or the
+    exception above would have been achieved by dropping the filter.
+    """
+    types = _local_types(
+        tmp_path,
+        "def pair() -> tuple[Widget, Banner]:\n"
+        "    return (Widget(), Banner())\n"
+        "\n"
+        "def outer(a, b) -> int:\n"
+        "    def inner() -> None:\n"
+        "        a, b = pair()\n"
+        "    inner()\n"
+        "    return b.render()\n",
+        "outer",
+    )
+
+    assert "a" not in types
+    assert "b" not in types
