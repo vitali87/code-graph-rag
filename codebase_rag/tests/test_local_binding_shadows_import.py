@@ -177,12 +177,12 @@ _GLOBAL_DECLARED = (
     "    return w[0]\n"
 )
 
-_NONLOCAL_DECLARED = (
-    "def outer():\n"
-    "    def use() -> int:\n"
-    "        nonlocal helpers\n"
-    "        return helpers.make_pair()[0]\n"
-    "    return use\n"
+_CLASS_BODY_DECLARATION = (
+    "def use(supplied) -> int:\n"
+    "    class C:\n"
+    "        global helpers\n"
+    "    helpers = supplied\n"
+    "    return helpers.make_pair()[0]\n"
 )
 
 _GLOBAL_IN_A_NESTED_DEF = (
@@ -195,18 +195,28 @@ _GLOBAL_IN_A_NESTED_DEF = (
 )
 
 
-@pytest.mark.parametrize("shape", ["global_declared", "nonlocal_declared"])
-def test_a_declared_non_local_name_is_not_a_shadow(tmp_path: Path, shape: str) -> None:
+def test_a_declared_global_name_is_not_a_shadow(tmp_path: Path) -> None:
     """`global helpers` makes every assignment in the body write the module's
     binding, so the name is not local and the imported module stays
     reachable. Treating the assignment as a shadow dropped an edge `main`
-    resolves (Greptile on #1907)."""
-    body = {
-        "global_declared": _GLOBAL_DECLARED,
-        "nonlocal_declared": _NONLOCAL_DECLARED,
-    }[shape]
-    calls = _calls_from_use(_build(tmp_path, body))
+    resolves (Greptile on #1907).
+
+    Only `global` is testable this way: `nonlocal` requires an enclosing
+    function to bind the name, and that binding is itself a genuine shadow,
+    so no valid `nonlocal` source keeps the import reachable. The keyword is
+    still handled, and the scope rule below is what pins it."""
+    calls = _calls_from_use(_build(tmp_path, _GLOBAL_DECLARED))
     assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+def test_a_declaration_in_a_nested_class_does_not_reach_its_parent(
+    tmp_path: Path,
+) -> None:
+    """`class C: global helpers` binds in the class scope, so the enclosing
+    function's own `helpers = supplied` stays an ordinary local. The walk
+    must skip every nested scope, not only nested defs (greptile-local)."""
+    calls = _calls_from_use(_build(tmp_path, _CLASS_BODY_DECLARATION))
+    assert "proj.helpers.make_pair" not in calls, sorted(calls)
 
 
 def test_a_declaration_in_a_nested_def_does_not_reach_its_parent(

@@ -290,8 +290,11 @@ def _declared_non_local(scope: Node) -> set[str]:
     while stack:
         node = stack.pop()
         for child in node.named_children:
-            if child.type == cs.TS_PY_FUNCTION_DEFINITION:
-                # A nested def's declarations bind in ITS scope, not here.
+            if child.type in _PY_NESTED_SCOPE_TYPES:
+                # A nested scope's declarations bind in ITS scope, not here:
+                # `class C: global helpers` inside a function leaves that
+                # function's own `helpers = ...` an ordinary local. Uses the
+                # same set as _bindings_in, so the two cannot disagree.
                 continue
             if child.type in (
                 cs.TS_PY_GLOBAL_STATEMENT,
