@@ -455,6 +455,18 @@ DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
 )
 
 
+# What `find_code_snippet` may return: a definition, plus any other node that
+# carries a readable span. A Markdown `Section` has start_line/end_line/path
+# and resolved successfully before this lookup was narrowed, so it belongs
+# here -- narrowing it out would have reproduced issue #1925's own symptom on
+# a different label. Kept separate from DEFINITION_NODE_LABELS because a
+# Section is not a definition for the graph-query and gloss lookups, which
+# never matched one.
+SNIPPET_NODE_LABELS: frozenset[NodeLabel] = DEFINITION_NODE_LABELS | {
+    NodeLabel.SECTION
+}
+
+
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
     CaptureGroup.FINDINGS: frozenset(

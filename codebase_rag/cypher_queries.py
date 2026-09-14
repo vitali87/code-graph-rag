@@ -2,6 +2,7 @@ from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
     DEFINITION_NODE_LABELS,
+    SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
@@ -289,6 +290,7 @@ RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
 _GRAPH_DEFINITION_LABELS = "|".join(
     sorted(label.value for label in DEFINITION_NODE_LABELS)
 )
+_SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
 
 # A lookup keyed on qualified_name alone can match more than one node: identity
 # constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
@@ -303,11 +305,11 @@ _DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
 # not found. Matched against the definition allowlist rather than excluding
 # those two labels by name, which fails open as labels are added (issue #1925).
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
-MATCH (n:{_GRAPH_DEFINITION_LABELS}) WHERE n.qualified_name = $qn
+MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
-{_DEFINITION_TIEBREAK}
+ORDER BY labels(n)[0], m.path, n.start_line
 LIMIT 1
 """
 
