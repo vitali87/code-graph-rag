@@ -128,6 +128,32 @@ def test_a_class_level_constant_is_skipped() -> None:
     assert _names("class C:\n    MAX = 1\n\nOUTER = 2\n") == ["OUTER"]
 
 
+def test_no_nesting_shape_leaks_a_constant_into_module_scope() -> None:
+    """Every awkward nesting, not just the two obvious ones.
+
+    A peer session hit a scope walk that skipped nested functions but not
+    nested CLASS bodies, so one shape leaked. This enumerator descends no
+    further than the module node's direct children, so the class of defect
+    cannot arise -- but "cannot arise" is a claim about the code, and this
+    is the check of it. Each case carries `OUTER` as a live control, so a
+    silently empty result fails here rather than reading as a pass.
+    """
+    cases = {
+        "class inside a function": "def f():\n    class C:\n        MAX = 1\n\nOUTER = 2\n",
+        "function inside a class": "class C:\n    def m(self):\n        MAX = 1\n\nOUTER = 2\n",
+        "class inside a class": "class C:\n    class D:\n        MAX = 1\n\nOUTER = 2\n",
+        "async function": "async def f():\n    MAX = 1\n\nOUTER = 2\n",
+        "decorated class": "@dec\nclass C:\n    MAX = 1\n\nOUTER = 2\n",
+        "module-level with": "with ctx():\n    MAX = 1\n\nOUTER = 2\n",
+        "module-level for": "for i in y:\n    MAX = 1\n\nOUTER = 2\n",
+    }
+    for label, source in cases.items():
+        assert _names(source) == ["OUTER"], f"{label} leaked a nested MAX"
+    # The control is only meaningful if the same declaration IS picked up at
+    # module scope: otherwise every case above passes by finding nothing.
+    assert _names("MAX = 1\n") == ["MAX"]
+
+
 def test_a_statement_nested_in_an_if_or_try_is_skipped() -> None:
     """Direct children of the module node only.
 
