@@ -125,12 +125,14 @@ class ModelConfig:
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
         provider_lower = self.provider.lower()
-        provider_env_keys = {
-            cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
-            cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
-            cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
-        }
-        env_key = provider_env_keys.get(provider_lower)
+        # The same table the error message reads. It used to be a hand-kept
+        # subset that omitted OpenAI and Google, so the gate refused a
+        # configuration naming the very variable it was telling the user to
+        # set -- and that the provider's own `_resolve_api_key` would have
+        # accepted (#1913). Reading one table means the gate and the message
+        # cannot disagree about which variable counts.
+        info = API_KEY_INFO.get(provider_lower)
+        env_key = info["env_var"] if info else None
         if (
             provider_lower in LOCAL_PROVIDERS
             or (
