@@ -47,9 +47,23 @@ def test_an_encoding_python_does_not_know_falls_back_rather_than_raising() -> No
     assert status_mark(True, "not-a-real-codec") == cs.HEALTH_MARK_PASS_ASCII
 
 
-def test_a_stream_with_no_encoding_of_its_own_keeps_the_glyphs() -> None:
-    """A capture buffer accepts any `str`, so the ASCII pair would only make
-    captured output harder to read."""
+class _NoEncoding(io.StringIO):
+    encoding = None  # type: ignore[assignment]
+
+
+def test_a_capture_stream_reaches_the_helper_as_utf_8_not_as_none() -> None:
+    """Rich normalises a missing or empty stream encoding to `utf-8`, so
+    `None` is not what a capture buffer produces -- the value the helper sees
+    comes from a real Console, not from the stream."""
+    for stream in (io.StringIO(), _NoEncoding()):
+        console = Console(file=stream)
+        assert console.encoding == "utf-8"
+        assert status_mark(True, console.encoding) == cs.HEALTH_MARK_PASS
+
+
+def test_a_caller_with_no_encoding_to_offer_keeps_the_glyphs() -> None:
+    """The `None` arm is for a caller that is not a Rich console. An unknown
+    stream is not evidence against the glyph, so it keeps it."""
     assert status_mark(True, None) == cs.HEALTH_MARK_PASS
 
 

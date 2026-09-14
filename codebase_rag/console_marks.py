@@ -22,10 +22,13 @@ __all__ = ["status_mark"]
 def _can_encode(text: str, encoding: str | None) -> bool:
     """Whether `encoding` can represent `text`.
 
-    ``None`` is the answer a Rich console gives for a stream with no
-    encoding of its own (a ``StringIO`` capture, a pytest ``capsys``
-    buffer). Those accept any ``str``, so the glyph is safe there and the
-    ASCII pair would only make captured output harder to read.
+    ``None`` is NOT what a Rich console reports for a capture stream --
+    measured, ``Console.encoding`` normalises a missing or empty stream
+    encoding to ``"utf-8"``, so a ``StringIO`` capture and a stream whose
+    ``.encoding`` is ``None`` both arrive here as ``"utf-8"``. The
+    ``None`` arm is the contract for a caller that is not a Rich console
+    and has no encoding to offer; an unknown stream is not evidence
+    against the glyph, so it keeps it.
     """
     if encoding is None:
         return True
