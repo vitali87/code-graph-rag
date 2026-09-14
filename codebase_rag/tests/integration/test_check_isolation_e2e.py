@@ -169,6 +169,28 @@ class TestIsolatedCheck:
         )
         assert rows[0]["s"] == "STALE"
 
+    def test_the_finding_cleanup_spares_another_projects_findings(
+        self, memgraph_ingestor: MemgraphIngestor, repo: Path
+    ) -> None:
+        """Findings key on a repo-relative path, so a sibling project in the
+        shared graph can hold the same one. This runs the real Cypher; the
+        unit tier can only check the double's modelling of it, because that
+        store dispatches on query identity (greptile-local, #1718)."""
+        _index(memgraph_ingestor, repo)
+        memgraph_ingestor.execute_write(
+            "CREATE (n:CodeSmell {qualified_name: $qn, path: $path})",
+            {"qn": "otherproj.pkg.util.3.0.bare_except", "path": "pkg/util.py"},
+        )
+        _edit(repo)
+
+        _check(memgraph_ingestor, repo, isolated=True)
+
+        rows = memgraph_ingestor.fetch_all(
+            "MATCH (n:CodeSmell {qualified_name: $qn}) RETURN count(n) AS c",
+            {"qn": "otherproj.pkg.util.3.0.bare_except"},
+        )
+        assert int(rows[0]["c"]) == 1, "the sibling project's finding was deleted"
+
     def test_the_same_edit_measures_the_same_way_twice(
         self, memgraph_ingestor: MemgraphIngestor, repo: Path
     ) -> None:

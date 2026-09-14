@@ -453,7 +453,15 @@ def test_the_finding_cleanup_spares_another_projects_findings(
     """Findings are keyed on a repo-relative path, and two projects in the
     shared graph can hold the same one. The cleanup must scope by project
     the way the module delete beside it does, or an isolated check on one
-    project deletes the sibling's findings (greptile-local, #1718)."""
+    project deletes the sibling's findings (greptile-local, #1718).
+
+    What this can and cannot prove: the eval store dispatches on query
+    IDENTITY, so editing the Cypher's text makes it match no case and do
+    nothing, which passes this test for the wrong reason. It therefore
+    discriminates against the store's MODELLING of the query (mutating the
+    project test out of `_delete_check_findings` reddens it), while the
+    production Cypher's own scoping is covered by the integration test.
+    """
     root, store = indexed
     mine = (cs.NodeLabel.CODE_SMELL.value, f"{PROJECT}.pkg.util.3.0.bare_except")
     theirs = (cs.NodeLabel.CODE_SMELL.value, "other.pkg.util.3.0.bare_except")
