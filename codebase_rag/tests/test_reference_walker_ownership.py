@@ -50,15 +50,12 @@ def _reference_edges(tmp_path: Path, source: str) -> Counter[tuple[str, str]]:
     return found
 
 
-# The walkers that consult _is_unowned_js_scope and are reachable from a
-# recorded function: assignment and return. In each, the recorded `x` holds
-# the reference, so `A.m` must not also claim it.
+# One shape per walker that consults _is_unowned_js_scope and is reachable
+# from a JS fixture: assignment, return and collection. In each, the recorded
+# `x` holds the reference, so `A.m` must not also claim it.
 #
-# The collection and JSX walkers take the same predicate and so are fixed by
-# the same change, but no fixture here reaches them: a returned array literal
-# emits no REFERENCES edge even directly in a method, and JSX needs a .jsx
-# tree. Rather than assert a shape the code does not produce, they are left
-# uncovered and named here.
+# The JSX walker takes the same predicate and is fixed by the same change, but
+# needs a .jsx tree to reach and is not covered here.
 _RECORDED = {
     "assignment": (
         "class A {\n"
@@ -76,12 +73,22 @@ _RECORDED = {
         "  }\n"
         "}\n"
     ),
+    # Reaches the COLLECTION walker: a shorthand property in a returned
+    # object literal. An explicit pair (`{ go: target }`) and an array
+    # literal emit nothing, so the shorthand is the one shape that gets
+    # there.
+    "collection": (
+        "class A {\n"
+        "  m() {\n"
+        "    const h = { x: function () { return { target }; } };\n"
+        "    return h.x();\n"
+        "  }\n"
+        "}\n"
+    ),
 }
 
 # The control: a genuinely anonymous function gets no node, so its reference
-# MUST bubble to the enclosing method. No `collection` entry: a returned array
-# literal emits no REFERENCES edge even directly in a method, so there is no
-# existing behaviour for a control to protect.
+# MUST bubble to the enclosing method.
 _ANONYMOUS = {
     "assignment": (
         "class A {\n"
@@ -94,6 +101,13 @@ _ANONYMOUS = {
         "class A {\n"
         "  m() {\n"
         "    return [1].map(function () { return target; });\n"
+        "  }\n"
+        "}\n"
+    ),
+    "collection": (
+        "class A {\n"
+        "  m() {\n"
+        "    return [1].map(function () { return { target }; });\n"
         "  }\n"
         "}\n"
     ),
