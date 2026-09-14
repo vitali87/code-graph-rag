@@ -814,9 +814,16 @@ RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
             OR x:{_GLOSS} THEN properties(x) END AS far_props"""
 # Findings hang off a Module without being DEFINED by it, keyed on their
 # file, line, column and rule: the ones at the scope's paths that the
-# capture did not see were written by the check itself.
+# capture did not see were written by the check itself. Project-scoped for
+# the reason CYPHER_DELETE_MODULE is: `$paths` are repo-relative, two
+# projects in the shared graph can hold the same relative path, and a
+# path-only match would take the sibling project's findings with it
+# (greptile-local, #1718). A finding's qualified name starts with its
+# module qn, so the prefix test applies unchanged.
 CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
 WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+  AND (n.qualified_name = $project_name
+       OR n.qualified_name STARTS WITH $project_prefix)
 DETACH DELETE n"""
 
 # Trace write-back (issue #1526): a static edge the runtime observed is

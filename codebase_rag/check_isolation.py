@@ -19,7 +19,17 @@ captured nodes and edges are re-emitted through the batch API the parsers
 write with. Nodes outside the scope that the check can prune or re-grade
 (ExternalModule, Resource, Gloss) come back with their captured properties;
 a property the check ADDED to such a node is not removed, since the batch
-write merges properties rather than replacing them.
+write merges properties rather than replacing them. The same merge limit
+applies to the File, Folder and Package nodes at the scope's paths that
+survive the check: only the ones the capture did not see are deleted, so a
+key added to a survivor would persist (greptile-local, #1718).
+
+A failed re-ingest is why the restore discards the store's pending writes
+before its first delete. The batch API buffers -- `MemgraphIngestor` holds
+nodes and relationships until `flush_all` -- so a run that raises after its
+first write leaves its partial parse queued, and the restore's own flush
+would commit it right after the deletes meant to remove it, writing a
+failed parse into the graph this flag exists to protect.
 """
 
 from __future__ import annotations
@@ -102,6 +112,26 @@ def _edge_key(
     # properties join the key because per-site edges (issue #1522) share
     # their endpoints and differ only there.
     return (source, rel, target, repr(sorted(props.items(), key=lambda kv: kv[0])))
+
+
+def _discard_pending(store: GraphStore) -> None:
+    """Drop writes the store has buffered but not yet flushed.
+
+    The batch API buffers: `MemgraphIngestor` appends to `node_buffer` and
+    `_rel_groups` and writes at `batch_size` or on `flush_all`. After a
+    re-ingest that raised, that buffer holds the partial parse, and the
+    restore's own flush would commit it after the deletes meant to remove
+    it. A store that writes through has nothing pending, so the attributes
+    are optional.
+    """
+    buffer = getattr(store, "node_buffer", None)
+    if buffer is not None:
+        buffer.clear()
+    groups = getattr(store, "_rel_groups", None)
+    if groups is not None:
+        groups.clear()
+    if getattr(store, "_rel_count", None) is not None:
+        store._rel_count = 0  # type: ignore[attr-defined]
 
 
 class IsolationGuard:
@@ -191,12 +221,19 @@ class IsolationGuard:
         if not self._captured:
             return
         store = self._store
+        _discard_pending(store)
         params = self._params()
         store.execute_write(
             cq.CYPHER_CHECK_DELETE_FINDINGS,
             {
                 cs.CYPHER_PARAM_PATHS: list(self._keys),
                 cs.CYPHER_PARAM_KEEP: sorted(self._finding_qns),
+                # The query is project-scoped, so it needs both names: a
+                # missing parameter is a Cypher error on the real store and
+                # matches nothing on a double, which would look like "no
+                # findings to clean up".
+                cs.KEY_PROJECT_NAME: self._project_name,
+                cs.KEY_PROJECT_PREFIX: self._project_name + cs.SEPARATOR_DOT,
             },
         )
         for key in self._keys:

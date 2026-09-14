@@ -28,7 +28,7 @@ from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
-from codebase_rag.structural_check import run_check
+from codebase_rag.structural_check import CheckError, run_check
 from codebase_rag.structural_delta import StructuralDelta
 from evals.cgr_graph import _StatefulIngestor
 
@@ -322,6 +322,202 @@ def test_an_applied_check_rewrites_the_hash_cache(
     _check(root, store, isolated=False)
 
     assert cache.read_bytes() != content
+
+
+# --- what the restore must not commit -----------------------------------------
+
+
+class _BufferingStore:
+    """A store with production's buffering semantics, over the eval double.
+
+    `MemgraphIngestor` queues batch writes and applies them at `flush_all`
+    (or at `batch_size`), while `execute_write` goes straight through. The
+    eval double writes batches through immediately and its `flush_all` is a
+    no-op, so it cannot express a re-ingest that raised with writes still
+    queued -- the case where the restore's own flush would commit a failed
+    parse (issue #1718, greptile-local).
+    """
+
+    def __init__(self, inner: _StatefulIngestor) -> None:
+        self._inner = inner
+        self.node_buffer: list[tuple[str, dict]] = []
+        self._rel_groups: dict[tuple, list[tuple]] = {}
+        self._rel_count = 0
+
+    def fetch_all(self, query: str, params: dict | None = None) -> list:
+        return self._inner.fetch_all(query, params)
+
+    def execute_write(self, query: str, params: dict | None = None) -> None:
+        self._inner.execute_write(query, params)
+
+    def ensure_node_batch(self, label: str, properties: dict) -> None:
+        self.node_buffer.append((label, dict(properties)))
+
+    def ensure_relationship_batch(
+        self,
+        from_spec: tuple,
+        rel_type: str,
+        to_spec: tuple,
+        properties: dict | None = None,
+    ) -> None:
+        self._rel_groups.setdefault((from_spec[0], rel_type, to_spec[0]), []).append(
+            (from_spec, rel_type, to_spec, properties)
+        )
+        self._rel_count += 1
+
+    def flush_all(self) -> None:
+        for label, props in self.node_buffer:
+            self._inner.ensure_node_batch(label, props)
+        self.node_buffer.clear()
+        for rows in self._rel_groups.values():
+            for from_spec, rel_type, to_spec, properties in rows:
+                self._inner.ensure_relationship_batch(
+                    from_spec, rel_type, to_spec, properties
+                )
+        self._rel_groups.clear()
+        self._rel_count = 0
+
+
+def test_a_failed_reingests_queued_writes_are_not_committed_by_the_restore(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The restore flushes, so it must first drop what the failed run queued.
+
+    A re-ingest that raises after its first write leaves parsed entities in
+    the store's buffer. The restore issues its deletes immediately and then
+    flushes its own re-emissions; without dropping the buffer, that flush
+    commits the failed parse straight after the deletes meant to remove it.
+    """
+    root, inner = indexed
+    store = _BufferingStore(inner)
+    guard = IsolationGuard(store, PROJECT, root)
+    before = _state(inner)
+
+    guard.capture(["pkg/util.py"])
+    # What a re-ingest does: delete the subtree, then queue the re-parse.
+    store.execute_write(
+        cs.CYPHER_DELETE_MODULE,
+        {
+            cs.KEY_PATH: "pkg/util.py",
+            cs.KEY_PROJECT_NAME: PROJECT,
+            cs.KEY_PROJECT_PREFIX: PROJECT + ".",
+        },
+    )
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: f"{PROJECT}.pkg.util.assist",
+            cs.KEY_PATH: "pkg/util.py",
+        },
+    )
+    # The re-parse raises here; nothing is flushed.
+
+    guard.restore()
+
+    assert (
+        cs.NodeLabel.FUNCTION.value,
+        f"{PROJECT}.pkg.util.assist",
+    ) not in inner.nodes
+    assert _state(inner) == before
+
+
+def test_the_buffering_double_commits_on_flush(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Known positive for the double: without the restore, the queued write
+    does land on flush. Otherwise the test above would pass against a store
+    that simply drops everything."""
+    root, inner = indexed
+    store = _BufferingStore(inner)
+
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: f"{PROJECT}.pkg.util.assist",
+            cs.KEY_PATH: "pkg/util.py",
+        },
+    )
+    assert (
+        cs.NodeLabel.FUNCTION.value,
+        f"{PROJECT}.pkg.util.assist",
+    ) not in inner.nodes
+
+    store.flush_all()
+
+    assert (cs.NodeLabel.FUNCTION.value, f"{PROJECT}.pkg.util.assist") in inner.nodes
+
+
+def test_the_finding_cleanup_spares_another_projects_findings(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Findings are keyed on a repo-relative path, and two projects in the
+    shared graph can hold the same one. The cleanup must scope by project
+    the way the module delete beside it does, or an isolated check on one
+    project deletes the sibling's findings (greptile-local, #1718)."""
+    root, store = indexed
+    mine = (cs.NodeLabel.CODE_SMELL.value, f"{PROJECT}.pkg.util.3.0.bare_except")
+    theirs = (cs.NodeLabel.CODE_SMELL.value, "other.pkg.util.3.0.bare_except")
+    for label, qn in (mine, theirs):
+        store.ensure_node_batch(
+            label, {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: "pkg/util.py"}
+        )
+    guard = IsolationGuard(store, PROJECT, root)
+
+    guard.capture(["pkg/util.py"])
+    guard.restore()
+
+    assert theirs in store.nodes, "the sibling project's finding was deleted"
+    assert mine not in store.nodes, (
+        "this project's uncaptured finding should have been cleaned up, "
+        "or the test proves nothing about scoping"
+    )
+
+
+# --- refusals -----------------------------------------------------------------
+
+
+def test_an_isolated_check_refuses_a_capture_holding_io_links(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Resource links are rewritten graph-wide by the endpoint pass and sit
+    off the capture's walk, so they cannot be restored. Refuse rather than
+    lose them silently."""
+    root, store = indexed
+    parsers, queries = load_parsers()
+
+    with pytest.raises(CheckError, match="isolated"):
+        run_check(
+            root,
+            "HEAD",
+            PROJECT,
+            store,
+            parsers,
+            queries,
+            isolated=True,
+            capture=resolve_capture(["io"]),
+        )
+
+
+def test_an_isolated_check_runs_without_io_links(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The control: the refusal is about IO links, not about --isolated."""
+    root, store = indexed
+    _edit(root)
+    parsers, queries = load_parsers()
+
+    delta = run_check(
+        root,
+        "HEAD",
+        PROJECT,
+        store,
+        parsers,
+        queries,
+        isolated=True,
+        capture=resolve_capture(["none", "structure", "calls"]),
+    )
+
+    assert delta["dangling_callers"]
 
 
 # --- per-site edges -----------------------------------------------------------

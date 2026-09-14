@@ -1179,6 +1179,10 @@ class _StatefulIngestor:
         paths = set(raw_paths) if isinstance(raw_paths, list) else set()
         raw_keep = params.get(cs.CYPHER_PARAM_KEEP)
         keep = set(raw_keep) if isinstance(raw_keep, list) else set()
+        # Project-scoped, as the real query is: `$paths` are repo-relative
+        # and a sibling project in the shared graph can hold the same one.
+        project = _str(params.get(cs.KEY_PROJECT_NAME))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
         self._detach_delete(
             {
                 (label, uid)
@@ -1186,6 +1190,7 @@ class _StatefulIngestor:
                 if label in _CHECK_FINDING_LABELS
                 and props.get(cs.KEY_PATH) in paths
                 and uid not in keep
+                and (_str(uid) == project or _str(uid).startswith(prefix))
             }
         )
 

@@ -29,6 +29,7 @@ from typing import cast
 from tree_sitter import Parser
 
 from . import constants as cs
+from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state
@@ -219,6 +220,32 @@ class _FileSnapshot:
         os.utime(self._path, ns=self._times)
 
 
+_UNRESTORABLE_RELS = (
+    cs.RelationshipType.RESOLVES_TO,
+    cs.RelationshipType.FLOWS_TO,
+)
+
+
+def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
+    """Refuse an isolated run whose capture holds links it cannot restore.
+
+    The guard restores by walking out from the re-parsed modules, and a
+    `Resource` is not on that walk: it is only ever the far end of an edge.
+    The endpoint pass then deletes every network `RESOLVES_TO` edge in the
+    graph and rebuilds them from the edited tree, and a Resource-to-Resource
+    `FLOWS_TO` chain touches no scoped node at all, so neither can be put
+    back from the capture. Losing them silently is worse than not offering
+    the mode, so this refuses instead (greptile-local, #1718).
+    """
+    enabled = [rel for rel in _UNRESTORABLE_RELS if capture.rel_enabled(rel)]
+    if enabled:
+        raise CheckError(
+            cs.CHECK_ISOLATED_WITH_IO.format(
+                groups=", ".join(rel.value for rel in enabled)
+            )
+        )
+
+
 def _isolated(
     updater: GraphUpdater,
     ingestor: object,
@@ -255,6 +282,7 @@ def run_check(
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
     isolated: bool = False,
+    capture: CaptureSelection | None = None,
 ) -> StructuralDelta:
     """Re-ingest what changed since `base` and return the structural delta.
 
@@ -284,6 +312,7 @@ def run_check(
 
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
+    _refuse_unrestorable_capture(capture or default_capture())
     return _isolated(
         updater,
         ingestor,
