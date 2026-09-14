@@ -291,6 +291,20 @@ def _binding_events(
     ]
 
 
+def _rebound_after(name: str, after: int, caller: Node) -> bool:
+    """Whether `name` is bound again in the caller's own scope past `after`.
+
+    The annotation describes the value bound with it, so a later binding
+    supersedes it: a plain `p = call()` is typed by the value passes that
+    run first and already win, and every other binding form leaves the name
+    holding something the annotation no longer describes (#1919).
+    """
+    return any(
+        identifier.start_byte > after and safe_decode_text(identifier) == name
+        for _binder, identifier in _bindings_in(caller)
+    )
+
+
 def _homogeneous_element(name: str, inner: str) -> str | None:
     """The single element type a container annotation guarantees, else ``None``.
 
@@ -436,7 +450,9 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
-        self._process_assignment_annotation(assignments, local_var_types, module_qn)
+        self._process_assignment_annotation(
+            node, assignments, local_var_types, module_qn
+        )
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
@@ -494,7 +510,11 @@ class PythonAstAnalyzerMixin(_AstBase):
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
     def _process_assignment_annotation(
-        self, assignments: list[Node], local_var_types: dict[str, str], module_qn: str
+        self,
+        caller: Node,
+        assignments: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
     ) -> None:
         """`q: T = ...`, or a bare `q: T`: the annotation types a name the
         value gave no type for (#1900).
@@ -509,14 +529,34 @@ class PythonAstAnalyzerMixin(_AstBase):
         untyped (local review P1); one that resolves to nothing types nothing.
         A `tuple[...]` alone keeps its text: it is what `_unpacked_elements`
         splits position by position, and what a typed parameter stores.
+
+        Two rules keep an annotation from describing the wrong value, both
+        from review (#1919). It must sit in the scope being analysed, the
+        rule the unpacking pass already applies. And a later binding of the
+        same name clears it, the clearing rule an unpacked call obeys:
+        after `p = opaque()` the annotation describes a value the name no
+        longer holds. A bare `q: T` declaration is exempt from the second:
+        it has no value of its own, so the assignment that follows is the
+        value it was declared for.
+
+        The scope rule is narrow on purpose. It keeps THIS pass from
+        recording a nested body's annotation, but the value passes that run
+        before it have the same defect and are not fixed here: a plain
+        `v = Banner()` in a nested def reaches the enclosing map on `main`
+        too, with no annotation involved (issue #1922).
         """
         for assignment in assignments:
             type_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
             left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
             if type_node is None or left is None:
                 continue
+            if _scope_of(assignment) != caller.id:
+                continue
             var_name = self._extract_assignment_variable_name(left)
             if not var_name or var_name in local_var_types:
+                continue
+            has_value = assignment.child_by_field_name(cs.TS_FIELD_RIGHT) is not None
+            if has_value and _rebound_after(var_name, assignment.end_byte, caller):
                 continue
             annotation = safe_decode_text(type_node) or ""
             if annotated := self._type_of_annotated_name(annotation, module_qn):

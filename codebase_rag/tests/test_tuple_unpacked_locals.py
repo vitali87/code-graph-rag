@@ -223,6 +223,28 @@ def _functions(node: Node) -> Iterator[Node]:
         yield from _functions(child)
 
 
+def _walk(node: Node) -> Iterator[Node]:
+    """Every node under `node`, itself included."""
+    yield node
+    for child in node.children:
+        yield from _walk(child)
+
+
+def _engine(tmp_path: Path):
+    """A built analyzer, for calling one pass in isolation."""
+    repo = tmp_path / "engine_only"
+    repo.mkdir()
+    (repo / "__init__.py").touch()
+    (repo / "engine.py").write_text(_TWO_CLASSES)
+    (repo / "app.py").write_text(_TWO)
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_StatefulIngestor(), repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater.run(force=True)
+    return updater.factory.type_inference.python_type_inference
+
+
 def _local_types(
     tmp_path: Path,
     body: str,
@@ -260,6 +282,109 @@ def _local_types(
     engine = updater.factory.type_inference.python_type_inference
     module_qn = ".".join(part for part in ("proj", package, "app") if part)
     return engine.build_local_variable_type_map(node, module_qn)
+
+
+def test_a_reassignment_the_engine_cannot_read_drops_the_annotation(
+    tmp_path: Path,
+) -> None:
+    """`p: tuple[...] = ...` then `p = opaque()`: the annotation describes
+    the FIRST value, and the name has since been rebound to something the
+    engine cannot type. Keeping the tuple text would unpack the old shape
+    into names the new value never produced (Greptile P1, #1919).
+
+    The clearing rule for unpacked calls already says a later binding to
+    anything but a whole-target call clears the earlier one; an annotation
+    is not exempt from it.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use() -> int:\n"
+        "    p: tuple[int, Banner] = opaque(0)\n"
+        "    p = opaque(1)\n"
+        "    _n, b = p\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert "b" not in types
+
+
+def test_an_unreassigned_annotation_still_binds(tmp_path: Path) -> None:
+    """The control for the test above: without the reassignment the same
+    annotation must still type the unpacked name, or the fix above would
+    have been achieved by simply never reading annotations."""
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use() -> int:\n"
+        "    p: tuple[int, Banner] = opaque(0)\n"
+        "    _n, b = p\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert types["b"] == "Banner"
+
+
+def test_the_annotation_pass_reads_only_the_analysed_scope(
+    tmp_path: Path,
+) -> None:
+    """This pass records an annotation only from the body being analysed.
+
+    Asserted on the pass rather than on the final map, because the value
+    passes that run before it leak a nested binding regardless: a plain
+    `v = Banner()` inside a nested def reaches the enclosing map on `main`
+    too, with no annotation anywhere (issue #1922). So the map after a full
+    build cannot tell this pass's scope rule from that defect, and a test
+    asserting `"v" not in types` would fail on `main` as well -- it would
+    be measuring #1922, not this change.
+
+    The unpacking pass filters on `_scope_of(assignment) == caller.id`;
+    this checks the annotation pass does the same, by giving it a nested
+    annotated assignment and an empty map of its own.
+    """
+    source = (
+        "def outer(v) -> int:\n"
+        "    def inner() -> int:\n"
+        "        v: Banner = Banner()\n"
+        "        return v.render()\n"
+        "    return v.render()\n"
+    )
+    parsers, _queries = load_parsers()
+    tree = parsers[cs.SupportedLanguage.PYTHON].parse(source.encode())
+    outer = next(
+        node
+        for node in _functions(tree.root_node)
+        if (node.child_by_field_name("name").text or b"").decode() == "outer"
+    )
+    annotated = [
+        node
+        for node in _walk(outer)
+        if node.type == cs.TS_PY_ASSIGNMENT
+        and node.child_by_field_name(cs.TS_FIELD_TYPE) is not None
+    ]
+    assert annotated, "fixture must contain the nested annotated assignment"
+    engine = _engine(tmp_path)
+    types: dict[str, str] = {}
+
+    engine._process_assignment_annotation(outer, annotated, types, "proj.app")
+
+    assert types == {}
+
+
+def test_an_annotation_in_the_analysed_scope_still_binds(tmp_path: Path) -> None:
+    """The control for the scope filter: an annotation in the function
+    being analysed must keep binding."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n    v: Banner = Banner()\n    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Banner"
 
 
 def test_a_count_mismatch_binds_nothing(tmp_path: Path) -> None:
