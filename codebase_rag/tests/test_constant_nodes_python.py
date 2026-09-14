@@ -92,6 +92,24 @@ def test_an_attribute_target_is_skipped() -> None:
     assert _names("import obj\n\nobj.MAX = 1\nREAL = 2\n") == ["REAL"]
 
 
+def test_a_chained_assignment_records_every_name_with_the_real_value() -> None:
+    """`MAX = MIN = 0` declares two constants, both bound to `0`.
+
+    The grammar nests a second `assignment` as the first one's `right`, so
+    reading `right` whole gave `MAX` the source text `MIN = 0` as its value
+    and dropped `MIN` entirely (found in local review). A malformed literal
+    that reads as a valid one is the failure direction the value cap exists
+    to avoid, so the value must be the innermost right-hand side.
+    """
+    constants = {c.name: c.value for c in _constants("MAX = MIN = 0\n")}
+    assert constants == {"MAX": "0", "MIN": "0"}
+    # Chains are not limited to two, and the filters still apply to every
+    # name in the chain, not just the first.
+    assert _names("A = B = C = 1\n") == ["A", "B", "C"]
+    assert _names("lower = OTHER = 2\n") == ["OTHER"]
+    assert _names("__all__ = OTHER = []\n") == ["OTHER"]
+
+
 def test_an_augmented_assignment_is_skipped() -> None:
     """`X += 1` mutates an existing binding; it does not declare one."""
     assert _names("X = 1\nX += 1\n") == ["X"]

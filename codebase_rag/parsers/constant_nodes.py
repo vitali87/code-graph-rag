@@ -103,9 +103,7 @@ def python_declared_constants(root: Node) -> list[DeclaredConstant]:
         assignment = _module_assignment(statement)
         if assignment is None:
             continue
-        constant = _python_constant(assignment)
-        if constant is not None:
-            out.append(constant)
+        out.extend(_python_constants(assignment))
     return out
 
 
@@ -121,12 +119,47 @@ def _module_assignment(statement: Node) -> Node | None:
     return assignment if assignment.type == cs.TS_PY_ASSIGNMENT else None
 
 
-def _python_constant(assignment: Node) -> DeclaredConstant | None:
-    """One constant from a module-level assignment, or None when it is not one."""
-    left = assignment.child_by_field_name(cs.FIELD_LEFT)
+def _python_constants(assignment: Node) -> list[DeclaredConstant]:
+    """Every constant a module-level assignment declares.
+
+    Usually one. A CHAINED assignment (`MAX = MIN = 0`) declares several: the
+    grammar nests a further `assignment` as the outer one's `right`, so each
+    name binds the SAME innermost value. Walking the chain is what keeps
+    `MAX.value` as `0` rather than the source text `MIN = 0` -- a malformed
+    literal that reads as a valid one, which is the failure direction the
+    value cap exists to avoid -- and what keeps `MIN` from being dropped
+    entirely (local review).
+    """
+    names: list[Node] = []
+    current = assignment
+    while True:
+        left = current.child_by_field_name(cs.FIELD_LEFT)
+        if left is None:
+            return []
+        names.append(left)
+        right = current.child_by_field_name(cs.FIELD_RIGHT)
+        if right is None or right.type != cs.TS_PY_ASSIGNMENT:
+            break
+        current = right
+    # The annotation belongs to the outermost target; a chained assignment
+    # cannot carry one (`A: int = B = 1` is a syntax error), so reading it
+    # from `assignment` is correct for both shapes.
+    value = _value_text(current)
+    out: list[DeclaredConstant] = []
+    for left in names:
+        constant = _python_constant(assignment, left, value)
+        if constant is not None:
+            out.append(constant)
+    return out
+
+
+def _python_constant(
+    assignment: Node, left: Node, value: str | None
+) -> DeclaredConstant | None:
+    """One constant from one target of a module-level assignment."""
     # A tuple/list target or an `obj.X` attribute target is not a bare
     # identifier, so both fall out here.
-    if left is None or left.type != cs.TS_PY_IDENTIFIER:
+    if left.type != cs.TS_PY_IDENTIFIER:
         return None
     name = safe_decode_text(left)
     if not name or _DUNDER.match(name):
@@ -140,7 +173,7 @@ def _python_constant(assignment: Node) -> DeclaredConstant | None:
         start_line=left.start_point[0] + 1,
         start_col=left.start_point[1],
         type_name=_type_name(annotation),
-        value=_value_text(assignment),
+        value=value,
         node=assignment,
     )
 

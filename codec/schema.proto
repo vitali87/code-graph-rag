@@ -406,7 +406,10 @@ message GraphCodeIndex {
 
     string name = 2;
     string path = 3;
-    string absolute_path = 4;
+    // 4 was absolute_path. Deliberately not on the wire, like Field and
+    // every other definition label: the canonical export must not differ
+    // per checkout.
+    reserved 4;
     int32 start_line = 5;
     int32 start_col = 6;
     // The annotation as written, "" when there is none.

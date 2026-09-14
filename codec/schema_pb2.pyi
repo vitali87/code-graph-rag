@@ -389,11 +389,10 @@ class Field(_message.Message):
     def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., modifiers: _Optional[_Iterable[str]] = ..., is_static: bool = ..., docstring: _Optional[str] = ...) -> None: ...
 
 class Constant(_message.Message):
-    __slots__ = ("qualified_name", "name", "path", "absolute_path", "start_line", "start_col", "type_name", "value")
+    __slots__ = ("qualified_name", "name", "path", "start_line", "start_col", "type_name", "value")
     QUALIFIED_NAME_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
-    ABSOLUTE_PATH_FIELD_NUMBER: _ClassVar[int]
     START_LINE_FIELD_NUMBER: _ClassVar[int]
     START_COL_FIELD_NUMBER: _ClassVar[int]
     TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -401,12 +400,11 @@ class Constant(_message.Message):
     qualified_name: str
     name: str
     path: str
-    absolute_path: str
     start_line: int
     start_col: int
     type_name: str
     value: str
-    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., absolute_path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    def __init__(self, qualified_name: _Optional[str] = ..., name: _Optional[str] = ..., path: _Optional[str] = ..., start_line: _Optional[int] = ..., start_col: _Optional[int] = ..., type_name: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
 
 class Resource(_message.Message):
     __slots__ = ("qualified_name", "name", "kind")

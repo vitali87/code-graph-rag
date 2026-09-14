@@ -66,6 +66,9 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
     "Field": frozenset({"absolute_path"}),
+    # Same reason as Field: a Constant records `absolute_path` on the node
+    # but must not export it, or the canonical format differs per checkout.
+    "Constant": frozenset({"absolute_path"}),
     # `positional_params` (issue #227) is the one entry here added with a
     # known cost rather than as a record of the past: a graph round-tripped
     # through protobuf loses it, so arity diagnosis on an IMPORTED graph
