@@ -1990,3 +1990,61 @@ class TestReviewAnchor:
         body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`"
 
         assert stale_review_reason([(body, "greptile-apps[bot]")], "") is None
+
+
+class TestStaleReviewReachesTheGate:
+    """The anchor check must be WIRED IN, not merely defined.
+
+    Every other test in `TestReviewAnchor` calls `stale_review_reason`
+    directly, so all of them stay green if the gate never calls it --
+    which is precisely the bug of #1936, where the capability to detect a
+    stale review is useless unless `check()` consults it. Deleting the
+    call from the gate left 132 tests passing, so this one exists to fail
+    when that happens.
+    """
+
+    HEAD = "7928c5ba8efe8af0f8d3f6b943171eb016deee72"
+    OLDER = "9aeb04f825538b27f0ff25fd31b56bbf08679000"
+
+    def _view(self, anchor: str) -> str:
+        return json.dumps(
+            {
+                "headRefOid": self.HEAD,
+                "baseRefName": "main",
+                "statusCheckRollup": [],
+                "comments": [
+                    {
+                        "body": f"Confidence Score: 5/5\nLast reviewed commit: `{anchor}`",
+                        "author": {"login": "greptile-apps[bot]"},
+                    }
+                ],
+                "reviews": [],
+            }
+        )
+
+    def _reasons(self, monkeypatch: pytest.MonkeyPatch, anchor: str) -> list[str]:
+        def fake(*args: str) -> str:
+            # Only the PR view matters here; every other lookup returns
+            # empty, which makes the other gates complain harmlessly.
+            return self._view(anchor) if args[:2] == ("pr", "view") else ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+        reasons, _caveats = check_pr_gated.check("1")
+        return reasons
+
+    def test_the_gate_reports_a_stale_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reasons = self._reasons(monkeypatch, self.OLDER)
+
+        assert any("anchors to" in r for r in reasons), reasons
+
+    def test_the_gate_is_silent_about_a_current_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control: the gate must not object to a review of the head,
+        or the test above would pass against a gate that always complains.
+        """
+        reasons = self._reasons(monkeypatch, self.HEAD)
+
+        assert not any("anchors to" in r for r in reasons), reasons
