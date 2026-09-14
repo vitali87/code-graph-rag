@@ -7522,14 +7522,22 @@ class CallProcessor:
         # this the enclosing scope emitted a second copy of every REFERENCES
         # edge (issue #1932).
         #
-        # Deliberately NOT extended to arrows. An arrow that is an object
-        # value in a config array (`{ cell: ({row}) => <CopyId/> }`, TanStack
-        # columns) is registered under its key too, but the module walk must
-        # still descend through it or a component used only in config
-        # callbacks reports as dead -- the case this helper was written for,
-        # and the one `cell` in the comment above names. A generator
-        # expression has no such consumer and duplicates exactly as a
-        # function expression does, so it is included.
+        # Deliberately NOT extended to arrows, and the reason is narrower
+        # than it looks. An arrow that is an object value in a config array
+        # (`{ cell: ({row}) => <CopyId/> }`, TanStack columns) is registered
+        # under its key too, so owning it would MOVE the edge to `cols.cell`
+        # rather than drop it -- the component stays reachable either way.
+        # What it would break is the edge's SOURCE, which
+        # test_jsx_component_in_config_callback_is_referenced asserts is the
+        # module. Changing that is a behaviour change for consumers, so
+        # arrows keep bubbling here.
+        #
+        # A generator expression has no such consumer and duplicates exactly
+        # as a function expression does, so it is included.
+        #
+        # All three types are identical on both underlying signals
+        # (_attributable_func_nodes says unattributable, the recorded name
+        # says is_named), so this split is an enumeration, not a property.
         if node.type not in (
             cs.TS_FUNCTION_EXPRESSION,
             cs.TS_GENERATOR_FUNCTION,

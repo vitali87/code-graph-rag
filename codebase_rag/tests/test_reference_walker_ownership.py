@@ -159,9 +159,11 @@ _ARROW_IN_A_CONFIG_OBJECT = (
 
 def test_an_arrow_in_a_config_object_still_bubbles(tmp_path: Path) -> None:
     """An arrow that is an object value is registered under its key too, so
-    `is_named` alone would silence it -- but a component rendered only in
-    such a callback (`{ cell: ({row}) => <CopyId/> }`) would then report as
-    dead. The ownership clause is therefore limited to function expressions;
-    this is the control that keeps it limited (greptile-local on #1932)."""
+    `is_named` alone would claim it. Owning it moves the edge to the arrow's
+    own node rather than dropping it -- the target stays reachable -- but
+    `test_jsx_component_in_config_callback_is_referenced` asserts the module
+    is the edge's SOURCE, and consumers read it that way. This control keeps
+    the clause off arrows (greptile-local on #1932, which measured that the
+    'reports as dead' reason first given here was false)."""
     edges = _reference_edges(tmp_path, _ARROW_IN_A_CONFIG_OBJECT)
     assert edges[("repo.app.A.m", "repo.app.target")] >= 1, edges
