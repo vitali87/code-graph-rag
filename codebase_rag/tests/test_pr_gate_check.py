@@ -1983,6 +1983,33 @@ class TestReviewAnchor:
 
         assert review_anchor(body) == self.HEAD
 
+    def test_a_bare_prose_anchor_is_read(self) -> None:
+        """The loosest pattern is the only reader for a body that names the
+        commit without a URL or a "last reviewed commit" label. Deleting it
+        left the suite green, so nothing pinned its existence
+        (greptile-local)."""
+        body = f"Confidence Score: 5/5\nI reviewed {self.HEAD} and found nothing."
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_an_uppercase_anchor_matches_a_lowercase_head(self) -> None:
+        """Both lowercasing rules exist to prevent a FALSE stale report,
+        which blocks a mergeable PR. The label pattern carries re.I, so an
+        uppercase sha reaches the group in uppercase (greptile-local)."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD.upper()}`"
+
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD) is None
+
+    def test_a_lowercase_anchor_matches_an_uppercase_head(self) -> None:
+        """The other direction: `headRefOid` itself may arrive uppercase."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+
+        assert (
+            stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD.upper())
+            is None
+        )
+
     def test_an_unknown_head_does_not_manufacture_a_reason(self) -> None:
         """If the head could not be read, staleness is unknown. Other
         reasons already cover an unreadable PR; inventing one here would
