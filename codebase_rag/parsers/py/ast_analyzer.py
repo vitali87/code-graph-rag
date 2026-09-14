@@ -356,6 +356,22 @@ else:
 
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
+
+    def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
+        """The import-map names the caller's body binds as locals.
+
+        `helpers = supplied` (or `def use(helpers)`, `for helpers in xs`, a
+        `case [helpers]` capture, an enclosing def's local, ...) makes
+        `helpers` local for the WHOLE body, so `helpers.make_pair()` can
+        never reach the module the import map holds under that name
+        (issue #1907). A body-level import the map reflects is a re-import,
+        not a shadow, and stays out of the set.
+        """
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return frozenset()
+        return _locally_bound_names(caller, import_map) & frozenset(import_map)
+
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol

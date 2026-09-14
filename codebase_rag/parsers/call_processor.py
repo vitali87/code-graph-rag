@@ -3150,6 +3150,16 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        if language == cs.SupportedLanguage.PYTHON:
+            # Names this caller binds that also name an import: the resolver
+            # refuses to read the import map for them (issue #1907).
+            shadowed = self._resolver.type_inference.python_type_inference.shadowed_import_names(
+                caller_node, module_qn
+            )
+            if shadowed:
+                self._resolver.python_shadowed_imports[caller_qn] = shadowed
+            else:
+                self._resolver.python_shadowed_imports.pop(caller_qn, None)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
