@@ -103,6 +103,16 @@ def test_a_chained_assignment_records_every_name_with_the_real_value() -> None:
     """
     constants = {c.name: c.value for c in _constants("MAX = MIN = 0\n")}
     assert constants == {"MAX": "0", "MIN": "0"}
+    # Each name keeps its OWN position, not the statement's. Asserted here
+    # because every other position test uses a single target, where the two
+    # coincide -- so taking the statement's position passes the whole suite
+    # while every chained name reports column 0 (local review).
+    assert [
+        (c.name, c.start_line, c.start_col) for c in _constants("MAX = MIN = 0\n")
+    ] == [
+        ("MAX", 1, 0),
+        ("MIN", 1, 6),
+    ]
     # Chains are not limited to two, and the filters still apply to every
     # name in the chain, not just the first.
     assert _names("A = B = C = 1\n") == ["A", "B", "C"]
