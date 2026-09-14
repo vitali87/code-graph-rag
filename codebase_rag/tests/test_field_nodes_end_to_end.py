@@ -361,7 +361,8 @@ def test_a_field_and_a_method_may_share_a_qualified_name(tmp_path: Path) -> None
         if str(props.get(cs.KEY_QUALIFIED_NAME, "")).endswith(".Acc.total")
     }
     assert labels == {cs.NodeLabel.FIELD.value, cs.NodeLabel.METHOD.value}, labels
-    from codebase_rag.cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
-
-    assert "NOT n:Field" in CYPHER_FIND_BY_QUALIFIED_NAME
-    assert "NOT n:Parameter" in CYPHER_FIND_BY_QUALIFIED_NAME
+    # The lookup matches the definition allowlist, so neither label can be
+    # returned; asserting the old `NOT n:Field` exclusion would pin a
+    # denylist that fails open as labels are added (issue #1925).
+    assert cs.NodeLabel.FIELD not in cs.DEFINITION_NODE_LABELS
+    assert cs.NodeLabel.PARAMETER not in cs.DEFINITION_NODE_LABELS

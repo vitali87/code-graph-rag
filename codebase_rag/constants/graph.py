@@ -433,6 +433,28 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
 # Node labels a group exclusively owns; the label is captured only while the
 # owning group has an enabled relationship. Labels owned by no group are always
 # captured.
+# The labels a "definition" lookup may return: things with a body a reader can
+# be shown, each carrying start_line/end_line. Sourced here rather than spelled
+# out per query so a new label joins every lookup at once.
+#
+# Deliberately an ALLOWLIST. The predecessor excluded Field and Parameter by
+# name, which fails OPEN: the next property-bearing label added would silently
+# start winning definition lookups again, returning a row with no end_line and
+# making an indexed definition read as not found (issue #1925).
+DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.FUNCTION,
+        NodeLabel.METHOD,
+        NodeLabel.CLASS,
+        NodeLabel.INTERFACE,
+        NodeLabel.ENUM,
+        NodeLabel.TYPE,
+        NodeLabel.UNION,
+        NodeLabel.MODULE,
+    }
+)
+
+
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
     CaptureGroup.FINDINGS: frozenset(

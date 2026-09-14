@@ -1,6 +1,7 @@
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    DEFINITION_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
@@ -282,15 +283,31 @@ RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
        n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
+# One source for every definition lookup (issue #1925): see
+# DEFINITION_NODE_LABELS. Sorted so the generated Cypher is stable across runs
+# rather than varying with frozenset iteration order.
+_GRAPH_DEFINITION_LABELS = "|".join(
+    sorted(label.value for label in DEFINITION_NODE_LABELS)
+)
+
+# A lookup keyed on qualified_name alone can match more than one node: identity
+# constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
+# LIMIT 1 without an ORDER BY then picks by storage order. Ordering by label and
+# path makes the pick total and stable across a re-index, since qualified_name
+# ties by definition in exactly the ambiguous case (issue #1925).
+_DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
+
 # Fields and Parameters share the `<owner>.<name>` key space with Methods (a
-# Python class may have a field and a method both called `total`), and this
-# lookup is label-less with LIMIT 1, so without the exclusion a Field row --
-# which has no `end` -- could win a definition lookup (local review of #1805).
-CYPHER_FIND_BY_QUALIFIED_NAME = """
-MATCH (n) WHERE n.qualified_name = $qn AND NOT n:Field AND NOT n:Parameter
+# Python class may have a field and a method both called `total`), and a Field
+# row carries no `end`, so one winning here made an indexed definition read as
+# not found. Matched against the definition allowlist rather than excluding
+# those two labels by name, which fails open as labels are added (issue #1925).
+CYPHER_FIND_BY_QUALIFIED_NAME = f"""
+MATCH (n:{_GRAPH_DEFINITION_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
+{_DEFINITION_TIEBREAK}
 LIMIT 1
 """
 
@@ -472,18 +489,6 @@ def build_create_relationship_query(
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
-_GRAPH_DEFINITION_LABELS = "|".join(
-    (
-        NodeLabel.FUNCTION.value,
-        NodeLabel.METHOD.value,
-        NodeLabel.CLASS.value,
-        NodeLabel.INTERFACE.value,
-        NodeLabel.ENUM.value,
-        NodeLabel.TYPE.value,
-        NodeLabel.UNION.value,
-        NodeLabel.MODULE.value,
-    )
-)
 CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
@@ -499,6 +504,7 @@ WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
+{_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
 # edge are ONE statement, so a write is all or nothing: the subject and every
@@ -525,6 +531,7 @@ _MENTIONS = RelationshipType.MENTIONS.value
 CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.anchor_hash AS target_hash
+{_DEFINITION_TIEBREAK}
 LIMIT 1"""
 CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
