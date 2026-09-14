@@ -322,7 +322,7 @@ if TYPE_CHECKING:
         import_processor: ImportProcessor
 
         def build_local_variable_type_map(
-            self, caller_node: Node, module_qn: str
+            self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
         def _extract_full_method_call(self, node: Node) -> str | None: ...
@@ -1033,7 +1033,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             return qn_parts[-2] if len(qn_parts) >= 2 else None
 
         if method_node := self._find_callable_ast_node(method_qn):
-            local_vars = self.build_local_variable_type_map(method_node, module_qn)
+            # The enclosing class, when there is one, so `w = self.parse();
+            # return w` types the return the same way the call pass types
+            # the body (issue #1901). The seed is inert for a free function.
+            owner = method_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            class_context = (
+                owner if self.function_registry.get(owner) == NodeType.CLASS else None
+            )
+            local_vars = self.build_local_variable_type_map(
+                method_node, module_qn, class_context
+            )
             if identifier in local_vars:
                 logger.debug(
                     lg.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]
