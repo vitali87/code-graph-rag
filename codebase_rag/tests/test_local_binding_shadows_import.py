@@ -141,6 +141,43 @@ def test_a_body_level_reimport_is_not_a_shadow(tmp_path: Path) -> None:
     assert "proj.helpers.make_pair" in calls, sorted(calls)
 
 
+_OPTIONAL_IMPORT = (
+    "def use() -> int:\n"
+    "    try:\n"
+    "        from . import helpers\n"
+    "    except ImportError:\n"
+    "        helpers = None\n"
+    "    return helpers.make_pair()[0]\n"
+)
+
+_HANDLER_GUARDS_ANOTHER_IMPORT = (
+    "def use() -> int:\n"
+    "    try:\n"
+    "        from . import engine\n"
+    "    except ImportError:\n"
+    "        helpers = None\n"
+    "    return helpers.make_pair()[0]\n"
+)
+
+
+def test_an_optional_import_fallback_is_not_a_shadow(tmp_path: Path) -> None:
+    """`except ImportError: helpers = None` guarding `from . import helpers`
+    binds the name, but on the path where it resolves to anything reachable
+    the try body's import bound it to the module. Unioning both branches
+    dropped an edge `main` kept."""
+    calls = _calls_from_use(_build(tmp_path, _OPTIONAL_IMPORT))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+def test_a_handler_guarding_another_import_still_shadows(tmp_path: Path) -> None:
+    """The discriminating case: the exemption is for a handler guarding an
+    import of THIS name. Guarding some other import leaves `helpers = None`
+    an ordinary shadow, so a green above cannot come from exempting every
+    except-clause binding."""
+    calls = _calls_from_use(_build(tmp_path, _HANDLER_GUARDS_ANOTHER_IMPORT))
+    assert "proj.helpers.make_pair" not in calls, sorted(calls)
+
+
 _SHADOWED_SIBLING = (
     "def shadowed(supplied) -> int:\n"
     "    helpers = supplied\n"

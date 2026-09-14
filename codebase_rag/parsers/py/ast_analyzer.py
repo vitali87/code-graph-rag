@@ -242,6 +242,40 @@ def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
     return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
 
 
+def _guards_an_optional_import(
+    binder: Node, name: str, import_map: dict[str, str]
+) -> bool:
+    """Whether `binder` is the fallback of an optional-import idiom:
+
+        try:
+            from . import helpers
+        except ImportError:
+            helpers = None
+
+    The handler's binding is real, but on the path where the name resolves
+    to anything the graph can reach, the `try` body's import bound it. The
+    union over both branches would otherwise put the name back into the
+    shadow set and drop a call edge the module genuinely has (issue #1907
+    review). Only a re-import the map already reflects counts, so a handler
+    guarding an import of something else still shadows.
+    """
+    node: Node | None = binder
+    while node is not None and node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        if node.type == cs.TS_PY_EXCEPT_CLAUSE:
+            try_statement = node.parent
+            if try_statement is None:
+                return False
+            body = try_statement.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                return False
+            return any(
+                _reimports(statement, name, import_map)
+                for statement in body.named_children
+            )
+        node = node.parent
+    return False
+
+
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
@@ -261,6 +295,7 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
                 for binder, identifier in _bindings_in(scope)
                 if (name := safe_decode_text(identifier))
                 and not _reimports(binder, name, import_map)
+                and not _guards_an_optional_import(binder, name, import_map)
             )
         scope = scope.parent
     return frozenset(names)
