@@ -438,9 +438,14 @@ def is_real_review(body: str, author: str) -> bool:
 # sha after "last reviewed commit", or a commit URL. Both appear in the
 # wild, and `CLAUDE.md`'s own extraction snippet greps for the URL form.
 _ANCHOR_PATTERNS = (
-    re.compile(r"commit/([0-9a-f]{40})"),
+    # Most specific first, and the order is load-bearing. A body may carry
+    # BOTH an explicit label and a commit URL, and a bot that links the
+    # head's diff while stating an older reviewed commit would otherwise
+    # read as fresh -- the very bug this check exists to catch, restored
+    # through pattern ordering alone (CodeRabbit, #1936).
     re.compile(r"last reviewed commit[^0-9a-f]{0,20}([0-9a-f]{40})", re.I),
     re.compile(r"reviewed[^.\n]{0,40}?\b([0-9a-f]{40})\b", re.I),
+    re.compile(r"commit/([0-9a-f]{40})"),
 )
 
 

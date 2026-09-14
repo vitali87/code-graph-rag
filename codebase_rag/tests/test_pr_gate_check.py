@@ -2010,6 +2010,35 @@ class TestReviewAnchor:
             is None
         )
 
+    def test_an_explicit_label_outranks_a_commit_url(self) -> None:
+        """A body carrying both forms must be read by the explicit one.
+
+        A bot that links the head's diff while stating an older reviewed
+        commit would otherwise read as fresh, which restores the exact bug
+        this check exists to catch, through pattern ordering alone
+        (CodeRabbit, #1936).
+        """
+        body = (
+            f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`\n"
+            f"[diff](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.OLDER
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+
+    def test_a_url_only_body_still_reads_the_url(self) -> None:
+        """The control: reordering must not stop the URL form working when
+        it is the only anchor present, which is how Greptile writes it."""
+        body = (
+            f"Confidence Score: 5/5\n[diff](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
     def test_an_unknown_head_does_not_manufacture_a_reason(self) -> None:
         """If the head could not be read, staleness is unknown. Other
         reasons already cover an unreadable PR; inventing one here would
