@@ -132,6 +132,68 @@ class TestLatestNews:
             "- **A**: line one\n  wrapped line two."
         )
 
+    def test_only_the_first_marker_counts(self, tmp_path: Path) -> None:
+        # NEWS.md accumulates a marker per release; only the newest block is
+        # the latest release, so a second marker lower down changes nothing.
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "- **A**: newest.\n"
+            "<!-- latest-release-end -->\n"
+            "- **B**: older.\n"
+            "<!-- latest-release-end -->\n"
+            "- **C**: oldest.\n",
+            encoding="utf-8",
+        )
+        assert format_latest_news(news, limit=3) == "- **A**: newest."
+
+    def test_a_blank_line_before_the_marker_still_closes_the_entry(
+        self, tmp_path: Path
+    ) -> None:
+        # The blank line closes the bullet first, so the marker arrives with
+        # nothing open and must still record the count.
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "- **A**: x\n  cont.\n\n<!-- latest-release-end -->\n- **B**: older.\n",
+            encoding="utf-8",
+        )
+        assert format_latest_news(news, limit=3) == "- **A**: x\n  cont."
+
+    def test_an_empty_file_renders_nothing(self, tmp_path: Path) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text("", encoding="utf-8")
+        assert format_latest_news(news, limit=3) == ""
+
+    def test_a_file_with_no_bullets_renders_nothing(self, tmp_path: Path) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text("# News\n\nJust prose, no entries.\n", encoding="utf-8")
+        assert format_latest_news(news, limit=3) == ""
+
+    def test_an_indented_marker_is_recognised(self, tmp_path: Path) -> None:
+        # The marker is matched on the STRIPPED line, so indentation does not
+        # turn it into continuation text of the bullet above.
+        news = tmp_path / "NEWS.md"
+        news.write_text(
+            "- **A**: x.\n  <!-- latest-release-end -->\n- **B**: older.\n",
+            encoding="utf-8",
+        )
+        assert format_latest_news(news, limit=3) == "- **A**: x."
+
+    def test_a_zero_limit_renders_nothing_without_a_marker(
+        self, tmp_path: Path
+    ) -> None:
+        # `count = marker_count if marker_count else limit` is falsy-tested,
+        # so limit=0 yields no entries rather than every entry.
+        news = tmp_path / "NEWS.md"
+        news.write_text("- **A**: x.\n- **B**: y.\n", encoding="utf-8")
+        assert format_latest_news(news, limit=0) == ""
+
+    def test_a_blank_line_between_bullets_does_not_stop_collection(
+        self, tmp_path: Path
+    ) -> None:
+        news = tmp_path / "NEWS.md"
+        news.write_text("- **A**: x.\n\n- **B**: y.\n", encoding="utf-8")
+        assert format_latest_news(news, limit=5) == "- **A**: x.\n- **B**: y."
+
     def test_marker_without_entries_above_falls_back_to_limit(
         self, tmp_path: Path
     ) -> None:
