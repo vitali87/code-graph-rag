@@ -864,12 +864,21 @@ class PythonAstAnalyzerMixin(_AstBase):
             elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
         if len(elements) != len(targets):
             return  # a count mismatch, or no tuple annotation at all
+        # An assignment admitted only because a target is `nonlocal` binds
+        # ONLY the declared names. Its siblings are locals of the nested
+        # body: `nonlocal a` then `a, b = pair()` rebinds the enclosing
+        # `a`, while `b` belongs to the inner scope and must not reach this
+        # map (Greptile, #1922).
+        nested = _scope_of(assignment) != caller.id
+        declared = _nonlocal_names(caller) if nested else frozenset()
         for target, (element, _homogeneous) in zip(targets, elements, strict=True):
             # A nested pattern or a starred target binds no one type.
             name = (
                 safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
             )
-            if name and name not in local_var_types:
+            if not name or (nested and name not in declared):
+                continue
+            if name not in local_var_types:
                 local_var_types[name] = element
 
     def _unpacked_elements(

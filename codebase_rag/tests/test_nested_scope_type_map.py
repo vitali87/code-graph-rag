@@ -237,3 +237,34 @@ def test_an_unrelated_nested_unpacking_still_types_nothing(tmp_path: Path) -> No
 
     assert "a" not in types
     assert "b" not in types
+
+
+def test_a_mixed_nonlocal_unpacking_binds_only_the_declared_name(
+    tmp_path: Path,
+) -> None:
+    """`nonlocal a` then `a, b = pair()`: `a` is the enclosing function's,
+    `b` is a local of the nested body (Greptile, #1922).
+
+    Admitting the assignment for `a`'s sake and then binding every target
+    leaked `b` outward. `origin/main` binds neither, so this was a
+    regression introduced by the nonlocal exception, not a pre-existing
+    gap.
+    """
+    types = _local_types(
+        tmp_path,
+        "def pair() -> tuple[Widget, Banner]:\n"
+        "    return (Widget(), Banner())\n"
+        "\n"
+        "def outer() -> int:\n"
+        "    a = None\n"
+        "    def inner() -> None:\n"
+        "        nonlocal a\n"
+        "        a, b = pair()\n"
+        "        return b\n"
+        "    inner()\n"
+        "    return a.render()\n",
+        "outer",
+    )
+
+    assert types["a"] == "Widget"
+    assert "b" not in types
