@@ -10,7 +10,8 @@ Each defect test pairs with a control: the same body with the shadowing
 binding removed, which MUST keep the edge, so a green means the binding was
 honoured rather than the harness seeing nothing. A body-level
 `from . import helpers` re-binds the name to the same module and keeps the
-edge (the one binding form that is not a shadow).
+edge. Three binding forms are not shadows: that re-import, an optional-import
+fallback guarding one, and a name declared `global` or `nonlocal`.
 """
 
 from __future__ import annotations
@@ -210,9 +211,7 @@ def test_a_declared_global_name_is_not_a_shadow(tmp_path: Path) -> None:
     """`global helpers` makes every assignment in the body write the module's
     binding, so the name is not local and the imported module stays
     reachable. Treating the assignment as a shadow dropped an edge `main`
-    resolves (Greptile on #1907).
-
-    """
+    resolves (Greptile on #1907)."""
     calls = _calls_from_use(_build(tmp_path, _GLOBAL_DECLARED))
     assert "proj.helpers.make_pair" in calls, sorted(calls)
 
