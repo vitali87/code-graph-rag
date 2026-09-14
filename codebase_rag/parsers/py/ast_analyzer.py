@@ -242,6 +242,74 @@ def _reimports(binder: Node, name: str, import_map: dict[str, str]) -> bool:
     return bool(path and qn) and (qn == path or qn.endswith(cs.SEPARATOR_DOT + path))
 
 
+def _guards_an_optional_import(
+    binder: Node, name: str, import_map: dict[str, str]
+) -> bool:
+    """Whether `binder` is the fallback of an optional-import idiom:
+
+        try:
+            from . import helpers
+        except ImportError:
+            helpers = None
+
+    The handler's binding is real, but on the path where the name resolves
+    to anything the graph can reach, the `try` body's import bound it. The
+    union over both branches would otherwise put the name back into the
+    shadow set and drop a call edge the module genuinely has (issue #1907
+    review). Only a re-import the map already reflects counts, so a handler
+    guarding an import of something else still shadows.
+    """
+    node: Node | None = binder
+    while node is not None and node.type != cs.TS_PY_FUNCTION_DEFINITION:
+        if node.type == cs.TS_PY_EXCEPT_CLAUSE:
+            try_statement = node.parent
+            if try_statement is None:
+                return False
+            body = try_statement.child_by_field_name(cs.FIELD_BODY)
+            if body is None:
+                return False
+            return any(
+                _reimports(statement, name, import_map)
+                for statement in body.named_children
+            )
+        node = node.parent
+    return False
+
+
+def _declared_non_local(scope: Node) -> set[str]:
+    """Names a `global` or `nonlocal` statement declares in this scope.
+
+    Such a name is NOT local however often the body assigns it: `global
+    helpers` makes every `helpers = ...` write the module's binding, so an
+    imported module of that name stays reachable and its calls still
+    resolve. Treating the assignment as a shadow dropped a real edge
+    (Greptile on #1907).
+    """
+    declared: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        for child in node.named_children:
+            if child.type in _PY_NESTED_SCOPE_TYPES:
+                # A nested scope's declarations bind in ITS scope, not here:
+                # `class C: global helpers` inside a function leaves that
+                # function's own `helpers = ...` an ordinary local. Uses the
+                # same set as _bindings_in, so the two cannot disagree.
+                continue
+            if child.type in (
+                cs.TS_PY_GLOBAL_STATEMENT,
+                cs.TS_PY_NONLOCAL_STATEMENT,
+            ):
+                declared.update(
+                    name
+                    for identifier in child.named_children
+                    if (name := safe_decode_text(identifier))
+                )
+            else:
+                stack.append(child)
+    return declared
+
+
 def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[str]:
     """Every name the caller's body reads as a local rather than as the
     module's: its parameters, whatever its own statements bind, and whatever
@@ -256,11 +324,14 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     while scope is not None:
         if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
             names.update(_parameter_names(scope))
+            declared = _declared_non_local(scope)
             names.update(
                 name
                 for binder, identifier in _bindings_in(scope)
                 if (name := safe_decode_text(identifier))
+                and name not in declared
                 and not _reimports(binder, name, import_map)
+                and not _guards_an_optional_import(binder, name, import_map)
             )
         scope = scope.parent
     return frozenset(names)
@@ -289,6 +360,92 @@ def _binding_events(
         for binder, identifier in _bindings_in(caller)
         if identifier.end_byte <= before and safe_decode_text(identifier) == name
     ]
+
+
+def _supersedes_annotation(name: str, before: int, caller: Node) -> bool:
+    """Whether anything rebound `name` between its annotation and `before`.
+
+    The stored text describes the value the name was ANNOTATED with, so it
+    applies only while that value is still what the name holds. The nearest
+    binding before this point decides. The annotation completes that
+    binding in exactly two shapes: the annotated statement itself
+    (`q: tuple[int, Banner] = untyped()`, where the call's return says
+    nothing and the annotation is the only thing that can type it), and the
+    assignment a bare `q: T` declaration was made for. Any other nearest
+    binding -- `p = opaque()`, `p = supplied`, `p += x`, `for p in xs`,
+    `with cm as p` -- is a value the annotation never described, so the
+    text does not apply to it.
+
+    A parameter has no binding node in the body at all, so a typed
+    parameter keeps its annotation until something in the body rebinds it
+    (greptile-local, #1900).
+
+    Position matters and is why this lives here rather than in the pass
+    that writes the map: a name rebound AFTER an unpack still held the
+    annotated value at the unpack, and clearing the map entry would untype
+    that earlier use (Greptile, #1919).
+    """
+    bindings = [
+        (identifier.start_byte, binder)
+        for binder, identifier in _bindings_in(caller)
+        if identifier.end_byte <= before and safe_decode_text(identifier) == name
+    ]
+    if not bindings:
+        # A typed parameter: nothing in the body has rebound it.
+        return False
+    _position, nearest = max(bindings, key=lambda event: event[0])
+    # Only the NEAREST binding decides: it is what the name holds here.
+    # The annotation completes it when that binding is the annotated
+    # statement itself, or the assignment a bare declaration was made for
+    # (a declaration binds nothing, so the nearest is that assignment and
+    # the annotation is still the only thing that can type it).
+    return not _annotates(nearest) and not _declared_before(name, nearest, caller)
+
+
+def _declared_before(name: str, binder: Node, caller: Node) -> bool:
+    """Whether `binder` is the assignment a bare `name: T` was declared for.
+
+    A declaration binds no value, so the FIRST assignment after it is what
+    it was declared for and the annotation is still the only thing that can
+    type the name. Only that one: after `q: T; q = opaque(0); q = opaque(1)`
+    the name holds the second call's result, which the declaration never
+    described, so a later assignment supersedes it like any other rebinding
+    (Greptile, #1919).
+    """
+    # The NEAREST declaration before this binding, not the earliest: a body
+    # may declare the same name twice, and the later declaration is the one
+    # describing the value bound after it (Greptile, #1919).
+    declarations = [
+        other.end_byte
+        for other, identifier in _bindings_in(caller)
+        if safe_decode_text(identifier) == name
+        and _annotates(other)
+        and other.child_by_field_name(cs.TS_FIELD_RIGHT) is None
+        and other.end_byte <= binder.start_byte
+    ]
+    if not declarations:
+        return False
+    declared = max(declarations)
+    # The first binding after THAT declaration, and nothing later.
+    first = min(
+        (
+            other.start_byte
+            for other, identifier in _bindings_in(caller)
+            if safe_decode_text(identifier) == name
+            and not _annotates(other)
+            and other.start_byte >= declared
+        ),
+        default=None,
+    )
+    return first is not None and binder.start_byte == first
+
+
+def _annotates(binder: Node) -> bool:
+    """Whether a binding node carries the annotation it binds (`p: T = v`)."""
+    return (
+        binder.type == cs.TS_PY_ASSIGNMENT
+        and binder.child_by_field_name(cs.TS_FIELD_TYPE) is not None
+    )
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -356,6 +513,22 @@ else:
 
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
+
+    def shadowed_import_names(self, caller: Node, module_qn: str) -> frozenset[str]:
+        """The import-map names the caller's body binds as locals.
+
+        `helpers = supplied` (or `def use(helpers)`, `for helpers in xs`, a
+        `case [helpers]` capture, an enclosing def's local, ...) makes
+        `helpers` local for the WHOLE body, so `helpers.make_pair()` can
+        never reach the module the import map holds under that name
+        (issue #1907). A body-level import the map reflects is a re-import,
+        not a shadow, and stays out of the set.
+        """
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return frozenset()
+        return _locally_bound_names(caller, import_map) & frozenset(import_map)
+
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
@@ -436,6 +609,9 @@ class PythonAstAnalyzerMixin(_AstBase):
 
         for assignment in assignments:
             self._process_assignment_complex(assignment, local_var_types, module_qn)
+        self._process_assignment_annotation(
+            node, assignments, local_var_types, module_qn
+        )
         self._process_assignment_unpacking(
             node, assignments, local_var_types, module_qn
         )
@@ -492,6 +668,78 @@ class PythonAstAnalyzerMixin(_AstBase):
             local_var_types[var_name] = inferred_type
             logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
+    def _process_assignment_annotation(
+        self,
+        caller: Node,
+        assignments: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """`q: T = ...`, or a bare `q: T`: the annotation types a name the
+        value gave no type for (#1900).
+
+        A last resort, not a pre-emption. Inference from the value keeps
+        priority because it resolves further: `x: Base = Derived()` stays
+        `Derived`. A declaration without a value has no right-hand side at
+        all, and is typed here alone. The annotation is read the way a return
+        annotation is, so `Optional[Banner]` is `Banner` and `List[Widget]`
+        the `list[Widget]` marker a loop can unwrap, where the raw text would
+        be unreadable downstream and cost the name the fallback edge it had
+        untyped (local review P1); one that resolves to nothing types nothing.
+        A `tuple[...]` alone keeps its text: it is what `_unpacked_elements`
+        splits position by position, and what a typed parameter stores.
+
+        The annotation must sit in the scope being analysed, the rule the
+        unpacking pass already applies (#1919); one inside a nested def
+        binds a name in that body, and recording it here would let an outer
+        receiver of the same name resolve by the inner class.
+
+        Supersession is NOT handled here. A name rebound later still holds
+        the annotated value for every use before the rebinding, and this
+        map is flat per function -- it cannot say "Banner until line 5,
+        unknown after". Clearing the entry would untype the earlier uses
+        too, which is what an earlier cut of this fix did (Greptile, #1919).
+        The position test belongs where the value is read, so
+        `_unpacked_elements` applies `_supersedes_annotation` at the unpack
+        site, the way `_defining_call` already tests bindings before the
+        site it is resolving.
+
+        The scope rule is narrow on purpose. It keeps THIS pass from
+        recording a nested body's annotation, but the value passes that run
+        before it have the same defect and are not fixed here: a plain
+        `v = Banner()` in a nested def reaches the enclosing map on `main`
+        too, with no annotation involved (issue #1922).
+        """
+        # In document order, so that among SEVERAL annotations of one name
+        # the last wins: a body may declare `q: A` and later `q: B`, and it
+        # is the later one that describes the value bound after it
+        # (Greptile, #1919). `written` tracks what THIS pass stored, so a
+        # second annotation may replace its own earlier entry while an
+        # inferred type from the value passes still wins over both.
+        written: set[str] = set()
+        for assignment in sorted(assignments, key=lambda node: node.start_byte):
+            type_node = assignment.child_by_field_name(cs.TS_FIELD_TYPE)
+            left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+            if type_node is None or left is None:
+                continue
+            if _scope_of(assignment) != caller.id:
+                continue
+            var_name = self._extract_assignment_variable_name(left)
+            if not var_name:
+                continue
+            if var_name in local_var_types and var_name not in written:
+                continue
+            annotation = safe_decode_text(type_node) or ""
+            if annotated := self._type_of_annotated_name(annotation, module_qn):
+                local_var_types[var_name] = annotated
+                written.add(var_name)
+
+    def _type_of_annotated_name(self, text: str, module_qn: str) -> str | None:
+        text = text.strip().strip("\"'")
+        if self._tuple_elements_from_text(text, "", module_qn):
+            return text
+        return self._annotation_type_from_text(text, "", module_qn)
+
     def _process_assignment_unpacking(
         self,
         caller: Node,
@@ -505,8 +753,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         `tuple_pattern` target, so an unpacked local had no type and a call on
         it fell to the bare-name fallback (issue #1896, the real shape of
         trace/sourcemap.py:225). The right-hand side is a call annotated
-        `tuple[A, B, C]`, or a local that was assigned such a call earlier in
-        the same body; the annotation is read RAW here because
+        `tuple[A, B, C]`, a local that was assigned such a call earlier in
+        the same body, or -- when no call says anything -- a name whose own
+        stored type is a `tuple[...]`: a typed parameter or an annotated local
+        (#1900). The annotation is read RAW here because
         `_annotated_return_type` deliberately refuses a heterogeneous tuple,
         which is exactly what unpacking consumes position by position. The
         walk captures every assignment under the caller, including a nested
@@ -539,13 +789,11 @@ class PythonAstAnalyzerMixin(_AstBase):
     ) -> None:
         left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
-        if (
-            left is None
-            or right is None
-            or (call := self._defining_call(right, caller)) is None
-        ):
+        if left is None or right is None:
             return
-        elements = self._tuple_return_elements(call, module_qn, local_var_types, bound)
+        elements = self._unpacked_elements(
+            right, caller, bound, local_var_types, module_qn
+        )
         targets = [t for t in left.named_children if t.type != cs.TS_COMMENT]
         if len(elements) == 1 and elements[0][1]:
             elements = [elements[0]] * len(targets)  # `tuple[T, ...]`
@@ -558,6 +806,42 @@ class PythonAstAnalyzerMixin(_AstBase):
             )
             if name and name not in local_var_types:
                 local_var_types[name] = element
+
+    def _unpacked_elements(
+        self,
+        right: Node,
+        caller: Node,
+        bound: frozenset[str],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> list[tuple[str, bool]]:
+        """The positions of the tuple an unpacking's right-hand side carries:
+        the defining call's return annotation, or -- when no call says
+        anything -- the name's own stored `tuple[...]` type, a typed parameter
+        or an annotated local (#1900). The stored text has no owner: `Self`
+        inside it keeps its text rather than resolving the module qn as if it
+        were a method's."""
+        elements: list[tuple[str, bool]] = []
+        if (call := self._defining_call(right, caller)) is not None:
+            elements = self._tuple_return_elements(
+                call, module_qn, local_var_types, bound
+            )
+        if elements or right.type != cs.TS_PY_IDENTIFIER:
+            return elements
+        name = safe_decode_text(right) or ""
+        # The stored text describes the value the name was ANNOTATED with,
+        # so a binding between that annotation and here supersedes it, the
+        # same rule `_defining_call` applies to a call. Checked at the read
+        # rather than at the write because a typed parameter is seeded into
+        # the map before any assignment pass runs and so has no annotated
+        # assignment node for the annotation pass to clear (greptile-local,
+        # #1900): without this, `def use(p: tuple[int, Banner]): p =
+        # opaque(); _n, b = p` unpacks a shape `p` no longer holds, while
+        # the annotated-local twin is correctly left unbound.
+        if _supersedes_annotation(name, right.start_byte, caller):
+            return []
+        stored = local_var_types.get(name)
+        return self._tuple_elements_from_text(stored, "", module_qn) if stored else []
 
     def _defining_call(self, right: Node, caller: Node) -> Node | None:
         """The call an unpacking's right-hand side comes from, or None.
@@ -596,7 +880,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         type_node = callee_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None:
             return []
-        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        return self._tuple_elements_from_text(
+            safe_decode_text(type_node) or "", callee_qn, module_qn
+        )
+
+    def _tuple_elements_from_text(
+        self, text: str, owner_qn: str, module_qn: str
+    ) -> list[tuple[str, bool]]:
+        """Split a `tuple[...]` annotation (Optional stripped) into positions;
+        empty for anything else, including a union of two tuples."""
+        text = text.strip().strip("\"'")
         members = [
             member
             for part in _split_top_level(text, cs.PY_UNION_SEPARATOR)
@@ -612,9 +905,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             return []
         parts = _split_top_level(container.group("inner"))
         if len(parts) == 2 and parts[1] == cs.PY_ELLIPSIS:
-            return [(self._element_type(parts[0], callee_qn, module_qn), True)]
+            return [(self._element_type(parts[0], owner_qn, module_qn), True)]
         return [
-            (self._element_type(part, callee_qn, module_qn), False) for part in parts
+            (self._element_type(part, owner_qn, module_qn), False) for part in parts
         ]
 
     def _element_type(self, element: str, callee_qn: str, module_qn: str) -> str:
@@ -897,7 +1190,19 @@ class PythonAstAnalyzerMixin(_AstBase):
         type_node = method_node.child_by_field_name(cs.FIELD_RETURN_TYPE)
         if type_node is None or type_node.text is None:
             return None
-        text = (safe_decode_text(type_node) or "").strip().strip("\"'")
+        return self._annotation_type_from_text(
+            safe_decode_text(type_node) or "", method_qn, module_qn
+        )
+
+    def _annotation_type_from_text(
+        self, text: str, owner_qn: str, module_qn: str
+    ) -> str | None:
+        """The type an annotation's text names, resolved in scope: a class,
+        `Self` against `owner_qn` (a method's qn; none for a local), or the
+        `list[<element>]` marker for a homogeneous container; ``None`` for
+        anything the resolver could not read, including a heterogeneous
+        tuple."""
+        text = text.strip().strip("\"'")
         non_none = [
             member
             for part in text.split(cs.PY_UNION_SEPARATOR)
@@ -907,7 +1212,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
         candidate = non_none[0]
         if optional := re.match(cs.PY_OPTIONAL_PATTERN, candidate):
-            candidate = optional.group("inner").strip()
+            candidate = optional.group("inner").strip().strip("\"'")
         if container := re.match(cs.PY_GENERIC_CONTAINER_PATTERN, candidate):
             element_text = _homogeneous_element(
                 container.group("name"), container.group("inner")
@@ -915,10 +1220,10 @@ class PythonAstAnalyzerMixin(_AstBase):
             if element_text is None:
                 return None
             element = self._trusted_annotation_name(
-                element_text.strip("\"'"), method_qn, module_qn
+                element_text.strip("\"'"), owner_qn, module_qn
             )
             return cs.PY_LIST_TYPE_FORMAT.format(element=element) if element else None
-        return self._trusted_annotation_name(candidate, method_qn, module_qn)
+        return self._trusted_annotation_name(candidate, owner_qn, module_qn)
 
     def _trusted_annotation_name(
         self, candidate: str, method_qn: str, module_qn: str

@@ -1645,6 +1645,30 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
     return False
 
 
+def enclosing_class_node(
+    func_node: ASTNode, lang_config: LanguageSpec
+) -> ASTNode | None:
+    """The nearest class node above func_node, or None if the module comes first.
+
+    Unlike is_method_node this does not stop at an enclosing function, so a
+    `def inner()` nested in a method still reports its class. The call
+    processor uses it to hand everything scoped inside a class body to the
+    class pass instead of walking it a second time (issue #1903).
+    """
+    current = func_node.parent
+    if not isinstance(current, Node):
+        return None
+    class_types = lang_config.class_node_types
+    module_types = lang_config.module_node_types
+    while current is not None:
+        if current.type in module_types:
+            return None
+        if current.type in class_types:
+            return current
+        current = current.parent
+    return None
+
+
 def module_qn_for_entity(
     entity_qn: str, module_paths: Mapping[str, object]
 ) -> str | None:
