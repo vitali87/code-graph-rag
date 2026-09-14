@@ -39,7 +39,9 @@ from scripts.check_pr_gated import (
     is_real_review,
     missing_aggregated_jobs,
     required_contexts_present,
+    review_anchor,
     review_execution_caveats,
+    stale_review_reason,
     unit_test_contexts,
     unresolved_in_page,
     validation_was_blocked,
@@ -1908,3 +1910,83 @@ class TestTheArmsAreOrderedMostSpecificFirst:
             )
 
             assert marker in reason, f"{marker!r} not in {reason!r}"
+
+
+class TestReviewAnchor:
+    """A review of an OLDER commit must not gate the head (issue #1936).
+
+    The script verified a review artifact positively -- a verdict marker
+    from a trusted bot -- but never compared the commit that review names
+    to `headRefOid`. A stale review and a fresh one were indistinguishable,
+    which is the trap `CLAUDE.md` warns about while also naming this script
+    as the source of truth.
+
+    The asymmetry is what made it dangerous rather than merely incomplete:
+    a MISSING review appends a reason, so it self-corrects, while a stale
+    one took the `else` branch and said nothing at all. Silence reads as
+    permission.
+
+    Three states need three answers, because they need different actions:
+    no artifact (wait for a review), an artifact whose anchor cannot be
+    parsed (fail closed and say so), and an artifact anchored to a
+    non-head commit (re-trigger the review).
+    """
+
+    HEAD = "7928c5ba8efe8af0f8d3f6b943171eb016deee72"
+    OLDER = "9aeb04f825538b27f0ff25fd31b56bbf08679000"
+
+    def test_an_anchor_naming_the_head_is_current(self) -> None:
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD) is None
+
+    def test_an_anchor_naming_an_older_commit_is_reported(self) -> None:
+        """The measured case from #1906: head two pushes past the review."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`"
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+        assert self.HEAD[:8] in reason
+
+    def test_an_artifact_with_no_parseable_anchor_fails_closed(self) -> None:
+        """A verdict with no commit named cannot be shown to be current, so
+        it must not pass. Failing open here would restore the bug for any
+        bot that changes its wording."""
+        body = "Confidence Score: 5/5\nLooks good to me."
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert "anchor" in reason.lower()
+
+    def test_the_freshest_anchor_decides_when_a_bot_re_reviews(self) -> None:
+        """Bots re-score in place and post repeatedly. One artifact naming
+        the head is enough, whatever earlier ones say, or every re-reviewed
+        PR would read as stale forever."""
+        stale = f"Confidence Score: 3/5\nLast reviewed commit: `{self.OLDER}`"
+        fresh = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+
+        reason = stale_review_reason(
+            [(stale, "greptile-apps[bot]"), (fresh, "greptile-apps[bot]")], self.HEAD
+        )
+
+        assert reason is None
+
+    def test_a_url_form_anchor_is_read(self) -> None:
+        """Greptile writes the anchor as a commit URL, which is the form
+        `CLAUDE.md`'s own extraction snippet greps for."""
+        body = (
+            f"Confidence Score: 5/5\n[link](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_an_unknown_head_does_not_manufacture_a_reason(self) -> None:
+        """If the head could not be read, staleness is unknown. Other
+        reasons already cover an unreadable PR; inventing one here would
+        report a stale review that may be current."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`"
+
+        assert stale_review_reason([(body, "greptile-apps[bot]")], "") is None

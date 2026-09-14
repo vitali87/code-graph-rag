@@ -38,6 +38,7 @@ Exit 0 when every check passes, 1 otherwise, printing EVERY reason found.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from typing import Any
@@ -433,6 +434,68 @@ def is_real_review(body: str, author: str) -> bool:
     return any(marker in lowered for marker in REVIEW_VERDICT_MARKERS)
 
 
+# The commit a review names, in either form bots write it: a bare 40-hex
+# sha after "last reviewed commit", or a commit URL. Both appear in the
+# wild, and `CLAUDE.md`'s own extraction snippet greps for the URL form.
+_ANCHOR_PATTERNS = (
+    re.compile(r"commit/([0-9a-f]{40})"),
+    re.compile(r"last reviewed commit[^0-9a-f]{0,20}([0-9a-f]{40})", re.I),
+    re.compile(r"reviewed[^.\n]{0,40}?\b([0-9a-f]{40})\b", re.I),
+)
+
+
+def review_anchor(body: str) -> str:
+    """The 40-hex commit a review artifact says it reviewed, or "".
+
+    Compares the SHA itself, never a proxy. A rebase preserves commit
+    subjects and changes SHAs, so matching a subject reports every rebased
+    branch as freshly reviewed (nearly merged #1779 on exactly that).
+    """
+    for pattern in _ANCHOR_PATTERNS:
+        found = pattern.search(body)
+        if found:
+            return found.group(1).lower()
+    return ""
+
+
+def stale_review_reason(real_reviews: list[tuple[str, str]], head: str) -> str | None:
+    """Why the reviews present do not cover `head`, or None if one does.
+
+    The gate verified that a review EXISTS and that a trusted account
+    wrote it, but never that it reviewed the commit about to merge, so a
+    stale review and a fresh one were indistinguishable (issue #1936).
+
+    Fails closed on an unparseable anchor: a verdict that names no commit
+    cannot be shown to be current, and failing open there would restore
+    the bug for any bot that changes its wording.
+
+    Returns None when `head` is unknown. Staleness is then undeterminable,
+    and other reasons already cover a PR whose head could not be read;
+    inventing one here would report a review stale that may be current.
+
+    One artifact naming the head is enough, whatever earlier ones say:
+    bots re-score in place and post repeatedly, so requiring every
+    artifact to be current would report every re-reviewed PR as stale.
+    """
+    if not head or not real_reviews:
+        return None
+    anchors = [review_anchor(body) for body, _author in real_reviews]
+    if head.lower() in anchors:
+        return None
+    named = [a for a in anchors if a]
+    if not named:
+        return (
+            "no review artifact names the commit it reviewed, so none can be "
+            f"shown to cover the head {head[:8]} (anchor absent, failing closed)"
+        )
+    return (
+        f"review artifact anchors to {named[-1][:8]}, not the head {head[:8]}, "
+        "so it did not review the current commit; re-trigger the review "
+        "(an empty commit moves the head without changing the tree, and bots "
+        "re-score in place, so this reads stale until the re-review lands)"
+    )
+
+
 def _author_login(artifact: dict[str, Any]) -> str:
     """The login that wrote a comment or review, across both payload shapes.
 
@@ -712,6 +775,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         )
     else:
         caveats.extend(review_execution_caveats(real_reviews))
+        stale = stale_review_reason(real_reviews, head)
+        if stale:
+            reasons.append(stale)
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
