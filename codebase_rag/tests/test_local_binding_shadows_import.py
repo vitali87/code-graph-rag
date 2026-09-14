@@ -177,6 +177,17 @@ _GLOBAL_DECLARED = (
     "    return w[0]\n"
 )
 
+_NONLOCAL_OVER_A_REIMPORT = (
+    "def outer():\n"
+    "    from . import helpers\n"
+    "    def use(supplied) -> int:\n"
+    "        nonlocal helpers\n"
+    "        helpers = supplied\n"
+    "        w = helpers.make_pair()\n"
+    "        return w[0]\n"
+    "    return use\n"
+)
+
 _CLASS_BODY_DECLARATION = (
     "def use(supplied) -> int:\n"
     "    class C:\n"
@@ -201,11 +212,20 @@ def test_a_declared_global_name_is_not_a_shadow(tmp_path: Path) -> None:
     reachable. Treating the assignment as a shadow dropped an edge `main`
     resolves (Greptile on #1907).
 
-    Only `global` is testable this way: `nonlocal` requires an enclosing
-    function to bind the name, and that binding is itself a genuine shadow,
-    so no valid `nonlocal` source keeps the import reachable. The keyword is
-    still handled, and the scope rule below is what pins it."""
+    """
     calls = _calls_from_use(_build(tmp_path, _GLOBAL_DECLARED))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+def test_a_nonlocal_over_a_reimport_keeps_the_edge(tmp_path: Path) -> None:
+    """`nonlocal` is load-bearing when the enclosing binding is one this
+    module already exempts. `outer` re-imports the module, so its binding is
+    not a shadow; `use` declares `nonlocal helpers`, so its own assignment
+    writes that same cell rather than a local. Removing the declaration flips
+    the edge off, which is what makes this a test of the keyword
+    (greptile-local: an earlier version of this file claimed no such source
+    existed)."""
+    calls = _calls_from_use(_build(tmp_path, _NONLOCAL_OVER_A_REIMPORT))
     assert "proj.helpers.make_pair" in calls, sorted(calls)
 
 
