@@ -1941,7 +1941,9 @@ class CallProcessor:
                 # gets no caller pass, and a call inside a NAMED function is
                 # still excluded because that function's flat filter owns it.
                 exclusion_nodes = (
-                    self._attributable_func_nodes(sorted_func_nodes, language)
+                    self._attributable_func_nodes(
+                        sorted_func_nodes, language, module_qn
+                    )
                     if language in _JS_TS_LANGUAGES
                     else sorted_func_nodes
                 )
@@ -1998,7 +2000,9 @@ class CallProcessor:
         # enclosing free function. Anonymous closures (not attributable) stay
         # excluded so their calls still bubble up. Other languages keep the flat
         # _filter_calls_in_node behavior their flow-tracing relies on.
-        owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            func_nodes, language, module_qn
+        )
         for func_node in func_nodes:
             # Anything scoped inside a class body -- a method, and a function
             # nested in a method -- is walked by _process_methods_in_class
@@ -2343,7 +2347,9 @@ class CallProcessor:
         # Only functions that get their own caller node exclude their calls from
         # the enclosing scope; anonymous arrows (skipped below) must not, so
         # their calls bubble up instead of dropping.
-        owned_func_nodes = self._attributable_func_nodes(method_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            method_nodes, language, module_qn
+        )
         for method_node in method_nodes:
             # The body byte-range slice also captures functions of a NESTED
             # class (Outer body contains Inner.run); those belong to the
@@ -7493,7 +7499,7 @@ class CallProcessor:
         return js_ts_utils.arrow_binding_name(func_node)
 
     def _attributable_func_nodes(
-        self, func_nodes: list[Node], language: cs.SupportedLanguage
+        self, func_nodes: list[Node], language: cs.SupportedLanguage, module_qn: str
     ) -> list[Node]:
         # The func nodes that will get their own caller node: named functions
         # plus arrows/function-expressions bound to a name. An anonymous arrow
@@ -7513,10 +7519,19 @@ class CallProcessor:
             return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
+        # A nameless function expression the definition pass registered under
+        # a name (`x: function () {}` in an object literal, `this.h = function
+        # () {}`) gets its own caller pass, so it must own its calls too, or
+        # the enclosing function keeps a second copy of every edge.
         return [
             n
             for n in func_nodes
-            if self._get_node_name(n) or self._js_ts_arrow_binding_name(n)
+            if self._get_node_name(n)
+            or self._js_ts_arrow_binding_name(n)
+            or (
+                (recorded := self._recorded_caller(n, module_qn)) is not None
+                and recorded.is_named
+            )
         ]
 
     def _is_unowned_js_scope(self, node: Node) -> bool:

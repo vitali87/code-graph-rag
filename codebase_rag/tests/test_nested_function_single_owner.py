@@ -158,3 +158,9 @@ def test_a_nameless_function_expression_in_a_method_keeps_its_edge(
     edges = _js_call_edges(tmp_path, JS_NAMELESS_IN_METHOD)
     assert edges[("repo.app.A.m.x", "repo.app.bar")] == 1, edges
     assert edges[("repo.app.A.constructor.handler", "repo.app.bar")] == 1, edges
+    # ...and owns that call outright: the class pass excludes nested owners'
+    # calls from the method, so the method must not keep a second copy
+    # (CodeRabbit on #1906; the same double edge existed on main). The
+    # module pass keeps the flat shape for its own functions by design.
+    assert edges[("repo.app.A.m", "repo.app.bar")] == 0, edges
+    assert edges[("repo.app.A.constructor", "repo.app.bar")] == 0, edges
