@@ -935,12 +935,25 @@ KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
 KEY_ANCHOR_HASH = "anchor_hash"
+# Written by the repair tiers (issue #1808, stage four). `moved_from` is the
+# name a MOVED gloss was written against, kept so the move stays visible;
+# `candidate_qns` lists the definitions an AMBIGUOUS gloss could belong to.
+KEY_MOVED_FROM = "moved_from"
+# The project a gloss belongs to, recorded at write time. A project name may
+# contain dots (`--project-name` is taken as given), so it cannot be read back
+# off `target_qn`; a note written before this property existed falls back to
+# the longest registered project name that prefixes its `target_qn`.
+KEY_PROJECT = "project"
+KEY_CANDIDATE_QNS = "candidate_qns"
+KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed
 # recorded the clone skeleton (`ast_fingerprint`) as its target hash; the two
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
 KEY_WRITE_ID = "write_id"
+KEY_CANDIDATES = "candidates"
+KEY_ORPHANED = "orphaned"
 GLOSS_ID_PREFIX = "gloss:"
 GLOSS_ID_HEX_LENGTH = 24
 GLOSS_STATUS_ACCEPTED = "accepted"
@@ -959,9 +972,16 @@ class GlossKind(StrEnum):
 class GlossAnchorState(StrEnum):
     """How well a gloss is still attached to its subject, best first.
 
-    Only EXACT is written today; the graded repair chain that produces the
-    other states is a later stage of #1808. A gloss whose subject cannot be
-    re-anchored becomes visibly LOST rather than silently re-bound.
+    EXACT: attached to the definition it was written against, unchanged.
+    MOVED: that name is gone, and exactly one definition in the project
+    carries the note's recorded content hash, so the note follows it; the
+    original name is kept in `moved_from` and the move stays visible.
+    STALE: attached, but the definition's content has changed since.
+    AMBIGUOUS: the name is gone and several definitions carry the hash;
+    `candidate_qns` names them and the note is attached to none.
+    LOST: the name is gone and nothing carries the hash (or the note has no
+    comparable hash). A gloss that cannot be re-anchored becomes visibly
+    LOST rather than silently re-bound (issue #1808).
     """
 
     EXACT = "EXACT"

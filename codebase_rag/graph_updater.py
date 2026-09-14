@@ -25,6 +25,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     get_language_for_extension,
@@ -5788,6 +5789,10 @@ class GraphUpdater:
             return
         try:
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            # A note whose name did not come back is placed by content hash
+            # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
+            # so a note that moved gets its MENTIONS edges back this run.
+            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here

@@ -244,11 +244,17 @@ MCP_GLOSSES = (
     "Notes (Glosses) about one definition: `annotating` are filed on it, "
     "`mentioning` are filed on other definitions and refer to it. `target` "
     "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
-    "graded after each sync for function and method subjects: EXACT when the "
-    "definition's current content hash equals the one recorded when the note "
-    "was written, STALE when it differs (and EXACT again if the code is "
-    "reverted). A note on a class or module, or one written before hashes "
-    "were recorded, keeps the state it has. " + _MCP_DETERMINISTIC_NOTE
+    "graded after each sync: EXACT when its definition's content hash still "
+    "equals the one recorded at writing, STALE when it differs (EXACT again "
+    "on revert), MOVED when the name is gone and exactly one definition in "
+    "the project carries the recorded hash (the note follows it; "
+    "`moved_from` keeps the old name), AMBIGUOUS when several do "
+    "(`candidate_qns` lists them) and LOST when none does. A note on a class "
+    "or module, or one written before hashes were recorded, is not graded "
+    "while attached (there is no hash to compare) and is LOST if its name "
+    "disappears (there is no hash to follow). "
+    "A target that no longer resolves returns the error plus `orphaned`: the "
+    "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_PARAM_GLOSS_BODY = (
     "The note itself: the reasoning a reader cannot recover from the code."

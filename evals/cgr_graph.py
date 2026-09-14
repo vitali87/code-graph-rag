@@ -98,7 +98,17 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # and its caller already treats an empty result as "no functions to embed" and
 # returns -- verified at graph_updater's embeddings pass, not assumed. An
 # emulation would invite the double into work it cannot represent.
-_NOT_MODELLED: frozenset[str] = frozenset({cs.CYPHER_QUERY_EMBEDDINGS})
+#
+# `CYPHER_UNANCHORED_GLOSSES` opens the gloss repair pass at the end of every
+# sync (issue #1808, stage four). The double holds no Gloss nodes -- its
+# `execute_write` ignores the gloss statements, and a gloss's edges are
+# restored rather than re-derived -- so "no unattached notes" is the true
+# answer here, not a silent default. The hash lookup that follows is issued
+# only for notes this read returned, so it is deliberately NOT listed: if a
+# test ever reaches it, the double is missing a real case.
+_NOT_MODELLED: frozenset[str] = frozenset(
+    {cs.CYPHER_QUERY_EMBEDDINGS, cq.CYPHER_UNANCHORED_GLOSSES}
+)
 _MODULE_QN_LABELS = frozenset(
     {
         _MODULE_LABEL,

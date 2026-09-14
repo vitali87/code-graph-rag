@@ -44,8 +44,19 @@ if TYPE_CHECKING:
 # it from a gloss whose subject survives. Direction matters: the edge runs
 # from the gloss to its subject, and an undirected match would also count a
 # gloss annotated BY something else, if that relationship is ever added.
+#
+# Scoped to the deleted project by the note's own record of its project.
+# Since stage four of #1808 an unattached gloss is not necessarily garbage: a
+# note graded LOST or AMBIGUOUS in a project that still exists is unattached
+# by design and stays readable on its old name. Only the notes about the
+# project just deleted go with it. Keyed on the recorded `project`, not a
+# qn prefix, because project names may contain dots: deleting `foo` must not
+# sweep `foo.bar`'s notes. A note written before `project` was recorded has
+# only its qn to go on and takes the prefix.
 CYPHER_DELETE_ORPHANED_GLOSSES = (
     f"MATCH (g:{cs.NodeLabel.GLOSS.value}) "
+    "WHERE (g.project = $project_name "
+    "OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix)) "
     f"OPTIONAL MATCH (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(subject) "
     "WITH g, count(subject) AS subjects "
     "WHERE subjects = 0 "
@@ -53,8 +64,8 @@ CYPHER_DELETE_ORPHANED_GLOSSES = (
 )
 
 
-def prune_orphaned_glosses(ingestor: QueryProtocol) -> bool:
-    """Delete glosses whose subject is gone, leaving anchored ones intact.
+def prune_orphaned_glosses(ingestor: QueryProtocol, project_name: str) -> bool:
+    """Delete the deleted project's glosses, leaving every other note intact.
 
     Never raises. The caller runs this AFTER the project delete has already
     succeeded, and the delete is not undoable: letting a cleanup failure
@@ -66,11 +77,17 @@ def prune_orphaned_glosses(ingestor: QueryProtocol) -> bool:
     Returns whether the sweep reached the store, so a caller that can
     schedule a retry may, and the log records it either way. Leaving the
     orphans is the mild outcome: they are unreachable rather than wrong, and
-    the next deliberate delete of any project sweeps them -- the predicate is
-    "this gloss has no subject", not "this gloss belonged to that project".
+    they read as LOST notes on a project that no longer exists until a
+    deliberate delete of that project name runs the sweep again.
     """
     try:
-        ingestor.execute_write(CYPHER_DELETE_ORPHANED_GLOSSES)
+        ingestor.execute_write(
+            CYPHER_DELETE_ORPHANED_GLOSSES,
+            {
+                cs.KEY_PROJECT_NAME: project_name,
+                cs.KEY_PROJECT_PREFIX: f"{project_name}{cs.SEPARATOR_DOT}",
+            },
+        )
     except Exception as error:  # noqa: BLE001 -- see docstring
         logger.warning(lg.GLOSS_PRUNE_FAILED.format(error=error))
         return False
