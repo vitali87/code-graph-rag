@@ -74,6 +74,30 @@ def test_the_default_index_emits_no_constant_and_no_edge(tmp_path: Path) -> None
     assert _edges(store, cs.RelationshipType.DEFINES_CONSTANT.value) == set()
 
 
+def test_the_constant_label_is_owned_by_its_capture_group() -> None:
+    """The label must be REGISTERED to the group, not merely absent from it.
+
+    `_node_labels_for` treats a label no group claims as always enabled, so
+    dropping `NodeLabel.CONSTANT` from `CAPTURE_GROUP_NODE_LABELS` does not
+    disable it -- it enables it unconditionally, while `DEFINES_CONSTANT`
+    stays off with the group. The default index would then be free to emit a
+    node whose edge is disabled.
+
+    The tests above cannot see that: they observe the emitter, which is gated
+    separately, so they stay green through exactly this misregistration (a
+    peer session hit the same shape on a shared label set, where every
+    set-equality test stayed green through a dropped label). This one drives
+    the capture resolution itself, which is where the defect would live.
+    """
+    default = resolve_capture([])
+    assert cs.NodeLabel.CONSTANT not in default.enabled_node_labels
+    assert cs.RelationshipType.DEFINES_CONSTANT not in default.enabled_rels
+
+    opted_in = resolve_capture(["+constants"])
+    assert cs.NodeLabel.CONSTANT in opted_in.enabled_node_labels
+    assert cs.RelationshipType.DEFINES_CONSTANT in opted_in.enabled_rels
+
+
 def test_every_module_level_constant_becomes_a_node(tmp_path: Path) -> None:
     store = _index(tmp_path, ["+constants"])
     constants = _nodes(store, cs.NodeLabel.CONSTANT.value)
