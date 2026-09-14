@@ -52,7 +52,6 @@ from .utils import (
     function_span_key,
     get_function_captures,
     go_parameter_names,
-    is_method_node,
     js_ts_parameter_names,
     module_qn_for_entity,
     node_site_properties,
@@ -8355,9 +8354,6 @@ class CallProcessor:
         self, root: Node
     ) -> dict[str, list[tuple[Node | None, Node | None]]]:
         return _JsFileBindingCollector(self._unwrap_ts_value).collect(root)
-
-    def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        return is_method_node(func_node, lang_config)
 
     def _class_pass_owns(
         self, func_node: Node, lang_config: LanguageSpec, language: cs.SupportedLanguage
