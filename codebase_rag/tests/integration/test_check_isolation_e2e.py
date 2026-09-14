@@ -103,7 +103,8 @@ def _annotate(ingestor: MemgraphIngestor, qn: str) -> None:
         "MATCH (f:Function {qualified_name: $qn}) RETURN f.anchor_hash AS h",
         {"qn": qn},
     )
-    assert rows and rows[0]["h"], rows
+    assert rows, "the function node carries no anchor hash to annotate"
+    assert rows[0]["h"], rows
     ingestor.execute_write(
         "MATCH (f:Function {qualified_name: $qn}) "
         "CREATE (g:Gloss {qualified_name: 'gloss-1', kind: 'note', body: 'x', "
@@ -143,7 +144,8 @@ class TestIsolatedCheck:
         _annotate(memgraph_ingestor, f"{PROJECT}.pkg.app.run")
         _edit(repo)
         before = _dump(memgraph_ingestor)
-        assert before[0] and before[1]
+        assert before[0], "the graph holds no nodes to restore"
+        assert before[1], "the graph holds no edges to restore"
 
         delta = _check(memgraph_ingestor, repo, isolated=True)
 

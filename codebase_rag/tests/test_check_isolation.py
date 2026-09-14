@@ -555,6 +555,10 @@ def test_an_isolated_check_refuses_a_capture_holding_io_links(
     lose them silently."""
     root, store = indexed
     parsers, queries = load_parsers()
+    # Built outside the raises block: only the call under test may be the
+    # thing that throws, or a failure in the setup reads as a pass
+    # (python:S5778).
+    io_capture = resolve_capture(["io"])
 
     with pytest.raises(CheckError, match="isolated"):
         run_check(
@@ -565,7 +569,7 @@ def test_an_isolated_check_refuses_a_capture_holding_io_links(
             parsers,
             queries,
             isolated=True,
-            capture=resolve_capture(["io"]),
+            capture=io_capture,
         )
 
 
