@@ -78,8 +78,15 @@ def test_the_exemption_list_covers_every_provider_env_key(
         monkeypatch.setenv(env_var, "ambient-key")
         try:
             ModelConfig(provider=provider, model_id="m").validate_api_key()
-        except ValueError:  # pragma: no cover - not an exemption, nothing to clear
-            continue
+        except ValueError as exc:
+            # NOT skipped. A listed provider that stops exempting on its own
+            # variable is the regression this guard exists for; treating it as
+            # "nothing to clear" would let the guard pass while the premise
+            # underneath every test below quietly changed.
+            pytest.fail(
+                f"{env_var} is set, yet {provider} still took the missing-key "
+                f"branch: {exc}"
+            )
         finally:
             monkeypatch.delenv(env_var, raising=False)
         assert env_var in _EXEMPTING_ENV_KEYS, (
@@ -88,17 +95,24 @@ def test_the_exemption_list_covers_every_provider_env_key(
         )
 
 
-def test_the_isolation_helper_clears_what_it_lists(tmp_path: Path) -> None:
+def test_the_isolation_helper_clears_what_it_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """And the list is actually applied. A correct list that the helper does
     not use would pass the guard above and still leak.
+
+    Every listed key, not just the first: the helper filters one mapping, and a
+    filter that misses one entry leaks exactly the provider whose key the
+    developer's machine happens to hold. `monkeypatch.setenv` rather than a
+    bare `os.environ[...] =` so a real value already in the process is put
+    back on teardown.
     """
-    key = _EXEMPTING_ENV_KEYS[0]
-    os.environ[key] = "ambient-key"
-    try:
-        with _isolated_env(tmp_path):
-            assert key not in os.environ
-    finally:
-        os.environ.pop(key, None)
+    for key in _EXEMPTING_ENV_KEYS:
+        monkeypatch.setenv(key, "ambient-key")
+
+    with _isolated_env(tmp_path):
+        for key in _EXEMPTING_ENV_KEYS:
+            assert key not in os.environ, key
 
 
 class TestStartupKeyValidation:
