@@ -284,6 +284,58 @@ def _local_types(
     return engine.build_local_variable_type_map(node, module_qn)
 
 
+def test_a_rebound_typed_parameter_does_not_unpack_its_annotation(
+    tmp_path: Path,
+) -> None:
+    """A typed parameter rebound in the body is the same defect as the
+    annotated local below, and must behave the same way (greptile-local).
+
+    The parameter's type is seeded into the map before any assignment pass
+    runs, so there is no annotated assignment node for the annotation pass
+    to reason about; the supersession test therefore lives at the unpack
+    site, where `_defining_call` already tests the bindings before it.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use(p: tuple[int, Banner]) -> int:\n"
+        "    p = opaque(1)\n"
+        "    _n, b = p\n"
+        "    return b.render()\n",
+        "use",
+    )
+
+    assert "b" not in types
+
+
+def test_an_unpack_before_a_later_rebinding_still_reads_the_annotation(
+    tmp_path: Path,
+) -> None:
+    """The name held the annotated value AT the unpack; a rebinding further
+    down does not reach back (Greptile, #1919).
+
+    The local type map is flat per function, so it cannot say "Banner until
+    line 5, unknown after". An earlier cut of this fix cleared the map
+    entry whenever the name was rebound anywhere later, which untyped the
+    uses before the rebinding too.
+    """
+    types = _local_types(
+        tmp_path,
+        "def opaque(n):\n    return n\n"
+        "\n"
+        "def use() -> int:\n"
+        "    p: tuple[int, Banner] = opaque(0)\n"
+        "    _n, b = p\n"
+        "    r = b.render()\n"
+        "    p = opaque(1)\n"
+        "    return r\n",
+        "use",
+    )
+
+    assert types.get("b") == "Banner"
+
+
 def test_a_reassignment_the_engine_cannot_read_drops_the_annotation(
     tmp_path: Path,
 ) -> None:

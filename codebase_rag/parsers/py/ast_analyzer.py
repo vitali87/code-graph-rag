@@ -291,17 +291,67 @@ def _binding_events(
     ]
 
 
-def _rebound_after(name: str, after: int, caller: Node) -> bool:
-    """Whether `name` is bound again in the caller's own scope past `after`.
+def _supersedes_annotation(name: str, before: int, caller: Node) -> bool:
+    """Whether anything rebound `name` between its annotation and `before`.
 
-    The annotation describes the value bound with it, so a later binding
-    supersedes it: a plain `p = call()` is typed by the value passes that
-    run first and already win, and every other binding form leaves the name
-    holding something the annotation no longer describes (#1919).
+    The stored text describes the value the name was ANNOTATED with, so it
+    applies only while that value is still what the name holds. The nearest
+    binding before this point decides. The annotation completes that
+    binding in exactly two shapes: the annotated statement itself
+    (`q: tuple[int, Banner] = untyped()`, where the call's return says
+    nothing and the annotation is the only thing that can type it), and the
+    assignment a bare `q: T` declaration was made for. Any other nearest
+    binding -- `p = opaque()`, `p = supplied`, `p += x`, `for p in xs`,
+    `with cm as p` -- is a value the annotation never described, so the
+    text does not apply to it.
+
+    A parameter has no binding node in the body at all, so a typed
+    parameter keeps its annotation until something in the body rebinds it
+    (greptile-local, #1900).
+
+    Position matters and is why this lives here rather than in the pass
+    that writes the map: a name rebound AFTER an unpack still held the
+    annotated value at the unpack, and clearing the map entry would untype
+    that earlier use (Greptile, #1919).
+    """
+    bindings = [
+        (identifier.start_byte, binder)
+        for binder, identifier in _bindings_in(caller)
+        if identifier.end_byte <= before and safe_decode_text(identifier) == name
+    ]
+    if not bindings:
+        # A typed parameter: nothing in the body has rebound it.
+        return False
+    _position, nearest = max(bindings, key=lambda event: event[0])
+    # Only the NEAREST binding decides: it is what the name holds here.
+    # The annotation completes it when that binding is the annotated
+    # statement itself, or the assignment a bare declaration was made for
+    # (a declaration binds nothing, so the nearest is that assignment and
+    # the annotation is still the only thing that can type it).
+    return not _annotates(nearest) and not _declared_before(name, nearest, caller)
+
+
+def _declared_before(name: str, binder: Node, caller: Node) -> bool:
+    """Whether a bare `name: T` declaration precedes `binder`.
+
+    A declaration binds no value, so the assignment that follows is what it
+    was declared for and the annotation is still the only thing that can
+    type the name.
     """
     return any(
-        identifier.start_byte > after and safe_decode_text(identifier) == name
-        for _binder, identifier in _bindings_in(caller)
+        _annotates(other)
+        and other.child_by_field_name(cs.TS_FIELD_RIGHT) is None
+        and other.end_byte <= binder.start_byte
+        for other, identifier in _bindings_in(caller)
+        if safe_decode_text(identifier) == name
+    )
+
+
+def _annotates(binder: Node) -> bool:
+    """Whether a binding node carries the annotation it binds (`p: T = v`)."""
+    return (
+        binder.type == cs.TS_PY_ASSIGNMENT
+        and binder.child_by_field_name(cs.TS_FIELD_TYPE) is not None
     )
 
 
@@ -530,14 +580,20 @@ class PythonAstAnalyzerMixin(_AstBase):
         A `tuple[...]` alone keeps its text: it is what `_unpacked_elements`
         splits position by position, and what a typed parameter stores.
 
-        Two rules keep an annotation from describing the wrong value, both
-        from review (#1919). It must sit in the scope being analysed, the
-        rule the unpacking pass already applies. And a later binding of the
-        same name clears it, the clearing rule an unpacked call obeys:
-        after `p = opaque()` the annotation describes a value the name no
-        longer holds. A bare `q: T` declaration is exempt from the second:
-        it has no value of its own, so the assignment that follows is the
-        value it was declared for.
+        The annotation must sit in the scope being analysed, the rule the
+        unpacking pass already applies (#1919); one inside a nested def
+        binds a name in that body, and recording it here would let an outer
+        receiver of the same name resolve by the inner class.
+
+        Supersession is NOT handled here. A name rebound later still holds
+        the annotated value for every use before the rebinding, and this
+        map is flat per function -- it cannot say "Banner until line 5,
+        unknown after". Clearing the entry would untype the earlier uses
+        too, which is what an earlier cut of this fix did (Greptile, #1919).
+        The position test belongs where the value is read, so
+        `_unpacked_elements` applies `_supersedes_annotation` at the unpack
+        site, the way `_defining_call` already tests bindings before the
+        site it is resolving.
 
         The scope rule is narrow on purpose. It keeps THIS pass from
         recording a nested body's annotation, but the value passes that run
@@ -554,9 +610,6 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
             var_name = self._extract_assignment_variable_name(left)
             if not var_name or var_name in local_var_types:
-                continue
-            has_value = assignment.child_by_field_name(cs.TS_FIELD_RIGHT) is not None
-            if has_value and _rebound_after(var_name, assignment.end_byte, caller):
                 continue
             annotation = safe_decode_text(type_node) or ""
             if annotated := self._type_of_annotated_name(annotation, module_qn):
@@ -656,7 +709,19 @@ class PythonAstAnalyzerMixin(_AstBase):
             )
         if elements or right.type != cs.TS_PY_IDENTIFIER:
             return elements
-        stored = local_var_types.get(safe_decode_text(right) or "")
+        name = safe_decode_text(right) or ""
+        # The stored text describes the value the name was ANNOTATED with,
+        # so a binding between that annotation and here supersedes it, the
+        # same rule `_defining_call` applies to a call. Checked at the read
+        # rather than at the write because a typed parameter is seeded into
+        # the map before any assignment pass runs and so has no annotated
+        # assignment node for the annotation pass to clear (greptile-local,
+        # #1900): without this, `def use(p: tuple[int, Banner]): p =
+        # opaque(); _n, b = p` unpacks a shape `p` no longer holds, while
+        # the annotated-local twin is correctly left unbound.
+        if _supersedes_annotation(name, right.start_byte, caller):
+            return []
+        stored = local_var_types.get(name)
         return self._tuple_elements_from_text(stored, "", module_qn) if stored else []
 
     def _defining_call(self, right: Node, caller: Node) -> Node | None:
