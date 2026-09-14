@@ -604,6 +604,17 @@ class PythonAstAnalyzerMixin(_AstBase):
 
                 stack.extend(reversed(current.children))
 
+        # Only what THIS body binds. The captures above walk the whole
+        # subtree, so a name bound inside a nested def or class body would
+        # otherwise be recorded in this function's map and type an outer
+        # receiver of the same name by the inner binding's class (#1922).
+        # Python's scoping makes them different objects: an inner local is
+        # local to the inner body, and a class body's names are attributes
+        # reached through the class, never as a bare name in the function
+        # around it. The unpacking and annotation passes apply the same rule
+        # themselves, for the same reason.
+        assignments = [a for a in assignments if _scope_of(a) == node.id]
+
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
 
