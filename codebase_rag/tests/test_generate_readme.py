@@ -157,6 +157,10 @@ class TestLatestNews:
             encoding="utf-8",
         )
         assert format_latest_news(news, limit=3) == "- **A**: x\n  cont."
+        # The marker must count the entry the blank line already closed: a
+        # count of 0 falls back to `limit`, which at 3 would also render the
+        # older release's entry. So the limit=3 assertion above is the
+        # discriminating one, not decoration.
 
     def test_an_empty_file_renders_nothing(self, tmp_path: Path) -> None:
         news = tmp_path / "NEWS.md"
