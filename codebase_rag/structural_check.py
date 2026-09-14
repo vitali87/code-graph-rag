@@ -257,7 +257,7 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
-def _isolated(
+def _measure_then_restore(
     updater: GraphUpdater,
     ingestor: object,
     project_name: str,
@@ -329,7 +329,7 @@ def run_check(
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
     _refuse_unrestorable_capture(capture or default_capture())
-    return _isolated(
+    return _measure_then_restore(
         updater,
         ingestor,
         project_name,
