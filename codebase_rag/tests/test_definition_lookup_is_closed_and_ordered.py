@@ -117,6 +117,9 @@ def test_no_lookup_names_a_label_it_excludes(name: str) -> None:
 _READABLE = {
     cs.NodeLabel.METHOD: "proj.mod.Cls.run",
     cs.NodeLabel.SECTION: "proj.README.Install",
+    cs.NodeLabel.PATTERN: "proj.mod.12.4.singleton",
+    cs.NodeLabel.CODE_SMELL: "proj.mod.30.0.long-method",
+    cs.NodeLabel.SECURITY_ISSUE: "proj.mod.7.2.sql-injection",
 }
 
 
@@ -153,3 +156,20 @@ async def test_a_node_with_a_readable_span_is_retrievable(
         f"it; admitted={sorted(admitted)}"
     )
     assert result.source_code
+
+
+@pytest.mark.parametrize(
+    "label", sorted(cs.SPAN_BEARING_NODE_LABELS, key=lambda x: x.value)
+)
+def test_a_span_bearing_label_reaches_the_snippet_lookup(label: cs.NodeLabel) -> None:
+    """Every node carrying start_line/end_line/path is retrievable.
+
+    These are not definitions, so they stay out of DEFINITION_NODE_LABELS,
+    but `find_code_snippet` can read source for them and did before this
+    lookup was narrowed. Dropping one reproduces this issue's own symptom on
+    another label, which is how Section and then the three finding nodes were
+    each lost in turn (greptile-local, then Greptile on the PR).
+    """
+    assert label in cs.SNIPPET_NODE_LABELS, label
+    assert label not in cs.DEFINITION_NODE_LABELS, label
+    assert label.value in _matched_labels(CYPHER_FIND_BY_QUALIFIED_NAME), label
