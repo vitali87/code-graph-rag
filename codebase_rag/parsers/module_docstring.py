@@ -53,6 +53,28 @@ class ModuleDocSpec(NamedTuple):
     # should (Scala `class_definition` vs Java `class_declaration`, C++
     # `class_specifier`, Dart `function_signature`).
     declaration_types: frozenset[str] = frozenset()
+    # Statement types that DEFINE a function or class without being a
+    # declaration node themselves: JavaScript's `const f = () => {}` is a
+    # `lexical_declaration`, and `module.exports.f = function () {}` an
+    # `expression_statement`. Such a statement is left out of
+    # `declaration_types` on purpose (a `const x = 1` may legally open a
+    # documented file), but when its VALUE is a function or class the adjacent
+    # doc is that definition's -- which is also what the definition-level
+    # extractor attaches it to, so leaving it here would give one comment two
+    # owners (issue #1887).
+    binding_types: frozenset[str] = frozenset()
+    # The value node types that make a binding -- or a bare `export default`
+    # -- a definition: functions and classes. `export default function () {}`
+    # unwraps to a bare `function_expression` that is neither a declaration
+    # type nor a binding statement, and was still taken as the file's doc
+    # (greptile-local on #1887).
+    definition_value_types: frozenset[str] = frozenset()
+    # Wrappers that change nothing about what a value IS: `(() => {})`,
+    # TypeScript's `expr as T`, `expr satisfies T`, `expr!`. The definition
+    # pass binds the inner value as the definition, so the module must look
+    # through them too or the adjacent doc is claimed here as the file's and
+    # the function is left undocumented (Greptile and CodeRabbit on #1889).
+    transparent_types: frozenset[str] = frozenset()
 
 
 _C_STYLE_BLOCK = frozenset({"comment", "block_comment"})
@@ -165,6 +187,32 @@ _JS_DECLS = frozenset(
     }
 )
 
+# The statements that may bind a function or class to a name. Which ones
+# actually do is decided per node by `_binds_a_definition`, from the VALUE.
+_JS_BINDINGS = frozenset(
+    {"lexical_declaration", "variable_declaration", "expression_statement"}
+)
+# Wrappers the definition pass looks through; see `ModuleDocSpec.transparent_types`.
+_JS_TRANSPARENT = frozenset(
+    {
+        "parenthesized_expression",
+        "as_expression",
+        "satisfies_expression",
+        "non_null_expression",
+        "type_assertion",
+    }
+)
+# The value node types that make such a binding a definition.
+_JS_FUNCTION_VALUES = frozenset(
+    {
+        "arrow_function",
+        "function_expression",
+        "function",
+        "generator_function",
+        "class",
+    }
+)
+
 _DART_DECLS = frozenset(
     {
         "class_definition",
@@ -194,6 +242,9 @@ _JS_STYLE = ModuleDocSpec(
     block_markers=_DOC_BLOCK_MARKERS,
     skip_types=_SHEBANGS,
     declaration_types=_JS_DECLS,
+    binding_types=_JS_BINDINGS,
+    definition_value_types=_JS_FUNCTION_VALUES,
+    transparent_types=_JS_TRANSPARENT,
 )
 
 MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
@@ -500,8 +551,68 @@ def _documents_declaration(
             continue
         if candidate.start_point[0] > end_row + 1:
             return False
-        return _unwrap_export(candidate).type in spec.declaration_types
+        unwrapped = _unwrap_transparent(_unwrap_export(candidate), spec)
+        if unwrapped.type in spec.declaration_types:
+            return True
+        # An anonymous `export default function () {}` / `() => {}` / `class {}`
+        # unwraps to the bare value; it is a definition all the same.
+        if unwrapped.type in spec.definition_value_types:
+            return True
+        return _binds_a_definition(unwrapped, spec)
     return False
+
+
+def _binds_a_definition(node: ASTNode, spec: ModuleDocSpec) -> bool:
+    """Whether a binding statement's value is a function or class.
+
+    `/** Arrow doc */` directly above `const arrow = () => {}` is the arrow's
+    documentation by JSDoc and TypeDoc alike, and the definition-level
+    extractor attaches it there. Before this check the module took it too,
+    because `lexical_declaration` is not a declaration type -- one comment,
+    two owners (issue #1887). A plain `const x = 1` is unchanged: its value is
+    not a definition, so an adjacent doc still describes the file, which the
+    existing tests pin.
+
+    A mixed `const a = 1, f = () => {}` is refused here AND not climbed by the
+    definition-level extractor (a multi-declarator statement is not a single
+    definition's wrapper), so that comment has no owner. No doc tool reads it
+    as file documentation, so none is the honest answer rather than the file.
+    """
+    if node.type not in spec.binding_types:
+        return False
+    if node.type == "expression_statement":
+        assignments = [c for c in node.children if c.type == "assignment_expression"]
+        values = [a.child_by_field_name("right") for a in assignments]
+    else:
+        declarators = [c for c in node.children if c.type == "variable_declarator"]
+        values = [d.child_by_field_name("value") for d in declarators]
+    return any(
+        v is not None
+        and _unwrap_transparent(v, spec).type in spec.definition_value_types
+        for v in values
+    )
+
+
+def _unwrap_transparent(node: ASTNode, spec: ModuleDocSpec) -> ASTNode:
+    """The value inside any number of transparent wrappers, or the node itself.
+
+    `(() => {})` is a `parenthesized_expression` around an `arrow_function`;
+    `x as T` an `as_expression` whose first named child is `x`; `<T>x` a
+    `type_assertion` whose first named child is the TYPE. The wrapped value is
+    the first named child that is not a `type_arguments`, and the loop
+    descends there.
+    """
+    while node.type in spec.transparent_types:
+        # `<T>expr` puts its `type_arguments` BEFORE the expression, so the
+        # first named child is the type, not the value (CodeRabbit on #1889).
+        inner = next(
+            (c for c in node.children if c.is_named and c.type != "type_arguments"),
+            None,
+        )
+        if inner is None:
+            return node
+        node = inner
+    return node
 
 
 def _unwrap_export(node: ASTNode) -> ASTNode:

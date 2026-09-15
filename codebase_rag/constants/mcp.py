@@ -36,6 +36,10 @@ class MCPToolName(StrEnum):
     FLOW_VERDICT = "flow_verdict"
     EXPLAIN_TRACEBACK = "explain_traceback"
     RANK_ROOT_CAUSES = "rank_root_causes"
+    # Agent-authored notes about code (issue #1808): written to the graph,
+    # never into source files, and read back per symbol.
+    ANNOTATE = "annotate"
+    GLOSSES = "glosses"
 
 
 class MCPTransport(StrEnum):
@@ -99,6 +103,10 @@ class MCPParamName(StrEnum):
     DELETED = "deleted"
     TARGET = "target"
     DEPTH = "depth"
+    BODY = "body"
+    KIND = "kind"
+    MENTIONS = "mentions"
+    AUTHOR = "author"
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
@@ -162,6 +170,18 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+MCP_GLOSS_TARGET_NOT_FOUND = "No definition matches {target!r} in project {project!r}."
+MCP_GLOSS_TARGET_AMBIGUOUS = (
+    "{target!r} names {count} definitions; pass one of the qualified names "
+    "listed under 'candidates'."
+)
+MCP_GLOSS_MENTION_REFUSED = "mention {name!r}: {error}"
+MCP_GLOSS_KIND_UNKNOWN = "Unknown gloss kind {kind!r}. Kinds: {kinds}"
+MCP_GLOSS_BODY_EMPTY = "A gloss needs a non-empty body."
+MCP_GLOSS_NOT_WRITTEN = (
+    "The gloss on {target!r} was not written: its subject or a mentioned "
+    "definition left the graph between resolving and writing. Re-index and retry."
+)
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."

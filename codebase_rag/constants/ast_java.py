@@ -21,6 +21,9 @@ TS_FORMAL_PARAMETER = "formal_parameter"
 TS_SPREAD_PARAMETER = "spread_parameter"
 TS_LOCAL_VARIABLE_DECLARATION = "local_variable_declaration"
 TS_FIELD_DECLARATION = "field_declaration"
+# An interface field. The grammar names it after what it implicitly is
+# (`public static final`), so the keywords are usually absent from source.
+TS_JAVA_CONSTANT_DECLARATION = "constant_declaration"
 TS_ASSIGNMENT_EXPRESSION = "assignment_expression"
 
 TS_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
