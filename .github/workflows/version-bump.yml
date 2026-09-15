@@ -24,11 +24,14 @@ env:
 jobs:
   bump-version:
     name: Auto Version Bump
-    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      !contains(github.event.head_commit.message, 'chore: bump version')
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 100
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -329,6 +332,75 @@ jobs:
           git add pyproject.toml server.json uv.lock NEWS.md README.md
           git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
           git push
+
+      - name: Require successful CI for the release source
+        if: steps.decide.outputs.release == 'true'
+        timeout-minutes: 50
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_WAIT_ATTEMPTS: 90
+        run: |
+          set -euo pipefail
+          # The bump has already been pushed. CI must cover its source commit,
+          # not the chore commit generated above or a newer tip of main.
+          if [[ "$GITHUB_REF" != refs/heads/main ||
+                "$(git rev-parse HEAD^)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Release source is not the triggering main commit"
+            exit 1
+          fi
+          WORKFLOW_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml" \
+            --jq 'select(.path == ".github/workflows/ci.yml" and .name == "CI" and .state == "active") | .id')
+          if [[ ! "$WORKFLOW_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Could not identify the active CI workflow"
+            exit 1
+          fi
+          for ((attempt=1; attempt<=CI_WAIT_ATTEMPTS; attempt++)); do
+            RUNS=$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?head_sha=${GITHUB_SHA}&event=push&branch=main&per_page=100")
+            STATE=$(jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" \
+              --argjson workflow "$WORKFLOW_ID" '
+              if type != "array" or length == 0 or
+                 any(.[]; (.workflow_runs | type) != "array" or
+                           (.total_count | type) != "number") then
+                error("Invalid CI workflow runs response")
+              else . end
+              | if ([.[].workflow_runs[]] | length) != .[0].total_count then
+                  error("Incomplete CI workflow runs response")
+                else . end
+              | [.[].workflow_runs[] | select(
+                  .workflow_id == $workflow and .path == ".github/workflows/ci.yml" and
+                  .head_sha == $sha and .head_branch == "main" and .event == "push" and
+                  .repository.full_name == $repo and .head_repository.full_name == $repo)]
+              | if any(.[]; (.id | type) != "number" or .id <= 0 or
+                            (.run_attempt | type) != "number" or .run_attempt <= 0) then
+                  error("Missing CI run identity")
+                else . end
+              | max_by([.id, .run_attempt])
+              | if . == null then "missing"
+                elif .status == "completed" then (.conclusion // "invalid")
+                elif .status == "queued" or .status == "in_progress" or
+                     .status == "pending" or .status == "waiting" or
+                     .status == "requested" then "pending"
+                else "invalid" end' <<< "$RUNS")
+            case "$STATE" in
+              success)
+                echo "CI succeeded for release source ${GITHUB_SHA}"
+                exit 0
+                ;;
+              missing|pending)
+                echo "Waiting for CI at ${GITHUB_SHA} (${STATE}, attempt ${attempt}/${CI_WAIT_ATTEMPTS})"
+                ;;
+              *)
+                echo "::error::CI at ${GITHUB_SHA} concluded ${STATE}; refusing release"
+                exit 1
+                ;;
+            esac
+            if (( attempt < CI_WAIT_ATTEMPTS )); then
+              sleep 30
+            fi
+          done
+          echo "::error::Timed out waiting for successful CI at ${GITHUB_SHA}; refusing release"
+          exit 1
 
       - name: Create git tag
         if: steps.check_manual.outputs.skip == 'false'
