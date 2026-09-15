@@ -14,6 +14,7 @@ nodes and DEFINES_CONSTANT.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -108,13 +109,23 @@ def test_a_constant_never_wins_the_source_lookup_from_a_real_definition() -> Non
         assert label not in cs.SNIPPET_NODE_LABELS, (
             f"{label.value} carries no end_line and would break source retrieval"
         )
-        assert f"{label.value}|" not in cq.CYPHER_FIND_BY_QUALIFIED_NAME
+        # Matched as a whole label in the rendered alternation, not as a
+        # prefix: `f"{label}|"` would miss a label that sorts LAST and so
+        # carries no trailing pipe, and a bare substring test would match
+        # `Constant` inside a longer label name.
+        assert not re.search(
+            rf"[:|]{re.escape(label.value)}[|)]",
+            cq.CYPHER_FIND_BY_QUALIFIED_NAME,
+        )
     # The control: span-bearing labels ARE in the allowlist and DO reach the
     # rendered query, or the assertions above would hold vacuously over an
     # empty set and a lookup that matches nothing at all.
     for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS):
         assert label in cs.SNIPPET_NODE_LABELS
-        assert label.value in cq.CYPHER_FIND_BY_QUALIFIED_NAME
+        assert re.search(
+            rf"[:|]{re.escape(label.value)}[|)]",
+            cq.CYPHER_FIND_BY_QUALIFIED_NAME,
+        )
 
 
 def test_the_constant_label_is_owned_by_its_capture_group() -> None:
