@@ -880,10 +880,17 @@ class TestIncompleteMarkerSurvivesTheProcess:
         having happened.
         """
         store: dict[str, bool] = {}
+        # {project: {run_id, ...}} -- the outstanding runs behind `store`.
+        runs: dict[str, set[str]] = {}
         # The marker's phase, kept beside the marker itself so the existing
         # `store[name] is True` assertions keep their meaning. Absent reads as
         # writing, exactly as the production query's `coalesce` does.
-        writing: dict[str, bool] = {}
+        # PER MARKER, keyed (project, run_id), because production stores the
+        # phase on the marker node. A per-project phase cannot express two
+        # concurrent runs at different phases -- and it silently raised a
+        # legacy marker's phase when an unrelated run marked itself writing,
+        # which is behaviour production does not have (#1850 review).
+        writing: dict[tuple[str, str], bool] = {}
         ingestor = MagicMock()
 
         # A plain dict, never an attribute on the MagicMock: `getattr` on a
@@ -903,17 +910,69 @@ class TestIncompleteMarkerSurvivesTheProcess:
             # the code is supposed to answer: with a branch keyed only on
             # "SET m.run_incomplete", reverting MERGE to MATCH left every
             # test green (#1705 review).
+            # The marker node is keyed by (project, run_id) in production
+            # (issue #1709), so the fake keys its per-run set the same way. A
+            # fake keyed only by project cannot express "B's clear leaves A's
+            # marker", which is the whole behaviour under test -- it would
+            # answer the question the code is supposed to answer, exactly as
+            # the MERGE-vs-MATCH note above records.
+            run_id = str((params or {}).get(cs.KEY_RUN_ID, ""))
             if "SET m.run_incomplete" in query:
                 if query.lstrip().startswith("MERGE") or name in store:
+                    runs.setdefault(name, set()).add(run_id)
                     store[name] = True
                     # Monotonic, as the production MERGE is: a later mark can
                     # raise the phase to writing but never lower it.
-                    writing[name] = writing.get(name, False) or bool(
-                        (params or {}).get(cs.KEY_WRITING, True)
-                    )
+                    writing[(name, run_id)] = writing.get(
+                        (name, run_id), False
+                    ) or bool((params or {}).get(cs.KEY_WRITING, True))
             elif "DELETE m" in query:
+                if "m.run_id IS NULL" in query:
+                    # The LEGACY clear: markers written before run ids
+                    # existed. The fake models those as the sentinel run id
+                    # "" (see the mark branch, which records whatever the
+                    # params carry). Phase-guarded exactly as production is --
+                    # a legacy marker whose run is still WRITING belongs to an
+                    # old-version process mid-write during a rolling upgrade
+                    # and must not be cleared. A fake that ignored the phase
+                    # would pass tests on behaviour production does not have.
+                    if writing.get((name, ""), True):
+                        return
+                    remaining = runs.get(name, set())
+                    remaining.discard("")
+                    writing.pop((name, ""), None)
+                    if remaining:
+                        return
+                    if remaining:
+                        return
+                elif "run_id" in query:
+                    # The ordinary clear: only THIS run's marker. The project
+                    # reads clear once every outstanding run's marker is gone.
+                    remaining = runs.get(name, set())
+                    remaining.discard(run_id)
+                    writing.pop((name, run_id), None)
+                    if remaining:
+                        return
+                elif "coalesce(m.writing, true) = false" in query:
+                    # RECOVERY, and it deletes only markers that are STILL
+                    # read-only. The phase is per project in this fake, so a
+                    # promoted phase blocks the whole delete -- which is the
+                    # property under test: a concurrent run that began
+                    # writing must not have its marker recovered away.
+                    still_writing = {
+                        r for r in runs.get(name, set()) if writing.get((name, r), True)
+                    }
+                    if still_writing:
+                        # Production's WHERE clause deletes the read-only ones
+                        # and leaves the rest; the project stays incomplete.
+                        for r in runs.get(name, set()) - still_writing:
+                            writing.pop((name, r), None)
+                        runs[name] = still_writing
+                        return
+                for r in runs.get(name, set()):
+                    writing.pop((name, r), None)
+                runs.pop(name, None)
                 store.pop(name, None)
-                writing.pop(name, None)
 
         def _read(query: str, params: dict | None = None) -> list[dict]:
             if "run_incomplete" not in query:
@@ -926,7 +985,10 @@ class TestIncompleteMarkerSurvivesTheProcess:
             # reads rows[0] would pass against a canned false and fail here.
             if not store.get(name):
                 return []
-            return [{"run_incomplete": True, "writing": writing.get(name, True)}]
+            any_writing = any(
+                writing.get((name, r), True) for r in runs.get(name, {""})
+            )
+            return [{"run_incomplete": True, "writing": any_writing}]
 
         def _delete_project(name: str) -> None:
             # Models CYPHER_DELETE_PROJECT: it detaches the Project and
@@ -938,7 +1000,35 @@ class TestIncompleteMarkerSurvivesTheProcess:
         ingestor.fetch_all.side_effect = _read
         ingestor.delete_project.side_effect = _delete_project
         ingestor._marker_store = store
-        ingestor._writing_store = writing
+
+        # Existing tests ask "is THIS PROJECT writing", which is now a view
+        # over the per-marker phases: true when any outstanding run is.
+        class _WritingView:
+            @staticmethod
+            def get(name: str, default: object = None) -> object:
+                marks = runs.get(name) or ({""} if store.get(name) else set())
+                if not marks:
+                    return default
+                return any(writing.get((name, r), True) for r in marks)
+
+            @staticmethod
+            def __setitem__(name: str, value: bool) -> None:
+                # Tests that plant a marker straight into `_marker_store`
+                # set the phase the same way. Record it against every known
+                # run for the project, and against the legacy sentinel when
+                # the marker was injected without one.
+                for r in runs.get(name) or {""}:
+                    writing[(name, r)] = value
+
+            @staticmethod
+            def pop(name: str, default: object = None) -> object:
+                for r in list(runs.get(name) or {""}):
+                    writing.pop((name, r), None)
+                return default
+
+        ingestor._writing_store = _WritingView()
+        ingestor._writing_by_marker = writing
+        ingestor._marker_runs = runs
         ingestor._failing = failing
         return ingestor
 
@@ -992,6 +1082,295 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert "failed part way" in refused.get("error", ""), (
             "a fresh registry hydrated a scoped updater from the partial "
             f"graph left by a crashed update; got {refused}"
+        )
+
+    async def test_an_unrelated_projects_clear_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """A successful clear settles only what it owns (#1774).
+
+        `_graph_incomplete` is registry-wide while every writer of it is
+        project-scoped, so `self._graph_incomplete = not cleared` let project
+        B's clean clear discard a flag project A earned.
+
+        The durable marker does not cover this. It is per project, so
+        `_persisted_incomplete(A)` correctly returns False: a wipe that dies
+        before the graph is gone writes no marker for A at all, leaving the
+        in-process flag the ONLY record that A is partial.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        # A wipe that fails part way: flag up, no marker written anywhere.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert not ingestor._marker_store, (
+            "fixture guard: the wipe must write NO marker, or the durable "
+            "check would refuse on its own and this proves nothing"
+        )
+
+        # An unrelated project B completes and clears its own marker.
+        assert registry._require_marker("project-B") is None
+        assert registry._require_marker_cleared("project-B") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's successful clear discarded the flag the "
+            "failed wipe earned; the next reingest would run over a partial graph"
+        )
+
+        # And the refusal it protects still fires.
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_deleting_an_unrelated_project_cannot_settle_a_wipes_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Through the PUBLIC path, which is what the helper-level test missed.
+
+        Raised by Greptile on #1846 and confirmed. The sibling test drives
+        `_require_marker_cleared('project-B')` directly, so it never sees
+        `_delete_project_sync` RAISE the flag for its own project first --
+        overwriting the wipe's `owner=None` with `B` -- and then legitimately
+        settle what it now appears to own. Measured before the fix:
+
+            after failed wipe:  flag=True  owner=None
+            after delete of B:  flag=False owner=None
+            reingest of A: ACCEPTED over a partial graph
+
+        The rule is that an operation claims ownership only when it raises
+        the flag FROM CLEAN; an already-set flag belongs to whatever failure
+        set it. Same rule `_abandon_before_writing` already applied to the
+        attribution.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._incomplete_project is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+        assert registry._incomplete_unbounded is True, (
+            "fixture guard: a half-done wipe is unbounded damage, so no "
+            "single project's clear may retire it (#1547)"
+        )
+
+        ingestor.list_projects.return_value = [project, "B"]
+        result = await registry.delete_project("B")
+        assert result.get("success") is True, f"fixture guard: delete failed; {result}"
+
+        assert registry._graph_incomplete is True, (
+            "deleting an unrelated project settled the flag a failed wipe "
+            "earned; the next reingest would run over a partially wiped graph"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_failed_clear_cannot_claim_another_projects_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery authority follows ownership too (#1846 review, third round).
+
+        The ownership field was guarded but `_flag_from_failed_clear` was not,
+        and it is what grants the heal in `_hydrate_reingest_updater`
+        (`recoverable_here = _flag_from_failed_clear == project_name`). So:
+
+            1. A fails leaving the flag up, owner=None (a failed wipe)
+            2. B's marker clear FAILS and claims the attribution
+            3. B's marker later recovers -> B heals the latch A owns
+
+        Measured before the fix: step 3 left `flag=False`, and B's scoped
+        reingest proceeded over A's partial graph.
+
+        The rule is the same one the ownership claim uses: an already-set flag
+        belongs to whatever failure set it.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True, "fixture guard: wipe must flag"
+        assert registry._flag_from_failed_clear is None, (
+            "fixture guard: a wipe strands no marker, so nothing is attributed"
+        )
+
+        # B strands a marker of its own: its clear fails.
+        assert registry._require_marker("B", writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared("B") is not None, (
+            "fixture guard: the clear was expected to fail"
+        )
+        ingestor._failing.discard("clear")
+
+        assert registry._flag_from_failed_clear is None, (
+            "B's failed clear claimed recovery authority over the flag A owns"
+        )
+
+        # B's marker recovers. The heal must not fire on A's flag.
+        ingestor._marker_store.pop("B", None)
+        registry._live_updater = None
+        ingestor.list_projects.return_value = [project, "B"]
+        with pytest.raises(ValueError, match="failed part way"):
+            registry._hydrate_reingest_updater("B")
+        assert registry._graph_incomplete is True, (
+            "B's marker recovery cleared the latch A owns"
+        )
+
+    async def test_a_clean_clear_keeps_another_projects_licence_to_heal(
+        self, temp_project_root: Path
+    ) -> None:
+        """The mirror of the attribution rule, and it fails CLOSED (#1846).
+
+        `_flag_from_failed_clear` is a project's licence to heal itself: A's
+        failed clear strands a recoverable `writing=false` marker and records
+        that the flag is A's to lift once the marker recovers. Dropping the
+        attribution unconditionally on any successful clear meant B's clean
+        clear discarded it, and A's own later reingest could no longer
+        recover -- refused forever though its graph was untouched.
+
+        Harmless compared with the other direction (a wrongly ALLOWED
+        reingest), but it wedges a project with nothing wrong with it, and
+        both directions come from the same unscoped assignment.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A's clear fails, leaving a recoverable marker attributed to A.
+        assert registry._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert registry._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert registry._flag_from_failed_clear == project, (
+            "fixture guard: A's failed clear must attribute the flag to A"
+        )
+
+        # B completes and clears its own marker.
+        assert registry._require_marker("B", writing=False) is None
+        assert registry._require_marker_cleared("B") is None
+
+        assert registry._flag_from_failed_clear == project, (
+            "B's clean clear discarded A's licence to heal itself; A's own "
+            "reingest would be refused though its graph was never touched"
+        )
+
+        # And A can still recover: its marker is `writing=false`.
+        registry._live_updater = None
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            registry._hydrate_reingest_updater(project)
+        assert registry._graph_incomplete is False, (
+            "A could not heal its own recoverable marker"
+        )
+
+    async def test_any_projects_clear_cannot_settle_a_failed_wipe(
+        self, temp_project_root: Path
+    ) -> None:
+        """Issue #1820's reproduction, pinned explicitly.
+
+        That issue is a third face of the same overloaded `None` this PR is
+        about, and it falls out of the ownership rule rather than needing its
+        own change -- but "falls out" is worth an assertion, or a later
+        refactor can quietly take it away again while the two tests above
+        stay green.
+
+        A failed wipe leaves the flag up with no owner (it spans every
+        project and writes no marker), so the in-process flag is the only
+        record the graph is partial. Before the rule, the next successful
+        clear for ANY project settled it and reads proceeded against a
+        half-wiped graph.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        assert "Error" in await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._graph_incomplete is True
+        assert registry._incomplete_project is None, (
+            "fixture guard: a wipe spans every project, so it owns none"
+        )
+        assert registry._incomplete_unbounded is True, (
+            "fixture guard: a half-done wipe is unbounded damage, so no "
+            "single project's clear may retire it (#1547)"
+        )
+
+        # A clear for a project entirely unrelated to the wipe.
+        assert registry._require_marker("any-project", writing=False) is None
+        assert registry._require_marker_cleared("any-project") is None
+
+        assert registry._graph_incomplete is True, (
+            "an unrelated project's clear settled the flag a failed wipe "
+            "earned; reads would proceed against a half-wiped graph (#1820)"
+        )
+
+        _mark_indexed(registry)
+        refused = await registry.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_projects_own_clear_still_settles_its_own_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control, and the one that constrains the fix.
+
+        Making the flag harder to clear must not break the operations that
+        legitimately clear the flag they raised: delete, index and update
+        each set it before their first write and settle it on success. A fix
+        that simply refused every clear would satisfy the test above while
+        wedging all three.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        _mark_indexed(registry)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await registry.update_repository()
+
+        assert registry._graph_incomplete is False, (
+            "a completed update must clear the flag it raised for its own project"
+        )
+        assert registry._incomplete_project is None
+        assert not registry._incomplete_projects, (
+            "a completed update must leave nothing outstanding"
+        )
+
+    async def test_a_delete_still_settles_the_flag_it_raised(
+        self, temp_project_root: Path
+    ) -> None:
+        """Second control, on a different owner-setting path.
+
+        `_delete_project_sync` raises the flag for its own project and
+        settles it via its own `_require_marker_cleared`. Pinning only the
+        update path would leave the delete and index paths free to regress.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        ingestor.list_projects.return_value = [project, "other"]
+
+        result = await registry.delete_project(project)
+        assert result.get("success") is True, result
+        assert registry._graph_incomplete is False, (
+            "a completed delete must settle the flag it raised"
         )
 
     async def test_a_completed_update_lifts_the_refusal_for_a_fresh_registry(
@@ -1224,6 +1603,824 @@ class TestIncompleteMarkerSurvivesTheProcess:
         assert project not in ingestor._marker_store, (
             "the deleted project kept its incomplete-run marker, so a fresh "
             "registry would refuse reingest for a project that is gone"
+        )
+
+    async def test_a_concurrent_runs_clear_cannot_remove_another_runs_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The overlap race (#1709), found by CodeRabbit on #1705.
+
+        `_ingestor_lock` is per INSTANCE, so two registries can index the same
+        project at once. With one marker node per project they interleaved:
+
+            1. A marks the project and starts mutating
+            2. B marks it -- a no-op, the node already exists
+            3. B finishes and CLEARS the marker
+            4. A fails part way
+
+        The graph then held A's partial data with no marker, and a fresh
+        process treated it as complete. Markers are now keyed per run, so B's
+        clear removes only B's.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        second = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+        _mark_indexed(second)
+        assert first._run_id != second._run_id, (
+            "fixture guard: two registries must have distinct run ids, or "
+            "this test cannot tell per-run markers from per-project ones"
+        )
+
+        assert first._require_marker(project) is None
+        assert second._require_marker(project) is None
+        assert second._require_marker_cleared(project) is None
+
+        assert first._persisted_incomplete(project) is True, (
+            "the concurrent run's clear removed this run's marker; A's "
+            "partial graph would look complete to a fresh process"
+        )
+
+        # A fresh process must still refuse, which is the consequence that
+        # matters: the marker exists precisely to survive one.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        refused = await fresh.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_legacy_marker_is_cleared_by_a_completing_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """Markers written before run ids must not wedge the project (#1850).
+
+        A marker from before this change has no `run_id` property. The read
+        matches on project alone and still sees it; the run-scoped clear
+        matches on `run_id` and can never delete it. Recovery reaches only
+        `writing=false` markers, so a legacy marker with `writing=true` (or
+        absent, which coalesces to true) was unreachable by every path and
+        the project stayed blocked forever after an upgrade.
+        """
+        from codebase_rag import cypher_queries as cq
+
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # A legacy marker: modelled as the sentinel empty run id. Left in the
+        # READ-ONLY phase, which is the shape a stale pre-upgrade marker has
+        # once its run is gone -- a `writing=true` legacy marker belongs to an
+        # old-version process that may still be mid-write, and the phase guard
+        # deliberately leaves that one alone (see the sibling test below).
+        ingestor.execute_write(
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: False},
+        )
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the legacy marker must be in the store"
+        )
+        # Deliberately NOT read through `_persisted_incomplete` here: that
+        # call RECOVERS a read-only marker as a side effect, so it would
+        # clear the very thing under test before the clear below runs.
+
+        # A run completes for this project: its clear lifts its own marker
+        # and the legacy one with it.
+        assert registry._require_marker(project) is None
+        assert registry._require_marker_cleared(project) is None
+
+        assert registry._persisted_incomplete(project) is False, (
+            "a legacy marker survived a completed run, so the project stays "
+            "blocked with no path that can clear it"
+        )
+
+    async def test_a_writing_legacy_marker_is_left_alone(
+        self, temp_project_root: Path
+    ) -> None:
+        """The rolling-deployment case (#1850 review).
+
+        During an upgrade an old-version process can still be WRITING under a
+        legacy marker. A new-version run completing for the same project must
+        not delete that protection, or a later failure in the old process
+        leaves partial data with nothing recording it.
+
+        The pair matters: the sibling test requires a stale read-only legacy
+        marker to be cleared (or an upgraded project is blocked forever), and
+        this one requires a writing legacy marker to survive. A fix
+        satisfying only one is the bug in the other direction.
+        """
+        from codebase_rag import cypher_queries as cq
+
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        # An old-version process, mid-write, under a legacy marker.
+        ingestor.execute_write(
+            cq.CYPHER_MARK_PROJECT_INCOMPLETE,
+            {cs.KEY_PROJECT_NAME: project, cs.KEY_RUN_ID: "", cs.KEY_WRITING: True},
+        )
+        assert registry._persisted_incomplete(project) is True
+
+        # A new-version run completes for the same project.
+        assert registry._require_marker(project) is None
+        assert registry._require_marker_cleared(project) is None
+
+        assert registry._persisted_incomplete(project) is True, (
+            "a completing new-version run deleted the protection for an "
+            "old-version process that was still writing; a later failure "
+            "there would leave partial data with nothing recording it"
+        )
+
+    async def test_recovery_deletes_only_the_read_only_markers(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery re-checks the phase AT DELETE TIME (#1850 review).
+
+        `_persisted_incomplete` reads the phase and then deletes, and a
+        concurrent run can promote its own marker in between -- an
+        unconditional delete would remove a marker protecting a graph that IS
+        being written. The re-check makes the delete act on the rows as they
+        are now, not as the caller last saw them.
+
+        Reaching it needs a marker set where the read still proceeds (the
+        first row it sees is read-only) while another marker is writing, so
+        the phase must be per MARKER. It is: the store models it that way
+        precisely so this case is expressible.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # One read-only marker (recoverable) and one writing marker.
+        assert stranding._require_marker(project, writing=False) is None
+        assert writer._require_marker(project, writing=True) is None
+        assert ingestor._writing_by_marker[(project, stranding._run_id)] is False
+        assert ingestor._writing_by_marker[(project, writer._run_id)] is True
+
+        # Recovery runs. It may clear the read-only marker; it must NOT clear
+        # the writing one, so the project still reads incomplete.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        fresh._recover_stranded_markers(project)
+
+        assert (project, writer._run_id) in ingestor._writing_by_marker or (
+            writer._run_id in ingestor._marker_runs.get(project, set())
+        ), "recovery deleted a marker belonging to a run that was WRITING"
+        assert ingestor._marker_store.get(project) is True, (
+            "recovery cleared the project though a writing run is outstanding; "
+            "a scoped reingest would trust a graph being written"
+        )
+
+    async def test_recovery_rechecks_before_reporting_the_project_clear(
+        self, temp_project_root: Path
+    ) -> None:
+        """A conditional delete plus a write with no row count (#1850 review).
+
+        Recovery deletes only markers still read-only, and `execute_write`
+        reports no affected-row count, so "the write succeeded" does not mean
+        "the marker is gone". A run that promotes its own marker between this
+        method's READ and that DELETE leaves a row the delete skipped, and
+        reporting the project clear then lets a scoped reingest proceed over a
+        graph being written.
+
+        The interleaving is forced rather than hoped for: the concurrent mark
+        is issued from inside the recovery call, which is the only way to land
+        it in that window deterministically.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # Only a read-only marker exists when the read happens.
+        assert stranding._require_marker(project, writing=False) is None
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+
+        real = fresh._recover_stranded_markers
+
+        def _racing(name: str) -> bool:
+            # The concurrent writer promotes its marker inside the window.
+            writer._require_marker(project, writing=True)
+            return real(name)
+
+        fresh._recover_stranded_markers = _racing  # type: ignore[method-assign]
+        verdict = fresh._persisted_incomplete(project)
+        fresh._recover_stranded_markers = real  # type: ignore[method-assign]
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the writing marker must survive the conditional "
+            "delete, or the race under test did not occur"
+        )
+        assert verdict is True, (
+            "the project was reported clear while a writing marker remained; "
+            "a scoped reingest would hydrate from a graph being written"
+        )
+
+    async def test_recovery_leaves_a_marker_that_began_writing(
+        self, temp_project_root: Path
+    ) -> None:
+        """A promoted phase must stop the marker being recovered away.
+
+        Covers the OUTER property: a project whose marker has been promoted
+        to writing still reads incomplete to a fresh process. It stops at the
+        phase READ in `_persisted_incomplete`, which returns before recovery
+        is called, so it does not reach the re-check inside
+        `CYPHER_RECOVER_PROJECT_INCOMPLETE`.
+
+        That re-check is covered by
+        `test_recovery_deletes_only_the_read_only_markers`, which needs a
+        marker set where the read still proceeds while another marker is
+        writing -- expressible only because the store models the phase per
+        MARKER rather than per project.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        writer = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+        _mark_indexed(writer)
+
+        # A read-only run strands its marker.
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+
+        # A concurrent run promotes the phase to writing before recovery acts.
+        assert writer._require_writing(project) is None
+        assert ingestor._writing_store.get(project) is True, (
+            "fixture guard: the phase must be promoted, or recovery is "
+            "entitled to clear and this test proves nothing"
+        )
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        assert fresh._persisted_incomplete(project) is True, (
+            "recovery cleared a marker belonging to a run that had begun "
+            "writing; a scoped reingest would trust a partial graph"
+        )
+
+    async def test_a_failed_legacy_cleanup_does_not_fail_a_completed_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """The legacy cleanup is best effort (#1850 review).
+
+        This run's own clear has already succeeded by the time it runs, so
+        the run IS complete. Letting a failure in optional compatibility
+        cleanup propagate reported a completed operation as incomplete and
+        raised the flag for a graph that is whole. The legacy marker simply
+        waits for the next run.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        assert registry._require_marker(project) is None
+
+        # Fail only the LEGACY delete, leaving this run's own clear working.
+        real_write = ingestor.execute_write.side_effect
+
+        def _fail_legacy(query: str, params: dict | None = None) -> None:
+            if "m.run_id IS NULL" in query:
+                raise RuntimeError("legacy cleanup refused")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _fail_legacy
+        stuck = registry._require_marker_cleared(project)
+        ingestor.execute_write.side_effect = real_write
+
+        assert stuck is None, (
+            "a failure in optional legacy cleanup reported a COMPLETED run as "
+            f"incomplete: {stuck}"
+        )
+        assert registry._graph_incomplete is False, (
+            "the flag was raised for a graph that is whole"
+        )
+
+    async def test_an_unreadable_store_refuses_rather_than_reporting_clear(
+        self, temp_project_root: Path
+    ) -> None:
+        """ "I cannot tell" and "nothing outstanding" are different answers.
+
+        Both the first marker read and the post-recovery re-check treat an
+        unreadable store as "refuse": acting on a graph whose state is
+        unknown is what the guard exists to prevent, and a full update
+        recovers either way.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        ingestor._failing.add("read")
+        try:
+            assert registry._persisted_incomplete(project) is True, (
+                "an unreadable marker store was reported as nothing outstanding"
+            )
+            assert registry._marker_rows(project) is None, (
+                "an unreadable store must be distinguishable from an empty one"
+            )
+        finally:
+            ingestor._failing.discard("read")
+
+    async def test_a_failed_recovery_write_refuses(
+        self, temp_project_root: Path
+    ) -> None:
+        """If the store refuses the recovery write, the run that would follow
+        could not mark itself either, so refuse now and let the next attempt
+        retry."""
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+
+        real_write = ingestor.execute_write.side_effect
+
+        def _fail_recovery(query: str, params: dict | None = None) -> None:
+            if "coalesce(m.writing, true) = false" in query:
+                raise RuntimeError("recovery write refused")
+            return real_write(query, params)
+
+        ingestor.execute_write.side_effect = _fail_recovery
+        assert fresh._recover_stranded_markers(project) is False
+        verdict = fresh._persisted_incomplete(project)
+        ingestor.execute_write.side_effect = real_write
+
+        assert verdict is True, (
+            "a store that refused the recovery write was reported as clear"
+        )
+
+    async def test_a_runs_own_clear_still_lifts_its_own_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control.
+
+        Making a clear run-scoped must not stop a run clearing what it wrote,
+        or every completed run would leave its marker behind and block the
+        next one -- a fix that satisfies the overlap test while wedging the
+        ordinary path.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        assert registry._require_marker(project) is None
+        assert registry._persisted_incomplete(project) is True
+        assert registry._require_marker_cleared(project) is None
+        assert registry._persisted_incomplete(project) is False, (
+            "a run could not clear the marker it wrote itself"
+        )
+
+    async def test_recovery_clears_a_marker_stranded_by_another_run(
+        self, temp_project_root: Path
+    ) -> None:
+        """Recovery is deliberately NOT run-scoped, and that is load-bearing.
+
+        Its whole purpose is to clear a marker some OTHER run stranded -- one
+        that stopped before its first graph write and could not clear its own.
+        A run-scoped delete matches nothing there, and the project stays
+        blocked until someone runs a full update. Three existing tests cover
+        the paths; this states the property directly so the reason survives.
+        """
+        ingestor = self._store()
+        stranding = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(stranding)
+
+        # A read-only run marks itself, then fails to clear.
+        assert stranding._require_marker(project, writing=False) is None
+        ingestor._failing.add("clear")
+        assert stranding._require_marker_cleared(project) is not None
+        ingestor._failing.discard("clear")
+        assert ingestor._marker_store.get(project) is True
+
+        # A DIFFERENT registry, with a different run id, recovers it.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        assert fresh._run_id != stranding._run_id, "fixture guard: distinct runs"
+        assert fresh._persisted_incomplete(project) is False, (
+            "a fresh process could not clear a `writing=false` marker another "
+            "run stranded, so the project stays blocked until a full update"
+        )
+
+    async def test_a_fresh_registry_refuses_the_structural_delta_after_a_crash(
+        self, temp_project_root: Path
+    ) -> None:
+        """The structural-delta path needs the same durable check (#1783).
+
+        `_updater_for_reingest` guards on the in-process flag alone and never
+        reads the persisted marker, so after a crash or an MCP restart it
+        passes -- `_graph_incomplete` is False because nothing in THIS
+        process failed -- and hydrates from the partial graph.
+
+        The sibling test above covers `_reingest_sync`, which #1705 rebuilt
+        as `_hydrate_reingest_updater` (the marker-reading version). The
+        structural-delta call site was added by the #1546 stack after that
+        branch was written, so it kept the flag-only helper. Same registry,
+        same state, opposite answers -- and invisible from either call site,
+        since each looks correct alone.
+
+        Driven through `_delta_after_write`, the real caller, rather than the
+        helper: the defect is which helper that path REACHES, so calling the
+        helper directly would assert the fix on the wrong subject.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("update died")
+            assert "Error" in await first.update_repository()
+
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the failed update left no persisted marker, so a "
+            "fresh process has nothing to read and this proves nothing"
+        )
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        assert second._graph_incomplete is False, (
+            "fixture guard: the new registry must NOT carry the in-process "
+            "flag, or this test cannot tell the persisted marker apart from it"
+        )
+
+        # `_delta_after_write` never raises -- it reports in place of the
+        # delta -- so the refusal shows up in the returned text.
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            result = second._delta_after_write(["a.py"])
+            hydrated = updater_cls.called
+
+        assert not hydrated, (
+            "the structural-delta path built an updater over the partial "
+            "graph left by a crashed update; it must refuse like the scoped "
+            "reingest path does"
+        )
+        assert "failed part way" in result, (
+            f"expected the incomplete-run refusal in the delta text; got {result!r}"
+        )
+
+    async def test_a_completed_update_lets_the_structural_delta_through(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control.
+
+        Without it the fix is indistinguishable from one that refuses every
+        structural delta forever, which also satisfies the test above.
+        """
+        ingestor = self._store()
+        first = self._registry(temp_project_root, ingestor)
+        _mark_indexed(first)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            assert "Error" not in await first.update_repository()
+
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            second._delta_after_write(["a.py"])
+            assert updater_cls.called, (
+                "a clean store must still let the structural delta hydrate"
+            )
+
+    async def test_the_flag_only_hydration_helper_is_gone(self) -> None:
+        """Both reingest paths now read the durable marker (#1783).
+
+        `_updater_for_reingest` guarded on `_graph_incomplete` alone. With
+        its last caller routed through `_hydrate_reingest_updater` it has
+        none, and a flag-only hydration helper left sitting beside the
+        marker-reading one is how this defect came back once already: the
+        #1546 stack picked the wrong one because both existed and looked
+        interchangeable. If it returns it needs a caller and a reason.
+        """
+        assert not hasattr(MCPToolsRegistry, "_updater_for_reingest")
+
+    async def test_a_successful_structural_delta_lifts_its_own_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (b) on the structural-delta path (#1845 review).
+
+        Routing this path through `_hydrate_reingest_updater` (#1783) brings
+        its MARK with it: that helper marks before its constraint migration.
+        Without a matching clear a SUCCESSFUL delta left the project durably
+        marked, and every later run -- delta or scoped reingest, in this
+        process or a fresh one -- refused on a marker no failure earned.
+
+        The delta must genuinely succeed here: on the failure path a retained
+        marker is correct, so a test whose delta errored would pass against
+        the bug.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+            )
+            updater_cls.return_value.project_name = project
+            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" not in result, (
+            f"fixture guard: the delta FAILED, so a retained marker is "
+            f"correct and this test cannot see the defect; got {result!r}"
+        )
+        assert ingestor._marker_store.get(project) is not True, (
+            "a successful structural delta left its own marker set; every "
+            "later run would refuse on it"
+        )
+
+        # The consequence, end to end: a fresh process must not refuse.
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            after = await second.reingest(["a.py"])
+        assert "failed part way" not in after.get("error", ""), (
+            f"a fresh registry refused after a SUCCESSFUL delta; got {after}"
+        )
+
+    async def test_a_delta_through_a_retained_updater_is_marked_too(
+        self, temp_project_root: Path
+    ) -> None:
+        """BOTH delta branches mark, not only the hydrating one (#1845 review).
+
+        The retained-updater branch reaches the same mutating `reingest`, so
+        leaving it unmarked meant a crash mid-delta left a partially rebuilt
+        graph that a fresh process could not tell from a complete one. Same
+        fifth-path gap `_reingest_sync` closed in the #1705 review, round 6.
+
+        Observed through the marker store DURING the delta -- after it, a
+        successful run has cleared its own marker, so the end state looks
+        identical whether or not one was ever taken.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        retained = MagicMock()
+        retained.project_name = project
+        retained.reingest.return_value = MagicMock(
+            reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+        )
+        registry._live_updater = retained
+        assert registry._live_updater is not None, "fixture guard: retained branch"
+
+        marked_during: list[bool] = []
+
+        def _observe(*_args: object, **_kwargs: object) -> str:
+            # Called inside `sd.observe`, i.e. while the delta is running.
+            marked_during.append(ingestor._marker_store.get(project) is True)
+            return ""
+
+        with patch("codebase_rag.mcp.tools.sd.observe", side_effect=_observe):
+            result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" not in result, (
+            f"fixture guard: the delta must succeed; got {result!r}"
+        )
+        assert marked_during == [True], (
+            "a delta through the RETAINED updater mutated the graph with no "
+            "durable marker; a crash mid-delta would leave a partial graph "
+            "indistinguishable from a complete one"
+        )
+        assert ingestor._marker_store.get(project) is not True, (
+            "the retained-branch delta left its own marker behind"
+        )
+
+    async def test_a_delta_aborted_before_writing_lifts_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A no-write abort must not leave the project blocked (#1845 review).
+
+        `reingest` can raise `ReingestAborted` during its READ-ONLY prologue.
+        The graph is whole then -- the handler's own comment says so -- but
+        the marker this call took stayed, so every later scoped reingest
+        refused a graph that was never touched, in this process and in any
+        fresh one.
+
+        Pairs with `test_a_failed_structural_delta_keeps_its_marker`: that one
+        requires the marker to SURVIVE a failure that may have mutated. The
+        distinction is exactly whether the graph was touched, which is what
+        `_abandon_before_writing` exists to express.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=ReingestAborted("aborted in the prologue"),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" in result, f"fixture guard: expected the abort; {result!r}"
+        assert ingestor._marker_store.get(project) is not True, (
+            "a delta aborted BEFORE any graph change left its marker behind; "
+            "the project refuses every later reingest though nothing was written"
+        )
+
+        # End to end: a fresh process must not inherit the refusal.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), skipped=(), elapsed_ms=0.1
+            )
+            after = await fresh.reingest(["a.py"])
+        assert "failed part way" not in after.get("error", ""), (
+            f"a fresh registry inherited a marker from a no-write abort; {after}"
+        )
+
+    async def test_a_delta_advances_the_phase_before_mutating(
+        self, temp_project_root: Path
+    ) -> None:
+        """Invariant (a), second half, on the delta path (#1845 review).
+
+        Both delta branches mark with `writing=False`, and `reingest` starts
+        deleting after its read-only prologue. Without advancing the phase
+        there, a crash mid-delete left a partial graph that a fresh registry
+        reads as recoverable, CLEARS, and hydrates as complete -- worse than
+        no marker, because the recovery path actively removes the protection.
+
+        Asserts the phase as seen from `before_write`, i.e. at the moment the
+        updater is about to issue its first delete.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+        phase_at_write: list[bool] = []
+
+        def _reingest(*_a: object, before_write: object = None, **_k: object) -> object:
+            # PRODUCTION must supply the callback. An earlier version of this
+            # test called it unconditionally when present, which passes
+            # whether or not the delta path passes one -- it observed the stub
+            # rather than the code, and stayed green with `before_write`
+            # removed from the call site.
+            assert callable(before_write), (
+                "the delta path did not pass a before_write callback, so the "
+                "marker stays writing=False through the deletes"
+            )
+            before_write()
+            phase_at_write.append(ingestor._writing_store.get(project) is True)
+            return MagicMock(reparsed=(), affected=(), removed=(), elapsed_ms=0.1)
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            updater_cls.return_value.reingest.side_effect = _reingest
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=lambda *a, **k: (
+                    (a[3]() if len(a) > 3 else k["run"]()) and ""
+                ),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert phase_at_write == [True], (
+            "the delta began deleting with its marker still saying "
+            f"writing=False; a crash there is recoverable-looking: {result!r}"
+        )
+
+    async def test_a_delta_abort_cannot_lift_another_runs_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """A no-write abort lifts only ITS OWN marker (#1845 review).
+
+        The abort path calls `_abandon_before_writing`, which clears the
+        marker this call took. Raised as a risk that a structural delta could
+        thereby remove the durable marker an EARLIER failed update left,
+        letting a later registry hydrate from a graph explicitly marked
+        partial.
+
+        It cannot, because markers are keyed per run (#1709): the clear
+        matches on this registry's own run id and a different run's marker is
+        invisible to it. That is a property of two changes meeting, so it is
+        worth an explicit test rather than being left implied -- neither
+        change's own tests cover the interaction.
+        """
+        ingestor = self._store()
+
+        # A's update fails part way, leaving a durable marker.
+        first = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(first)
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.run.side_effect = RuntimeError("update died")
+            assert "Error" in await first.update_repository()
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the failed update must leave a marker"
+        )
+
+        # B -- a different process -- runs a delta that aborts before writing.
+        second = self._registry(temp_project_root, ingestor)
+        _mark_indexed(second)
+        assert first._run_id != second._run_id, "fixture guard: distinct runs"
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=ReingestAborted("aborted in the prologue"),
+            ):
+                second._delta_after_write(["a.py"])
+
+        assert ingestor._marker_store.get(project) is True, (
+            "an aborted structural delta removed the marker an earlier failed "
+            "update left; a later registry would hydrate from a graph that "
+            "was explicitly marked partial"
+        )
+
+        # The refusal it protects must still fire for a fresh process.
+        fresh = self._registry(temp_project_root, ingestor)
+        _mark_indexed(fresh)
+        refused = await fresh.reingest(["a.py"])
+        assert "failed part way" in refused.get("error", ""), (
+            f"expected the incomplete-run refusal; got {refused}"
+        )
+
+    async def test_a_failed_structural_delta_keeps_its_marker(
+        self, temp_project_root: Path
+    ) -> None:
+        """The control for the clear above.
+
+        The marker must come off only on SUCCESS. A delta that fails after
+        mutating may have left a subtree deleted and not rebuilt, and that is
+        exactly what the marker exists to record -- so a fix that simply
+        always cleared would satisfy the test above while discarding the
+        protection.
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.project_name = project
+            with patch(
+                "codebase_rag.mcp.tools.sd.observe",
+                side_effect=RuntimeError("delta died mid-write"),
+            ):
+                result = registry._delta_after_write(["a.py"])
+
+        assert "unavailable" in result, f"fixture guard: expected failure; {result!r}"
+        assert ingestor._marker_store.get(project) is True, (
+            "a delta that failed after mutating dropped its marker; a fresh "
+            "process could not tell the partial graph from a complete one"
+        )
+
+    async def test_a_delta_whose_marker_clear_fails_reports_it(
+        self, temp_project_root: Path
+    ) -> None:
+        """A stuck clear is a retryable failure, not a silent success.
+
+        The delta itself succeeded but its marker could not be lifted, so the
+        project is still durably marked and every later run will refuse. This
+        method never raises -- it reports in place of the delta -- so the
+        message is the only channel that can say so. Reporting the delta as
+        clean here would leave the caller with a wedged project and no
+        indication why (the same shape #1705 fixed on the reingest path).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        project = _mark_indexed(registry)
+
+        (temp_project_root / "a.py").write_text("x = 1\n", encoding="utf-8")
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as updater_cls:
+            updater_cls.return_value.reingest.return_value = MagicMock(
+                reparsed=(), affected=(), removed=(), elapsed_ms=0.1
+            )
+            updater_cls.return_value.project_name = project
+            with patch("codebase_rag.mcp.tools.sd.observe", return_value=""):
+                ingestor._failing.add("clear")
+                result = registry._delta_after_write(["a.py"])
+                ingestor._failing.discard("clear")
+
+        assert "Structural delta unavailable" in result, (
+            f"a stuck marker clear was reported as a clean delta; got {result!r}"
+        )
+        assert ingestor._marker_store.get(project) is True, (
+            "fixture guard: the clear was expected to fail and leave the marker"
         )
 
 
@@ -2249,15 +3446,18 @@ class TestIncompleteMarkerInvariant:
             "fixture guard: `before_write` must have promoted the marker"
         )
 
-        # Another process finishes a full update and clears the marker.
+        # Another process finishes a full update. Before #1709 its clear
+        # removed THIS registry's marker too -- one node per project -- which
+        # is what made the attribution the deciding factor here. Markers are
+        # now per run, so the other process clears only its own and this
+        # registry's marker survives.
         other = self._registry(temp_project_root, ingestor)
         _mark_indexed(other)
         with patch("codebase_rag.mcp.tools.GraphUpdater"):
             assert "Error" not in await other.update_repository()
-        assert registry._persisted_incomplete(project) is False, (
-            "fixture guard: the other process must have cleared the durable "
-            "marker, or _persisted_incomplete refuses on its own and the "
-            "attribution is never the deciding factor"
+        assert registry._persisted_incomplete(project) is True, (
+            "the other process's clear removed this registry's marker; that "
+            "is the #1709 race, and per-run markers exist to stop it"
         )
 
         registry._live_updater = None
@@ -2273,9 +3473,11 @@ class TestIncompleteMarkerInvariant:
             f"(#1705 review): {hydrations}"
         )
         assert "error" in result, (
-            "another process's marker clear healed a flag earned by THIS "
-            "process's mutating failure, so a scoped reingest ran over the "
-            f"partial graph it left: {result}"
+            "a scoped reingest ran over the partial graph THIS process's "
+            "mutating failure left. Before #1709 the way in was the other "
+            "process's clear removing this marker and a stale attribution "
+            "then healing the flag; with per-run markers the durable marker "
+            f"survives and refuses on its own. Either way it must refuse: {result}"
         )
 
     @pytest.mark.parametrize(
@@ -2374,6 +3576,77 @@ class TestIncompleteMarkerInvariant:
         assert ("error" in result) is expect_refused, (
             "the wipe's refusal was discarded and a scoped reingest ran over "
             f"the half-wiped graph it left: {result}"
+        )
+
+    async def test_a_successful_clear_cannot_settle_a_widened_flag(
+        self, temp_project_root: Path
+    ) -> None:
+        """`None` means two opposite things, and the clear reads the wrong one.
+
+        `_invalidate_graph_for` WIDENS the attribution to None when a second,
+        different project is damaged: None there is the BROADEST state, "more
+        than one project is suspect, so trust none of them".
+        `_require_marker_cleared` reads that same None as the NARROWEST,
+        "owned by nobody, the single-project case", and settles the flag.
+
+        So: ALPHA is damaged, BETA is damaged, the attribution widens to None
+        -- and then ALPHA clearing its own marker discards the only
+        in-process record that BETA may be partial. A read of BETA is then
+        allowed onto a graph nothing ever finished.
+
+        Written on the WIPE case deliberately. A marker-less wipe is the one
+        kind of damage no durable marker records, so the in-process flag is
+        the sole evidence; on a path that DOES leave a marker,
+        `_marker_says_incomplete` refuses the read anyway and the assertion
+        below passes whether or not the flag was wrongly settled -- the
+        assertion-satisfied-by-both trap this file already documents on
+        `_abandon_before_writing`.
+
+        Found by 4-55 reading the invariant end to end rather than reading
+        either function on its own; both docstrings are locally correct and
+        globally contradictory (#1547 review).
+        """
+        ingestor = self._store()
+        registry = self._registry(temp_project_root, ingestor)
+        alpha = _mark_indexed(registry)
+        beta = "beta"
+
+        # Marker-less damage to ALPHA: the wipe dies and writes no marker.
+        ingestor.clean_database.side_effect = RuntimeError("wipe died")
+        with patch("codebase_rag.mcp.tools.GraphUpdater"):
+            await registry.wipe_database(confirm=True)
+        ingestor.clean_database.side_effect = None
+        assert registry._incomplete_project in (None, alpha), (
+            "fixture guard: the failed wipe must leave the flag up"
+        )
+
+        # A SECOND project is damaged, which widens the attribution to None.
+        registry._invalidate_graph_for(beta)
+        assert registry._graph_incomplete is True, (
+            "fixture guard: the flag must still be up after the second damage"
+        )
+        assert registry._incomplete_project is None, (
+            "fixture guard: two different damaged projects must widen the "
+            "attribution to None -- if it is still attributed, the clear "
+            "below takes the other branch and this test proves nothing"
+        )
+
+        # ALPHA now clears its own marker, successfully.
+        registry._require_marker_cleared(alpha)
+
+        assert registry._graph_incomplete is True, (
+            "a successful clear for one project settled a flag that had been "
+            "WIDENED because a second project was damaged too, so the only "
+            "record that the other project is partial is gone"
+        )
+
+        # The consequence, stated as behaviour rather than as state: BETA's
+        # reads must still refuse.
+        assert (
+            registry._incomplete_refusal(beta, cs.MCPToolName.ASK_AGENT) is not None
+        ), (
+            "reads of the second damaged project were reopened onto a graph "
+            "nothing ever finished"
         )
 
     async def test_a_failed_structural_delta_does_not_inherit_an_attribution(

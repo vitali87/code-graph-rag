@@ -81,6 +81,7 @@ CPP_KEYWORD_STRUCT = "struct"
 # `static` storage on a declaration: internal linkage, TU-local symbol.
 CPP_KEYWORD_STATIC = "static"
 TS_CPP_STORAGE_CLASS_SPECIFIER = "storage_class_specifier"
+TS_CPP_TYPE_QUALIFIER = "type_qualifier"
 CPP_EXPORTED_CLASS_KEYWORDS = frozenset({CPP_KEYWORD_CLASS, CPP_KEYWORD_STRUCT})
 
 # A C/C++ class/struct/union tag with no body is a forward declaration

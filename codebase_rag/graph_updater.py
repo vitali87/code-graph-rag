@@ -18,12 +18,14 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from tree_sitter import Node, Parser, QueryCursor
 
 from . import constants as cs
+from . import cypher_queries as cq
 from . import logs as ls
 from .analyzers import FindingAnalyzer
 from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     get_language_for_extension,
@@ -62,6 +64,7 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
+from .parsers.field_nodes import PendingFieldType
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -81,6 +84,7 @@ from .parsers.java_lombok import (
     current_lombok_identity,
     overlay_identity,
 )
+from .parsers.parameter_nodes import PendingParameterType
 from .parsers.utils import sorted_captures
 from .path_filters import matches_test_path
 from .services import FilteringIngestor, IngestorProtocol, QueryProtocol
@@ -106,6 +110,7 @@ from .utils.path_utils import (
     base_module_qn,
     cached_file_identity_posix,
     cached_relative_path,
+    cached_resolve_posix,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -739,6 +744,60 @@ def _natural_qn(qualified_name: str) -> str:
     return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
 
 
+_GLOSS_RELS = frozenset(
+    {cs.RelationshipType.ANNOTATES.value, cs.RelationshipType.MENTIONS.value}
+)
+
+
+def _project_root_for_single_file(target: Path) -> Path:
+    """The project root owning `target`, or its parent when none is found.
+
+    A single-file run used to treat the target's PARENT as the repo root, so a
+    file in a subdirectory was keyed relative to that subdirectory: the same
+    file indexed as `pkg/module_a.py` by a full build became `module_a.py`,
+    with a qualified name to match. The keys differ, so delete-before-reingest
+    misses the existing node and a duplicate set is written under the wrong
+    key, and `Project.root_path` is overwritten with the subdirectory (#1775).
+
+    Two markers, and they are NOT interchangeable -- the cache outranks `.git`
+    at any depth, which is the whole subtlety here:
+
+    * the hash cache (`repo_path / HASH_CACHE_FILENAME`) is written by every
+      directory run, so an ancestor holding one is EVIDENCE of the root that
+      actually indexed this file. Agreeing with it is the entire point, since
+      disagreeing is what writes a second identity for the same file;
+    * `.git` is only a GUESS at a root. It earns its place because the cache
+      alone leaves a reachable gap -- the first single-file run on a fresh
+      clone finds no cache and reproduces #1775 exactly -- but it says nothing
+      about what has been indexed.
+
+    Ranking them, rather than taking the nearest of either, is required. A
+    submodule or linked worktree puts a `.git` INSIDE a project that owns the
+    cache, so a nearest-of-either walk picks the nested marker and keys the
+    file as `pkg/module_a.py` where the outer build keyed it as
+    `components/inner/pkg/module_a.py` -- reintroducing this very issue one
+    level down, and overwriting `Project.root_path` with the nested directory.
+    Measured on a nested worktree-style marker during review of this change.
+
+    So: the nearest CACHED ancestor wins outright; only if there is none does
+    the nearest `.git` apply. Two nested caches still resolve to the nearer,
+    which is the project that genuinely indexed the target.
+
+    The final fallback is the old behaviour: a target under neither marker is
+    not identifiably part of a project here, so there is no root to agree with
+    and inventing one (the filesystem root, say) would key it against a tree
+    nobody asked to index. That case still keys divergently from a later full
+    build of an enclosing directory -- it is a narrowed gap, not a closed one.
+    """
+    git_root: Path | None = None
+    for ancestor in target.parents:
+        if (ancestor / cs.HASH_CACHE_FILENAME).is_file():
+            return ancestor
+        if git_root is None and (ancestor / cs.GIT_DIR_NAME).exists():
+            git_root = ancestor
+    return git_root if git_root is not None else target.parent
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -775,7 +834,7 @@ class GraphUpdater:
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
-            repo_path = resolved.parent
+            repo_path = _project_root_for_single_file(resolved)
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
@@ -1603,6 +1662,12 @@ class GraphUpdater:
         if not force and self._is_already_in_sync():
             logger.info(ls.GRAPH_ALREADY_IN_SYNC)
             self.skipped_because_in_sync = True
+            # The re-anchor runs here too: a run whose re-anchor failed still
+            # published its cache, so the next unchanged run takes this path,
+            # and "re-attached by the next run" (the re-anchor's own contract)
+            # would otherwise be false for exactly the run that needs it. Two
+            # statements, no-ops when every note is attached (issue #1808).
+            self._reanchor_glosses()
             self.ingestor.flush_all()
             return
 
@@ -1735,6 +1800,7 @@ class GraphUpdater:
         self._link_endpoint_resources()
 
         self._prune_orphan_nodes()
+        self._reanchor_glosses()
         # The prune issues its own deletes and has no flush of its own, so the
         # flush above cannot cover them (issue #1645). Without this they are
         # still queued when the caches commit below, and a run that stops in
@@ -1825,9 +1891,29 @@ class GraphUpdater:
         hash_cache_published = True
         if self._pending_hash_cache is not None:
             cache_path, new_hashes = self._pending_hash_cache
-            hash_cache_published = _publish_hash_cache(
-                cache_path, new_hashes, observed_at
-            )
+            # A single-file run may UPDATE an existing cache but must never
+            # CREATE one, for the same reason it does not record the
+            # exclusion state below: it walked one file and cannot describe
+            # a directory's contents.
+            #
+            # Creating one is actively harmful since #1775, because the
+            # cache is what marks a project root. A cache created under
+            # `pkg/` by a run targeting `pkg/module_a.py` makes every later
+            # single-file run below `pkg/` root THERE, which preserves
+            # exactly the misrooting #1775 removes. Measured in review: the
+            # stray held all three sibling files, so it is indistinguishable
+            # by content from a genuine project's cache and cannot be
+            # filtered out after the fact -- it has to not be written.
+            #
+            # Updating an existing one stays correct: such a run is rooted
+            # at the ancestor that owns that cache, so the entries it writes
+            # are keyed against the same root every other run uses.
+            if self._single_file is not None and not cache_path.is_file():
+                logger.info(ls.HASH_CACHE_SKIPPED_SINGLE_FILE, path=cache_path)
+            else:
+                hash_cache_published = _publish_hash_cache(
+                    cache_path, new_hashes, observed_at
+                )
             self._pending_hash_cache = None
         if self._pending_dir_mtimes is not None and hash_cache_published:
             _save_dir_mtimes(*self._pending_dir_mtimes)
@@ -2174,8 +2260,87 @@ class GraphUpdater:
                 [str(p) for p in param_types]
                 if isinstance(param_types, list)
                 else None,
+                path,
             )
         )
+
+    def _requeue_parameter_types(self, project_params: PropertyDict) -> None:
+        # OF_TYPE for the Parameter nodes of files this run does not re-parse:
+        # their owners never re-emit them, so the pending list is rebuilt from
+        # the graph exactly as _requeue_type_facts rebuilds RETURNS/ACCEPTS
+        # (issue #1527). Without this, re-parsing only the TYPE's file detaches
+        # every OF_TYPE into it and nothing puts them back. The key is the
+        # FILE: a Parameter whose file is being re-parsed this run is
+        # re-emitted by ingest and queues its own (a requeue here would carry
+        # the OLD annotation); one whose file is not needs rebuilding. Neither
+        # registry membership nor "what the rehydration loop restored" can
+        # tell the two apart -- a reused updater already holds every unchanged
+        # definition, a fresh one holds none -- and both were tried first.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
+        ):
+            # A full build re-parses every file: ingest queues everything.
+            return
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            return
+        pending = self.factory.definition_processor.pending_parameter_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if path in self._reparsed_file_keys:
+                continue
+            pending.append(
+                PendingParameterType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                )
+            )
+
+    def _requeue_field_types(self, project_params: PropertyDict) -> None:
+        # The Field counterpart of _requeue_parameter_types, keyed on the FILE
+        # for the same reason: a Field whose file is being re-parsed this run
+        # is re-emitted by ingest and queues its own type; one whose file is
+        # not needs rebuilding from the graph. A full build re-parses every
+        # file, so ingest queues everything and there is nothing to rebuild.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
+        ):
+            return
+        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        pending = self.factory.definition_processor.pending_field_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if path in self._reparsed_file_keys:
+                continue
+            pending.append(
+                PendingFieldType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                )
+            )
 
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
@@ -2291,6 +2456,8 @@ class GraphUpdater:
             else:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
+        self._requeue_parameter_types(project_params)
+        self._requeue_field_types(project_params)
 
     def _seed_module_qns_from_graph(
         self,
@@ -2845,51 +3012,81 @@ class GraphUpdater:
                 cs.CYPHER_INBOUND_EDGES, {cs.CYPHER_PARAM_PATHS: reindexed_keys}
             )
         except Exception:
-            # A FULL build re-parses every caller, so nothing is lost and the
-            # sync may continue; an incremental run cannot re-resolve edges
-            # from files it will not parse, so the outage must abort it
-            # rather than silently drop them.
+            # A FULL build re-parses every caller, so the source-derived edges
+            # are re-resolved and the sync may continue over an unreadable
+            # graph (test_fully_unreadable_graph_still_completes_the_rebuild
+            # pins this). The captured set also holds the ANNOTATES / MENTIONS
+            # edges of glosses (issue #1808), which have no source to come
+            # back from; those are rebuilt from the notes' own recorded names
+            # by `_reanchor_glosses` at the end of the run. An incremental run
+            # cannot re-resolve edges from files it will not parse, so there
+            # the outage aborts the run.
             if not self._is_full_build:
                 raise
             logger.warning(ls.INBOUND_CAPTURE_FAILED)
             return []
 
+    def _restorable_edge(
+        self, row: ResultRow
+    ) -> tuple[tuple[str, str, str], str, tuple[str, str, str]] | None:
+        """The (caller_spec, rel, target_spec) a captured row restores, or None.
+
+        None for a malformed row, a target the re-index did not recreate (a
+        renamed or removed definition is correctly left without its stale
+        inbound edge, matching a clean re-index), or a label without a key.
+        """
+        caller_label = row.get(cs.KEY_CALLER_LABEL)
+        caller_qn = row.get(cs.KEY_CALLER_QN)
+        rel = row.get(cs.KEY_REL)
+        target_label = row.get(cs.KEY_TARGET_LABEL)
+        target_qn = row.get(cs.KEY_TARGET_QN)
+        if not (
+            isinstance(caller_label, str)
+            and isinstance(caller_qn, str)
+            and isinstance(rel, str)
+            and isinstance(target_label, str)
+            and isinstance(target_qn, str)
+        ):
+            return None
+        module_label = cs.NodeLabel.MODULE.value
+        if target_label != module_label and target_qn not in self.function_registry:
+            return None
+        caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
+        target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
+        if caller_key is None or target_key is None:
+            return None
+        return (
+            (caller_label, caller_key, caller_qn),
+            rel,
+            (target_label, target_key, target_qn),
+        )
+
     def _restore_inbound_edges(self, captured: list[ResultRow]) -> None:
         # Re-emit each captured inbound edge whose target still exists after the
-        # re-index. A target that was renamed or removed is correctly left
-        # without its stale inbound edge, matching a clean re-index.
+        # re-index (see `_restorable_edge` for what is dropped).
         if not captured:
             return
-        module_label = cs.NodeLabel.MODULE.value
         restored = 0
         for row in captured:
-            caller_label = row.get(cs.KEY_CALLER_LABEL)
-            caller_qn = row.get(cs.KEY_CALLER_QN)
-            rel = row.get(cs.KEY_REL)
-            target_label = row.get(cs.KEY_TARGET_LABEL)
-            target_qn = row.get(cs.KEY_TARGET_QN)
-            if not (
-                isinstance(caller_label, str)
-                and isinstance(caller_qn, str)
-                and isinstance(rel, str)
-                and isinstance(target_label, str)
-                and isinstance(target_qn, str)
-            ):
+            edge = self._restorable_edge(row)
+            if edge is None:
                 continue
-            if target_label != module_label and target_qn not in self.function_registry:
-                continue
-            caller_key = cs.NODE_UNIQUE_CONSTRAINTS.get(caller_label)
-            target_key = cs.NODE_UNIQUE_CONSTRAINTS.get(target_label)
-            if caller_key is None or target_key is None:
-                continue
+            caller_spec, rel, target_spec = edge
             # The edge's own properties (its site, issue #1522) come back with
             # it: per-site edges are keyed by them, so a bare re-emission
             # would land beside the original instead of restoring it.
             props = row.get(cs.KEY_PROPS)
-            self._sink.ensure_relationship_batch(
-                (caller_label, caller_key, caller_qn),
+            # A gloss edge goes to the RAW ingestor. The filtering sink admits
+            # what the capture selection lets a parser EMIT, and glosses are
+            # never emitted from source: their group is off by default so
+            # indexing cannot invent them. Restoring an edge that already
+            # existed is not emitting one, and through the sink it would be
+            # dropped, orphaning the note (issue #1808).
+            writer = self.ingestor if rel in _GLOSS_RELS else self._sink
+            writer.ensure_relationship_batch(
+                caller_spec,
                 rel,
-                (target_label, target_key, target_qn),
+                target_spec,
                 properties=cast(PropertyDict, props)
                 if isinstance(props, dict) and props
                 else None,
@@ -3853,8 +4050,19 @@ class GraphUpdater:
         if force:
             logger.info(ls.INCREMENTAL_FORCE)
 
-        _touch_empty_json(cache_path)
-        _touch_empty_json(dir_mtimes_path)
+        # Same rule as the publish site in `run`: a single-file run may
+        # UPDATE an existing cache but must never CREATE one. These two
+        # calls are what actually bring a stray into existence -- they run
+        # before any publishing -- so the guard has to be here as well.
+        #
+        # No `or cache_path.is_file()` arm: `_touch_empty_json` already
+        # returns early when the file exists, so the update case is
+        # unaffected either way and the extra arm could never fail. Its
+        # absence is checked by the "still updates an existing cache" test,
+        # which reddens on the publish-site guard rather than this one.
+        if self._single_file is None:
+            _touch_empty_json(cache_path)
+            _touch_empty_json(dir_mtimes_path)
 
         eligible_files = self._collect_eligible_files()
 
@@ -4532,13 +4740,19 @@ class GraphUpdater:
             # evidence of work too: the Python decorator pass takes class
             # nodes as its targets.
             #
-            # Only a file recording none of call/function/class could license
-            # a skip, and no such CACHE ENTRY exists: the populator stores a
-            # key only when the query matched it and drops an all-absent
-            # entry (definition_processor.py), so every entry has a non-empty
-            # kind. A narrowed guard would be unreachable rather than merely
-            # cheap -- measured 0 hits over 105 real files, while the old
-            # guard skipped this repo's own class-only parsers/constants.py.
+            # An all-absent entry IS possible on this branch: the populator
+            # writes {} whenever the query RAN, to keep the cache honest
+            # about a file that now parses to nothing (#1794). So the
+            # narrowed guard is not unreachable-and-therefore-harmless, as
+            # the #1837 reasoning had it on a tree without that change -- it
+            # is unsound. An all-absent entry is precisely the module-level
+            # reference case: a file whose only CALLS edge lives under no
+            # capture kind. Measured by reinstating it: the guard fires on
+            # 19 files and reddens test_a_module_level_reference_survives_
+            # the_re_parse, test_class_only_file_still_emits_its_module_
+            # level_call and test_every_parsed_file_reaches_the_call_walk.
+            # Do not re-add it.
+            #
             # Uncached files were always walked, so the walk is now uniform.
             self.factory.call_processor.process_calls_in_file(
                 file_path,
@@ -4583,7 +4797,18 @@ class GraphUpdater:
         # delombok overlay are per-run inputs run() computes before Pass 2;
         # a fresh updater must compute them too or a Lombok class re-parses
         # without its generated members.
-        self.factory.structure_processor.identify_structure()
+        #
+        # `emit=False`: the MAP is what hydration needs, and it needs all of
+        # it -- a parent lookup can reach any directory, so `only` is not an
+        # option here. Emitting is a different matter. The unrestricted walk
+        # writes a node for every directory as it is on disk NOW, so a
+        # directory whose package-ness changed since the last index gained a
+        # node of the new kind beside its surviving old one -- two
+        # contradictory container identities, for a directory this scoped
+        # call never named (issue #1872). The scoped re-derivation inside
+        # `reingest` is what legitimately emits, and it restricts itself to
+        # the flipped directories and their children.
+        self.factory.structure_processor.identify_structure(emit=False)
         self._rehydrate_registry_from_graph()
         self._rehydrate_function_locations()
         self._reingest_hydrated = True
@@ -4698,6 +4923,350 @@ class GraphUpdater:
                 survivors[key] = candidate
         return flux_stems, survivors
 
+    def _reingest_package_flip(
+        self, present: dict[str, Path], gone: dict[str, Path]
+    ) -> tuple[set[str], dict[str, Path]]:
+        """Directories whose package-ness this call changes, and their files.
+
+        A directory with a package indicator (`__init__.py`, `Cargo.toml`) is
+        a Package keyed on a dotted qn; without one it is a Folder keyed on an
+        absolute path. Every CONTAINS_FILE and CONTAINS_MODULE edge under it
+        hangs off whichever node it is, and that edge is emitted only when the
+        module is parsed -- so a directory that changes kind needs its files
+        re-parsed to re-point them, exactly as `run()` does for the same
+        reason (issue #1570, `_package_flip_dirs`).
+
+        `reingest` computed none of this: it never re-derived the structure,
+        so a deleted `__init__.py` left the Package node and all its edges in
+        place, and an ADDED one left the Folder (issue #1798 -- the issue
+        reports the deletion, but both directions were broken).
+
+        Returns the flipped directories and the on-disk files under them that
+        this call has not already named, for the re-parse.
+        """
+        structure = self.factory.structure_processor
+        indicators = structure.package_indicator_names()
+        touched = {
+            Path(key).parent.as_posix()
+            for key in (*present, *gone)
+            if Path(key).name in indicators
+        }
+        # Narrowed to directories this call actually named an indicator for.
+        # Without it a scoped re-ingest reconciles directories the caller
+        # never mentioned -- measured: an unrelated `other/` whose
+        # `__init__.py` had been deleted on disk by something else was demoted
+        # too. That is the whole-project claim `_prune_orphan_nodes` is
+        # careful not to make from a partial walk, and a full index is what
+        # reconciles the rest.
+        if not touched:
+            return set(), {}
+
+        # Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        # Deriving the structure here instead would WRITE the new container
+        # node inside the prologue, and an abort in `before_write` then left
+        # the graph holding both container nodes for one directory while
+        # reporting that nothing changed (greptile-local, issue #1798). The
+        # real derivation happens after the caller's last word.
+        flipped = {rel for rel in touched if self._package_ness_changed(structure, rel)}
+        if not flipped:
+            return set(), {}
+
+        return flipped, self._flip_sibling_files(flipped, present, gone)
+
+    def _flip_sibling_files(
+        self, flipped: set[str], present: dict[str, Path], gone: dict[str, Path]
+    ) -> dict[str, Path]:
+        """On-disk files under a flipped directory that this call has not named.
+
+        They re-parse so their CONTAINS_FILE and CONTAINS_MODULE edges are
+        re-emitted onto the container of the new kind: those edges are written
+        only when the module is parsed, so a directory that changes kind needs
+        its files parsed again or they stay anchored to the old node.
+        """
+        siblings: dict[str, Path] = {}
+        for rel in flipped:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.iterdir()):
+                key = cached_relative_path(candidate, self.repo_path).as_posix()
+                if (
+                    not candidate.is_file()
+                    or key in present
+                    or key in gone
+                    or self._reingest_ignored(candidate)
+                ):
+                    continue
+                siblings[key] = candidate
+        return siblings
+
+    def _recorded_container_kinds(self, directory: Path) -> set[str]:
+        """Which container labels the GRAPH holds for this directory.
+
+        Empty means "cannot tell" -- no query surface, the read failed, or no
+        container node exists yet -- and the caller falls back to the
+        in-memory map. TWO entries means the directory already holds both
+        identities, which the caller must treat as changed whatever is on
+        disk, because reconciling is the only thing that clears it.
+
+        The graph is asked FIRST because the in-memory map is not a record of
+        the previous state on every path. A fresh updater (the MCP tool builds
+        one per project, and so does the watcher) runs
+        `_hydrate_for_reingest` before the flip check, and that calls
+        `identify_structure()`, which derives the map FROM DISK. Both sides of
+        the comparison were then the post-change state, no flip was ever
+        detected, and the whole fix was inert on the path it exists for
+        (greptile-local, PR #1835).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_CONTAINER_KIND,
+                {cs.KEY_PATH: cached_resolve_posix(directory)},
+            )
+        except Exception:  # noqa: BLE001 -- an unreadable store is not a verdict
+            return set()
+        return self._container_kinds_from_rows(rows)
+
+    @staticmethod
+    def _container_kinds_from_rows(rows: object) -> set[str]:
+        """Container labels out of `CYPHER_CONTAINER_KIND` rows.
+
+        Shared by both readers of that query rather than restated in each:
+        two readers of one query drift, and this one already carries two
+        non-obvious rules that would drift separately.
+
+        EVERY row, not the first: row order is unspecified, and a directory
+        can already hold BOTH kinds (#1872), so "the first row wins" answers
+        Package or Folder for the same graph depending on the driver
+        (CodeRabbit, PR #1835).
+        """
+        recorded: set[str] = set()
+        for row in rows or ():  # type: ignore[union-attr]
+            raw = row.get(cs.KEY_LABELS) if isinstance(row, dict) else None
+            # Narrowed to a list of str before the membership test: a result
+            # scalar is a union wide enough that `in` is not defined on every
+            # member of it, and the driver returns labels as plain strings.
+            labels = (
+                [item for item in raw if isinstance(item, str)]
+                if (isinstance(raw, list))
+                else []
+            )
+            recorded.update(
+                label
+                for label in labels
+                if label in (cs.NodeLabel.PACKAGE.value, cs.NodeLabel.FOLDER.value)
+            )
+        return recorded
+
+    def _package_ness_changed(self, structure: object, rel: str) -> bool:
+        """Whether this directory's kind on DISK differs from the recorded one.
+
+        Read-only: `is_package_dir` stats the filesystem and emits nothing.
+        Deriving the structure to answer this would WRITE the new container
+        node inside the prologue, and an abort in `before_write` then left the
+        graph holding both container nodes for one directory while reporting
+        that nothing changed (greptile-local, issue #1798).
+        """
+        directory = self.repo_path / rel if rel != "." else self.repo_path
+        if not directory.is_dir():
+            return False
+        is_package_now = bool(structure.is_package_dir(directory))  # type: ignore[attr-defined]
+        # The graph's record first; the map only when it cannot answer. See
+        # `_recorded_container_kinds` for why the map alone is wrong on a
+        # fresh updater.
+        recorded = self._recorded_container_kinds(directory)
+        if len(recorded) > 1:
+            # Already holds both identities. Whatever is on disk, this needs
+            # reconciling -- the derivation plus the prune is the only thing
+            # that removes the stale one.
+            return True
+        if recorded:
+            was_package = cs.NodeLabel.PACKAGE.value in recorded
+        else:
+            was_package = bool(structure.structural_elements.get(Path(rel)))  # type: ignore[attr-defined]
+        return is_package_now != was_package
+
+    def _uncontained_dirs(self, present: dict[str, Path]) -> tuple[set[str], set[str]]:
+        """Ancestor directories of `present` the graph holds no container for.
+
+        Hydration used to emit a node for every directory on disk, which
+        covered a directory that is NEW since the last index as a side
+        effect. It no longer emits (issue #1872), and the scoped
+        re-derivation does not cover these either: it re-derives directories
+        whose package-ness FLIPPED, and a brand-new directory never flipped.
+        Without this the re-parse writes CONTAINS_FILE and CONTAINS_MODULE
+        edges out of a container node nothing wrote -- and in production the
+        merge query MATCHes both endpoints, so the edge is not created at all
+        and the new file is silently unparented (greptile-local, #1872).
+
+        Guarded on the graph having NO container for the directory, not on
+        the directory being in this call. An unconditional ancestor scope
+        would re-derive an ancestor that changed independently and give it a
+        second container identity -- the #1835 rule, which
+        `test_an_independently_changed_ancestor_keeps_one_identity` pins.
+        """
+        new_dirs: set[str] = set()
+        diverged: set[str] = set()
+        for key in present:
+            self._climb_uncontained(Path(key).parent, new_dirs, diverged)
+        return new_dirs, diverged
+
+    def _climb_uncontained(
+        self, start: Path, new_dirs: set[str], diverged: set[str]
+    ) -> None:
+        """Climb from one file's directory to the first correct ancestor.
+
+        Stops at the first directory the graph already records correctly --
+        everything above it is correct too, since an ancestor is only wrong
+        if something changed it, and that change would have been caught on
+        its own climb.
+
+        Split out of `_uncontained_dirs` to keep it under the
+        cognitive-complexity limit; the nested loop was the whole cost.
+        """
+        parent = start
+        while True:
+            rel = parent.as_posix()
+            if rel in new_dirs or rel in diverged:
+                return
+            needs = self._container_needs_deriving(rel)
+            if needs is None:
+                return
+            (diverged if needs else new_dirs).add(rel)
+            if rel == ".":
+                return
+            parent = parent.parent
+
+    def _container_needs_deriving(self, rel: str) -> bool | None:
+        """Whether this directory needs deriving, and if so which kind of need.
+
+        `True` means its recorded kind DIVERGED from disk, `False` means the
+        graph holds no container for it at all, and `None` means it is
+        already correct and the walk can stop climbing.
+
+        The two true cases differ in what the caller must then do: a new
+        directory only needs deriving, while a diverged one also needs its
+        stale node pruned. Both matter, and the second for a reason easy to
+        miss -- a child's parent identity comes from `structural_elements`,
+        which hydration fills from DISK, so a child under a diverged ancestor
+        gets a containment edge naming an identity the graph does not hold
+        and the subtree is left disconnected (Greptile, PR #1875).
+        """
+        directory = self.repo_path if rel == "." else self.repo_path / rel
+        recorded = self._container_kinds_or_unknown(directory)
+        if recorded is None:
+            # "I could not ask" is not "there is nothing there". Treating an
+            # unreadable store as an absent container would derive every
+            # ancestor and re-create the duplicate identity this path
+            # prevents. Abort in the read-only prologue, as the other
+            # prologue reads do, rather than act on an unknown.
+            raise ReingestAborted(ls.REINGEST_CONTAINER_KIND_UNKNOWN)
+        if not recorded:
+            return False
+        return True if self._kind_diverged(directory, recorded) else None
+
+    def _container_kinds_or_unknown(self, directory: Path) -> set[str] | None:
+        """The recorded container kinds, or None when the read RAISED.
+
+        ONE read with three outcomes, deliberately: a set (possibly empty,
+        meaning no container node), or None meaning "could not ask".
+        Asking twice -- once to test readability and once for the value --
+        meant a failure BETWEEN the two turned an existing container into
+        "no container", which skipped the prune and left both identities in
+        the graph: the exact defect this path exists to remove, reachable
+        through its own guard (Greptile, PR #1875).
+
+        A sink with NO query surface is not a failure. It is a legitimate
+        configuration the whole scoped path already tolerates, and treating
+        it as unknown aborted every re-ingest against one.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return set()
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_CONTAINER_KIND,
+                {cs.KEY_PATH: cached_resolve_posix(directory)},
+            )
+        except Exception:  # noqa: BLE001 -- the caller decides what to do
+            return None
+        return self._container_kinds_from_rows(rows)
+
+    def _kind_diverged(self, directory: Path, recorded: set[str]) -> bool:
+        """Whether the graph's container kind disagrees with the disk's.
+
+        Two recorded kinds is already a disagreement with any disk state --
+        one of them is stale whatever the directory is now.
+        """
+        if len(recorded) > 1:
+            return True
+        structure = self.factory.structure_processor
+        is_package_now = bool(structure.is_package_dir(directory))
+        return (cs.NodeLabel.PACKAGE.value in recorded) != is_package_now
+
+    def _flip_derivation_scope(self, flipped_dirs: set[str]) -> set[str]:
+        """Directories to re-derive: the flipped ones plus their CHILDREN.
+
+        Children, because the prune DETACH DELETEs the node of the old kind
+        and that takes its CONTAINS_PACKAGE / CONTAINS_FOLDER edges to child
+        containers with it. The sibling re-parse cannot restore those -- a
+        child directory is not a file it re-parses -- so re-deriving the
+        children re-emits their parent edge onto the surviving node
+        (Greptile, PR #1835).
+
+        Never ANCESTORS. A re-derivation EMITS a node for whatever kind the
+        directory is on disk now, so putting an ancestor in scope gave one
+        that had changed independently a SECOND container identity beside the
+        one it already had. The ancestor walk was there so a nested
+        directory's parent lookup could find its enclosing package, and it is
+        not needed: `structural_elements` persists across calls, so the
+        parent's entry is already in the map.
+        """
+        scope = set(flipped_dirs)
+        for rel in flipped_dirs:
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            if not directory.is_dir():
+                continue
+            scope.update(
+                cached_relative_path(child, self.repo_path).as_posix()
+                for child in directory.iterdir()
+                if child.is_dir()
+            )
+        return scope
+
+    def _prune_flipped_containers(self, flipped_dirs: set[str]) -> None:
+        """Delete the node of the kind a flipped directory no longer is.
+
+        A directory is represented by exactly ONE of Folder and Package, and
+        the re-parse above has just written the correct one. The other is
+        stale even though the directory still exists on disk -- the same
+        `stale_kind` rule `_prune_orphan_nodes` applies at the end of a full
+        run (issue #1570), scoped here to the directories this call flipped.
+
+        Scoped rather than reusing `_prune_orphan_nodes` wholesale: that walks
+        every node in the project and deletes anything whose path is absent
+        from disk, which is a whole-project claim a scoped re-ingest has not
+        earned -- it walked a handful of files and cannot say what the project
+        still holds.
+        """
+        if not flipped_dirs or not isinstance(self.ingestor, QueryProtocol):
+            return
+        elements = self.factory.structure_processor.structural_elements
+        for rel in sorted(flipped_dirs):
+            directory = self.repo_path / rel if rel != "." else self.repo_path
+            absolute = cached_resolve_posix(directory)
+            # Keyed on Path(rel), which is Path(".") for the root -- the same
+            # key `identify_structure` uses. An earlier version special-cased
+            # a falsy `rel`, but `Path(key).parent.as_posix()` yields "." for
+            # a root-level file and never "", so that branch was dead and the
+            # root was never resolved (greptile-local, issue #1798).
+            is_package_now = bool(elements.get(Path(rel)))
+            stale = (
+                cs.CYPHER_DELETE_FOLDER if is_package_now else cs.CYPHER_DELETE_PACKAGE
+            )
+            self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
+
     def _reingest_dependents(
         self, present: dict[str, Path], gone: dict[str, Path]
     ) -> dict[str, Path]:
@@ -4737,13 +5306,39 @@ class GraphUpdater:
         # the files re-parsed or dropped here describe the old source, and
         # the re-parse queues the new ones, so without this both the stale
         # and the fresh RETURNS/ACCEPTS edge would be emitted (issue #1527).
+        # Keyed on the FILE, not the module qn: `foo.py` and `foo/__init__.py`
+        # share `proj.foo`, and a module-qn filter dropped the unchanged
+        # file's facts with the re-parsed one's, leaving its detached
+        # RETURNS/ACCEPTS unbuilt (issue #1892). A fact ingested without a
+        # file (no path) falls back to the module-qn key.
+        stale_keys = {*reparse, *gone}
         qn_to_path = self.factory.definition_processor.module_qn_to_file_path
         stale_paths = {*reparse.values(), *gone.values()}
         stale_modules = {
-            base_module_qn(Path(key), self.project_name) for key in (*reparse, *gone)
+            base_module_qn(Path(key), self.project_name) for key in stale_keys
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
-        pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
+        pending[:] = [
+            fact
+            for fact in pending
+            if (
+                fact.path not in stale_keys
+                if fact.path is not None
+                else fact.module_qn not in stale_modules
+            )
+        ]
+        # The same for parameter annotations: the scoped prologue rehydrates
+        # them from the graph before this delete, so a changed annotation
+        # would otherwise emit OF_TYPE to both the old and the new type.
+        pending_params = self.factory.definition_processor.pending_parameter_types
+        pending_params[:] = [
+            fact for fact in pending_params if fact.path not in stale_keys
+        ]
+        # Fields the same, keyed on the file for the same reason.
+        pending_fields = self.factory.definition_processor.pending_field_types
+        pending_fields[:] = [
+            fact for fact in pending_fields if fact.path not in stale_keys
+        ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
@@ -4840,7 +5435,14 @@ class GraphUpdater:
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
+        # Flush FIRST: the re-parsed definitions are still buffered in the
+        # ingestor here, and the grading statement compares a note against
+        # its subject's current `anchor_hash` in the store. Graded before the
+        # flush it finds no subject (the old node is already deleted, the new
+        # one not yet written) and the note on the very file that was just
+        # edited stays EXACT until the following sync (issue #1808).
         self.ingestor.flush_all()
+        self._reanchor_glosses()
 
     def _reingest_update_hashes(
         self,
@@ -4943,8 +5545,8 @@ class GraphUpdater:
             return ReingestReport((), (), (), tuple(sorted(skipped)), 0.0)
 
         # Everything up to the inbound-edge capture issues no delete and no
-        # content write (a fresh updater's structure hydration re-emits
-        # idempotent Package and Folder upserts, nothing more). A failure
+        # content write (a fresh updater's structure hydration
+        # derives the package map and emits nothing, #1872). A failure
         # there leaves the graph as it was and says so with ReingestAborted,
         # so a caller holding the updater (the MCP tool, the watcher) keeps
         # it rather than treating the graph as partially rewritten.
@@ -4976,6 +5578,12 @@ class GraphUpdater:
             # below keys on to free its qn and forget its rehydrated form.
             self._seed_module_qns_from_graph(set(gone) & graph_paths, frozenset())
 
+            # A directory that gained or lost a package indicator changes the
+            # container every file under it hangs off, so those files re-parse
+            # too and the stale node of the other kind is pruned below.
+            flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
+            survivors.update(flip_siblings)
+
             affected = self._reingest_dependents({**present, **survivors}, gone)
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
@@ -4999,6 +5607,37 @@ class GraphUpdater:
         self.reingest_mutated = True
         self._reparsed_file_keys = set(all_keys)
 
+        # Past the caller's refusal point, so this may finally WRITE. Re-deriving
+        # the structure updates `structural_elements` and emits the container
+        # node of the new kind; the sibling re-parse below re-points the
+        # containment edges onto it, and `_prune_flipped_containers` removes
+        # the node of the old kind once both have happened.
+        # New directories first: their container has to exist before the
+        # re-parse writes containment edges out of it.
+        # A directory with no container yet only needs deriving. One whose
+        # recorded kind DIVERGED from disk also needs its stale node pruned,
+        # or the derivation emits the new kind beside the old one -- the very
+        # duplicate identity this path exists to prevent. Pruning is what
+        # `flipped_dirs` already means, so it joins that set rather than
+        # getting a second, parallel mechanism to keep in step.
+        new_dirs, diverged_dirs = self._uncontained_dirs(present)
+        flipped_dirs |= diverged_dirs
+        if scope := (new_dirs | diverged_dirs):
+            self.factory.structure_processor.identify_structure(only=scope)
+        if flipped_dirs:
+            # Scoped to the flipped directories and their CHILDREN, never
+            # their ancestors -- see `_flip_derivation_scope` for both halves
+            # of that rule.
+            #
+            # Scoped at all because the unrestricted walk emits a node for
+            # every directory that changed on disk since the last derivation,
+            # so an unrelated directory whose indicator was removed elsewhere
+            # gained a second container identity beside the one it already
+            # had (Greptile, PR #1835).
+            self.factory.structure_processor.identify_structure(
+                only=self._flip_derivation_scope(flipped_dirs)
+            )
+
         # Walk order, as the batch path re-parses (issue #1569): the first
         # same-stem sibling parsed claims the bare module qn, so a header
         # found before its dependent source file would take the qn a clean
@@ -5020,6 +5659,29 @@ class GraphUpdater:
         # would never shrink on the retained updater this fix exists for.
         self._prune_stale_seeded_module_qns(set(reparse.values()))
         self._reingest_resolve(reparse, captured)
+        # AFTER the re-parse, never before: the surviving node of the correct
+        # kind and its re-pointed containment edges are written by the parse
+        # above, so pruning first would delete the old node while every edge
+        # still hung off it and leave the files unparented in between.
+        self._prune_flipped_containers(flipped_dirs)
+        # BEFORE the hash commit, matching `run()`, which does both passes
+        # ahead of its cache write. `_reingest_update_hashes` saves the hash
+        # cache to disk, which records these files as indexed; queueing the
+        # rebuilt finding and link writes after it meant an interruption in
+        # between left caches claiming the files were done while those writes
+        # never landed -- and the next run would skip them as unchanged
+        # (raised in review of #1852).
+        self._reingest_rebuild_findings(reparse)
+        self._link_endpoint_resources()
+        # Unconditionally, because neither post-pass guarantees one:
+        # `_reingest_rebuild_findings` only QUEUES its nodes and edges, and
+        # `_link_endpoint_resources` returns early when RESOLVES_TO is
+        # disabled or the ingestor cannot query, so on those paths nothing
+        # flushes what the rebuild queued. The hash cache below records these
+        # files as current, and a later run would take the in-sync path and
+        # skip the post-passes entirely -- so an unflushed queue here is lost
+        # for good rather than retried (raised by CodeRabbit on #1852).
+        self.ingestor.flush_all()
         self._reingest_update_hashes(cache_path, hashes, reparse, parsed, gone)
 
         report = ReingestReport(
@@ -5045,6 +5707,61 @@ class GraphUpdater:
         )
         return report
 
+    def _reingest_rebuild_findings(self, reparse: dict[str, Path]) -> None:
+        """Re-run the finding analysis for the RE-PARSED modules only.
+
+        `CYPHER_DELETE_MODULE` detaches a re-parsed Module from its finding
+        nodes (`HAS_SMELL`, `HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`), and
+        nothing recreated those edges until the next full `update_repository`
+        (issue #1670). A re-ingested file therefore lost its findings and
+        stayed lost, which reads as "this file is clean".
+
+        Scoped rather than repo-wide, because the full pass is not cheap
+        enough to run on every re-ingest -- the other option the issue
+        offers. Measured over this repo's own parser tree: 1.001s for 125
+        modules against 0.001s for one, so the full pass would dominate a
+        scoped re-ingest and grow with the repository rather than with the
+        change. The analyzer already takes a module map, so the scope is the
+        argument and needs no new machinery.
+        """
+        processor = self.factory.definition_processor
+        touched = set(reparse.values())
+        scoped = {
+            module_qn: path
+            for module_qn, path in processor.module_qn_to_file_path.items()
+            if path in touched
+        }
+        if scoped:
+            self.finding_analyzer.analyze(scoped)
+
+    def _reanchor_glosses(self) -> None:
+        """Re-attach every Gloss to the definitions its own record names, then grade it.
+
+        A gloss lives only in the graph, so a rebuild that deletes and
+        recreates a definition, or an inbound-edge capture that could not be
+        read, would otherwise leave the note unattached and the next sweep
+        would delete it. The note records its subject and mentions by
+        qualified name, and this rebuilds the edges from that record after
+        every sync (issue #1808). Never raises: the sync has already landed,
+        and an unattached note is recoverable by the next run, so a failure
+        here is logged rather than reported as a failed sync.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        try:
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            # A note whose name did not come back is placed by content hash
+            # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
+            # so a note that moved gets its MENTIONS edges back this run.
+            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
+            self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
+            # Then grade: the subject's `anchor_hash` was just re-emitted by
+            # the parse, so comparing it with the note's recorded hash here
+            # is what makes a note about changed code read STALE.
+            self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
+        except Exception as error:  # noqa: BLE001 -- see docstring
+            logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
+
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
         if not isinstance(self.ingestor, QueryProtocol):
@@ -5058,14 +5775,36 @@ class GraphUpdater:
             # a full walk established which paths those are.
             #
             # Left unguarded it did not merely over-reach, it emptied the
-            # graph (issue #1756). `repo_path` is the TARGET'S PARENT here,
-            # so `pkg/module_a.py` makes it `pkg/` and every module's
-            # relative path is resolved against the wrong root:
-            # `root_module.py` is tested as `pkg/root_module.py`, is absent,
-            # and is deleted. Modules are the worst case because
+            # graph (issue #1756). At the time `repo_path` was the TARGET'S
+            # PARENT, so `pkg/module_a.py` made it `pkg/` and every module's
+            # relative path resolved against the wrong root: `root_module.py`
+            # was tested as `pkg/root_module.py`, found absent, and deleted.
+            # Modules are the worst case because
             # CYPHER_ALL_MODULE_PATHS_INTERNAL returns no `absolute_path`, so
             # the containment gate that spares out-of-repo File and Folder
             # rows never runs for them.
+            #
+            # #1775 fixed that misrooting: `repo_path` is now the project
+            # root whenever an ancestor holds the hash cache or a `.git`.
+            #
+            # That removes the MEASURED cause of #1756 rather than the guard's
+            # justification. Two things were checked while looking at #1776:
+            #
+            # * the path test now agrees with disk truth -- on a correctly
+            #   rooted single-file run, surviving siblings survive and only a
+            #   genuinely absent path is selected;
+            # * `packages_now` is NOT a partial-walk artefact either, because
+            #   `identify_structure` rglobs the whole of `repo_path`
+            #   independently of which FILES are parsed. An earlier version of
+            #   this comment claimed the opposite; a test written to pin that
+            #   claim failed, which is how the error was found.
+            #
+            # So the guard is now conservative rather than load-bearing, and
+            # narrowing it is #1776. It is kept because "conservative" is the
+            # right default for a whole-project delete, and because the
+            # premise above is worth re-measuring against a live database
+            # before acting on it -- these observations come from the
+            # emulated store, which models fewer node kinds than production.
             logger.info(ls.PRUNE_SKIPPED_SINGLE_FILE)
             # The two sweeps below still run. Unlike the path-keyed loop they
             # take no path and no project: each deletes only nodes with zero

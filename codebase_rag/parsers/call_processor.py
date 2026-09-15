@@ -48,10 +48,10 @@ from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    enclosing_class_node,
     function_span_key,
     get_function_captures,
     go_parameter_names,
-    is_method_node,
     js_ts_parameter_names,
     module_qn_for_entity,
     node_site_properties,
@@ -1940,7 +1940,9 @@ class CallProcessor:
                 # gets no caller pass, and a call inside a NAMED function is
                 # still excluded because that function's flat filter owns it.
                 exclusion_nodes = (
-                    self._attributable_func_nodes(sorted_func_nodes, language)
+                    self._attributable_func_nodes(
+                        sorted_func_nodes, language, module_qn
+                    )
                     if language in _JS_TS_LANGUAGES
                     else sorted_func_nodes
                 )
@@ -1997,9 +1999,19 @@ class CallProcessor:
         # enclosing free function. Anonymous closures (not attributable) stay
         # excluded so their calls still bubble up. Other languages keep the flat
         # _filter_calls_in_node behavior their flow-tracing relies on.
-        owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            func_nodes, language, module_qn
+        )
         for func_node in func_nodes:
-            if has_classes and self._is_method(func_node, lang_config):
+            # Anything scoped inside a class body -- a method, and a function
+            # nested in a method -- is walked by _process_methods_in_class
+            # with the class context set. Walking it here too emitted every
+            # call edge twice, and once the class pass could type `self`
+            # the second copy was a false bare-name edge (issue #1903).
+            # Skip only what that pass will actually walk: it drops a class
+            # it cannot name (a JS mixin's `(Base) => class extends Base`),
+            # and those nested functions would otherwise lose every edge.
+            if has_classes and self._class_pass_owns(func_node, lang_config, language):
                 continue
 
             if language in _C_FAMILY_LANGUAGES:
@@ -2334,7 +2346,9 @@ class CallProcessor:
         # Only functions that get their own caller node exclude their calls from
         # the enclosing scope; anonymous arrows (skipped below) must not, so
         # their calls bubble up instead of dropping.
-        owned_func_nodes = self._attributable_func_nodes(method_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            method_nodes, language, module_qn
+        )
         for method_node in method_nodes:
             # The body byte-range slice also captures functions of a NESTED
             # class (Outer body contains Inner.run); those belong to the
@@ -2349,6 +2363,20 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name and language in _JS_TS_LANGUAGES:
                 method_name = self._js_ts_arrow_binding_name(method_node)
+            # A nameless function expression the definition pass registered
+            # under a name (`x: function () {}` in a method's object literal,
+            # `this.h = function () {}` in a constructor) has a real node:
+            # adopt the record's simple name, as the module pass does. Since
+            # #1903 handed every class-scoped function to this pass, a
+            # `continue` here would leave that node with no outgoing edge.
+            if (
+                not method_name
+                and language in _JS_TS_LANGUAGES
+                and (recorded := self._recorded_caller(method_node, module_qn))
+                is not None
+                and recorded.is_named
+            ):
+                method_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the
@@ -3150,6 +3178,16 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        if language == cs.SupportedLanguage.PYTHON:
+            # Names this caller binds that also name an import: the resolver
+            # refuses to read the import map for them (issue #1907).
+            shadowed = self._resolver.type_inference.python_type_inference.shadowed_import_names(
+                caller_node, module_qn
+            )
+            if shadowed:
+                self._resolver.python_shadowed_imports[caller_qn] = shadowed
+            else:
+                self._resolver.python_shadowed_imports.pop(caller_qn, None)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -4454,7 +4492,9 @@ class CallProcessor:
             # ... }`): it gets no caller pass, so its assignments would else be
             # scanned by nobody and the stored functions report dead. Named
             # nested scopes still own their own pass.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
@@ -4694,7 +4734,9 @@ class CallProcessor:
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
             # callers, so their JSX, rendered on behalf of this scope, would
             # otherwise be scanned by nobody and report as dead.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _JSX_NAMED_ELEMENT_TYPES:
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -4792,7 +4834,7 @@ class CallProcessor:
         while stack:
             node = self._site_node = stack.pop()
             if node.type in boundary_types:
-                if not self._is_unowned_js_scope(node):
+                if not self._is_unowned_js_scope(node, module_qn):
                     continue
                 self._emit_expression_body_return(
                     node,
@@ -4936,7 +4978,9 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = self._site_node = stack.pop()
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
@@ -7470,7 +7514,7 @@ class CallProcessor:
         return js_ts_utils.arrow_binding_name(func_node)
 
     def _attributable_func_nodes(
-        self, func_nodes: list[Node], language: cs.SupportedLanguage
+        self, func_nodes: list[Node], language: cs.SupportedLanguage, module_qn: str
     ) -> list[Node]:
         # The func nodes that will get their own caller node: named functions
         # plus arrows/function-expressions bound to a name. An anonymous arrow
@@ -7490,13 +7534,22 @@ class CallProcessor:
             return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
+        # A nameless function expression the definition pass registered under
+        # a name (`x: function () {}` in an object literal, `this.h = function
+        # () {}`) gets its own caller pass, so it must own its calls too, or
+        # the enclosing function keeps a second copy of every edge.
         return [
             n
             for n in func_nodes
-            if self._get_node_name(n) or self._js_ts_arrow_binding_name(n)
+            if self._get_node_name(n)
+            or self._js_ts_arrow_binding_name(n)
+            or (
+                (recorded := self._recorded_caller(n, module_qn)) is not None
+                and recorded.is_named
+            )
         ]
 
-    def _is_unowned_js_scope(self, node: Node) -> bool:
+    def _is_unowned_js_scope(self, node: Node, module_qn: str) -> bool:
         # An anonymous arrow/function/generator expression that gets no caller
         # node of its own (no name, no binding name): a `.map()`/`cell`/
         # forwardRef callback. Its calls bubble up to the enclosing named
@@ -7508,7 +7561,37 @@ class CallProcessor:
             cs.TS_GENERATOR_FUNCTION,
         ):
             return False
-        return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
+        if self._get_node_name(node) or self._js_ts_arrow_binding_name(node):
+            return False
+        # A nameless FUNCTION EXPRESSION the definition pass registered under
+        # a name (`x: function () {}`) has neither, but IS a node with its own
+        # walk, so a reference inside it belongs to that node alone. Without
+        # this the enclosing scope emitted a second copy of every REFERENCES
+        # edge (issue #1932).
+        #
+        # Deliberately NOT extended to arrows, and the reason is narrower
+        # than it looks. An arrow that is an object value in a config array
+        # (`{ cell: ({row}) => <CopyId/> }`, TanStack columns) is registered
+        # under its key too, so owning it would MOVE the edge to `cols.cell`
+        # rather than drop it -- the component stays reachable either way.
+        # What it would break is the edge's SOURCE, which
+        # test_jsx_component_in_config_callback_is_referenced asserts is the
+        # module. Changing that is a behaviour change for consumers, so
+        # arrows keep bubbling here.
+        #
+        # A generator expression has no such consumer and duplicates exactly
+        # as a function expression does, so it is included.
+        #
+        # All three types are identical on both underlying signals
+        # (_attributable_func_nodes says unattributable, the recorded name
+        # says is_named), so this split is an enumeration, not a property.
+        if node.type not in (
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
+            return True
+        recorded = self._recorded_caller(node, module_qn)
+        return recorded is None or not recorded.is_named
 
     def reset_js_receiver_bindings(self) -> None:
         # Despite the historical name this clears ALL per-run JS call-pass
@@ -8318,5 +8401,17 @@ class CallProcessor:
     ) -> dict[str, list[tuple[Node | None, Node | None]]]:
         return _JsFileBindingCollector(self._unwrap_ts_value).collect(root)
 
-    def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        return is_method_node(func_node, lang_config)
+    def _class_pass_owns(
+        self, func_node: Node, lang_config: LanguageSpec, language: cs.SupportedLanguage
+    ) -> bool:
+        # Mirrors _process_calls_in_classes: a class with a body that it can
+        # name gets a class pass; everything inside it is that pass's.
+        class_node = enclosing_class_node(func_node, lang_config)
+        if class_node is None:
+            return False
+        if class_node.child_by_field_name(cs.FIELD_BODY) is None:
+            return False
+        class_name = self._get_class_name_for_node(class_node, language)
+        if not class_name and language in _JS_TS_LANGUAGES:
+            class_name = js_ts_utils.class_binding_name(class_node)
+        return bool(class_name)

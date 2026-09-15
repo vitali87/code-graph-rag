@@ -81,6 +81,11 @@ DART_NESTED_SCOPE_NODE_TYPES = frozenset(
     }
 )
 TS_DART_INITIALIZED_IDENTIFIER_LIST = "initialized_identifier_list"
+TS_DART_STATIC_FINAL_DECLARATION_LIST = "static_final_declaration_list"
+TS_DART_STATIC_FINAL_DECLARATION = "static_final_declaration"
+TS_DART_CONST_BUILTIN = "const_builtin"
+TS_DART_FINAL_BUILTIN = "final_builtin"
+TS_DART_LATE = "late"
 TS_DART_INITIALIZED_IDENTIFIER = "initialized_identifier"
 TS_DART_INITIALIZED_VARIABLE_DEFINITION = "initialized_variable_definition"
 TS_DART_FORMAL_PARAMETER = "formal_parameter"

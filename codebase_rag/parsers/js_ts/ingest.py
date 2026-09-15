@@ -48,7 +48,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     _handler: LanguageHandler
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -243,7 +245,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     method_qn,
                     method_name,
                     func_node,
-                    self._get_docstring(func_node),
+                    self._get_docstring(func_node, language),
                     self.module_qn_to_file_path.get(module_qn),
                     self.repo_path,
                 )
@@ -415,7 +417,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             method_qn,
             method_name,
             method_func_node,
-            self._get_docstring(method_func_node),
+            self._get_docstring(method_func_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
@@ -655,7 +657,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             function_qn,
             function_name,
             function_node,
-            self._get_docstring(function_node),
+            self._get_docstring(function_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )

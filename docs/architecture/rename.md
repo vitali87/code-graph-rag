@@ -59,6 +59,28 @@ The rename also refuses when the new name is not a valid identifier, when
 the qualified name has no definition in the graph, or when the definition's
 name token cannot be found at the recorded position (a stale graph).
 
+## Postcondition contract
+
+An applied rename is measured through the [structural
+delta](structural-delta.md) and held to its
+[contract](postcondition-contract.md): the symbol set and call-site count
+must be unchanged apart from the renamed hierarchy, no caller may be left
+dangling, no site resolved by guesswork may have been rewritten without
+`--allow-heuristic`, and no duplicate group or import cycle may appear.
+The contract is measured only when the caller supplies `reingest` (the CLI and the MCP tool always do; a programmatic caller that omits it gets an applied rename with no verdict). A failing contract undoes this rename's own transaction (refusing if a later edit was recorded on top of it), re-ingests the restored files
+and reports the reasons in `message`; `verdict.affected_tests` lists the
+tests to run after a rename that passed.
+
+A failed contract always reports `applied: false`, exits the CLI with code 1,
+and skips `after_apply`. The separate `undone` field is `true` when the
+rename was reversed, `false` when rollback was refused or restoration could
+not be confirmed, and `null` when no contract rollback was needed. With
+`undone: false`, files may still contain the rename or later edits; inspect
+the working tree and the failure message before proceeding. A completed
+rollback whose re-ingest failed reports `undone: true` and
+`graph_incomplete: true`, so the graph needs rebuilding even though the
+files were restored.
+
 ## Atomicity
 
 All edits are staged in one [edit transaction](edit-transactions.md). Every
@@ -75,6 +97,7 @@ history, so `cgr edits undo` reverses them.
   "old_name": "helper",
   "new_name": "assist",
   "applied": true,
+  "undone": null,
   "transaction_id": "...",
   "files": ["pkg/__init__.py", "pkg/app.py", "pkg/util.py"],
   "sites": [{"kind": "call", "path": "pkg/app.py", "line": 4, "col": 11, "owner": "myproj.pkg.app.run", "resolution": "exact"}],

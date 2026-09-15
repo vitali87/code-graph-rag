@@ -5,6 +5,9 @@ from enum import StrEnum
 INIT_PY = "__init__.py"
 
 ENCODING_UTF8 = "utf-8"
+# Any UTF encoding can carry the whole of Unicode; the check Rich itself
+# uses to decide whether a stream can show box-drawing characters.
+ENCODING_UTF_PREFIX = "utf"
 # Longest UTF-8 sequence, so a window this size either side of a name spans
 # any single character that could legitimately sit next to it.
 UTF8_MAX_SEQUENCE_BYTES = 4
@@ -197,6 +200,14 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
 )
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
+
+# What a TransactionConflict means for a rename's rollback. Absence from the
+# history is only evidence of an undo while the history has not reached its
+# retention limit; at the limit an entry can have been EVICTED with its
+# rename still on disk.
+RENAME_UNDO_STACKED = "stacked"
+RENAME_UNDO_UNDONE = "undone"
+RENAME_UNDO_UNKNOWN = "unknown"
 EDIT_TRANSACTION_ID_LENGTH = 12
 EDIT_STAGING_PREFIX = "cgr-edit-"
 DIFF_DEV_NULL = "/dev/null"

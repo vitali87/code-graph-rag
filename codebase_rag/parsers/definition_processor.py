@@ -34,7 +34,9 @@ from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
+from .definition_docstring import extract_definition_docstring
 from .dependency_parser import parse_dependencies
+from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
@@ -42,6 +44,7 @@ from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
 from .module_docstring import extract_module_docstring
+from .parameter_nodes import PendingParameterType
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -330,6 +333,8 @@ class DefinitionProcessor(
         ] = []
         # Return/parameter annotations awaiting the full registry (#1527).
         self.pending_type_facts: list[PendingTypeFact] = []
+        self.pending_parameter_types: list[PendingParameterType] = []
+        self.pending_field_types: list[PendingFieldType] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -390,16 +395,35 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
+        from .field_nodes import emit_field_type_edges
+        from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        if not self.pending_type_facts:
+        # Every queue, not just the first: a Parameter or Field fact with no
+        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
+        # and OF_TYPE silently absent. A class whose only annotations are on
+        # fields is the case that reaches this (found by the Field regression).
+        if not (
+            self.pending_type_facts
+            or self.pending_parameter_types
+            or self.pending_field_types
+        ):
             return 0
         resolver = TypeReferenceResolver(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
         )
-        return emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        # Parameter OF_TYPE edges resolve in the same pass, for the same
+        # reason: the annotation may name a type from a later file.
+        emitted += emit_parameter_type_edges(
+            self.pending_parameter_types, resolver, self.ingestor
+        )
+        emitted += emit_field_type_edges(
+            self.pending_field_types, resolver, self.ingestor
+        )
+        return emitted
 
     def process_file(
         self,
@@ -499,13 +523,40 @@ class DefinitionProcessor(
                 if combined_query:
                     cursor = QueryCursor(combined_query)
                     combined_captures = sorted_captures(cursor, root_node)
-            if self._func_class_captures_cache is not None and combined_captures:
+            # An UNAVAILABLE query is not an empty result. `combined_captures`
+            # stays None when the language has no combined query (or building
+            # it raised), and caching {} for that would tell the call walk
+            # "this file has no functions" when the truth is "nobody looked".
+            # Measured: it attributed a call to the MODULE alongside the
+            # correct function-owned edge, so the graph gained a spurious
+            # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
+            # ...` (Greptile, PR #1833). Absent is the honest state there, and
+            # it is what the reader already falls back on.
+            if self._func_class_captures_cache is not None and (
+                combined_captures is not None
+            ):
+                # Write unconditionally, including the EMPTY entry. The two
+                # truthiness guards this replaces both skipped the write when
+                # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
+                # ENTRY in place -- captures holding nodes from a tree that
+                # has since been discarded.
+                #
+                # A file emptied (or made unparseable) between runs is exactly
+                # that case: its AST cache is correctly refreshed to the empty
+                # tree, but `_process_function_calls` reads these captures, so
+                # it walked the OLD call sites and re-emitted a CALLS edge out
+                # of a function that no longer exists in the source (#1794).
+                # `_load_ast_from_disk` already pops this cache on eviction for
+                # the same reason; the re-parse path has to keep it true too.
+                #
+                # An absent entry and an empty one are not the same thing to
+                # the reader: absent means "not parsed this run, look at the
+                # AST", empty means "parsed, and it has nothing".
                 cache_entry: dict[str, list] = {}
                 for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                    if key in combined_captures:
+                    if combined_captures and key in combined_captures:
                         cache_entry[key] = combined_captures[key]
-                if cache_entry:
-                    self._func_class_captures_cache[file_path] = cache_entry
+                self._func_class_captures_cache[file_path] = cache_entry
 
             # A reused updater's second run re-parses this module into a map
             # still holding the first run's spans. The key is (module_qn,
@@ -650,10 +701,25 @@ class DefinitionProcessor(
         comment and an ordinary one as the same node type.
         """
         if language == cs.SupportedLanguage.PYTHON:
-            return self._get_docstring(root_node)
+            return self._get_docstring(root_node, language)
         return extract_module_docstring(root_node, language)
 
-    def _get_docstring(self, node: ASTNode) -> str | None:
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation of one definition, in its language's own form.
+
+        Python's is a string literal inside the body; every other language
+        marks it with a comment convention above the declaration, which needs
+        the per-language markers in `definition_docstring` because the
+        grammars report a doc comment and an ordinary one as the same node
+        type (issue #1809). `language` is required rather than defaulted: a
+        default would silently route every call site that forgot it back to
+        the Python path, and the property would stay empty for that language
+        with nothing failing.
+        """
+        if language != cs.SupportedLanguage.PYTHON:
+            return extract_definition_docstring(node, language)
         if node.type == cs.TS_PY_MODULE:
             # A module node has no `body` field: its statements are direct
             # children, one level shallower than a class or function body.
