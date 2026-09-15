@@ -1993,6 +1993,54 @@ class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:
 
         assert any("does not resolve to" in r for r in reasons), reasons
 
+    def test_a_merged_pr_whose_detail_fetch_failed_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fail-open this excuse must not reopen.
+
+        `_gh_stdout_or_empty` returns "" for a failed call and for an empty
+        body alike, so an UNREADABLE run and a genuinely cleared
+        `pull_requests` reach the owner loop identically. Excusing on PR state
+        alone would cover both, which is the shape the empty-is-unverified
+        rule closed (Greptile on PR #1625). Only a run that was actually read
+        may be excused, so this stays a reason even though the PR is MERGED.
+        """
+        head = self.HEAD
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(
+                    {
+                        "headRefOid": head,
+                        "baseRefName": "main",
+                        "statusCheckRollup": [],
+                        "comments": [],
+                        "reviews": [],
+                        "state": "MERGED",
+                    }
+                )
+            if args[0] == "api" and f"head_sha={head}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 777,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": head,
+                            }
+                        ]
+                    }
+                )
+            # The detail fetch FAILS -- the case a cleared field is mistaken for.
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("does not resolve to" in r for r in reasons), reasons
+
     def test_an_open_pr_owned_by_another_number_still_fails_closed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

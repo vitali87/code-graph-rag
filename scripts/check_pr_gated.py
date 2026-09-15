@@ -648,10 +648,19 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         reasons.append(f"no CI run exists at the head SHA {head[:8]}")
     else:
         owners: set[str] = set()
+        # Whether every run's detail was actually READ. `_gh_stdout_or_empty`
+        # returns "" for a failed call and for an empty body alike, so an
+        # unreadable run and a genuinely empty `pull_requests` are otherwise
+        # indistinguishable -- and the closed-PR excuse below must never cover
+        # the first. A run whose detail did not parse leaves this False.
+        all_details_read = True
         for run in at_head:
             detail = _json_dict(
                 _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
             )
+            if not detail:
+                all_details_read = False
+                continue
             owners.update(
                 str(p.get("number"))
                 for p in detail.get("pull_requests", [])
@@ -668,7 +677,12 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         # set naming a different PR is the rebase collision the message
         # describes and still fails, whatever the state.
         state = str(view.get("state", "")).upper()
-        cleared_by_close = not owners and state in ("MERGED", "CLOSED")
+        # Excused only when the runs were READ and reported no owner. A failed
+        # detail fetch keeps failing closed on a merged PR exactly as on an
+        # open one: that is the fail-open the empty-is-unverified rule closed.
+        cleared_by_close = (
+            not owners and all_details_read and state in ("MERGED", "CLOSED")
+        )
         if pr not in owners and not cleared_by_close:
             # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
             # fetch failed, or one reporting `pull_requests: []`, leaves
