@@ -565,5 +565,80 @@ class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
         result = _execute_workflow_check([[run]], pr_pages=[[]])
 
         assert result.returncode == 1
-        assert "not this PR" in result.stdout
+        # The REASON line, not a substring the static remedy also prints.
+        # Asserting "not this PR" alone passed even with the whole reason
+        # feature gutted, because the #1582 remedy text ends "it is not
+        # this PR's evidence" (greptile-local on this branch).
+        assert (
+            "excluded because its PR association names [9999], not this PR"
+            in result.stdout
+        )
         assert "gh workflow run ci.yml" not in result.stdout
+
+    def test_an_empty_association_names_the_failed_fallback(self) -> None:
+        result = _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert (
+            "excluded because it carries no PR association and the "
+            "source-branch fallback did not resolve it to this PR" in result.stdout
+        )
+
+    def test_a_foreign_source_branch_is_named(self) -> None:
+        run = _make_workflow_run(branch="someone-else", prs=(9999,))
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert (
+            "excluded because it belongs to another source branch or repository"
+            in result.stdout
+        )
+
+    def test_a_status_the_grep_would_miss_still_gets_the_pending_remedy(
+        self,
+    ) -> None:
+        """`requested` and `pending` are real workflow-run statuses.
+
+        The remedy was selected by grepping `status=(queued|waiting|
+        in_progress)` out of the rendered reason text, so these two fell
+        through to the absent-case advice and told the reader to dispatch
+        a run that already existed.
+        """
+        run = _make_workflow_run(status="requested", conclusion=None)
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "has not completed" in result.stdout
+        assert "gh workflow run ci.yml" not in result.stdout
+
+    def test_a_foreign_queued_run_does_not_claim_one_is_coming(self) -> None:
+        """The shared-head case (#1582): every run belongs to another PR.
+
+        Selecting the remedy by grepping for any queued run printed "Do
+        NOT dispatch another" even though no run for THIS PR was coming,
+        which is the one situation where dispatching is the right advice.
+        """
+        runs = [
+            _make_workflow_run(
+                branch="other-branch", prs=(9999,), status="queued", conclusion=None
+            ),
+            _make_workflow_run(
+                branch="other-branch", prs=(9999,), conclusion="failure"
+            ),
+        ]
+        result = _execute_workflow_check([runs], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout
+
+    def test_a_branch_named_like_a_status_does_not_flip_the_remedy(self) -> None:
+        """`head_branch` is interpolated into the reason text the grep
+        then scanned, so a branch called `status=queued` chose the
+        remedy."""
+        run = _make_workflow_run(
+            branch="status=queued", prs=(9999,), conclusion="success"
+        )
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout

@@ -175,6 +175,23 @@ jobs:
                   end' 2>/dev/null) || ci_at_head="  (could not summarise runs)"
             echo "Why no run counted for this PR:"
             echo "$ci_at_head"
+            # Compute the remedy's state in jq, from the DATA. Grepping the
+            # rendered reason text re-derives state from a string that
+            # interpolates head_branch, so a branch literally named
+            # `status=queued` would flip the advice -- and a status the
+            # grep does not list (`requested`, `pending`) would silently
+            # fall through to the absent-case remedy. Restricted to runs
+            # matching THIS PR's source identity, so a queued run belonging
+            # to another PR cannot claim "one is already coming".
+            ci_state=$(echo "$runs" | jq -r \
+              --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
+              --arg head_repo "$HEAD_REPO" '
+                [.[] | select(.path == ".github/workflows/ci.yml")
+                     | select(.head_sha == $sha and .head_branch == $branch
+                              and .head_repo == $head_repo)]
+                | if length == 0 then "absent"
+                  elif any(.[]; .status != "completed") then "pending"
+                  else "foreign" end' 2>/dev/null) || ci_state="absent"
             echo
             echo "::error::No 'CI' workflow run matches PR #$PR_NUMBER at head $HEAD_SHA."
             echo "This PR has not been verified by the test suite at the commit"
@@ -186,7 +203,7 @@ jobs:
             # right only when none exists; when one is queued or waiting on
             # fork approval, a second dispatch adds a run without releasing
             # the first.
-            if echo "$ci_at_head" | grep -q "no ci.yml run exists"; then
+            if [ "$ci_state" = "absent" ]; then
               echo "Ensure ci.yml runs for this pull request's base branch."
               echo "Trigger one with:"
               echo "  gh workflow run ci.yml --ref <branch>"
@@ -195,7 +212,7 @@ jobs:
               echo "whose base is not main -- it creates a new head, CodeQL"
               echo "re-runs green, and the page looks freshly validated while no"
               echo "test has run."
-            elif echo "$ci_at_head" | grep -qE "status=(queued|waiting|in_progress)"; then
+            elif [ "$ci_state" = "pending" ]; then
               echo "A ci.yml run exists at this head but has not completed."
               echo "Do NOT dispatch another; it would not release this one."
               echo "On a fork PR this usually means the run is awaiting"
