@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.config import API_KEY_INFO, ModelConfig
+from codebase_rag.config import PROVIDER_ENV_KEYS, ModelConfig
 from codebase_rag.mcp import server as srv
 
 
@@ -22,10 +22,10 @@ def _local_config() -> ModelConfig:
 
 
 # Every provider env var `validate_api_key` treats as an exemption, read from
-# the one table the validator itself consults (#1913). Derived rather than
-# hand-listed: a new provider in `API_KEY_INFO` is cleared here the day it is
+# the one map the validator itself consults (#1913). Derived rather than
+# hand-listed: a new provider reaching that map is cleared here the day it is
 # added, and the guard below proves each entry really does exempt.
-_EXEMPTING_ENV_KEYS = tuple(info["env_var"] for info in API_KEY_INFO.values())
+_EXEMPTING_ENV_KEYS = tuple(PROVIDER_ENV_KEYS.values())
 
 
 def _isolated_env(tmp_path: Path) -> Any:
@@ -73,8 +73,14 @@ def test_the_exemption_list_covers_every_provider_env_key(
     machine holding that provider's key, every test below would take the
     exemption and assert nothing.
     """
-    for provider, info in API_KEY_INFO.items():
-        env_var = info["env_var"]
+    # Reads the validator's own map rather than grepping its source: the map
+    # moved to module level when `cgr doctor` began reading it, which made a
+    # source scan see nothing while the exemptions still applied (#1910).
+    assert PROVIDER_ENV_KEYS, (
+        "fixture guard: PROVIDER_ENV_KEYS is empty, so this test cannot detect "
+        "drift"
+    )
+    for provider, env_var in PROVIDER_ENV_KEYS.items():
         monkeypatch.setenv(env_var, "ambient-key")
         try:
             ModelConfig(provider=provider, model_id="m").validate_api_key()

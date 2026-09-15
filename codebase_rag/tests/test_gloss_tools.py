@@ -115,6 +115,26 @@ class FakeGraph:
             out = [self._gloss_row(g) for g, qn in self.annotates if qn == p[cs.KEY_QN]]
         elif query == cq.CYPHER_GLOSSES_MENTIONING:
             out = [self._gloss_row(g) for g, qn in self.mentions if qn == p[cs.KEY_QN]]
+        elif query == cq.CYPHER_GLOSSES_ORPHANED_ON:
+            attached = {g for g, _qn in self.annotates}
+
+            def in_project(props: PropertyDict) -> bool:
+                recorded = props.get(cs.KEY_PROJECT)
+                if recorded is not None:
+                    return recorded == p[cs.KEY_PROJECT_NAME]
+                return str(props.get(cs.KEY_TARGET_QN, "")).startswith(
+                    str(p[cs.KEY_PROJECT_PREFIX])
+                )
+
+            def names_target(props: PropertyDict) -> bool:
+                qn = str(props.get(cs.KEY_TARGET_QN, ""))
+                return qn == p[cs.KEY_QN] or qn.endswith(str(p[cs.KEY_SUFFIX]))
+
+            out = [
+                self._gloss_row(g)
+                for g, props in self.glosses.items()
+                if in_project(props) and names_target(props) and g not in attached
+            ]
         else:
             raise AssertionError(f"unexpected query: {query[:60]}")
         # Deliberately unsorted: the tools must sort.
@@ -151,13 +171,28 @@ class FakeGraph:
             for k, v in self.glosses.get(key, {}).items()
             if k in (cs.KEY_CREATED_BY, cs.KEY_CREATED_AT)
         }
-        skip = {cs.KEY_QN, cs.KEY_PROJECT_PREFIX, cs.KEY_CREATED_BY, cs.KEY_CREATED_AT}
+        skip = {
+            cs.KEY_QN,
+            cs.KEY_PROJECT_PREFIX,
+            cs.KEY_PROJECT_NAME,
+            cs.KEY_CREATED_BY,
+            cs.KEY_CREATED_AT,
+        }
         self.glosses[key] = {
             **kept,
             **created,
             **{k: v for k, v in p.items() if k not in skip and v is not None},
+            # `g.project = $project_name`: the parameter lands on the node
+            # under the property name.
+            cs.KEY_PROJECT: p[cs.KEY_PROJECT_NAME],
         }
+        # A fresh write against a name is EXACT at that name: any earlier
+        # subject edge (a note that had MOVED) is dropped and the repair
+        # state cleared, mirroring the statement.
+        self.annotates = {(g, qn) for g, qn in self.annotates if g != key}
         self.annotates.add((key, target))
+        self.glosses[key].pop(cs.KEY_MOVED_FROM, None)
+        self.glosses[key].pop(cs.KEY_CANDIDATE_QNS, None)
         # A repeat write replaces the note's mentions.
         self.mentions = {(g, qn) for g, qn in self.mentions if g != key}
         for qn in wanted:
@@ -468,6 +503,167 @@ def test_read_refuses_an_ambiguous_name_the_same_way_as_a_write() -> None:
     assert len(result["candidates"]) == 2
 
 
+def test_read_on_a_gone_definition_returns_its_orphaned_notes_with_the_error() -> None:
+    # Stage four of #1808: a note whose definition's name is gone is LOST or
+    # AMBIGUOUS and attached to nothing, so the read that used to find it
+    # attached would report "no definition" and nothing else. The refusal
+    # stands (the name does not resolve, and nothing is re-bound), and the
+    # notes written against that exact name come back with it, state and
+    # candidates included, so the orphaning is visible rather than silent.
+    graph = FakeGraph()
+    gone = f"{P}.app.removed"
+    graph.glosses["gloss:lost"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_BODY: "b1",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    graph.glosses["gloss:amb"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_BODY: "b2",
+        cs.KEY_CREATED_AT: "2026-09-13T09:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.AMBIGUOUS.value,
+        cs.KEY_CANDIDATE_QNS: [UTIL_GET, STORE_GET],
+    }
+    # A note on the same old name that has since MOVED is attached, so it is
+    # not orphaned and must not appear here.
+    graph.glosses["gloss:moved"] = {
+        cs.KEY_TARGET_QN: RUN,
+        cs.KEY_MOVED_FROM: gone,
+        cs.KEY_BODY: "b3",
+        cs.KEY_CREATED_AT: "2026-09-13T08:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.MOVED.value,
+    }
+    graph.annotates.add(("gloss:moved", RUN))
+    result = gloss.glosses_for(graph.fetch_all, P, gone)
+    assert _is_refusal(result)
+    assert cs.KEY_CANDIDATES not in result
+    orphaned = result[cs.KEY_ORPHANED]
+    assert [g["qualified_name"] for g in orphaned] == ["gloss:amb", "gloss:lost"]
+    assert orphaned[0]["anchor_state"] == cs.GlossAnchorState.AMBIGUOUS.value
+    assert orphaned[0]["candidate_qns"] == [STORE_GET, UTIL_GET], "sorted"
+    assert orphaned[1]["anchor_state"] == cs.GlossAnchorState.LOST.value
+    assert orphaned[1]["candidate_qns"] == []
+
+
+def test_a_repeat_write_of_a_moved_note_replaces_its_subject_edge() -> None:
+    # The key is deterministic in (subject, kind, body), so writing the same
+    # note against its ORIGINAL name after it has MOVED finds the same node,
+    # still attached to the definition it followed. A name-keyed MERGE added a
+    # second ANNOTATES edge (bot review: 1 -> 2 edges reproduced). The write
+    # drops any other subject edge first and clears the repair state.
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    key = row["qualified_name"]
+    # The note follows its hash to another definition.
+    graph.annotates = {(g, qn) for g, qn in graph.annotates if g != key}
+    graph.annotates.add((key, VALIDATE))
+    graph.glosses[key][cs.KEY_TARGET_QN] = VALIDATE
+    graph.glosses[key][cs.KEY_MOVED_FROM] = RUN
+    graph.glosses[key][cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.MOVED.value
+    again = _write(graph, RUN)
+    assert again["qualified_name"] == key
+    assert {qn for g, qn in graph.annotates if g == key} == {RUN}, "one subject"
+    assert again["moved_from"] is None
+    assert again["anchor_state"] == cs.GlossAnchorState.EXACT.value
+    q = cq.CYPHER_GLOSS_WRITE
+    # The stale-subject deletion precedes the new subject MERGE.
+    stale = q.index(
+        f"OPTIONAL MATCH (g)-[old:{cs.RelationshipType.ANNOTATES.value}]->(prev)"
+    )
+    assert "WHERE prev <> t" in q
+    assert "FOREACH (edge IN stale_subjects | DELETE edge)" in q
+    merge = q.index(f"MERGE (g)-[:{cs.RelationshipType.ANNOTATES.value}]->(t)")
+    assert stale < merge
+    assert "g.moved_from = null, g.candidate_qns = null" in q
+
+
+def test_a_written_note_records_its_project() -> None:
+    # Recorded, not derived: a project name may contain dots, and the repair
+    # pass and the orphan read scope on this field (local review).
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    assert graph.glosses[row["qualified_name"]][cs.KEY_PROJECT] == P
+    assert "g.project = $project_name" in cq.CYPHER_GLOSS_WRITE
+
+
+def test_read_on_a_gone_definition_accepts_the_dotted_suffix_form() -> None:
+    # The tool text promises resolve-style names, so `removed` and
+    # `app.removed` must find the notes written against `proj.app.removed`.
+    graph = FakeGraph()
+    gone = f"{P}.app.removed"
+    graph.glosses["gloss:lost"] = {
+        cs.KEY_TARGET_QN: gone,
+        cs.KEY_PROJECT: P,
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    for name in ("removed", "app.removed", gone):
+        result = gloss.glosses_for(graph.fetch_all, P, name)
+        assert _is_refusal(result), name
+        assert [g["qualified_name"] for g in result[cs.KEY_ORPHANED]] == [
+            "gloss:lost"
+        ], name
+    # A suffix that is not dot-aligned is not the name: `moved` is not
+    # `.removed`.
+    assert cs.KEY_ORPHANED not in gloss.glosses_for(graph.fetch_all, P, "moved")
+
+
+def test_read_on_a_gone_definition_never_shows_another_projects_notes() -> None:
+    # The full qualified name of another project's gone definition resolves
+    # to nothing here, and its notes are that project's to show, not ours.
+    graph = FakeGraph()
+    graph.glosses["gloss:theirs"] = {
+        cs.KEY_TARGET_QN: "other.app.removed",
+        cs.KEY_PROJECT: "other",
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T10:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.LOST.value,
+    }
+    for name in ("other.app.removed", "removed"):
+        assert cs.KEY_ORPHANED not in gloss.glosses_for(graph.fetch_all, P, name)
+
+
+def test_read_on_a_gone_definition_with_no_notes_is_a_plain_refusal() -> None:
+    graph = FakeGraph()
+    result = gloss.glosses_for(graph.fetch_all, P, f"{P}.app.never")
+    assert _is_refusal(result)
+    assert cs.KEY_ORPHANED not in result, "an empty list would read as a finding"
+
+
+def test_read_on_an_ambiguous_name_does_not_look_for_orphans() -> None:
+    # An ambiguous name is not a gone name; the refusal carries candidates
+    # and nothing else, and no orphan read is issued for it.
+    graph = FakeGraph()
+    seen: list[str] = []
+
+    def spy(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        seen.append(query)
+        return graph.fetch_all(query, params)
+
+    result = gloss.glosses_for(spy, P, "get")
+    assert _is_refusal(result)
+    assert cq.CYPHER_GLOSSES_ORPHANED_ON not in seen
+
+
+def test_a_moved_note_reads_back_with_where_it_came_from() -> None:
+    graph = FakeGraph()
+    graph.glosses["gloss:moved"] = {
+        cs.KEY_TARGET_QN: RUN,
+        cs.KEY_MOVED_FROM: f"{P}.app.old_run",
+        cs.KEY_BODY: "b",
+        cs.KEY_CREATED_AT: "2026-09-13T08:00:00+00:00",
+        cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.MOVED.value,
+    }
+    graph.annotates.add(("gloss:moved", RUN))
+    result = gloss.glosses_for(graph.fetch_all, P, RUN)
+    [row] = result["annotating"]
+    assert row["anchor_state"] == cs.GlossAnchorState.MOVED.value
+    assert row["moved_from"] == f"{P}.app.old_run"
+    assert row["candidate_qns"] == []
+
+
 # --- the MCP surface ----------------------------------------------------------
 
 
@@ -717,8 +913,13 @@ class _RecordingStore:
     def __init__(self) -> None:
         self.writes: list[str] = []
         self.fail = False
+        # When set, the store reports one note the name tier left unattached
+        # (no comparable hash), so the repair tier has something to mark.
+        self.unanchored: list[ResultRow] = []
 
     def fetch_all(self, query: str, params: PropertyDict | None = None) -> list:
+        if query == cq.CYPHER_UNANCHORED_GLOSSES:
+            return list(self.unanchored)
         return []
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
@@ -741,6 +942,14 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     # so a rebuild that recreated the definitions (or a capture that could
     # not be read) still ends with every note attached.
     store = _RecordingStore()
+    store.unanchored = [
+        {
+            cs.KEY_QUALIFIED_NAME: "gloss:orphan",
+            cs.KEY_TARGET_QN: f"{P}.gone.f",
+            cs.KEY_TARGET_HASH: None,
+            cs.KEY_ANCHOR_STATE: cs.GlossAnchorState.EXACT.value,
+        }
+    ]
     updater = GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
         repo_path=tmp_path,
@@ -748,8 +957,13 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
         queries={},
     )
     updater._reanchor_glosses()
+    # Name tier first; then the repair tier places or marks what the name
+    # tier left unattached (here: one note with no comparable hash, marked
+    # LOST); then the mentions restore, so a note that has just MOVED gets
+    # its MENTIONS edges back in the same run; then grading.
     assert store.writes == [
         cq.CYPHER_REANCHOR_GLOSSES,
+        cq.CYPHER_GLOSS_MARK,
         cq.CYPHER_REANCHOR_GLOSS_MENTIONS,
         cq.CYPHER_GRADE_GLOSS_ANCHORS,
     ]
@@ -759,15 +973,33 @@ def test_reanchoring_rebuilds_edges_from_the_notes_own_record(tmp_path: Path) ->
     assert "WHERE subjects = 0" in cq.CYPHER_REANCHOR_GLOSSES
 
 
+def test_reanchoring_by_name_resets_the_state_it_left_behind() -> None:
+    # A note the previous run graded LOST or AMBIGUOUS whose name has come
+    # back is attached again and reads EXACT (grading may demote it to STALE
+    # straight after); a MOVED note stays MOVED, since `target_qn` is by then
+    # the name it moved to. The candidate list belongs to AMBIGUOUS alone.
+    q = cq.CYPHER_REANCHOR_GLOSSES
+    assert "SET g.anchor_state = CASE WHEN g.moved_from IS NULL" in q
+    assert (
+        f"THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
+    )
+    assert "g.candidate_qns = null" in q
+    assert "DELETE" not in q
+
+
 def test_grading_compares_the_recorded_hash_with_the_subjects_current_one() -> None:
     # After re-anchoring, a note whose recorded hash no longer matches the
     # subject's `anchor_hash` reads STALE; a match reads EXACT again; a
     # subject or note without a hash is left as it is, never guessed at.
     q = cq.CYPHER_GRADE_GLOSS_ANCHORS
     assert "g.target_hash = t.anchor_hash" in q
+    assert f"ELSE '{cs.GlossAnchorState.STALE.value}' END" in q
+    # A note that followed its definition to a new name stays MOVED while the
+    # hashes agree: `moved_from` is what keeps the move visible.
     assert (
-        f"THEN '{cs.GlossAnchorState.EXACT.value}' ELSE '{cs.GlossAnchorState.STALE.value}'"
-        in q
+        f"CASE WHEN g.moved_from IS NULL\n          THEN '{cs.GlossAnchorState.EXACT.value}' "
+        f"ELSE '{cs.GlossAnchorState.MOVED.value}' END" in q
     )
     assert "g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL" in q
     # A note that recorded a pre-format hash (stage two wrote the clone

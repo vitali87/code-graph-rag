@@ -417,22 +417,18 @@ def _pair_lone_containers(
         matches = [
             other
             for other in lone_added
-            if after.definitions[other].path == definition.path
+            if (qn, other) in declared
+            and after.definitions[other].path == definition.path
             and after.definitions[other].label == definition.label
         ]
-        peers = [
-            other
-            for other in lone_removed
-            if before.definitions[other].path == definition.path
-            and before.definitions[other].label == definition.label
-        ]
-        if len(matches) == 1 and len(peers) == 1:
-            # The only admissible evidence: the operation says it did this.
-            if (qn, matches[0]) not in declared:
-                continue
-            found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
-            paired_new.add(matches[0])
-            lone_added.remove(matches[0])
+        if len(matches) != 1:
+            continue
+        target = matches[0]
+        peers = [other for other in lone_removed if (other, target) in declared]
+        if len(peers) == 1:
+            found.append(RenameFinding(old=qn, new=target, path=definition.path))
+            paired_new.add(target)
+            lone_added.remove(target)
     return found
 
 

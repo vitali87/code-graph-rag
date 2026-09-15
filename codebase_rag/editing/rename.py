@@ -132,6 +132,7 @@ class RenameReport(NamedTuple):
     # True when a rollback re-ingest failed after the files were restored:
     # the graph may hold a partial picture and must be rebuilt.
     graph_incomplete: bool = False
+    undone: bool | None = None
 
 
 # --- site collection -----------------------------------------------------------
@@ -771,7 +772,7 @@ class Renamer:
     def apply(
         self, qn: str, new_name: str, allow_heuristic: bool = False
     ) -> RenameReport:
-        """Plan, patch, verify and commit; the tree is untouched on failure."""
+        """Plan, patch, verify and commit; report contract rollback separately."""
         report = self.plan(qn, new_name, allow_heuristic)
         tx, results, broken = self._stage(report, new_name)
         if broken:
@@ -811,16 +812,15 @@ class Renamer:
         limit, which fails once those later entries are themselves undone --
         the history shrinks and the eviction becomes invisible (Greptile,
         PR #1547). Absence can never prove a reversal, so it is never
-        reported as one; the caller keeps `applied` and is told the state
+        reported as one; the caller keeps `undone=False` and is told the state
         could not be determined.
 
         Whether the files were actually restored is settled by
-        `_rename_is_on_disk`, which reads the tree rather than the history.
+        `_old_name_is_back`, which reads the tree rather than the history.
         """
         try:
             entries = load_history(self.repo_root)
-        # An unreadable history is an unknown state: keep `applied` as it
-        # was rather than guessing in either direction.
+        # An unreadable history cannot confirm a completed rollback.
         except Exception:  # noqa: BLE001
             return cs.RENAME_UNDO_STACKED
         if any(
@@ -832,7 +832,7 @@ class Renamer:
     def _old_name_is_back(self, report: RenameReport) -> bool:
         """Whether the old name has returned AT THE SITES this rename edited.
 
-        `applied` is a claim about the working tree, so the tree settles it,
+        `undone` is a claim about the working tree, so the tree settles it,
         not the history: an entry can be evicted by later edits while its
         rename stands, and once those later entries are themselves undone the
         history is short again and the eviction leaves no trace.
@@ -847,7 +847,7 @@ class Renamer:
         The test is the OLD name, not the new one: the new name is routinely
         present either way, since renaming onto an existing symbol is exactly
         what makes the contract fail. A site that cannot be read counts as
-        NOT reverted, keeping `applied` unchanged rather than claiming a
+        NOT reverted, keeping `undone=False` rather than claiming a
         rollback that may not have happened.
         """
         by_path: dict[str, list[RenameSite]] = {}
@@ -876,7 +876,7 @@ class Renamer:
             return False
         old_bytes = report.old_name.encode("utf-8")
         # EVERY rewritten site must carry the old name again: one restored
-        # site is a PARTIAL undo, and reporting `applied=False` for it tells
+        # site is a PARTIAL undo, and reporting `undone=True` for it tells
         # the caller every file is back when other definitions and references
         # are still renamed (Greptile, PR #1547).
         if not all(
@@ -1036,7 +1036,7 @@ class Renamer:
         """Whether every site in one file carries the old name at its column.
 
         An unreadable file and a site whose line is gone both answer False:
-        `applied=False` claims EVERY site is back, so anything that cannot be
+        `undone=True` claims EVERY site is back, so anything that cannot be
         SHOWN restored is a no rather than a skip.
         """
         try:
@@ -1057,21 +1057,38 @@ class Renamer:
                 return False
         return True
 
-    def _enforce_contract(
-        self, report: RenameReport, new_name: str, allow_heuristic: bool
-    ) -> RenameReport:
-        assert self.reingest is not None
-        # The pairs this rename applied, computed here rather than after the
-        # measurement: the delta needs them to recognise an empty container,
-        # whose identity nothing in the two snapshots can show.
-        pairs = [
+    def _declared_renames(
+        self, report: RenameReport, new_name: str
+    ) -> list[tuple[str, str]]:
+        parents = [
             (
                 member,
                 member.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT + new_name,
             )
             for member in report.hierarchy
         ]
+        pairs = list(parents)
+        for row in self.fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS,
+            {
+                cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.CYPHER_PARAM_PATHS: list(report.files),
+            },
+        ):
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            if not isinstance(qn, str) or row.get(cs.KEY_AST_FINGERPRINT):
+                continue
+            for old, new in parents:
+                if qn.startswith(old + cs.SEPARATOR_DOT):
+                    pairs.append((qn, new + qn[len(old) :]))
+        return pairs
+
+    def _enforce_contract(
+        self, report: RenameReport, new_name: str, allow_heuristic: bool
+    ) -> RenameReport:
+        assert self.reingest is not None
         try:
+            pairs = self._declared_renames(report, new_name)
             delta = measure(
                 self.fetch_all,
                 self.project,
@@ -1122,10 +1139,11 @@ class Renamer:
         if verdict.ok:
             return report._replace(verdict=verdict)
         reasons = "; ".join(verdict.failures)
+        report = report._replace(applied=False, verdict=verdict, undone=False)
         try:
             # This rename's own transaction, not whatever is newest: a
             # later edit stacked on it refuses the rollback instead.
-            undo_transaction(self.repo_root, report.transaction_id)
+            outcome = undo_transaction(self.repo_root, report.transaction_id)
         except TransactionConflict as conflict:
             logger.warning(str(conflict))
             # The conflict covers two opposite situations needing opposite
@@ -1133,22 +1151,27 @@ class Renamer:
             # another actor having already reversed this one (restored).
             if self._undo_state(report.transaction_id) == cs.RENAME_UNDO_STACKED:
                 return report._replace(
-                    verdict=verdict,
-                    message=cs.RENAME_ROLLBACK_REFUSED.format(reasons=reasons),
+                    message=cs.RENAME_ROLLBACK_REFUSED.format(
+                        reasons=reasons, error=conflict
+                    ),
                 )
             # The entry is absent, which proves nothing on its own -- a
             # bounded history evicts entries whose rename is still on disk.
-            # So ask the TREE, which is the thing `applied` describes, rather
+            # So ask the TREE, which is the thing `undone` describes, rather
             # than reasoning about history bookkeeping (Greptile, PR #1547).
             if self._old_name_is_back(report):
                 return report._replace(
-                    applied=False,
-                    verdict=verdict,
+                    undone=True,
                     message=cs.RENAME_ROLLBACK_ALREADY_UNDONE.format(reasons=reasons),
                 )
             return report._replace(
-                verdict=verdict,
                 message=cs.RENAME_ROLLBACK_UNKNOWN.format(reasons=reasons),
+            )
+        if not outcome.applied:
+            return report._replace(
+                message=cs.RENAME_ROLLBACK_REFUSED.format(
+                    reasons=reasons, error=outcome.message
+                ),
             )
         try:
             self.reingest(list(report.files))
@@ -1161,16 +1184,14 @@ class Renamer:
                 cs.RENAME_ROLLBACK_UNMEASURED.format(reasons=reasons, error=error)
             )
             return report._replace(
-                applied=False,
-                verdict=verdict,
+                undone=True,
                 graph_incomplete=True,
                 message=cs.RENAME_ROLLBACK_UNMEASURED.format(
                     reasons=reasons, error=error
                 ),
             )
         return report._replace(
-            applied=False,
-            verdict=verdict,
+            undone=True,
             message=cs.RENAME_CONTRACT_FAILED.format(reasons=reasons),
         )
 

@@ -31,6 +31,7 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
 from ..parameter_nodes import PendingParameterType
@@ -200,6 +201,7 @@ class ClassIngestMixin:
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
     pending_parameter_types: list[PendingParameterType]
+    pending_field_types: list[PendingFieldType]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -1134,6 +1136,25 @@ class ClassIngestMixin:
         # type_spec is class_node, so this is a no-op for non-templates and for
         # Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
+        # Declared fields ride with their owner: same gate, same props source
+        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
+        # Emitted AFTER the owner node so a batch flush never writes the edge
+        # before its endpoint, and from member_node: a templated C++ class's
+        # wrapper has no body, its members live on the inner class_specifier
+        # (local review P1).
+        emit_declared_fields(
+            self.ingestor,
+            self.pending_field_types,
+            # `determine_node_type` returns a NodeType; every member's value is a
+            # NodeLabel value (checked when this was written), so the owner
+            # label is the same name in the graph's own enum.
+            cs.NodeLabel(node_type.value),
+            class_qn,
+            module_qn,
+            member_node,
+            language,
+            class_props,
+        )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent

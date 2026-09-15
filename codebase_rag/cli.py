@@ -1301,6 +1301,18 @@ def status_command() -> None:
         app_context.console.print(f"  - {project}: last sync {ts}")
 
 
+def _status_mark(passed: bool, encoding: str) -> str:
+    """The pass/fail mark the console's stream can encode.
+
+    Rich substitutes ASCII box characters on a non-UTF stream but leaves
+    text alone, so the glyph raised UnicodeEncodeError on a CP950 Windows
+    terminal before a single check was shown (issue #1910).
+    """
+    if encoding.lower().startswith(cs.ENCODING_UTF_PREFIX):
+        return cs.HEALTH_MARK_PASS if passed else cs.HEALTH_MARK_FAIL
+    return cs.HEALTH_MARK_PASS_ASCII if passed else cs.HEALTH_MARK_FAIL_ASCII
+
+
 @app.command(
     name=ch.CLICommandName.DOCTOR,
     help=ch.CMD_DOCTOR,
@@ -1316,8 +1328,9 @@ def doctor() -> None:
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column(style="cyan", no_wrap=False)
 
+    encoding = app_context.console.encoding
     for result in results:
-        status = "✓" if result.passed else "✗"
+        status = _status_mark(result.passed, encoding)
         status_color = cs.Color.GREEN if result.passed else cs.Color.RED
         status_text = style(status, status_color, cs.StyleModifier.NONE)
 

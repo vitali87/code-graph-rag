@@ -71,6 +71,16 @@ The contract is measured only when the caller supplies `reingest` (the CLI and t
 and reports the reasons in `message`; `verdict.affected_tests` lists the
 tests to run after a rename that passed.
 
+A failed contract always reports `applied: false`, exits the CLI with code 1,
+and skips `after_apply`. The separate `undone` field is `true` when the
+rename was reversed, `false` when rollback was refused or restoration could
+not be confirmed, and `null` when no contract rollback was needed. With
+`undone: false`, files may still contain the rename or later edits; inspect
+the working tree and the failure message before proceeding. A completed
+rollback whose re-ingest failed reports `undone: true` and
+`graph_incomplete: true`, so the graph needs rebuilding even though the
+files were restored.
+
 ## Atomicity
 
 All edits are staged in one [edit transaction](edit-transactions.md). Every
@@ -87,6 +97,7 @@ history, so `cgr edits undo` reverses them.
   "old_name": "helper",
   "new_name": "assist",
   "applied": true,
+  "undone": null,
   "transaction_id": "...",
   "files": ["pkg/__init__.py", "pkg/app.py", "pkg/util.py"],
   "sites": [{"kind": "call", "path": "pkg/app.py", "line": 4, "col": 11, "owner": "myproj.pkg.app.run", "resolution": "exact"}],
