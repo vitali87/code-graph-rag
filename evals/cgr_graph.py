@@ -76,6 +76,7 @@ _DEFINES_RELS = frozenset(
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.DEFINES_CONSTANT.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
@@ -736,6 +737,22 @@ class _StatefulIngestor:
                     }
                     for (label, _uid), props in self.nodes.items()
                     if label == cs.NodeLabel.FIELD.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
+            case cs.CYPHER_PROJECT_CONSTANT_TYPES:
+                # The Constant counterpart (issue #1806), for the same reason.
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.CONSTANT.value
                     and cs.KEY_TYPE_NAME in props
                     and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
                         prefix
