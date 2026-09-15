@@ -187,7 +187,11 @@ def test_a_final_annotation_is_recognised_through_a_unicode_module() -> None:
     composed = "caf\u00e9_mod"
     decomposed = "cafe\u0301_mod"
     assert composed != decomposed
-    assert composed.isidentifier() and decomposed.isidentifier()
+    # Split rather than joined with `and`: a composite assertion that fails
+    # cannot say WHICH spelling Python rejected, and the whole point here is
+    # that it accepts both.
+    assert composed.isidentifier()
+    assert decomposed.isidentifier()
 
     for module in (composed, decomposed):
         assert _names(f"{module} = None\nvalue: {module}.Final = 1\n") == ["value"]
