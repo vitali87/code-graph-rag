@@ -47,6 +47,11 @@ def test_a_failing_unrequired_check_is_reported() -> None:
     assert len(caveat) == 1
     assert "Analyze (csharp)" in caveat[0]
     assert "do not block" in caveat[0]
+    # The caveat may not upgrade "this gate does not require it" into "the
+    # ruleset does not require it": the gate never reads that list.
+    assert "this gate does not require" in caveat[0]
+    assert "does not read the ruleset's required-context list" in caveat[0]
+    assert "the ruleset does not require" not in caveat[0]
 
 
 def test_a_green_board_produces_no_caveat() -> None:
@@ -231,15 +236,19 @@ def test_the_verdict_line_claims_only_what_was_checked(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`every check present and satisfied` is a claim about every check, and
-    the script only ever looked at the required ones. A reader told that this
+    the script only ever looked at one. `every REQUIRED check` was no better:
+    the gate reads the branch rule's type, never its required-context list, so
+    it cannot speak for what the ruleset requires. A reader told that this
     output is the state merges on that sentence."""
     monkeypatch.setattr(check_pr_gated, "check", lambda _pr: ([], []))
 
     assert check_pr_gated.main(["check_pr_gated.py", "1930"]) == 0
 
     line = capsys.readouterr().out
-    assert "every REQUIRED check present and satisfied" in line
+    assert f"'{check_pr_gated.REQUIRED_CONTEXT}' present and satisfied" in line
+    assert "no other context was tested for being required" in line
     assert "every check present and satisfied" not in line
+    assert "every REQUIRED check" not in line
 
 
 def test_a_caveat_prints_above_the_gated_verdict(
