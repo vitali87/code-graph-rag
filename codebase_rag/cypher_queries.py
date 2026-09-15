@@ -307,7 +307,7 @@ _DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
 MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
 ORDER BY labels(n)[0], m.path, n.start_line
 LIMIT 1
