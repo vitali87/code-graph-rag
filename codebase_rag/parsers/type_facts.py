@@ -244,6 +244,7 @@ def queue_type_facts(
     qualified_name: str,
     module_qn: str | None,
     facts: TypeFacts,
+    path: str | None = None,
 ) -> None:
     """Hold a definition's annotations until every file's types are registered.
 
@@ -256,7 +257,12 @@ def queue_type_facts(
         return
     sink.append(
         PendingTypeFact(
-            label, qualified_name, module_qn, facts.return_type, facts.param_types
+            label,
+            qualified_name,
+            module_qn,
+            facts.return_type,
+            facts.param_types,
+            path,
         )
     )
 

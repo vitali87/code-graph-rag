@@ -15,6 +15,7 @@ from ...types_defs import (
     SimpleNameLookup,
 )
 from ...utils.path_utils import cached_resolve_posix
+from ..definition_docstring import libclang_docstring
 from . import constants as fc
 from .qn import CppQnResolver
 
@@ -215,7 +216,10 @@ class _Collector:
             cs.KEY_DECORATORS: [],
             cs.KEY_START_LINE: cursor.location.line,
             cs.KEY_END_LINE: cursor.extent.end.line,
-            cs.KEY_DOCSTRING: None,
+            # libclang attaches the Doxygen comment to the cursor it documents;
+            # without this the pure-libclang path emitted every documented
+            # definition with no docstring (Greptile on PR #1888).
+            cs.KEY_DOCSTRING: libclang_docstring(getattr(cursor, "raw_comment", None)),
             cs.KEY_IS_EXPORTED: False,
             cs.KEY_PATH: rel,
             cs.KEY_ABSOLUTE_PATH: Path(cursor.location.file.name).resolve().as_posix(),

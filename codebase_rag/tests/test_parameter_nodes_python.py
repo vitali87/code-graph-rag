@@ -1,0 +1,98 @@
+"""`python_declared_parameters` enumerates what a function DECLARES.
+
+Issue #1804. The existing slot extractor answers a different question --
+which parameter positional argument N binds to -- and so it stops at the first
+`*`, drops `self`, and never sees a keyword-only parameter. Every case below
+is one where the two answers differ, so a test that passed against the slot
+extractor by accident would be caught here.
+"""
+
+from __future__ import annotations
+
+from codebase_rag.parser_loader import load_parsers
+from codebase_rag.parsers.parameter_nodes import python_declared_parameters
+
+
+def _params(src: str, *, has_receiver: bool = True):
+    parsers, _ = load_parsers()
+    tree = parsers["python"].parse(src.encode())
+    fn = next(n for n in tree.root_node.children if n.type == "function_definition")
+    return python_declared_parameters(fn, has_receiver=has_receiver)
+
+
+def test_keyword_only_parameters_are_declared() -> None:
+    """The slot extractor stops at `*`; a declaration does not."""
+    got = _params("def f(a, *, b, c=1):\n    pass\n")
+    assert [p.name for p in got] == ["a", "b", "c"]
+    assert [p.index for p in got] == [0, 1, 2]
+    assert [p.has_default for p in got] == [False, False, True]
+
+
+def test_variadics_are_one_parameter_each_and_flagged() -> None:
+    got = _params("def f(a, *args, k=None, **kwargs):\n    pass\n")
+    assert [(p.name, p.is_variadic) for p in got] == [
+        ("a", False),
+        ("args", True),
+        ("k", False),
+        ("kwargs", True),
+    ]
+
+
+def test_leading_self_is_excluded_but_a_later_self_is_not() -> None:
+    """Exclusion is by POSITION: only the receiver slot is implicit."""
+    assert [p.name for p in _params("def m(self, x):\n    pass\n")] == ["x"]
+    assert [p.name for p in _params("def m(cls, x):\n    pass\n")] == ["x"]
+    assert [p.name for p in _params("def f(x, self):\n    pass\n")] == ["x", "self"]
+
+
+def test_separators_bind_nothing_and_take_no_index() -> None:
+    got = _params("def f(a, /, b, *, c):\n    pass\n")
+    assert [(p.name, p.index) for p in got] == [("a", 0), ("b", 1), ("c", 2)]
+
+
+def test_annotation_text_and_position_are_read_from_the_name() -> None:
+    got = _params("def f(\n    a: int,\n    b: list[str] = [],\n):\n    pass\n")
+    assert [(p.name, p.type_name, p.has_default) for p in got] == [
+        ("a", "int", False),
+        ("b", "list[str]", True),
+    ]
+    # Line of the NAME, 1-based, matching the Function node's own convention.
+    assert [(p.start_line, p.start_col) for p in got] == [(2, 4), (3, 4)]
+
+
+def test_an_unannotated_parameter_has_no_type() -> None:
+    got = _params("def f(a, b: str):\n    pass\n")
+    assert [p.type_name for p in got] == [None, "str"]
+
+
+def test_no_parameters_is_empty_not_an_error() -> None:
+    assert _params("def f():\n    pass\n") == []
+
+
+def test_a_typed_variadic_is_declared_and_keeps_later_indices() -> None:
+    """`*args: int` wraps the splat in a typed_parameter (local review P1).
+
+    Looking for a direct identifier child found nothing, the slot was
+    skipped, and every parameter after it took the wrong index.
+    """
+    got = _params("def f(a, *args: int, b: str = '', **kw: str):\n    pass\n")
+    assert [(p.name, p.index, p.is_variadic, p.type_name) for p in got] == [
+        ("a", 0, False, None),
+        ("args", 1, True, "int"),
+        ("b", 2, False, "str"),
+        ("kw", 3, True, "str"),
+    ]
+
+
+def test_a_comment_before_self_does_not_defeat_the_exclusion() -> None:
+    """The receiver is the first BINDING, not the first child (local review P2)."""
+    got = _params("def m(  # note\n    self, x):\n    pass\n")
+    assert [p.name for p in got] == ["x"]
+
+
+def test_an_explicit_self_is_kept_when_there_is_no_receiver() -> None:
+    """`def callback(self, value)` at module level, or under @staticmethod:
+    the caller supplies `self`, so it is a parameter (review, non-blocking).
+    The name alone cannot decide; the call site passes what it knows."""
+    got = _params("def callback(self, value):\n    pass\n", has_receiver=False)
+    assert [(p.name, p.index) for p in got] == [("self", 0), ("value", 1)]
