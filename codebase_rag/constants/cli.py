@@ -583,9 +583,8 @@ RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"
 RENAME_ROLLBACK_REFUSED = (
-    "Rename kept: its postcondition failed ({reasons}) but a later edit was "
-    "recorded on top of it, so it was not rolled back; undo the later edit "
-    "and rerun"
+    "Rename failed its postcondition ({reasons}) and was not rolled back "
+    "({error}); renamed files may remain modified; check the working tree"
 )
 RENAME_ROLLBACK_UNKNOWN = (
     "Rename kept: its postcondition failed ({reasons}) and its transaction is "

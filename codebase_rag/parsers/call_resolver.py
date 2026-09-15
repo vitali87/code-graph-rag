@@ -148,6 +148,7 @@ def _binds_identifier(target: Node, name: str) -> bool:
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
+        "python_shadowed_imports",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -191,6 +192,9 @@ class CallResolver:
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
         self._py_rel_to_module: dict[str, str] = {}
+        # caller qn -> import-map names that caller binds as locals (#1907);
+        # filled by the call processor before the caller's calls resolve.
+        self.python_shadowed_imports: dict[str, frozenset[str]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -448,6 +452,20 @@ class CallResolver:
             class_context,
             local_var_types,
         )
+
+    def _receiver_is_untyped_shadow(
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        local_var_types: dict[str, str] | None,
+    ) -> bool:
+        if not caller_qn or cs.SEPARATOR_DOT not in call_name:
+            return False
+        shadowed = self.python_shadowed_imports.get(caller_qn)
+        if not shadowed:
+            return False
+        head = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        return head in shadowed and not (local_var_types and head in local_var_types)
 
     def _resolve_inline_receiver_call(
         self,
@@ -1182,6 +1200,16 @@ class CallResolver:
             )
             if handled:
                 return inline
+            # `helpers.make_pair()` where the caller binds `helpers` itself:
+            # the receiver is a local the type map could not type, so the
+            # call is on an unknown value. It must not reach the import probe
+            # (which would answer with the module the name shadows) nor the
+            # caller-independent cache (a sibling caller's answer, or ours
+            # poisoning theirs), and the bare-name trie must not guess
+            # either (issue #1907). A typed shadow (`helpers: W = ...`)
+            # resolves through its type as any local does.
+            if self._receiver_is_untyped_shadow(call_name, caller_qn, local_var_types):
+                return None
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer

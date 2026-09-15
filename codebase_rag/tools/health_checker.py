@@ -10,7 +10,7 @@ from loguru import logger
 
 from .. import constants as cs
 from .. import graph_audit
-from ..config import settings
+from ..config import PROVIDER_ENV_KEYS, settings
 from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
@@ -192,32 +192,54 @@ class HealthChecker:
                 except Exception as e:
                     logger.warning(f"Failed to close Memgraph connection: {e}")
 
-    def check_api_key(self, env_name: str, display_name: str) -> HealthCheckResult:
-        value = os.getenv(env_name) or getattr(settings, env_name, None)
-        passed = bool(value)
-        error_msg = (
-            None
-            if passed
-            else cs.HEALTH_CHECK_API_KEY_MISSING_MSG.format(env_name=env_name)
+    def check_model_role(self, role: cs.ModelRole) -> HealthCheckResult:
+        """Whether the runtime would accept this role's model credentials.
+
+        Judged by the same call `cgr start` makes before it runs
+        (`ModelConfig.validate_api_key`), so this check and the start-up
+        gate cannot disagree: a local model needs no key, a provider's
+        own key variable counts where the runtime accepts it, and a
+        missing key is named by the variable the runtime reads
+        (issue #1910).
+        """
+        config = (
+            settings.active_orchestrator_config
+            if role == cs.ModelRole.ORCHESTRATOR
+            else settings.active_cypher_config
         )
+        label = {
+            "role": cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value),
+            "provider": config.provider,
+            "model": config.model_id,
+        }
+        try:
+            config.validate_api_key(role)
+        except ValueError:
+            role_var = cs.HEALTH_MODEL_ROLE_KEY_VARIABLE.format(role=role.value.upper())
+            # The gate accepts a provider-owned variable for some providers;
+            # read its map rather than restating the rule here.
+            provider_var = PROVIDER_ENV_KEYS.get(config.provider.lower())
+            error = (
+                cs.HEALTH_CHECK_MODEL_KEY_MISSING_EITHER.format(
+                    env_name=role_var, provider_env=provider_var
+                )
+                if provider_var
+                else cs.HEALTH_CHECK_MODEL_KEY_MISSING_ERROR.format(env_name=role_var)
+            )
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_NOT_READY.format(**label),
+                passed=False,
+                message=cs.HEALTH_CHECK_MODEL_KEY_MISSING_MSG,
+                error=error,
+            )
         return HealthCheckResult(
-            name=(
-                cs.HEALTH_CHECK_API_KEY_SET.format(display_name=display_name)
-                if passed
-                else cs.HEALTH_CHECK_API_KEY_NOT_SET.format(display_name=display_name)
-            ),
-            passed=passed,
-            message=cs.HEALTH_CHECK_API_KEY_CONFIGURED
-            if passed
-            else cs.HEALTH_CHECK_API_KEY_NOT_CONFIGURED,
-            error=error_msg,
+            name=cs.HEALTH_CHECK_MODEL_READY.format(**label),
+            passed=True,
+            message=cs.HEALTH_CHECK_MODEL_OK_MSG.format(provider=config.provider),
         )
 
-    def check_api_keys(self) -> list[HealthCheckResult]:
-        return [
-            self.check_api_key(env_name, display_name)
-            for env_name, display_name in cs.HEALTH_CHECK_TOOLS
-        ]
+    def check_model_roles(self) -> list[HealthCheckResult]:
+        return [self.check_model_role(role) for role in cs.ModelRole]
 
     def check_external_tool(
         self, tool_name: str, command: str | None = None
@@ -346,7 +368,7 @@ class HealthChecker:
         self.results.append(self.check_docker())
         self.results.append(self.check_memgraph_connection())
         self.results.extend(self.check_graph_integrity())
-        self.results.extend(self.check_api_keys())
+        self.results.extend(self.check_model_roles())
         for tool_name, cmd in cs.HEALTH_CHECK_EXTERNAL_TOOLS:
             self.results.append(self.check_external_tool(tool_name, cmd))
         return self.results

@@ -91,31 +91,30 @@ def test_a_constant_never_wins_the_source_lookup_from_a_real_definition() -> Non
     """`VALUE = 1` and `def VALUE()` share one qualified name.
 
     Identity constraints are label-scoped, so both nodes exist. The source
-    lookup takes `LIMIT 1` with no ordering, and a Constant carries no
-    `end_line`, so if it were returned the retriever would report missing
-    location data for a definition that is indexed (reproduced by the bot
-    review). Constant is excluded for the same reason Field and Parameter
-    are: it is not span-bearing.
+    lookup takes `LIMIT 1`, and a Constant carries no `end_line`, so if it
+    were returned the retriever would report missing location data for a
+    definition that is indexed (reproduced by the bot review).
 
-    This is a denylist and denylists fail open, so the assertion is written
-    against the PROPERTY that decides membership -- a label with no
-    `end_line` must not be reachable here -- rather than against today's
-    three names. #1925 replaces this with a span-bearing allowlist; when it
-    lands, Constant joins that set and this exclusion goes away.
+    #1925 replaced the old by-name exclusion with SNIPPET_NODE_LABELS, an
+    allowlist. Constant stays OUT of it: membership is decided by carrying a
+    readable span, and a Constant has a start but no end. So the assertion is
+    written against that property rather than against the rendered label list.
     """
-    query = cq.CYPHER_FIND_BY_QUALIFIED_NAME
     for label in (
         cs.NodeLabel.CONSTANT,
         cs.NodeLabel.FIELD,
         cs.NodeLabel.PARAMETER,
     ):
-        assert f"NOT n:{label.value}" in query, (
+        assert label not in cs.SNIPPET_NODE_LABELS, (
             f"{label.value} carries no end_line and would break source retrieval"
         )
-    # The control: a span-bearing label must NOT be excluded, or the lookup
-    # would return nothing at all and the assertions above would be vacuous.
+        assert f"{label.value}|" not in cq.CYPHER_FIND_BY_QUALIFIED_NAME
+    # The control: span-bearing labels ARE in the allowlist and DO reach the
+    # rendered query, or the assertions above would hold vacuously over an
+    # empty set and a lookup that matches nothing at all.
     for label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.CLASS):
-        assert f"NOT n:{label.value}" not in query
+        assert label in cs.SNIPPET_NODE_LABELS
+        assert label.value in cq.CYPHER_FIND_BY_QUALIFIED_NAME
 
 
 def test_the_constant_label_is_owned_by_its_capture_group() -> None:

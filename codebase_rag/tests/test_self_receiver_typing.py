@@ -190,12 +190,12 @@ def test_a_body_binding_named_cls_keeps_the_type_the_alias_pass_gives_it(
 
 def test_a_closure_inside_a_method_sees_the_methods_self(tmp_path: Path) -> None:
     # `inner` has no `self` parameter of its own; the enclosing method's is
-    # what types `w`. Asserted with `in`, not `==`: a function nested in a
-    # method is ingested twice today, once by the module-function pass with
-    # no class context, and that pass still emits the bare-name edge. That
-    # double ingestion is pre-existing and filed separately.
+    # what types `w`. Asserted with `==` rather than membership: #1903 made
+    # the class pass the single owner of a function nested in a method, so
+    # the module-function pass no longer also emits a bare-name edge here.
+    # Membership would pass even if that decoy edge came back.
     repo = _build(tmp_path, _CLOSURE, _DECOY_COLLIDES)
-    assert "proj.widget.Widget.render" in _render_targets(repo, ".inner")
+    assert _render_targets(repo, ".inner") == {"proj.widget.Widget.render"}
 
 
 def test_a_returned_local_typed_from_self_types_the_caller(tmp_path: Path) -> None:
