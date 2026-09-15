@@ -1993,6 +1993,39 @@ class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:
 
         assert any("does not resolve to" in r for r in reasons), reasons
 
+    def test_a_closed_pr_is_excused_and_says_so_in_the_caveat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLOSED, not merged, takes the same path -- GitHub clears the field
+        on either -- and the excuse must announce itself.
+
+        The caveat is the only thing distinguishing "ownership verified" from
+        "ownership assumed", so it is asserted rather than left to inspection:
+        a silent excuse and a verified pass would otherwise read alike.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("CLOSED", [])
+        )
+
+        reasons, caveats = check_pr_gated.check("1930")
+
+        assert not any("does not resolve to" in r for r in reasons), reasons
+        assert any("cleared its runs" in c for c in caveats), caveats
+        assert any("CLOSED" in c for c in caveats), caveats
+
+    def test_the_merged_excuse_announces_itself_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MERGED caveat names the state, so a reader of the output can
+        tell WHICH assumption was made rather than only that one was."""
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("MERGED", [])
+        )
+
+        _reasons, caveats = check_pr_gated.check("1930")
+
+        assert any("MERGED" in c and "issue #1944" in c for c in caveats), caveats
+
     def test_a_merged_pr_whose_detail_fetch_failed_still_fails_closed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
