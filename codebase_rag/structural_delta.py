@@ -420,19 +420,42 @@ def _pair_lone_containers(
             if after.definitions[other].path == definition.path
             and after.definitions[other].label == definition.label
         ]
-        peers = [
-            other
-            for other in lone_removed
-            if before.definitions[other].path == definition.path
-            and before.definitions[other].label == definition.label
-        ]
-        if len(matches) == 1 and len(peers) == 1:
-            # The only admissible evidence: the operation says it did this.
-            if (qn, matches[0]) not in declared:
-                continue
-            found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
-            paired_new.add(matches[0])
-            lone_added.remove(matches[0])
+        # A DECLARATION is the only admissible evidence, and it is now the
+        # only test. This pass previously required BOTH candidate sets to be
+        # unique -- `len(matches) == 1 and len(peers) == 1` -- and consulted
+        # `declared` afterwards, so two empty containers renamed in one file
+        # were refused before the declaration was read: each sees two matches
+        # and two peers. The contract then saw two removals plus two additions
+        # where the operation had named two renames, and rolled back a correct
+        # edit.
+        #
+        # This DOES loosen the gate, deliberately: with one removed and two
+        # added containers the old code refused on `len(matches) != 1` and this
+        # admits the declared one. That is sound because a declaration is still
+        # required, not because nothing widened -- the uniqueness tests existed
+        # to refuse a GUESS among indistinguishable candidates, and no guess is
+        # made here any more. A pair is admitted when and only when `declared`
+        # names it, and `matches` is already filtered on path and label, so an
+        # absent, cross-file or mismatched-label target is still refused.
+        #
+        # This does NOT fix issue #1836, whose nested container is never
+        # DECLARED in the first place: `rename.py`'s `pairs` is built from
+        # `report.hierarchy`, and `_hierarchy` walks only `overrides` edges, so
+        # no descendant of a renamed symbol is ever named. That is a separate
+        # axis -- what is declared, not what is admitted given a declaration.
+        declared_match = next(
+            (other for other in matches if (qn, other) in declared), None
+        )
+        if declared_match is not None:
+            found.append(
+                RenameFinding(old=qn, new=declared_match, path=definition.path)
+            )
+            paired_new.add(declared_match)
+            lone_added.remove(declared_match)
+        # No `else`: an UNDECLARED pairing is never inferred here, unambiguous
+        # or not. Without a fingerprint or descendants, a lone rename and a
+        # lone replacement are the same edit, so it falls through to a removal
+        # plus an addition -- which is what the snapshots actually show.
     return found
 
 
