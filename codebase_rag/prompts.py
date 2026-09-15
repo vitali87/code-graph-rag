@@ -177,10 +177,22 @@ The database contains information about a codebase, structured with the followin
 """
 
 
-def _format_active_projects_block(active_projects: list[str] | None) -> str:
+GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
+
+
+def _resolve_engine_display_name(backend: str | None = None) -> str:
+    chosen = backend or settings.GRAPH_BACKEND
+    return "Neo4j" if "neo4j" in chosen.lower() else "Memgraph"
+
+
+def _format_active_projects_block(
+    active_projects: list[str] | None,
+    backend: str | None = None,
+) -> str:
+    engine = _resolve_engine_display_name(backend)
     if not active_projects:
         return (
-            "\n**Project Scope**: This Memgraph database may contain multiple "
+            f"\n**Project Scope**: This {engine} database may contain multiple "
             "indexed projects. Call `list_projects` early to enumerate them, then "
             "scope graph queries by filtering on the `qualified_name` prefix "
             "(e.g., `WHERE n.qualified_name STARTS WITH 'projectName.'`).\n"
@@ -209,6 +221,7 @@ def build_rag_orchestrator_prompt(
     tools: list["Tool"],
     project_instructions: str | None = None,
     active_projects: list[str] | None = None,
+    backend: str | None = None,
 ) -> str:
     """Build the orchestrator system prompt for the given toolset."""
     t = extract_tool_names(tools)
@@ -319,7 +332,7 @@ def build_rag_orchestrator_prompt(
     d. Prioritize most relevant findings over comprehensive coverage
 8.  **Synthesize Answer**: Analyze and explain the retrieved content. Cite your sources (file paths or qualified names). Report any errors gracefully.
 """
-    base += _format_active_projects_block(active_projects)
+    base += _format_active_projects_block(active_projects, backend=backend)
     extra = (project_instructions or "").strip()
     if not extra:
         return base
