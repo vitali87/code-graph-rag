@@ -133,7 +133,8 @@ def test_add_required_parameter_with_a_default_mapping(
     assert "return helper(2, 1, b='y')" in app
     assert "return helper(3, 1, 'z')" in app
     assert report.unmapped == ()
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     assert [t["qualified_name"] for t in report.verdict.affected_tests] == [
         f"{PROJECT}.tests.test_app.test_run"
     ]
@@ -177,7 +178,8 @@ def test_reorder_parameters_rewrites_positional_callers_only(
     assert "return helper('x', 2)" in app
     # A keyword caller binds by name and is left exactly as written.
     assert before_kw in app
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     _smoke(
         root,
         "from pkg.app import run, run_kw\nassert (run(), run_kw()) == ('xx', 'yy')",
@@ -255,7 +257,8 @@ def test_allow_heuristic_applies_through_the_contract(
         reingest=updater.reingest,
     )
     assert report.applied, report.message
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     assert "return helper(3, 1, 'z')" in _read(root, "pkg/app.py")
 
 
@@ -294,7 +297,8 @@ def test_a_parameter_renamed_by_index_renames_keyword_sites(temp_repo: Path) -> 
     assert "return helper(2, 'x')" in app
     # Keyword values keep their order and form; only the names follow.
     assert "return helper(text='y', times=2)" in app
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     _smoke(
         root,
         "from pkg.app import run, run_kw\nassert (run(), run_kw()) == ('xx', 'yy')",
@@ -352,7 +356,8 @@ def test_an_unmapped_required_parameter_leaves_every_site_and_lists_it(
     ]
     assert all("`n`" in u.reason for u in report.unmapped)
     # Listed sites satisfy the contract: the operation said it left them.
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
 
 
 def _strip_location(store: _StatefulIngestor, caller: str) -> None:
@@ -365,6 +370,87 @@ def _strip_location(store: _StatefulIngestor, caller: str) -> None:
     props[cs.KEY_RESOLUTION] = cs.EdgeResolution.DYNAMIC.value
     for key in (cs.KEY_LINE, cs.KEY_COL, cs.KEY_END_LINE, cs.KEY_END_COL):
         props.pop(key, None)
+
+
+def test_a_site_whose_recorded_end_matches_no_call_is_listed(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # A stale end position must not fall back to another call sharing the
+    # start: the site is listed rather than the wrong call rewritten.
+    root, store, _updater = repo
+    edge = next(
+        e
+        for e in store.edges
+        if e[1] == f"{PROJECT}.pkg.app.run_kw"
+        and e[2] == cs.RelationshipType.CALLS.value
+        and e[4] == HELPER
+    )
+    store.edge_props[edge][cs.KEY_END_COL] = 99
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        HELPER,
+        ["a", "n: int", "b"],
+        {"n": "=1"},
+        dry_run=True,
+    )
+    (skipped,) = report.unmapped
+    assert skipped.owner == f"{PROJECT}.pkg.app.run_kw"
+    assert "no call" in skipped.reason
+    assert "helper(2, b='y')" not in report.diff
+    assert "+    return helper(3, 1, 'z')" in report.diff
+
+
+def test_chained_calls_sharing_a_start_are_both_rewritten(temp_repo: Path) -> None:
+    # `B().area(2).area(3)`: both calls start where `B` does and differ only
+    # in where they end. The graph records both; neither may be dropped.
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/shapes.py": (
+                "class B:\n"
+                "    def area(self, scale):\n"
+                "        return self\n\n\n"
+                "def run():\n"
+                "    return B().area(2).area(3)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+    run_qn = f"{PROJECT}.pkg.shapes.run"
+    stored = store.fetch_all
+
+    def both_links(query: str, params: dict[str, object] | None = None):  # type: ignore[no-untyped-def]
+        out = []
+        for row in stored(query, params):
+            if row.get(cs.KEY_QUALIFIED_NAME) != run_qn:
+                out.append(row)
+                continue
+            for end_col in (22, 30):
+                link = dict(row)
+                link[cs.KEY_LINE] = 7
+                link[cs.KEY_COL] = 11
+                link[cs.KEY_END_LINE] = 7
+                link[cs.KEY_END_COL] = end_col
+                out.append(link)
+        return out
+
+    report = change_signature(
+        root,
+        both_links,
+        PROJECT,
+        f"{PROJECT}.pkg.shapes.B.area",
+        ["scale", "unit: str"],
+        {"unit": "='m'"},
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.unmapped == ()
+    assert sum(1 for s in report.sites if s.kind == "call") == 2
+    assert "return B().area(2, 'm').area(3, 'm')" in _read(root, "pkg/shapes.py")
+    _smoke(root, "from pkg.shapes import run, B\nassert isinstance(run(), B)")
 
 
 def test_every_site_without_a_location_is_listed(
@@ -421,7 +507,8 @@ def test_a_site_passing_surplus_arguments_is_listed_not_truncated(
     (skipped,) = report.unmapped
     assert (skipped.path, skipped.line) == ("pkg/app.py", 9)
     assert "3" in skipped.reason
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
 
 
 @pytest.mark.parametrize(
@@ -783,7 +870,8 @@ def test_a_recursive_call_is_rewritten_with_its_renamed_arguments(
     assert "def helper(times, n: int):" in util
     assert "    return helper(times - 1, 1) + 1 if times else 0" in util
     assert "return helper(2, 1)" in _read(root, "pkg/app.py")
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     _smoke(root, "from pkg.app import run\nassert run() == 2")
 
 
@@ -878,7 +966,8 @@ def test_a_method_hierarchy_is_rewritten_together(temp_repo: Path) -> None:
     shapes = _read(root, "pkg/shapes.py")
     assert shapes.count("def area(self, scale, unit: str):") == 2
     assert "shape.area(2, 'm') + Circle().area(scale=3, unit='m')" in shapes
-    assert report.verdict is not None and report.verdict.ok, report.message
+    assert report.verdict is not None, report.message
+    assert report.verdict.ok, report.message
     _smoke(root, "from pkg.shapes import total, Circle\nassert total(Circle()) == 15")
 
 
@@ -925,14 +1014,18 @@ def test_a_method_whose_receiver_is_not_self_or_cls_is_refused(
     assert _read(root, "pkg/shapes.py") == files["pkg/shapes.py"]
 
 
-def test_a_static_method_has_no_receiver(temp_repo: Path) -> None:
+@pytest.mark.parametrize("decorator", ["staticmethod", "builtins.staticmethod"])
+def test_a_static_method_has_no_receiver(temp_repo: Path, decorator: str) -> None:
+    # The indexer reads a decorator by its last name, so the operation must
+    # recognise the qualified spelling too.
     root = _project(
         temp_repo,
         {
             "pkg/__init__.py": "",
             "pkg/shapes.py": (
+                "import builtins\n\n\n"
                 "class K:\n"
-                "    @staticmethod\n"
+                f"    @{decorator}\n"
                 "    def helper(a):\n"
                 "        return a\n\n\n"
                 "def on_class():\n"
@@ -1026,7 +1119,8 @@ def test_a_contract_failure_undoes_the_change(
         reingest=lambda paths: updater.reingest([*paths, "pkg/late.py"]),
     )
     assert not report.applied
-    assert report.verdict is not None and not report.verdict.ok
+    assert report.verdict is not None
+    assert not report.verdict.ok
     assert "pkg/late.py:5" in report.message
     for rel, text in before.items():
         assert _read(root, rel) == text

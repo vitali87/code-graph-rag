@@ -45,6 +45,7 @@ from ..graph_query import QueryFn
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
+from ..parsers.utils import _is_static_decorator
 from .contract import Reingest, Verdict, change_signature_expectation, measure, verify
 from .patcher import Patcher, PatcherError
 from .sites import AMBIGUOUS, call_node_at, hierarchy
@@ -95,6 +96,7 @@ class UnmappedSite(NamedTuple):
     owner: str
     path: str
     line: int | None
+    col: int | None
     reason: str
 
 
@@ -303,19 +305,20 @@ def _accepted_types(node: ast.expr) -> set[type] | None:
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
         return _union_of([node.left, node.right])
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-        if node.value.id == cs.PY_TYPING_OPTIONAL:
-            inner = _accepted_types(node.slice)
-            return inner | {type(None)} if inner is not None else None
-        if node.value.id == cs.PY_TYPING_UNION:
-            members = (
-                list(node.slice.elts)
-                if isinstance(node.slice, ast.Tuple)
-                else [node.slice]
-            )
-            return _union_of(members)
-        # `list[int]` is a list; the element type is not checked.
-        return _accepted_types(node.value)
+        return _subscript_types(node.value, node.slice)
     return None
+
+
+def _subscript_types(head: ast.Name, index: ast.expr) -> set[type] | None:
+    """`Optional[X]`, `Union[X, Y]`, or a subscripted builtin like `list[int]`."""
+    if head.id == cs.PY_TYPING_OPTIONAL:
+        inner = _accepted_types(index)
+        return inner | {type(None)} if inner is not None else None
+    if head.id == cs.PY_TYPING_UNION:
+        members = list(index.elts) if isinstance(index, ast.Tuple) else [index]
+        return _union_of(members)
+    # `list[int]` is a list; the element type is not checked.
+    return _accepted_types(head)
 
 
 def _union_of(members: Iterable[ast.expr]) -> set[type] | None:
@@ -373,21 +376,21 @@ def _text(node: Node, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode(cs.ENCODING_UTF8)
 
 
-_STATIC_DECORATORS = frozenset(
-    name.encode(cs.ENCODING_UTF8) for name in cs.STATIC_DECORATORS
-)
+def _is_static(function: Node, source: bytes) -> bool:
+    """Decorated `@staticmethod`: every parameter is one the caller passes.
 
-
-def _is_static(function: Node) -> bool:
-    """Decorated `@staticmethod`: every parameter is one the caller passes."""
+    Read the way the indexer reads decorators, by the last name, so the
+    qualified `@builtins.staticmethod` counts too.
+    """
     parent = function.parent
     if parent is None or parent.type != cs.TS_PY_DECORATED_DEFINITION:
         return False
-    return any(
-        child.type == cs.TS_PY_DECORATOR
-        and bool(child.named_children)
-        and child.named_children[0].text in _STATIC_DECORATORS
-        for child in parent.children
+    return _is_static_decorator(
+        [
+            _text(child, source)
+            for child in parent.children
+            if child.type == cs.TS_PY_DECORATOR
+        ]
     )
 
 
@@ -461,6 +464,7 @@ _REBINDING_STATEMENTS = frozenset(
         cs.TS_PY_IMPORT_FROM_STATEMENT,
     }
 )
+_OPAQUE_TO_THE_WALK = _OWN_SCOPES | _REBINDING_STATEMENTS
 
 
 def _is_a_reference(node: Node) -> bool:
@@ -510,19 +514,13 @@ def _body_references(
     wanted = old.encode(cs.ENCODING_UTF8)
     taken = None if new in renamed_away else new.encode(cs.ENCODING_UTF8)
     rebinds = cs.SIGNATURE_BODY_REBINDS.format(old=old, qn=header.qn, new=new)
+    shadows = cs.SIGNATURE_BODY_NAME_TAKEN.format(old=old, qn=header.qn, new=new)
     spans: list[tuple[int, int]] = []
     stack: list[Node] = [body]
     while stack:
         node = stack.pop()
-        if node.type in _OWN_SCOPES or node.type in _REBINDING_STATEMENTS:
-            if _mentions(node, wanted):
-                raise SignatureRefused(rebinds)
-            # A nested scope reading the new name would start reading the
-            # renamed parameter instead of whatever it read before.
-            if taken is not None and _mentions(node, taken):
-                raise SignatureRefused(
-                    cs.SIGNATURE_BODY_NAME_TAKEN.format(old=old, qn=header.qn, new=new)
-                )
+        if node.type in _OPAQUE_TO_THE_WALK:
+            _refuse_mentions(node, wanted, taken, rebinds, shadows)
             continue
         if node.type in _COMPREHENSIONS and _comprehension_binds(node, wanted):
             raise SignatureRefused(rebinds)
@@ -530,11 +528,24 @@ def _body_references(
             if node.text == wanted:
                 spans.append((node.start_byte, node.end_byte))
             elif node.text == taken:
-                raise SignatureRefused(
-                    cs.SIGNATURE_BODY_NAME_TAKEN.format(old=old, qn=header.qn, new=new)
-                )
+                raise SignatureRefused(shadows)
         stack.extend(node.children)
     return spans
+
+
+def _refuse_mentions(
+    node: Node, wanted: bytes, taken: bytes | None, rebinds: str, shadows: str
+) -> None:
+    """A nested scope or re-binding statement may mention neither name.
+
+    The walk cannot tell a use of the old name there from the parameter's;
+    and a nested scope reading the new name would start reading the renamed
+    parameter instead of whatever it read before.
+    """
+    if _mentions(node, wanted):
+        raise SignatureRefused(rebinds)
+    if taken is not None and _mentions(node, taken):
+        raise SignatureRefused(shadows)
 
 
 # --- call sites -----------------------------------------------------------------
@@ -645,27 +656,39 @@ def _render_arguments(
     keywords: list[tuple[tuple[int, int], str]] = []
     forced = False
     for order, (spec, source) in enumerate(zip(new, sources, strict=True)):
-        binding: _Binding | None = None
-        if source is not None and source.literal is not None:
-            value = source.literal
-        elif source is not None and source.index in bound:
-            binding = bound[source.index]
-            value = binding.text
-        elif spec.has_default:
+        found = _value_at_site(spec, source, bound)
+        if found is None:
             forced = True
             continue
-        else:
-            raise _Unmapped(cs.SIGNATURE_SITE_NO_VALUE.format(name=spec.name))
-        was_keyword = binding is not None and binding.keyword
-        if was_keyword or forced:
+        value, binding = found
+        if binding is not None and binding.keyword:
             forced = True
-            rank = (0, binding.position) if binding and was_keyword else (1, order)
-            keywords.append((rank, f"{spec.name}={value}"))
+            keywords.append(((0, binding.position), f"{spec.name}={value}"))
+        elif forced:
+            keywords.append(((1, order), f"{spec.name}={value}"))
         else:
             positional.append(value)
     keywords.sort(key=lambda item: item[0])
     parts = positional + [text for _rank, text in keywords]
     return f"({cs.SEPARATOR_COMMA_SPACE.join(parts)})"
+
+
+def _value_at_site(
+    spec: ParamSpec, source: _Source | None, bound: Mapping[int, _Binding]
+) -> tuple[str, _Binding | None] | None:
+    """The value this site passes for `spec`, with the binding it came from.
+
+    None when the parameter's default stands in; unmapped when there is
+    neither a value nor a default.
+    """
+    if source is not None and source.literal is not None:
+        return source.literal, None
+    if source is not None and source.index in bound:
+        binding = bound[source.index]
+        return binding.text, binding
+    if spec.has_default:
+        return None
+    raise _Unmapped(cs.SIGNATURE_SITE_NO_VALUE.format(name=spec.name))
 
 
 def _render_site(
@@ -686,6 +709,79 @@ def _render_site(
     if not consumed and text == candidate.text:
         return None
     return _Edit(candidate.site.path, candidate.span, text)
+
+
+def _check_hierarchy(
+    qn: str, headers: Sequence[_Header], old_names: Sequence[str]
+) -> None:
+    """Every override declares the same parameter names as the definition."""
+    for header in headers[1:]:
+        theirs = [p.name for p in header.params]
+        if theirs != list(old_names):
+            raise SignatureRefused(
+                cs.SIGNATURE_HIERARCHY_MISMATCH.format(
+                    qn=qn,
+                    member=header.qn,
+                    theirs=cs.SEPARATOR_COMMA_SPACE.join(theirs),
+                    ours=cs.SEPARATOR_COMMA_SPACE.join(old_names),
+                )
+            )
+
+
+def _definition_edits(
+    header: _Header,
+    new: Sequence[ParamSpec],
+    carried: set[str],
+    renamed: Sequence[tuple[str, str]],
+) -> list[_Edit]:
+    """The header's new parameter list, and every body reference renamed."""
+    own = {p.name: p for p in header.params}
+    texts = [own[spec.name].text if spec.name in carried else spec.text for spec in new]
+    if header.receiver is not None:
+        texts.insert(0, header.receiver)
+    edits = [
+        _Edit(header.path, header.span, f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})")
+    ]
+    renamed_away = {old for old, _new in renamed}
+    for old_name, new_name in renamed:
+        edits.extend(
+            _Edit(header.path, span, new_name)
+            for span in _body_references(header, old_name, new_name, renamed_away)
+        )
+    return edits
+
+
+def _params_of(params: Node, source: bytes, qn: str) -> list[ParamSpec]:
+    """Every parameter as a plain spec, or a refusal naming the odd one."""
+    specs: list[ParamSpec] = []
+    for child in params.named_children:
+        spec = _param_spec(child, source)
+        if spec is None:
+            raise SignatureRefused(
+                cs.SIGNATURE_UNSUPPORTED_PARAMS.format(qn=qn, text=_text(child, source))
+            )
+        specs.append(spec)
+    return specs
+
+
+def _take_receiver(
+    qn: str, label: object, specs: list[ParamSpec], node: Node, source: bytes
+) -> str | None:
+    """Pop a method's `self`/`cls` off `specs`; a static method has none.
+
+    A method whose first parameter is named anything else refuses: `this`
+    would be remapped as a parameter and every bound call would lose its
+    receiver.
+    """
+    if label != cs.NodeLabel.METHOD or not specs:
+        return None
+    if specs[0].name in cs.PY_RECEIVER_NAMES:
+        return specs.pop(0).text
+    if _is_static(node, source):
+        return None
+    raise SignatureRefused(
+        cs.SIGNATURE_UNUSUAL_RECEIVER.format(qn=qn, name=specs[0].name)
+    )
 
 
 # --- the operation ---------------------------------------------------------------
@@ -727,17 +823,7 @@ class SignatureChanger:
         headers = [self._header(member, patcher) for member in members]
         old = headers[0].params
         old_names = [p.name for p in old]
-        for header in headers[1:]:
-            theirs = [p.name for p in header.params]
-            if theirs != old_names:
-                raise SignatureRefused(
-                    cs.SIGNATURE_HIERARCHY_MISMATCH.format(
-                        qn=qn,
-                        member=header.qn,
-                        theirs=cs.SEPARATOR_COMMA_SPACE.join(theirs),
-                        ours=cs.SEPARATOR_COMMA_SPACE.join(old_names),
-                    )
-                )
+        _check_hierarchy(qn, headers, old_names)
         new = _new_specs(new_params, old)
         sources = _resolve_sources(new, old, mapping or {})
         for spec, source in zip(new, sources, strict=True):
@@ -757,31 +843,10 @@ class SignatureChanger:
             and source.index is not None
             and old_names[source.index] != spec.name
         ]
-        renamed_away = {old for old, _new in renamed}
         sites: list[SignatureSite] = []
         edits: list[_Edit] = []
         for header in headers:
-            own = {p.name: p for p in header.params}
-            texts = [
-                own[spec.name].text if spec.name in carried else spec.text
-                for spec in new
-            ]
-            if header.receiver is not None:
-                texts.insert(0, header.receiver)
-            edits.append(
-                _Edit(
-                    header.path,
-                    header.span,
-                    f"({cs.SEPARATOR_COMMA_SPACE.join(texts)})",
-                )
-            )
-            for old_name, new_name in renamed:
-                edits.extend(
-                    _Edit(header.path, span, new_name)
-                    for span in _body_references(
-                        header, old_name, new_name, renamed_away
-                    )
-                )
+            edits.extend(_definition_edits(header, new, carried, renamed))
             sites.append(
                 SignatureSite(
                     _DEFINITION,
@@ -835,26 +900,8 @@ class SignatureChanger:
         params = node.child_by_field_name(cs.FIELD_PARAMETERS) if node else None
         if node is None or params is None:
             raise SignatureRefused(cs.SIGNATURE_NO_HEADER.format(qn=qn, path=path))
-        specs: list[ParamSpec] = []
-        for child in params.named_children:
-            spec = _param_spec(child, source)
-            if spec is None:
-                raise SignatureRefused(
-                    cs.SIGNATURE_UNSUPPORTED_PARAMS.format(
-                        qn=qn, text=_text(child, source)
-                    )
-                )
-            specs.append(spec)
-        receiver: str | None = None
-        if definition["label"] == cs.NodeLabel.METHOD and specs:
-            if specs[0].name in cs.PY_RECEIVER_NAMES:
-                receiver = specs.pop(0).text
-            elif not _is_static(node):
-                # `this` would be remapped as a parameter and every bound
-                # call would lose its receiver.
-                raise SignatureRefused(
-                    cs.SIGNATURE_UNUSUAL_RECEIVER.format(qn=qn, name=specs[0].name)
-                )
+        specs = _params_of(params, source, qn)
+        receiver = _take_receiver(qn, definition["label"], specs, node, source)
         return _Header(
             qn,
             path,
@@ -879,26 +926,7 @@ class SignatureChanger:
         edits: list[_Edit],
     ) -> list[UnmappedSite]:
         unmapped: list[UnmappedSite] = []
-        candidates: list[_Candidate] = []
-        seen: set[tuple[str, int, int]] = set()
-        for header in headers:
-            for row in graph_query.callers(self.fetch_all, self.project, header.qn):
-                path, line, col = row["path"], row["line"], row["col"]
-                if path is not None and line is not None and col is not None:
-                    # One row per located site; sites without a location
-                    # are each listed, since nothing tells them apart.
-                    key = (path, line, col)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                try:
-                    candidates.append(
-                        self._candidate(row, old, allow_heuristic, patcher)
-                    )
-                except _Unmapped as skip:
-                    unmapped.append(
-                        UnmappedSite(row["qualified_name"], path or "", line, str(skip))
-                    )
+        candidates = self._candidates(headers, old, allow_heuristic, patcher, unmapped)
         # Innermost first, so a site nested in another's arguments (or a
         # body rename inside a recursive call) is already planned when the
         # enclosing site folds it into its value text.
@@ -921,6 +949,7 @@ class SignatureChanger:
                         candidate.site.owner,
                         candidate.site.path,
                         candidate.site.line,
+                        candidate.site.col,
                         str(skip),
                     )
                 )
@@ -932,6 +961,58 @@ class SignatureChanger:
         # The report lists sites in the order the graph gave them.
         sites.extend(c.site for i, c in enumerate(candidates) if i in mapped)
         return unmapped
+
+    def _candidates(
+        self,
+        headers: Sequence[_Header],
+        old: Sequence[ParamSpec],
+        allow_heuristic: bool,
+        patcher: Patcher,
+        unmapped: list[UnmappedSite],
+    ) -> list[_Candidate]:
+        """Every graph-known call site the mapping can read, once each."""
+        candidates: list[_Candidate] = []
+        seen: set[tuple[object, ...]] = set()
+        for header in headers:
+            for row in graph_query.callers(self.fetch_all, self.project, header.qn):
+                # Chained calls share a start and differ in their end, so
+                # the whole span identifies a site; sites without a
+                # location are each listed, since nothing tells them apart.
+                key = (
+                    row["path"],
+                    row["line"],
+                    row["col"],
+                    row["end_line"],
+                    row["end_col"],
+                )
+                if None in key[:3] or key not in seen:
+                    seen.add(key)
+                    self._consider(
+                        row, old, allow_heuristic, patcher, candidates, unmapped
+                    )
+        return candidates
+
+    def _consider(
+        self,
+        row: graph_query.CallSiteRow,
+        old: Sequence[ParamSpec],
+        allow_heuristic: bool,
+        patcher: Patcher,
+        candidates: list[_Candidate],
+        unmapped: list[UnmappedSite],
+    ) -> None:
+        try:
+            candidates.append(self._candidate(row, old, allow_heuristic, patcher))
+        except _Unmapped as skip:
+            unmapped.append(
+                UnmappedSite(
+                    row["qualified_name"],
+                    row["path"] or "",
+                    row["line"],
+                    row["col"],
+                    str(skip),
+                )
+            )
 
     def _candidate(
         self,
@@ -1083,7 +1164,7 @@ class SignatureChanger:
         verdict = verify(
             change_signature_expectation(
                 [
-                    f"{site.path}{cs.CHAR_COLON}{site.line}"
+                    _site_key(site.path, site.line, site.col)
                     for site in report.unmapped
                     if site.line is not None
                 ],
@@ -1091,7 +1172,7 @@ class SignatureChanger:
             ),
             delta,
             rewritten=[
-                (f"{site.path}{cs.CHAR_COLON}{site.line}", site.resolution)
+                (_site_key(site.path, site.line, site.col), site.resolution)
                 for site in report.sites
                 if site.kind == _CALL
             ],
@@ -1130,6 +1211,11 @@ class SignatureChanger:
             verdict=verdict,
             message=cs.SIGNATURE_CONTRACT_FAILED.format(reasons=reasons),
         )
+
+
+def _site_key(path: str, line: int | None, col: int | None) -> str:
+    """The identity the contract checks a call under: two calls can share a line."""
+    return cs.CHAR_COLON.join((path, str(line), str(col)))
 
 
 def change_signature(

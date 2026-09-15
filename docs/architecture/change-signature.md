@@ -126,7 +126,7 @@ argument list is rendered on one line.
 ## Unmapped sites
 
 A site is left exactly as written, and listed in `unmapped` with its owner,
-path, line and reason, when:
+path, line, column and reason, when:
 
 - it passes no value for a new parameter without a default and the mapping
   supplies none;

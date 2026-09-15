@@ -47,21 +47,26 @@ def call_node_at(
     Several calls can share a start point -- `helper(helper(1))`,
     `helper(2).upper()`, and both links of `obj.helper(1).helper(2)` -- so the
     right one is the call ending where the site recorded its end, or the
-    outermost when no end was recorded.
+    outermost when no end was recorded. A recorded end that matches no call
+    names nothing: the position is stale, and rewriting a neighbour that
+    happens to share the start would be a guess.
     """
-    best: Node | None = None
+    calls = _calls_starting_at(root, line - 1, col)
+    if recorded_end is not None:
+        return next((call for call in calls if call.end_point == recorded_end), None)
+    return max(calls, key=lambda call: call.end_byte, default=None)
+
+
+def _calls_starting_at(root: Node, row: int, col: int) -> list[Node]:
+    calls: list[Node] = []
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    return node
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
-        if node.start_point[0] <= line - 1 <= node.end_point[0]:
+        if (
+            node.start_point == (row, col)
+            and node.child_by_field_name(cs.FIELD_FUNCTION) is not None
+        ):
+            calls.append(node)
+        if node.start_point[0] <= row <= node.end_point[0]:
             stack.extend(node.children)
-    return best
+    return calls
