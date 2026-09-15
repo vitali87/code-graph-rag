@@ -364,3 +364,46 @@ def test_a_nested_pyproject_remaps_relative_to_its_own_directory(
     assert discover_python_source_roots(tmp_path) == {
         "acme": [("acme", "packages.one.lib")]
     }
+
+
+def test_a_src_child_package_under_a_package_src_is_not_a_root(
+    tmp_path: Path,
+) -> None:
+    # `src` is ITSELF a package here, so the package signal skips `src/proj`
+    # (its parent is a package) and nothing else records it. This is what makes
+    # the src-child __init__.py filter load-bearing rather than a dedup mirror:
+    # without it the walk invents `proj` as a root.
+    _pkg(tmp_path, "src")
+    _pkg(tmp_path, "src/proj")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_candidate_order_follows_the_sorted_walk(tmp_path: Path) -> None:
+    # Parent names deliberately NOT in creation order, so an unsorted walk is
+    # observable. `resolve_via_source_roots` returns the first disk-confirmed
+    # match, so this order decides which root answers an import.
+    _pkg(tmp_path, "zz/common")
+    _pkg(tmp_path, "aa/common")
+    _pkg(tmp_path, "mm/common")
+    assert discover_python_source_roots(tmp_path) == {
+        "common": [
+            ("common", "aa.common"),
+            ("common", "mm.common"),
+            ("common", "zz.common"),
+        ]
+    }
+
+
+def test_the_package_signal_is_recorded_before_the_pyproject_signal(
+    tmp_path: Path,
+) -> None:
+    # Both signals fire in `libs/acme` and both key on `acme`, so the order of
+    # the two candidates is decided by the order the signals are collected in.
+    _pkg(tmp_path, "libs/acme")
+    (tmp_path / "libs/acme/inner").mkdir()
+    (tmp_path / "libs/acme/pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nacme = "inner"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {
+        "acme": [("acme", "libs.acme"), ("acme", "libs.acme.inner")]
+    }

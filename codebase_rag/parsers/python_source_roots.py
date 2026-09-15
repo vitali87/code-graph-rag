@@ -98,10 +98,10 @@ def _src_dir_roots(
     # The `src` signal: the importable names a `src` directory exposes. Child
     # directories WITHOUT __init__.py (PEP 420 namespace packages; those with it
     # are caught by the package signal instead), plus single-module files.
-    # The __init__.py filter is redundant with the dedup in `_record_root` -- a
-    # src child that IS a package yields the pair the package signal already
-    # records -- so it is an optimisation and a mirror of the original, not a
-    # behaviour guard. Mutating it away reddens nothing, by design.
+    # The __init__.py filter is load-bearing, not merely a dedup mirror: when
+    # `src` is ITSELF a package the package signal skips `src/child` (its parent
+    # is a package), so nothing else would record it and dropping the filter
+    # would invent a root.
     if current.name != cs.LANG_SRC_DIR:
         return []
     roots = [
