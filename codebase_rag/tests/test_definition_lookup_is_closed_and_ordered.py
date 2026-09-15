@@ -1,0 +1,175 @@
+"""Definition lookups match a closed label set and pick deterministically.
+
+Issue #1925. Identity constraints are label-scoped, so two nodes may
+legitimately share one `qualified_name` -- a Python `@property` backed by
+`self.x` emits both a `Field` and a `Method` at `<cls>.x`. A `Field` row
+carries no `end_line`, so when one won a definition lookup the caller's own
+validation rejected it and reported an indexed definition as not found.
+
+The first fix excluded `Field` and `Parameter` by name. That closes the
+instance but fails OPEN: the next property-bearing label added starts
+winning definition lookups again, silently. These tests pin the two
+properties that make the failure impossible rather than merely absent:
+
+* the lookups match an ALLOWLIST, so an unknown label cannot be returned
+  no matter when it was added;
+* the pick among equals is ordered, so it does not depend on storage order.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.cypher_queries import (
+    CYPHER_FIND_BY_QUALIFIED_NAME,
+    CYPHER_GLOSS_TARGET,
+    CYPHER_GRAPH_DEFINITION,
+)
+from codebase_rag.tools.code_retrieval import CodeRetriever
+
+# Every lookup that resolves one qualified name to a single definition row.
+_DEFINITION_LOOKUPS = {
+    "find_by_qualified_name": CYPHER_FIND_BY_QUALIFIED_NAME,
+    "graph_definition": CYPHER_GRAPH_DEFINITION,
+    "gloss_target": CYPHER_GLOSS_TARGET,
+}
+
+# Labels that carry no end_line, so a definition lookup returning one makes a
+# real definition read as not found. Field and Parameter exist today; the list
+# is what a future property-bearing label joins.
+_PROPERTY_BEARING = (cs.NodeLabel.FIELD, cs.NodeLabel.PARAMETER)
+
+
+def _matched_labels(query: str) -> set[str]:
+    """The labels the query's MATCH admits, from `(n:A|B|C)`."""
+    match = re.search(r"MATCH \(n:([A-Za-z|]+)\)", query)
+    assert match is not None, f"no label-scoped MATCH found in:\n{query}"
+    return set(match.group(1).split("|"))
+
+
+# The snippet lookup reads source, so it admits the definition labels plus any
+# other node carrying a readable span; the graph-query and gloss lookups admit
+# definitions only. Both are named sets, which is the point.
+_LOOKUP_LABEL_SETS = {
+    "find_by_qualified_name": "SNIPPET_NODE_LABELS",
+    "graph_definition": "DEFINITION_NODE_LABELS",
+    "gloss_target": "DEFINITION_NODE_LABELS",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_DEFINITION_LOOKUPS))
+def test_a_definition_lookup_matches_a_shared_allowlist(name: str) -> None:
+    """Not merely 'excludes Field': the MATCH is closed over one named set,
+    so a label nobody has written yet cannot be returned either."""
+    labels = _matched_labels(_DEFINITION_LOOKUPS[name])
+    expected = {label.value for label in getattr(cs, _LOOKUP_LABEL_SETS[name])}
+    assert labels == expected, (name, sorted(labels), sorted(expected))
+
+
+@pytest.mark.parametrize("name", sorted(_DEFINITION_LOOKUPS))
+def test_a_definition_lookup_orders_before_limiting(name: str) -> None:
+    """`LIMIT 1` over a label-ambiguous match without an ORDER BY picks by
+    storage order, so the same graph can answer differently across a
+    re-index."""
+    query = _DEFINITION_LOOKUPS[name]
+    assert "LIMIT 1" in query, query
+    order_at = query.find("ORDER BY")
+    assert order_at != -1, f"{name} limits without ordering:\n{query}"
+    assert order_at < query.find("LIMIT 1"), f"{name} orders after LIMIT:\n{query}"
+
+
+@pytest.mark.parametrize("name", sorted(_DEFINITION_LOOKUPS))
+def test_the_ordering_is_total_on_a_colliding_name(name: str) -> None:
+    """`qualified_name` ties by definition in exactly the ambiguous case, so
+    ordering on it alone would leave the pick arbitrary. The key must break
+    the tie on something that differs between the colliding rows."""
+    query = _DEFINITION_LOOKUPS[name]
+    order_clause = query[query.find("ORDER BY") :].splitlines()[0]
+    assert "labels(n)" in order_clause, (name, order_clause)
+
+
+@pytest.mark.parametrize("label", _PROPERTY_BEARING)
+def test_a_property_bearing_label_is_not_a_definition(label: cs.NodeLabel) -> None:
+    """The labels whose rows have no end_line stay out of the set every
+    definition lookup is built from."""
+    assert label not in cs.DEFINITION_NODE_LABELS, label
+
+
+@pytest.mark.parametrize("name", sorted(_DEFINITION_LOOKUPS))
+def test_no_lookup_names_a_label_it_excludes(name: str) -> None:
+    """The regression guard. A `NOT n:Field` style exclusion reintroduces the
+    fail-open denylist even while the tests above still pass, because a
+    denylist can sit alongside an allowlist and quietly become the thing
+    maintained."""
+    query = _DEFINITION_LOOKUPS[name]
+    assert "NOT n:" not in query, f"{name} excludes labels by name:\n{query}"
+
+
+# Every label whose rows carry a readable span. Asserting the MATCH equals a
+# named set is true by construction for ANY set, including one missing a label
+# that used to resolve -- which is how narrowing this lookup silently broke
+# Markdown headings. These tests go through the real retriever instead.
+_READABLE = {
+    cs.NodeLabel.METHOD: "proj.mod.Cls.run",
+    cs.NodeLabel.SECTION: "proj.README.Install",
+    cs.NodeLabel.PATTERN: "proj.mod.12.4.singleton",
+    cs.NodeLabel.CODE_SMELL: "proj.mod.30.0.long-method",
+    cs.NodeLabel.SECURITY_ISSUE: "proj.mod.7.2.sql-injection",
+}
+
+
+@pytest.mark.parametrize("label", sorted(_READABLE, key=lambda x: x.value))
+@pytest.mark.asyncio
+async def test_a_node_with_a_readable_span_is_retrievable(
+    tmp_path: Path, label: cs.NodeLabel
+) -> None:
+    """A row the lookup admits must reach the caller as a snippet. A Section
+    carries start_line/end_line/path exactly as a Method does, so dropping it
+    from the match reproduced this issue's own symptom (review of #1925)."""
+    source = tmp_path / "file.txt"
+    source.write_text("one\ntwo\nthree\n")
+    admitted = _matched_labels(CYPHER_FIND_BY_QUALIFIED_NAME)
+
+    ingestor = MagicMock()
+    # Stand in for the store: return the row only if the query's own MATCH
+    # would have admitted this label, so the test tracks the query text.
+    row = {
+        "name": "x",
+        "start": 1,
+        "end": 3,
+        "path": source.name,
+        "absolute_path": str(source),
+        "docstring": None,
+    }
+    ingestor.fetch_all.return_value = [row] if label.value in admitted else []
+
+    retriever = CodeRetriever(str(tmp_path), ingestor)
+    result = await retriever.find_code_snippet(_READABLE[label])
+
+    assert result.found, (
+        f"{label.value} carries a readable span but the lookup does not admit "
+        f"it; admitted={sorted(admitted)}"
+    )
+    assert result.source_code
+
+
+@pytest.mark.parametrize(
+    "label", sorted(cs.SPAN_BEARING_NODE_LABELS, key=lambda x: x.value)
+)
+def test_a_span_bearing_label_reaches_the_snippet_lookup(label: cs.NodeLabel) -> None:
+    """Every node carrying start_line/end_line/path is retrievable.
+
+    These are not definitions, so they stay out of DEFINITION_NODE_LABELS,
+    but `find_code_snippet` can read source for them and did before this
+    lookup was narrowed. Dropping one reproduces this issue's own symptom on
+    another label, which is how Section and then the three finding nodes were
+    each lost in turn (greptile-local, then Greptile on the PR).
+    """
+    assert label in cs.SNIPPET_NODE_LABELS, label
+    assert label not in cs.DEFINITION_NODE_LABELS, label
+    assert label.value in _matched_labels(CYPHER_FIND_BY_QUALIFIED_NAME), label

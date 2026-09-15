@@ -1,7 +1,6 @@
 """MCP startup must fail with the role-aware missing-key diagnostic (issue #1125),
 not a wrapped provider error from the first tool call."""
 
-import inspect
 import os
 from pathlib import Path
 from typing import Any
@@ -10,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.config import ModelConfig
+from codebase_rag.config import PROVIDER_ENV_KEYS, ModelConfig
 from codebase_rag.mcp import server as srv
 
 
@@ -69,16 +68,18 @@ def test_the_exemption_list_covers_every_provider_env_key() -> None:
     every test in this file would keep passing on a machine without that
     provider's key set.
     """
-    validator = inspect.getsource(ModelConfig.validate_api_key)
+    # Reads the validator's own map rather than grepping its source: the map
+    # moved to module level when `cgr doctor` began reading it, which made a
+    # source scan see nothing while the exemptions still applied (#1910).
     referenced = {
         name
         for name in dir(cs)
         if name.startswith("ENV_")
         and name.endswith("_API_KEY")
-        and f"cs.{name}" in validator
+        and getattr(cs, name) in set(PROVIDER_ENV_KEYS.values())
     }
     assert referenced, (
-        "fixture guard: found no provider env keys in validate_api_key, so "
+        "fixture guard: found no provider env keys in PROVIDER_ENV_KEYS, so "
         "this test cannot detect drift"
     )
     covered = {
