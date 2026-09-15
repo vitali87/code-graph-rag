@@ -31,6 +31,7 @@ from codebase_rag.cypher_queries import (
     CYPHER_GRAPH_DEFINITION,
 )
 from codebase_rag.tools.code_retrieval import CodeRetriever
+from codebase_rag.types_defs import NODE_SCHEMAS
 
 # Every lookup that resolves one qualified name to a single definition row.
 _DEFINITION_LOOKUPS = {
@@ -173,3 +174,42 @@ def test_a_span_bearing_label_reaches_the_snippet_lookup(label: cs.NodeLabel) ->
     assert label in cs.SNIPPET_NODE_LABELS, label
     assert label not in cs.DEFINITION_NODE_LABELS, label
     assert label.value in _matched_labels(CYPHER_FIND_BY_QUALIFIED_NAME), label
+
+
+def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
+    """The allowlist is derived from the SCHEMA, not from itself.
+
+    Every other test in this file takes its cases from
+    SNIPPET_NODE_LABELS or its two halves, so each one proves the constant
+    is consistent with the query and none can fail when the CONSTANT is
+    wrong. Add a span-bearing label to NODE_SCHEMAS and forget
+    SPAN_BEARING_NODE_LABELS, and they all stay green while
+    find_code_snippet reports missing-location for that label -- issue
+    #1925's own symptom, on a new label (issue #1950).
+
+    `NODE_SCHEMAS` is the independent source: it is what the graph is
+    actually built to, and it is maintained for its own reasons. Equality
+    rather than a subset, so it fails in both directions -- a label that
+    gains a span and is not admitted, and a label kept in the allowlist
+    after losing one.
+
+    The predicate is start_line AND end_line, which is what "readable
+    span" means to the caller. `Field` and `Parameter` declare
+    `start_line: int?` and no end_line at all, and that is precisely why
+    #1925 excluded them: a Field row winning a definition lookup was
+    rejected by the caller's own validation for having no end. So the
+    two labels this file exists to keep out are kept out BY the predicate
+    rather than by an exception list, and a start_line-only predicate
+    would readmit them.
+    """
+    declared = {
+        schema.label
+        for schema in NODE_SCHEMAS
+        if cs.KEY_START_LINE in schema.properties
+        and cs.KEY_END_LINE in schema.properties
+    }
+    assert declared == cs.SNIPPET_NODE_LABELS, (
+        "SNIPPET_NODE_LABELS has drifted from the schema. "
+        f"span-bearing but not admitted: {sorted(x.value for x in declared - cs.SNIPPET_NODE_LABELS)}; "
+        f"admitted without a declared span: {sorted(x.value for x in cs.SNIPPET_NODE_LABELS - declared)}"
+    )
