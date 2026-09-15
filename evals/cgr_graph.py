@@ -682,11 +682,14 @@ class _StatefulIngestor:
                     callers.add(caller_path)
                 return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
             case cs.CYPHER_ALL_DEFINITION_QNS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 defs: list[ResultRow] = []
                 for (label, uid), props in self.nodes.items():
                     if label not in _DEFINITION_LABELS:
                         continue
                     qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
+                    if not _str(qn).startswith(prefix):
+                        continue
                     row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
@@ -739,10 +742,13 @@ class _StatefulIngestor:
                     )
                 ]
             case cs.CYPHER_ALL_INHERITS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 inherits: list[tuple[str, int, ResultRow]] = []
                 for edge in self.edges:
                     _from_label, from_val, rel_type, _to_label, to_val = edge
-                    if rel_type != _INHERITS_REL:
+                    if rel_type != _INHERITS_REL or not _str(from_val).startswith(
+                        prefix
+                    ):
                         continue
                     raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX)
                     index = raw_index if isinstance(raw_index, int) else None
@@ -760,9 +766,12 @@ class _StatefulIngestor:
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
             case cs.CYPHER_ALL_MODULE_QNS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 module_rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
-                    if label not in _MODULE_QN_LABELS:
+                    if label not in _MODULE_QN_LABELS or not _str(
+                        props.get(cs.KEY_QUALIFIED_NAME)
+                    ).startswith(prefix):
                         continue
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
