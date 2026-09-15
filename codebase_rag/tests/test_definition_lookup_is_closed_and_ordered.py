@@ -199,8 +199,12 @@ def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
     gains a span and is not admitted, and a label kept in the allowlist
     after losing one.
 
-    The predicate is start_line AND end_line, which is what "readable
-    span" means to the caller. `Field` and `Parameter` declare
+    The predicate is start_line AND end_line AND path, which is what the
+    caller actually requires: `find_code_snippet` rejects a row unless
+    the path is a non-empty string AND both line numbers are ints with
+    end >= start (code_retrieval.py). Checking the lines alone would
+    demand a label be admitted that retrieval could not serve, so the
+    predicate names the whole contract (Greptile on #1951). `Field` and `Parameter` declare
     `start_line: int?` and no end_line at all, and that is precisely why
     #1925 excluded them: a Field row winning a definition lookup was
     rejected by the caller's own validation for having no end. So the
@@ -208,10 +212,11 @@ def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
     rather than by an exception list, and a start_line-only predicate
     would readmit them.
     """
+    readable = {cs.KEY_START_LINE, cs.KEY_END_LINE, cs.KEY_PATH}
     declared = {
         label
         for label, specs in parsed_node_schemas().items()
-        if {cs.KEY_START_LINE, cs.KEY_END_LINE} <= {spec.name for spec in specs}
+        if readable <= {spec.name for spec in specs}
     }
     assert declared == cs.SNIPPET_NODE_LABELS, (
         "SNIPPET_NODE_LABELS has drifted from the schema. "
