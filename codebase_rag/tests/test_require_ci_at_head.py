@@ -573,7 +573,11 @@ class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
             "excluded because its PR association names [9999], not this PR"
             in result.stdout
         )
-        assert "gh workflow run ci.yml" not in result.stdout
+        # A completed run naming another PR means nothing is coming for
+        # this one, so dispatching IS the right advice. This assertion
+        # previously required its ABSENCE, which encoded the bug Greptile
+        # found on #1955: a foreign run was treated as one to wait for.
+        assert "gh workflow run ci.yml" in result.stdout
 
     def test_an_empty_association_names_the_failed_fallback(self) -> None:
         result = _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[]])
@@ -630,6 +634,40 @@ class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
 
         assert result.returncode == 1
         assert "Do NOT dispatch another" not in result.stdout
+
+    def test_a_queued_run_on_this_branch_for_another_pr_is_not_awaited(
+        self,
+    ) -> None:
+        """Matching source identity is not enough to be worth waiting for.
+
+        A run can match this PR's SHA, branch AND repository while being
+        associated with a different PR -- `ci_count` excludes it for the
+        association, so it can never satisfy this gate no matter how long
+        it runs. Filtering `ci_state` on source identity alone called it
+        `pending` and told the contributor not to dispatch, leaving the
+        PR with no eligible run and no instruction to create one
+        (Greptile on #1955).
+
+        An EMPTY association is different and must still count as
+        pending: the fork fallback may yet resolve it to this PR.
+        """
+        run = _make_workflow_run(prs=(9999,), status="queued", conclusion=None)
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout
+        assert "gh workflow run ci.yml" in result.stdout
+
+    def test_a_queued_run_with_no_association_is_still_awaited(self) -> None:
+        """The control for the test above: an empty association may still
+        resolve through the fork fallback, so it stays `pending` and must
+        NOT be told to dispatch."""
+        run = _make_workflow_run(status="queued", conclusion=None)
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" in result.stdout
+        assert "gh workflow run ci.yml" not in result.stdout
 
     def test_a_branch_named_like_a_status_does_not_flip_the_remedy(self) -> None:
         """`head_branch` is interpolated into the reason text the grep

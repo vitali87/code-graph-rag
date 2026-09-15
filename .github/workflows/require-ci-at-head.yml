@@ -185,10 +185,17 @@ jobs:
             # to another PR cannot claim "one is already coming".
             ci_state=$(echo "$runs" | jq -r \
               --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
-              --arg head_repo "$HEAD_REPO" '
+              --arg head_repo "$HEAD_REPO" --argjson pr "$PR_NUMBER" '
                 [.[] | select(.path == ".github/workflows/ci.yml")
                      | select(.head_sha == $sha and .head_branch == $branch
-                              and .head_repo == $head_repo)]
+                              and .head_repo == $head_repo)
+                     # A run that could still count for THIS PR: either it
+                     # names this PR, or it carries no association and the
+                     # fork fallback may yet resolve it. A run naming a
+                     # DIFFERENT PR never can, however well its source
+                     # matches, so waiting on it is waiting for nothing
+                     # (Greptile on this PR).
+                     | select((.prs | index($pr)) or (.prs | length) == 0)]
                 | if length == 0 then "absent"
                   elif any(.[]; .status != "completed") then "pending"
                   else "foreign" end' 2>/dev/null) || ci_state="absent"
