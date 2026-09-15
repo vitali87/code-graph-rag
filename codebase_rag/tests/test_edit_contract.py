@@ -830,7 +830,8 @@ def test_a_failed_contract_refuses_to_roll_back_over_a_later_edit(
         reingest=reingest_then_edit,
     )
     # Not rolled back: the later edit would have been undone instead.
-    assert report.applied
+    assert not report.applied
+    assert report.undone is False
     assert report.verdict is not None
     assert not report.verdict.ok
     assert "not rolled back" in report.message
@@ -873,6 +874,7 @@ def test_a_failed_rollback_reingest_is_reported_not_raised(temp_repo: Path) -> N
     # The files are restored, the failure is in the report, and the graph is flagged.
     assert not report.applied
     assert report.graph_incomplete
+    assert report.undone is True
     assert "memgraph went away" in report.message
     assert (root / "pkg" / "util.py").read_text() == before
 
@@ -970,10 +972,10 @@ def test_change_signature_does_not_accept_an_unknown_verdict() -> None:
 
 def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
     # `TransactionConflict` covers two opposite situations. The test above
-    # pins the one where a LATER edit is stacked on top: the rename is still
-    # applied and must say so. Here another actor reverses the rename's own
+    # pins the one where a LATER edit is stacked on top: the rename is not
+    # undone and must say so. Here another actor reverses the rename's own
     # transaction while the postcondition is being measured, so the files are
-    # restored -- and reporting `applied=True` would be a lie about the tree
+    # restored -- and reporting `undone=False` would miss that restoration
     # (Greptile, PR #1547).
     from codebase_rag.editing.transaction import undo_transaction
 
@@ -1014,6 +1016,7 @@ def test_a_concurrent_undo_is_not_reported_as_applied(temp_repo: Path) -> None:
     assert undone, "the concurrent undo never ran; the race was not exercised"
     # The tree was restored by the other actor, so this is NOT applied.
     assert not report.applied
+    assert report.undone is True
     assert report.verdict is not None
     assert not report.verdict.ok
     assert "already been reversed" in report.message
@@ -1063,7 +1066,8 @@ def test_an_evicted_transaction_is_not_reported_as_rolled_back(
         "def assist(a):\n    return a\n\n\ndef assist(a):"
         in (root / "pkg" / "util.py").read_text()
     )
-    assert report.applied, "an evicted entry was misread as a completed undo"
+    assert not report.applied
+    assert report.undone is False, "an evicted entry was misread as a completed undo"
     assert "cannot be told" in report.message
 
 
@@ -1073,7 +1077,7 @@ def test_an_evicted_rename_survives_the_history_shrinking_again(
     # The sharper form of the eviction bug. My first fix asked whether the
     # history was at its limit -- but undoing the retained entries shrinks it
     # again, so the eviction becomes invisible and absence read as "undone"
-    # for a rename still on disk (Greptile, PR #1547). `applied` is a claim
+    # for a rename still on disk (Greptile, PR #1547). `undone` is a claim
     # about the tree, so the tree decides it.
     from codebase_rag.editing.transaction import EditTransaction, undo_transaction
 
@@ -1116,7 +1120,8 @@ def test_an_evicted_rename_survives_the_history_shrinking_again(
 
     on_disk = (root / "pkg" / "util.py").read_text()
     assert "def assist(a):\n    return a\n\n\ndef assist(a):" in on_disk
-    assert report.applied, "a rename still on disk was reported as rolled back"
+    assert not report.applied
+    assert report.undone is False, "a rename still on disk was reported as rolled back"
 
 
 def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
@@ -1163,7 +1168,10 @@ def test_an_unrelated_symbol_sharing_the_old_name_is_not_a_rollback(
 
     # `Independent.helper` is still there, but it is not this rename's site.
     assert "def helper(self):" in (root / "pkg" / "util.py").read_text()
-    assert report.applied, "an unrelated same-named symbol was read as a rollback"
+    assert not report.applied
+    assert report.undone is False, (
+        "an unrelated same-named symbol was read as a rollback"
+    )
 
 
 # A move must leave importers updated, which the module docstring has always

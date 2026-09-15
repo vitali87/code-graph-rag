@@ -25,6 +25,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     get_language_for_extension,
@@ -63,6 +64,7 @@ from .parsers.endpoints import (
     parse_route_decorator,
 )
 from .parsers.factory import ProcessorFactory
+from .parsers.field_nodes import PendingFieldType
 from .parsers.frontends import (
     EMITTING_FRONTENDS,
     FRONTENDS,
@@ -2258,6 +2260,7 @@ class GraphUpdater:
                 [str(p) for p in param_types]
                 if isinstance(param_types, list)
                 else None,
+                path,
             )
         )
 
@@ -2303,6 +2306,38 @@ class GraphUpdater:
                 continue
             pending.append(
                 PendingParameterType(
+                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                )
+            )
+
+    def _requeue_field_types(self, project_params: PropertyDict) -> None:
+        # The Field counterpart of _requeue_parameter_types, keyed on the FILE
+        # for the same reason: a Field whose file is being re-parsed this run
+        # is re-emitted by ingest and queues its own type; one whose file is
+        # not needs rebuilding from the graph. A full build re-parses every
+        # file, so ingest queues everything and there is nothing to rebuild.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
+        ):
+            return
+        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        pending = self.factory.definition_processor.pending_field_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if path in self._reparsed_file_keys:
+                continue
+            pending.append(
+                PendingFieldType(
                     qn, base_module_qn(Path(path), self.project_name), type_name, path
                 )
             )
@@ -2422,6 +2457,7 @@ class GraphUpdater:
                 self._rehydrated_module_qns.add(qn)
         self._rehydrate_class_inheritance_from_graph()
         self._requeue_parameter_types(project_params)
+        self._requeue_field_types(project_params)
 
     def _seed_module_qns_from_graph(
         self,
@@ -5270,23 +5306,38 @@ class GraphUpdater:
         # the files re-parsed or dropped here describe the old source, and
         # the re-parse queues the new ones, so without this both the stale
         # and the fresh RETURNS/ACCEPTS edge would be emitted (issue #1527).
+        # Keyed on the FILE, not the module qn: `foo.py` and `foo/__init__.py`
+        # share `proj.foo`, and a module-qn filter dropped the unchanged
+        # file's facts with the re-parsed one's, leaving its detached
+        # RETURNS/ACCEPTS unbuilt (issue #1892). A fact ingested without a
+        # file (no path) falls back to the module-qn key.
+        stale_keys = {*reparse, *gone}
         qn_to_path = self.factory.definition_processor.module_qn_to_file_path
         stale_paths = {*reparse.values(), *gone.values()}
         stale_modules = {
-            base_module_qn(Path(key), self.project_name) for key in (*reparse, *gone)
+            base_module_qn(Path(key), self.project_name) for key in stale_keys
         } | {qn for qn, path in qn_to_path.items() if path in stale_paths}
         pending = self.factory.definition_processor.pending_type_facts
-        pending[:] = [fact for fact in pending if fact.module_qn not in stale_modules]
+        pending[:] = [
+            fact
+            for fact in pending
+            if (
+                fact.path not in stale_keys
+                if fact.path is not None
+                else fact.module_qn not in stale_modules
+            )
+        ]
         # The same for parameter annotations: the scoped prologue rehydrates
         # them from the graph before this delete, so a changed annotation
-        # would otherwise emit OF_TYPE to both the old and the new type. Keyed
-        # on the FILE, not the module qn: `foo.py` and `foo/__init__.py` share
-        # `proj.foo`, and a module-qn filter dropped the unchanged file's
-        # facts with the re-parsed one's, leaving its detached OF_TYPE unbuilt.
-        stale_keys = {*reparse, *gone}
+        # would otherwise emit OF_TYPE to both the old and the new type.
         pending_params = self.factory.definition_processor.pending_parameter_types
         pending_params[:] = [
             fact for fact in pending_params if fact.path not in stale_keys
+        ]
+        # Fields the same, keyed on the file for the same reason.
+        pending_fields = self.factory.definition_processor.pending_field_types
+        pending_fields[:] = [
+            fact for fact in pending_fields if fact.path not in stale_keys
         ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
@@ -5699,6 +5750,10 @@ class GraphUpdater:
             return
         try:
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSSES)
+            # A note whose name did not come back is placed by content hash
+            # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
+            # so a note that moved gets its MENTIONS edges back this run.
+            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here

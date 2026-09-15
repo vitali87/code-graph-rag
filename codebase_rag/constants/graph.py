@@ -35,6 +35,7 @@ KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
 KEY_TYPE_NAME = "type_name"
+KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
 KEY_HAS_DEFAULT = "has_default"
 KEY_NAME_START_LINE = "name_start_line"
@@ -187,6 +188,7 @@ ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
+ONEOF_FIELD = "field"
 
 
 class UniqueKeyType(StrEnum):
@@ -234,6 +236,7 @@ class NodeLabel(StrEnum):
     GLOSS = "Gloss"
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
+    FIELD = "Field"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -270,6 +273,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # <callable qn>.<index>: one node per declared slot, keyed so a rename of
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -325,6 +329,7 @@ class RelationshipType(StrEnum):
     MENTIONS = "MENTIONS"
     # Function|Method -> Parameter, carrying {index} (issue #1804).
     HAS_PARAMETER = "HAS_PARAMETER"
+    HAS_FIELD = "HAS_FIELD"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
 
@@ -342,6 +347,7 @@ class CaptureGroup(StrEnum):
     # else, rather than becoming a second, parallel mechanism.
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
+    FIELDS = "fields"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -415,11 +421,62 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.OF_TYPE,
         }
     ),
+    # Opt-in (issue #1805), like parameters. OF_TYPE is NOT listed here: the
+    # capture contract puts every relationship in exactly one group (a
+    # relationship in two would make "enabled" ambiguous), and OF_TYPE already
+    # belongs to `parameters`. A field's type edge is therefore captured
+    # whenever the `parameters` group is on -- one relationship, one switch --
+    # and `fields` alone yields Field nodes and HAS_FIELD only.
+    CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
 # owning group has an enabled relationship. Labels owned by no group are always
 # captured.
+# The labels a "definition" lookup may return: things with a body a reader can
+# be shown, each carrying start_line/end_line. Sourced here rather than spelled
+# out per query so a new label joins every lookup at once.
+#
+# Deliberately an ALLOWLIST. The predecessor excluded Field and Parameter by
+# name, which fails OPEN: the next property-bearing label added would silently
+# start winning definition lookups again, returning a row with no end_line and
+# making an indexed definition read as not found (issue #1925).
+DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.FUNCTION,
+        NodeLabel.METHOD,
+        NodeLabel.CLASS,
+        NodeLabel.INTERFACE,
+        NodeLabel.ENUM,
+        NodeLabel.TYPE,
+        NodeLabel.UNION,
+        NodeLabel.MODULE,
+    }
+)
+
+
+# What `find_code_snippet` may return: a definition, plus every other node
+# that carries a readable span (start_line, end_line and a path), because the
+# retriever can read source for those and returned them before this lookup
+# was narrowed. Dropping one reproduces issue #1925's own symptom on another
+# label: a Markdown `Section`, and the three finding nodes, each resolved
+# successfully on `main`.
+#
+# Kept separate from DEFINITION_NODE_LABELS because none of these is a
+# definition for the graph-query and gloss lookups, which never matched one.
+SPAN_BEARING_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.SECTION,
+        NodeLabel.PATTERN,
+        NodeLabel.CODE_SMELL,
+        NodeLabel.SECURITY_ISSUE,
+    }
+)
+SNIPPET_NODE_LABELS: frozenset[NodeLabel] = (
+    DEFINITION_NODE_LABELS | SPAN_BEARING_NODE_LABELS
+)
+
+
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
     CaptureGroup.FINDINGS: frozenset(
@@ -427,6 +484,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     ),
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
+    CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -590,7 +648,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -673,6 +731,13 @@ CYPHER_PROJECT_PARAMETER_TYPES = (
     "AND p.type_name IS NOT NULL "
     "RETURN p.qualified_name AS qualified_name, p.type_name AS type_name, "
     "p.path AS path"
+)
+# The Field counterpart, read by the incremental requeue for the same reason.
+CYPHER_PROJECT_FIELD_TYPES = (
+    "MATCH (f:Field) WHERE f.qualified_name STARTS WITH $project_prefix "
+    "AND f.type_name IS NOT NULL "
+    "RETURN f.qualified_name AS qualified_name, f.type_name AS type_name, "
+    "f.path AS path"
 )
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
@@ -876,12 +941,25 @@ KEY_ANCHOR_STATE = "anchor_state"
 KEY_MENTIONS = "mentions"
 KEY_MENTION_QNS = "mention_qns"
 KEY_ANCHOR_HASH = "anchor_hash"
+# Written by the repair tiers (issue #1808, stage four). `moved_from` is the
+# name a MOVED gloss was written against, kept so the move stays visible;
+# `candidate_qns` lists the definitions an AMBIGUOUS gloss could belong to.
+KEY_MOVED_FROM = "moved_from"
+# The project a gloss belongs to, recorded at write time. A project name may
+# contain dots (`--project-name` is taken as given), so it cannot be read back
+# off `target_qn`; a note written before this property existed falls back to
+# the longest registered project name that prefixes its `target_qn`.
+KEY_PROJECT = "project"
+KEY_CANDIDATE_QNS = "candidate_qns"
+KEY_HASHES = "hashes"
 # Prefix on every anchor hash. A Gloss written before this format existed
 # recorded the clone skeleton (`ast_fingerprint`) as its target hash; the two
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
 KEY_WRITE_ID = "write_id"
+KEY_CANDIDATES = "candidates"
+KEY_ORPHANED = "orphaned"
 GLOSS_ID_PREFIX = "gloss:"
 GLOSS_ID_HEX_LENGTH = 24
 GLOSS_STATUS_ACCEPTED = "accepted"
@@ -900,9 +978,16 @@ class GlossKind(StrEnum):
 class GlossAnchorState(StrEnum):
     """How well a gloss is still attached to its subject, best first.
 
-    Only EXACT is written today; the graded repair chain that produces the
-    other states is a later stage of #1808. A gloss whose subject cannot be
-    re-anchored becomes visibly LOST rather than silently re-bound.
+    EXACT: attached to the definition it was written against, unchanged.
+    MOVED: that name is gone, and exactly one definition in the project
+    carries the note's recorded content hash, so the note follows it; the
+    original name is kept in `moved_from` and the move stays visible.
+    STALE: attached, but the definition's content has changed since.
+    AMBIGUOUS: the name is gone and several definitions carry the hash;
+    `candidate_qns` names them and the note is attached to none.
+    LOST: the name is gone and nothing carries the hash (or the note has no
+    comparable hash). A gloss that cannot be re-anchored becomes visibly
+    LOST rather than silently re-bound (issue #1808).
     """
 
     EXACT = "EXACT"

@@ -234,6 +234,41 @@ def format_dependencies(deps: list[str]) -> str:
 LATEST_RELEASE_MARKER = "<!-- latest-release-end -->"
 
 
+def _news_entries(content: str) -> tuple[list[str], int | None]:
+    """Every "- " entry with its wrapped lines, and how many precede the marker.
+
+    A blank line closes an entry (Markdown list-item semantics), so trailing
+    prose or a header list elsewhere in the file is not swept into the news
+    bullets. The latest-release marker also closes the entry above it and
+    records how many entries belong to the latest release; only the FIRST
+    marker counts, since NEWS.md accumulates one per release.
+    """
+    bullets: list[str] = []
+    current: list[str] = []
+    marker_count: int | None = None
+
+    def close() -> None:
+        nonlocal current
+        if current:
+            bullets.append("\n".join(current))
+            current = []
+
+    for line in content.splitlines():
+        if line.strip() == LATEST_RELEASE_MARKER:
+            close()
+            if marker_count is None:
+                marker_count = len(bullets)
+        elif line.startswith("- "):
+            close()
+            current = [line]
+        elif current and line.strip():
+            current.append(line)
+        else:
+            close()
+    close()
+    return bullets, marker_count
+
+
 def format_latest_news(news_path: Path, limit: int = 3) -> str:
     # Render the latest release's bullet entries from NEWS.md into the
     # README's "Latest News" section. NEWS.md is the source of truth (newest
@@ -248,32 +283,7 @@ def format_latest_news(news_path: Path, limit: int = 3) -> str:
         content = news_path.read_text(encoding=ENCODING_UTF8)
     except OSError:
         return ""
-    # Group each "- " entry with its wrapped continuation lines; a blank line
-    # closes the entry (Markdown list-item semantics), so trailing prose or a
-    # header list elsewhere in the file is not swept into the news bullets.
-    # The marker also closes the entry above it, and records how many entries
-    # belong to the latest release.
-    bullets: list[str] = []
-    current: list[str] = []
-    marker_count: int | None = None
-    for line in content.splitlines():
-        if line.strip() == LATEST_RELEASE_MARKER:
-            if current:
-                bullets.append("\n".join(current))
-                current = []
-            if marker_count is None:
-                marker_count = len(bullets)
-        elif line.startswith("- "):
-            if current:
-                bullets.append("\n".join(current))
-            current = [line]
-        elif current and line.strip():
-            current.append(line)
-        elif current:
-            bullets.append("\n".join(current))
-            current = []
-    if current:
-        bullets.append("\n".join(current))
+    bullets, marker_count = _news_entries(content)
     count = marker_count if marker_count else limit
     return "\n".join(bullets[:count])
 

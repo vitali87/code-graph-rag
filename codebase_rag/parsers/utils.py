@@ -1367,8 +1367,14 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
-        type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
+        type_fact_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        type_facts,
+        method_path if isinstance(method_path, str) else None,
     )
     method_props.update(fingerprint_props(method_node))
     method_props.update(anchor_hash_props(method_node, decorators))
@@ -1637,6 +1643,30 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
             return False
         current = current.parent
     return False
+
+
+def enclosing_class_node(
+    func_node: ASTNode, lang_config: LanguageSpec
+) -> ASTNode | None:
+    """The nearest class node above func_node, or None if the module comes first.
+
+    Unlike is_method_node this does not stop at an enclosing function, so a
+    `def inner()` nested in a method still reports its class. The call
+    processor uses it to hand everything scoped inside a class body to the
+    class pass instead of walking it a second time (issue #1903).
+    """
+    current = func_node.parent
+    if not isinstance(current, Node):
+        return None
+    class_types = lang_config.class_node_types
+    module_types = lang_config.module_node_types
+    while current is not None:
+        if current.type in module_types:
+            return None
+        if current.type in class_types:
+            return current
+        current = current.parent
+    return None
 
 
 def module_qn_for_entity(

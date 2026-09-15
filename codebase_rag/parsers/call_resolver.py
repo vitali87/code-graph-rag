@@ -148,6 +148,8 @@ def _binds_identifier(target: Node, name: str) -> bool:
 class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
+        "python_shadowed_imports",
+        "python_reimport_points",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -191,6 +193,10 @@ class CallResolver:
         self.type_inference = type_inference
         self.class_inheritance = class_inheritance
         self._py_rel_to_module: dict[str, str] = {}
+        # caller qn -> import-map names that caller binds as locals (#1907);
+        # filled by the call processor before the caller's calls resolve.
+        self.python_shadowed_imports: dict[str, frozenset[str]] = {}
+        self.python_reimport_points: dict[str, dict[str, int]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -448,6 +454,32 @@ class CallResolver:
             class_context,
             local_var_types,
         )
+
+    def _receiver_is_untyped_shadow(
+        self,
+        call_name: str,
+        caller_qn: str | None,
+        local_var_types: dict[str, str] | None,
+        call_point: int | None = None,
+    ) -> bool:
+        if not caller_qn or cs.SEPARATOR_DOT not in call_name:
+            return False
+        head = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        if local_var_types and head in local_var_types:
+            return False
+        shadowed = head in (self.python_shadowed_imports.get(caller_qn) or frozenset())
+        # A body-level re-import is positional, and the caller-wide set cannot
+        # say so. `helpers = supplied` above `from . import helpers` binds the
+        # name for the whole body -- which is why the set holds it -- but the
+        # import puts the module back from the line it runs, so a call below it
+        # reads the module and one above it reads the local. Where there is a
+        # restore point the position decides on its own; the set decides only
+        # when the call has no position to judge by, which keeps the answer it
+        # gave before this was positional.
+        offset = (self.python_reimport_points.get(caller_qn) or {}).get(head)
+        if offset is None:
+            return shadowed
+        return shadowed if call_point is None else call_point < offset
 
     def _resolve_inline_receiver_call(
         self,
@@ -1182,6 +1214,18 @@ class CallResolver:
             )
             if handled:
                 return inline
+            # `helpers.make_pair()` where the caller binds `helpers` itself:
+            # the receiver is a local the type map could not type, so the
+            # call is on an unknown value. It must not reach the import probe
+            # (which would answer with the module the name shadows) nor the
+            # caller-independent cache (a sibling caller's answer, or ours
+            # poisoning theirs), and the bare-name trie must not guess
+            # either (issue #1907). A typed shadow (`helpers: W = ...`)
+            # resolves through its type as any local does.
+            if self._receiver_is_untyped_shadow(
+                call_name, caller_qn, local_var_types, call_point
+            ):
+                return None
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer
@@ -1350,6 +1394,20 @@ class CallResolver:
             if use_cache:
                 self._remember(cache_key, result)
             return result
+
+        # A member call whose receiver has a known FIRST-PARTY class type that
+        # defines no such method (own or inherited) is a known non-edge, not an
+        # unknown one. The chained and inline receiver paths already drop this
+        # shape; the plain-variable path let it reach the probes below, where
+        # the same-module function fallback inside the import probe, or the
+        # bare-name trie at the end, bound `p.go()` on a `Product` without `go`
+        # to an unrelated `go` (issue #1897). Ahead of the import probe for that
+        # reason; never cached, because it can only fire with a non-empty local
+        # type map and `use_cache` is already False then.
+        if self._typed_receiver_lacks_method(
+            call_name, module_qn, local_var_types, language
+        ):
+            return None
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
@@ -1652,6 +1710,116 @@ class CallResolver:
             return False
         return f"{project_root}{cs.SEPARATOR_DOT}{target}" not in self.function_registry
 
+    def _two_part_receiver_type(
+        self, call_name: str, local_var_types: dict[str, str] | None
+    ) -> str | None:
+        """The inferred local type of `obj` in a two-part `obj.method` call, or None."""
+        if not local_var_types or cs.SEPARATOR_DOT not in call_name:
+            return None
+        parts = call_name.split(cs.SEPARATOR_DOT)
+        if len(parts) != 2:
+            return None
+        return local_var_types.get(parts[0])
+
+    def _registered_class_qn(self, class_qn: str, module_qn: str) -> str | None:
+        """The registry's spelling of a first-party class qn, or None if unindexed.
+
+        A first-party qn may be written without the project prefix (a bare
+        `from models.user import User` gives `models.user.User` while the
+        registry stores `proj.models.user.User`), so both spellings are tried.
+        """
+        if class_qn in self.function_registry:
+            return class_qn
+        project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
+        prefixed = f"{project_root}{cs.SEPARATOR_DOT}{class_qn}"
+        if prefixed in self.function_registry:
+            return prefixed
+        return None
+
+    def _typed_receiver_lacks_method(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        language: cs.SupportedLanguage | None,
+    ) -> bool:
+        # True for a Python `obj.method` where `obj` has a known type that IS
+        # an indexed first-party class, and neither that class, a base it
+        # inherits from, nor any same-named class in this module defines
+        # `method`. The precise local-type path already failed for exactly
+        # that reason, so the call cannot be this class's method; binding it
+        # by bare name to some other `method` is a false edge. An untyped
+        # receiver, an external type (`_receiver_type_is_external`) or a type
+        # that resolves to no indexed class stays out: unknown, not absent.
+        #
+        # Python only. Elsewhere a type's method set is not readable from its
+        # class qn: Go promotes methods from an embedded struct the inheritance
+        # walk does not model, and Rust registers `impl` methods under the
+        # impl's module and trait defaults under the trait. There the fallback
+        # stays as it was (found by the local review and CI on this change).
+        if language != cs.SupportedLanguage.PYTHON:
+            return False
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
+        if var_type is None:
+            return False
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
+        if not class_qn:
+            return False
+        registered = self._registered_class_qn(class_qn, module_qn)
+        if registered is None:
+            return False
+        if self.function_registry[registered] != cs.NodeLabel.CLASS.value:
+            return False
+        method_name = call_name.split(cs.SEPARATOR_DOT)[1]
+        # Own or inherited under the registered spelling. The precise
+        # local-type path has normally already answered both, so this
+        # re-check matters where that path used an unprefixed class qn.
+        if self._try_resolve_method(registered, method_name) is not None:
+            return False
+        # A bare type name that several classes in THIS module carry (two
+        # functions each defining a local `Analyzer`) resolved to one of them
+        # above, possibly the wrong one; if any same-named class defined in
+        # this module has the method, the call is left to the fallback. A
+        # same-named class in another module, a CHILD module of a package
+        # included, is unrelated and does not rescue the call. The annotation
+        # is reduced first: `Product | None` names `Product`.
+        simple_type = self._strip_optional(var_type).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return not any(
+            self._is_class_method_defined_in(qn, module_qn)
+            for qn in self.function_registry.find_ending_with(
+                f"{simple_type}{cs.SEPARATOR_DOT}{method_name}"
+            )
+        )
+
+    def _is_class_method_defined_in(self, qn: str, module_qn: str) -> bool:
+        """Whether `qn` is a method of a CLASS that `module_qn` itself defines.
+
+        The owner must be a registered class (a nested function named like
+        the type, `factory.Product.go`, does not count), and it must live in
+        `module_qn` at any scope depth: every scope between the module and the
+        class (`second` in `proj.app.second.Analyzer`) must be a definition
+        this module registered. An unregistered scope is a module boundary,
+        `proj.app.util` under the `proj.app` package, or unknown; either way
+        not this module. Modules are not registry entries, and the module map
+        holds only re-parsed files during an incremental run, so the registry
+        (rehydrated for every file) is what decides, with the map as a second
+        check where it does know the scope.
+        """
+        owner, _sep, _method = qn.rpartition(cs.SEPARATOR_DOT)
+        if self.function_registry.get(owner) != cs.NodeLabel.CLASS.value:
+            return False
+        prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        if not owner.startswith(prefix):
+            return False
+        modules = self.type_inference.module_qn_to_file_path
+        scope = module_qn
+        for segment in owner[len(prefix) :].split(cs.SEPARATOR_DOT)[:-1]:
+            scope = f"{scope}{cs.SEPARATOR_DOT}{segment}"
+            if scope in modules or scope not in self.function_registry:
+                return False
+        return True
+
     def _receiver_type_is_external(
         self,
         call_name: str,
@@ -1667,31 +1835,19 @@ class CallResolver:
         # absent from the map) or a project-rooted type is left alone: its method may
         # still be resolved by the fallback (e.g. a cross-file imported-class call the
         # precise path missed), so only a provably external type is suppressed.
-        if not local_var_types or cs.SEPARATOR_DOT not in call_name:
-            return False
-        parts = call_name.split(cs.SEPARATOR_DOT)
-        if len(parts) != 2:
-            return False
-        var_type = local_var_types.get(parts[0])
+        var_type = self._two_part_receiver_type(call_name, local_var_types)
         if var_type is None:
             return False
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         class_qn = self._resolve_class_qn_from_type(var_type, import_map, module_qn)
         if not class_qn:
             return True
-        # First-party class qns may be written without the project prefix (a bare
-        # `from models.user import User` resolves to `models.user.User` while the
-        # registry stores `proj.models.user.User`), so check both the qn as-is and
-        # the project-prefixed form before judging a type external, mirroring
-        # _is_external_import. A project-rooted qn is always treated as first-party.
+        # A project-rooted qn is always treated as first-party; otherwise the
+        # registry decides, under either spelling (see `_registered_class_qn`).
         project_root = module_qn.split(cs.SEPARATOR_DOT, 1)[0]
         if class_qn.split(cs.SEPARATOR_DOT, 1)[0] == project_root:
             return False
-        return (
-            class_qn not in self.function_registry
-            and f"{project_root}{cs.SEPARATOR_DOT}{class_qn}"
-            not in self.function_registry
-        )
+        return self._registered_class_qn(class_qn, module_qn) is None
 
     def _try_resolve_iife(
         self, call_name: str, module_qn: str

@@ -124,11 +124,13 @@ cgr index -o ./index-output --repo-path ./my-project
 
 ### `cgr doctor`
 
-Check that all required dependencies and services are available.
+Check that the services, credentials and tools a session needs are in place.
 
 ```bash
 cgr doctor
 ```
+
+It reports, one line per check: the Docker daemon; a connection to the configured graph engine (and, when reachable, the graph's structural integrity); the orchestrator and Cypher model credentials, judged by the same rule `cgr start` applies (a local Ollama model needs no key); and ripgrep. The exit status is 1 when any check fails. On a terminal that cannot display `✓`/`✗` the marks are printed as `PASS`/`FAIL`.
 
 ### `cgr language`
 

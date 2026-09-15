@@ -36,6 +36,7 @@ from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
 from .definition_docstring import extract_definition_docstring
 from .dependency_parser import parse_dependencies
+from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
@@ -333,6 +334,7 @@ class DefinitionProcessor(
         # Return/parameter annotations awaiting the full registry (#1527).
         self.pending_type_facts: list[PendingTypeFact] = []
         self.pending_parameter_types: list[PendingParameterType] = []
+        self.pending_field_types: list[PendingFieldType] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -393,13 +395,19 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
+        from .field_nodes import emit_field_type_edges
         from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        # Every queue, not just the first: a Parameter fact with no RETURNS/
-        # ACCEPTS fact beside it (a peer's Field pass hit exactly this) would
-        # otherwise be skipped outright, and OF_TYPE silently absent.
-        if not self.pending_type_facts and not self.pending_parameter_types:
+        # Every queue, not just the first: a Parameter or Field fact with no
+        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
+        # and OF_TYPE silently absent. A class whose only annotations are on
+        # fields is the case that reaches this (found by the Field regression).
+        if not (
+            self.pending_type_facts
+            or self.pending_parameter_types
+            or self.pending_field_types
+        ):
             return 0
         resolver = TypeReferenceResolver(
             self.function_registry,
@@ -411,6 +419,9 @@ class DefinitionProcessor(
         # reason: the annotation may name a type from a later file.
         emitted += emit_parameter_type_edges(
             self.pending_parameter_types, resolver, self.ingestor
+        )
+        emitted += emit_field_type_edges(
+            self.pending_field_types, resolver, self.ingestor
         )
         return emitted
 

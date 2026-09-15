@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Collection
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
@@ -149,21 +150,28 @@ def source_state(repo_path: Path) -> JsonDict:
     return _source_state(repo_path)
 
 
+def _index_layout_problem(artifacts: Collection[str]) -> str | None:
+    joint = cs.PROTOBUF_INDEX_FILE in artifacts
+    nodes = cs.PROTOBUF_NODES_FILE in artifacts
+    relationships = cs.PROTOBUF_RELS_FILE in artifacts
+    if joint and (nodes or relationships):
+        return "mixed index layouts: both the joint and the split artifacts exist"
+    if nodes != relationships:
+        missing = cs.PROTOBUF_RELS_FILE if nodes else cs.PROTOBUF_NODES_FILE
+        return f"incomplete split index: missing {missing}"
+    return None
+
+
 def build_manifest(
     index_dir: Path,
     source: JsonDict,
     capture: JsonDict,
 ) -> JsonDict:
-    joint = (index_dir / cs.PROTOBUF_INDEX_FILE).is_file()
-    split = (index_dir / cs.PROTOBUF_NODES_FILE).is_file()
-    if joint and split:
-        raise ValueError(
-            "mixed index layouts: both the joint and the split artifacts exist"
-        )
+    artifact_names = [name for name in _ARTIFACT_FILES if (index_dir / name).is_file()]
+    if problem := _index_layout_problem(artifact_names):
+        raise ValueError(problem)
     artifacts = {
-        name: {_HASH_ALGORITHM: _sha256(index_dir / name)}
-        for name in _ARTIFACT_FILES
-        if (index_dir / name).is_file()
+        name: {_HASH_ALGORITHM: _sha256(index_dir / name)} for name in artifact_names
     }
     return {
         "manifest_version": _MANIFEST_VERSION,
@@ -251,10 +259,8 @@ def _artifact_problem(index_dir: Path, name: str, expected: object) -> str | Non
 
 def _check_artifacts(index_dir: Path, artifacts: dict) -> list[str]:
     problems: list[str] = []
-    if cs.PROTOBUF_INDEX_FILE in artifacts and cs.PROTOBUF_NODES_FILE in artifacts:
-        problems.append(
-            "mixed index layouts: manifest covers both joint and split artifacts"
-        )
+    if problem := _index_layout_problem(artifacts):
+        problems.append(problem)
     for name, hashes in artifacts.items():
         expected = hashes.get(_HASH_ALGORITHM) if isinstance(hashes, dict) else None
         if (problem := _artifact_problem(index_dir, name, expected)) is not None:

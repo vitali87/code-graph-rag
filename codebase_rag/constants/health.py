@@ -34,13 +34,37 @@ HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG = "{count} violation(s) found"
 HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG = "Audit queries failed"
 HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
 
-HEALTH_CHECK_API_KEY_SET = "{display_name} API key is set"
-HEALTH_CHECK_API_KEY_NOT_SET = "{display_name} API key is not set"
-HEALTH_CHECK_API_KEY_CONFIGURED = "Configured"
-HEALTH_CHECK_API_KEY_NOT_CONFIGURED = "Not set"
-HEALTH_CHECK_API_KEY_MISSING_MSG = (
-    "Set the {env_name} environment variable or configure it in your settings."
+# Model credentials are judged by the rule the runtime applies at
+# start-up (`ModelConfig.validate_api_key`), so doctor cannot fail a
+# setup `cgr start` accepts or pass one it refuses (issue #1910). The
+# per-variable checks this replaces read ORCHESTRATOR_API_KEY and
+# CYPHER_API_KEY verbatim, failing the default Ollama model that needs no
+# key, and GEMINI_API_KEY, which nothing in the package reads.
+HEALTH_CHECK_MODEL_READY = "{role} model ready ({provider}:{model})"
+HEALTH_CHECK_MODEL_NOT_READY = "{role} model not ready ({provider}:{model})"
+HEALTH_CHECK_MODEL_OK_MSG = "Credentials accepted for {provider}"
+HEALTH_CHECK_MODEL_KEY_MISSING_MSG = "API key not set"
+HEALTH_CHECK_MODEL_KEY_MISSING_ERROR = (
+    "Set {env_name} in your environment or .env file, or choose a local model."
 )
+# Some providers are also satisfied by their own variable; naming both stops
+# the remediation from pointing at a credential the runtime will not read
+# (CodeRabbit on #1910). The alternative comes from the gate's own map.
+HEALTH_CHECK_MODEL_KEY_MISSING_EITHER = (
+    "Set {env_name} (or {provider_env}) in your environment or .env file, "
+    "or choose a local model."
+)
+HEALTH_MODEL_ROLE_NAMES = {"orchestrator": "Orchestrator", "cypher": "Cypher"}
+HEALTH_MODEL_ROLE_KEY_VARIABLE = "{role}_API_KEY"
+
+# Pass/fail marks. Rich swaps box-drawing characters for ASCII on a stream
+# that cannot encode them but leaves text alone, so the glyphs need their
+# own fallback: `✓` raised UnicodeEncodeError on a CP950 Windows terminal
+# before a single check was shown (issue #1910).
+HEALTH_MARK_PASS = "✓"
+HEALTH_MARK_FAIL = "✗"
+HEALTH_MARK_PASS_ASCII = "PASS"
+HEALTH_MARK_FAIL_ASCII = "FAIL"
 
 HEALTH_CHECK_TOOL_INSTALLED = "{tool_name} is installed"
 HEALTH_CHECK_TOOL_NOT_INSTALLED = "{tool_name} is not installed"
@@ -52,16 +76,11 @@ HEALTH_CHECK_TOOL_TIMEOUT_ERROR = (
 )
 HEALTH_CHECK_TOOL_FAILED_MSG = "Check failed"
 
-HEALTH_CHECK_TOOLS = [
-    ("GEMINI_API_KEY", "Gemini"),
-    ("OPENAI_API_KEY", "OpenAI"),
-    ("ORCHESTRATOR_API_KEY", "Orchestrator"),
-    ("CYPHER_API_KEY", "Cypher"),
-]
-
+# cmake is deliberately absent: it only builds pymgclient, a hard
+# dependency doctor has already imported by the time it runs, so a
+# missing cmake cannot be what is wrong with a working install.
 HEALTH_CHECK_EXTERNAL_TOOLS = [
     ("ripgrep", "rg"),
-    ("cmake", "cmake"),
 ]
 
 SHELL_CMD_WHERE = "where"
