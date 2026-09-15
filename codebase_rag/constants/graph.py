@@ -32,6 +32,12 @@ KEY_START_LINE = "start_line"
 # keys sit at the `func` keyword). Persisted so incremental runs can rehydrate
 # the col-keyed location indexes for unchanged files (issue #1240).
 KEY_START_COL = "start_col"
+# Parameter node properties (issue #1804).
+KEY_INDEX = "index"
+KEY_TYPE_NAME = "type_name"
+KEY_IS_STATIC = "is_static"
+KEY_IS_VARIADIC = "is_variadic"
+KEY_HAS_DEFAULT = "has_default"
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
@@ -181,6 +187,8 @@ ONEOF_PATTERN = "pattern"
 ONEOF_CODE_SMELL = "code_smell"
 ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
+ONEOF_PARAMETER = "parameter"
+ONEOF_FIELD = "field"
 
 
 class UniqueKeyType(StrEnum):
@@ -226,6 +234,9 @@ class NodeLabel(StrEnum):
     # delete comments, and no cross-language exemption for a structured
     # comment is achievable.
     GLOSS = "Gloss"
+    # A declared formal parameter of a Function or Method (issue #1804).
+    PARAMETER = "Parameter"
+    FIELD = "Field"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -259,6 +270,10 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # It reuses the `qualified_name` key so the existing constraint, index
     # and MERGE machinery apply unchanged.
     NodeLabel.GLOSS: UniqueKeyType.QUALIFIED_NAME,
+    # <callable qn>.<index>: one node per declared slot, keyed so a rename of
+    # the parameter is an update of the same node, not a new one.
+    NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -312,6 +327,11 @@ class RelationshipType(StrEnum):
     # traversing MENTIONS finds glosses that talk about a symbol without
     # being filed under it.
     MENTIONS = "MENTIONS"
+    # Function|Method -> Parameter, carrying {index} (issue #1804).
+    HAS_PARAMETER = "HAS_PARAMETER"
+    HAS_FIELD = "HAS_FIELD"
+    # Parameter -> the project type its annotation resolves to.
+    OF_TYPE = "OF_TYPE"
 
 
 class CaptureGroup(StrEnum):
@@ -326,6 +346,8 @@ class CaptureGroup(StrEnum):
     # label and its edges obey the same enable/disable contract as everything
     # else, rather than becoming a second, parallel mechanism.
     GLOSSES = "glosses"
+    PARAMETERS = "parameters"
+    FIELDS = "fields"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -391,6 +413,21 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
             RelationshipType.MENTIONS,
         }
     ),
+    # Opt-in (issue #1804): roughly 2.6x the node count of a repo, and the
+    # per-parameter OF_TYPE resolution is measured at 1.16x today's ACCEPTS.
+    CaptureGroup.PARAMETERS: frozenset(
+        {
+            RelationshipType.HAS_PARAMETER,
+            RelationshipType.OF_TYPE,
+        }
+    ),
+    # Opt-in (issue #1805), like parameters. OF_TYPE is NOT listed here: the
+    # capture contract puts every relationship in exactly one group (a
+    # relationship in two would make "enabled" ambiguous), and OF_TYPE already
+    # belongs to `parameters`. A field's type edge is therefore captured
+    # whenever the `parameters` group is on -- one relationship, one switch --
+    # and `fields` alone yields Field nodes and HAS_FIELD only.
+    CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -402,6 +439,8 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
         {NodeLabel.PATTERN, NodeLabel.CODE_SMELL, NodeLabel.SECURITY_ISSUE}
     ),
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
+    CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
+    CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -560,7 +599,12 @@ CYPHER_DELETE_MODULE = (
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION*0..]->(c) "
+    # HAS_PARAMETER too: a Parameter is derived from source like everything
+    # else the module DEFINES, so it goes with its owner on re-parse. Without
+    # it a removed parameter or a deleted function left its nodes orphaned --
+    # the shape of the Gloss leak (#1828), but the opposite remedy, because a
+    # gloss is written into the graph and must survive a rebuild.
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -568,6 +612,16 @@ CYPHER_DELETE_MODULE = (
 CYPHER_DELETE_FILE = "MATCH (f:File {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_FOLDER = "MATCH (f:Folder {absolute_path: $path}) DETACH DELETE f"
 CYPHER_DELETE_PACKAGE = "MATCH (p:Package {absolute_path: $path}) DETACH DELETE p"
+# Which container kind the GRAPH records for a directory, independent of what
+# is on disk now. `_package_ness_changed` cannot ask the structure map for
+# this: on a fresh updater (the MCP tool builds one per project) the map has
+# already been re-derived FROM DISK by `_hydrate_for_reingest`, so both sides
+# of the comparison are the post-change state and no flip is ever detected
+# (greptile-local, PR #1835).
+CYPHER_CONTAINER_KIND = (
+    "MATCH (n) WHERE (n:Package OR n:Folder) AND n.absolute_path = $path "
+    "RETURN labels(n) AS labels"
+)
 # Removes external import-target Module nodes that no module imports anymore
 # (e.g. an imported name that was renamed/removed on an incremental rebuild).
 # OPTIONAL MATCH + count instead of `WHERE NOT (m)<--()`: Memgraph 3.x
@@ -625,6 +679,22 @@ CYPHER_ALL_PACKAGE_PATHS = (
 # $project_prefix filter scopes it to the project being indexed; without it,
 # another project's same-named symbols pollute the resolver trie and the
 # bare-name fallback binds calls across the project boundary (issue #711).
+# Parameter nodes with an annotation, for rehydrating OF_TYPE on an
+# incremental run: the owner's file is unchanged and never re-emits them, so
+# the pending list is rebuilt from the graph the way RETURNS/ACCEPTS are.
+CYPHER_PROJECT_PARAMETER_TYPES = (
+    "MATCH (p:Parameter) WHERE p.qualified_name STARTS WITH $project_prefix "
+    "AND p.type_name IS NOT NULL "
+    "RETURN p.qualified_name AS qualified_name, p.type_name AS type_name, "
+    "p.path AS path"
+)
+# The Field counterpart, read by the incremental requeue for the same reason.
+CYPHER_PROJECT_FIELD_TYPES = (
+    "MATCH (f:Field) WHERE f.qualified_name STARTS WITH $project_prefix "
+    "AND f.type_name IS NOT NULL "
+    "RETURN f.qualified_name AS qualified_name, f.type_name AS type_name, "
+    "f.path AS path"
+)
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
     "OR n:Enum OR n:Type OR n:Union) "
@@ -678,8 +748,12 @@ CYPHER_INBOUND_EDGES = (
     # annotation names a type resolves it by unique suffix without importing
     # its module, so its file is not a dependent and the edge would otherwise
     # die with the recreated type node.
+    # ANNOTATES and MENTIONS join it too (issue #1808): a gloss lives only in
+    # the graph, so the edge that attaches it to a re-parsed symbol has no
+    # source to be re-derived from and would otherwise die with the subtree,
+    # leaving the note orphaned for the next sweep to delete.
     "MATCH (caller)-[r:CALLS|REFERENCES|INSTANTIATES|IMPORTS|INHERITS|IMPLEMENTS|OVERRIDES"
-    "|RETURNS|ACCEPTS]->(target) "
+    "|RETURNS|ACCEPTS|ANNOTATES|MENTIONS]->(target) "
     "WHERE target.path IN $paths AND caller.qualified_name IS NOT NULL "
     "AND (caller.path IS NULL OR NOT caller.path IN $paths) "
     "RETURN head(labels(caller)) AS caller_label, "
@@ -809,6 +883,75 @@ KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
+
+# Gloss nodes (issue #1808): the properties an agent-authored note carries and
+# the keys its read tools answer with.
+KEY_KIND = "kind"
+KEY_STATUS = "status"
+KEY_BODY = "body"
+KEY_CREATED_BY = "created_by"
+KEY_CREATED_AT = "created_at"
+KEY_COMMIT_SHA = "commit_sha"
+KEY_TARGET_HASH = "target_hash"
+KEY_ANCHOR_STATE = "anchor_state"
+KEY_MENTIONS = "mentions"
+KEY_MENTION_QNS = "mention_qns"
+KEY_ANCHOR_HASH = "anchor_hash"
+# Written by the repair tiers (issue #1808, stage four). `moved_from` is the
+# name a MOVED gloss was written against, kept so the move stays visible;
+# `candidate_qns` lists the definitions an AMBIGUOUS gloss could belong to.
+KEY_MOVED_FROM = "moved_from"
+# The project a gloss belongs to, recorded at write time. A project name may
+# contain dots (`--project-name` is taken as given), so it cannot be read back
+# off `target_qn`; a note written before this property existed falls back to
+# the longest registered project name that prefixes its `target_qn`.
+KEY_PROJECT = "project"
+KEY_CANDIDATE_QNS = "candidate_qns"
+KEY_HASHES = "hashes"
+# Prefix on every anchor hash. A Gloss written before this format existed
+# recorded the clone skeleton (`ast_fingerprint`) as its target hash; the two
+# are not comparable, so grading is gated on the prefix and a legacy note is
+# left as it was rather than read as STALE. Bump when the hashing changes.
+ANCHOR_HASH_VERSION = "ah1:"
+KEY_WRITE_ID = "write_id"
+KEY_CANDIDATES = "candidates"
+KEY_ORPHANED = "orphaned"
+GLOSS_ID_PREFIX = "gloss:"
+GLOSS_ID_HEX_LENGTH = 24
+GLOSS_STATUS_ACCEPTED = "accepted"
+GLOSS_DEFAULT_AUTHOR = "agent"
+
+
+class GlossKind(StrEnum):
+    """What a gloss asserts. Typed so retrieval can filter by it."""
+
+    INVARIANT = "invariant"
+    MIRRORS = "mirrors"
+    PLATFORM_CONDITIONAL = "platform-conditional"
+    SAFETY_PRECONDITION = "safety-precondition"
+
+
+class GlossAnchorState(StrEnum):
+    """How well a gloss is still attached to its subject, best first.
+
+    EXACT: attached to the definition it was written against, unchanged.
+    MOVED: that name is gone, and exactly one definition in the project
+    carries the note's recorded content hash, so the note follows it; the
+    original name is kept in `moved_from` and the move stays visible.
+    STALE: attached, but the definition's content has changed since.
+    AMBIGUOUS: the name is gone and several definitions carry the hash;
+    `candidate_qns` names them and the note is attached to none.
+    LOST: the name is gone and nothing carries the hash (or the note has no
+    comparable hash). A gloss that cannot be re-anchored becomes visibly
+    LOST rather than silently re-bound (issue #1808).
+    """
+
+    EXACT = "EXACT"
+    MOVED = "MOVED"
+    STALE = "STALE"
+    AMBIGUOUS = "AMBIGUOUS"
+    LOST = "LOST"
+
 
 REL_TYPE_CALLS = "CALLS"
 

@@ -136,11 +136,26 @@ class TestReach(TypedDict):
     through: str
 
 
+class SiteCounts(TypedDict):
+    """CALLS sites into the touched files' definitions, before and after."""
+
+    before: int
+    after: int
+
+
 class SymbolDelta(TypedDict):
     added: list[str]
     removed: list[str]
     renamed: list[RenameFinding]
     changed: list[str]
+
+
+class StaleImporter(TypedDict):
+    """A module still importing from where a moved symbol used to live."""
+
+    importer: str
+    path: str
+    line: int
 
 
 class StructuralDelta(TypedDict):
@@ -154,7 +169,11 @@ class StructuralDelta(TypedDict):
     arity_findings: list[ArityAtSite]
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
+    # Importers that still name a module a moved symbol has left. Empty for
+    # every operation that moves nothing, so a non-move never carries one.
+    stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
+    call_sites: SiteCounts
     reingest_ms: float
     delta_ms: float
 
@@ -274,19 +293,10 @@ def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Sna
 # --- symbols ------------------------------------------------------------------
 
 
-def _renames(
-    removed: list[str], added: list[str], before: Snapshot, after: Snapshot
-) -> list[RenameFinding]:
-    # A rename keeps the body: the same whole-skeleton fingerprint under a
-    # new name in the same file. Paired one-to-one in sorted order so a
-    # duplicated body cannot be reported as two renames of one symbol.
-    by_shape: dict[tuple[str, str], list[str]] = {}
-    for qn in added:
-        definition = after.definitions[qn]
-        if definition.fingerprint:
-            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
-                qn
-            )
+def _pair_by_shape(
+    removed: list[str], by_shape: dict[tuple[str, str], list[str]], before: Snapshot
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 1: same fingerprint, same file, new name -- a plain rename."""
     renames: list[RenameFinding] = []
     unpaired: list[str] = []
     for qn in removed:
@@ -298,8 +308,16 @@ def _renames(
             )
         else:
             unpaired.append(qn)
-    # A move keeps the name and the body but changes the file: pair what is
-    # left by name and fingerprint across files (issue #1534).
+    return renames, unpaired
+
+
+def _pair_by_move(
+    unpaired: list[str],
+    by_shape: dict[tuple[str, str], list[str]],
+    before: Snapshot,
+    after: Snapshot,
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 2: same name and body, different file -- a move (issue #1534)."""
     by_name_shape: dict[tuple[str, str], list[str]] = {}
     for candidates in by_shape.values():
         for qn in candidates:
@@ -307,6 +325,8 @@ def _renames(
             by_name_shape.setdefault(
                 (definition.name, definition.fingerprint), []
             ).append(qn)
+    renames: list[RenameFinding] = []
+    still_unpaired: list[str] = []
     for qn in unpaired:
         definition = before.definitions[qn]
         candidates = by_name_shape.get((definition.name, definition.fingerprint))
@@ -314,6 +334,148 @@ def _renames(
             new = candidates.pop(0)
             by_shape[(after.definitions[new].path, definition.fingerprint)].remove(new)
             renames.append(RenameFinding(old=qn, new=new, path=definition.path))
+        else:
+            still_unpaired.append(qn)
+    return renames, still_unpaired
+
+
+def _carried_container(
+    qn: str,
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+) -> str | None:
+    """The added container a removed one moved to, when its members agree.
+
+    A class carries no fingerprint of its own, so a renamed class reads as
+    removed plus added; its methods do carry one and were paired already.
+    """
+    definition = before.definitions[qn]
+    if definition.fingerprint:
+        return None
+    prefix = qn + cs.SEPARATOR_DOT
+    targets = {
+        r["new"][: len(r["new"]) - (len(r["old"]) - len(qn))]
+        for r in renames
+        if r["old"].startswith(prefix)
+    }
+    if len(targets) != 1:
+        return None
+    (target,) = targets
+    candidate = after.definitions.get(target)
+    if (
+        candidate is None
+        or candidate.fingerprint
+        or candidate.label != definition.label
+        or target in paired_new
+        or target not in added
+    ):
+        return None
+    return target
+
+
+def _pair_lone_containers(
+    still_unpaired: list[str],
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]],
+) -> list[RenameFinding]:
+    """Pass 4: an EMPTY container, paired only when the caller DECLARED it.
+
+    An empty container has no fingerprint and no descendants, and the only
+    thing that changed is its name -- so nothing in the two snapshots can
+    tell a rename from a replacement. They are the same edit. Neither
+    content similarity (git's heuristic) nor tree-sitter's changed ranges
+    separates them, because the difference is intent, not syntax.
+
+    So this pass does not infer. An operation that RENAMED something knows
+    which pairs it applied and passes them in `declared`; anything else is
+    reported as a removal plus an addition, which is the truth about what
+    the snapshots show. Guessing here produced renames that never happened,
+    and the contract treats an unexpected rename as a failure, so an
+    invented one rolls back a correct edit (Greptile, PR #1547).
+    """
+    lone_removed = [
+        qn
+        for qn in still_unpaired
+        if not before.definitions[qn].fingerprint
+        and not any(r["old"] == qn for r in renames)
+    ]
+    lone_added = [
+        qn
+        for qn in added
+        if qn not in paired_new and not after.definitions[qn].fingerprint
+    ]
+    found: list[RenameFinding] = []
+    for qn in lone_removed:
+        definition = before.definitions[qn]
+        matches = [
+            other
+            for other in lone_added
+            if after.definitions[other].path == definition.path
+            and after.definitions[other].label == definition.label
+        ]
+        peers = [
+            other
+            for other in lone_removed
+            if before.definitions[other].path == definition.path
+            and before.definitions[other].label == definition.label
+        ]
+        if len(matches) == 1 and len(peers) == 1:
+            # The only admissible evidence: the operation says it did this.
+            if (qn, matches[0]) not in declared:
+                continue
+            found.append(RenameFinding(old=qn, new=matches[0], path=definition.path))
+            paired_new.add(matches[0])
+            lone_added.remove(matches[0])
+    return found
+
+
+def _renames(
+    removed: list[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
+) -> list[RenameFinding]:
+    # A rename keeps the body: the same whole-skeleton fingerprint under a
+    # new name in the same file. Paired one-to-one in sorted order so a
+    # duplicated body cannot be reported as two renames of one symbol.
+    #
+    # Four passes, each narrower than the last and each extracted to its own
+    # function (S3776): plain rename, move, container carried by its members,
+    # then the lone empty container.
+    by_shape: dict[tuple[str, str], list[str]] = {}
+    for qn in added:
+        definition = after.definitions[qn]
+        if definition.fingerprint:
+            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
+                qn
+            )
+
+    renames, unpaired = _pair_by_shape(removed, by_shape, before)
+    moved, still_unpaired = _pair_by_move(unpaired, by_shape, before, after)
+    renames.extend(moved)
+
+    paired_new = {r["new"] for r in renames}
+    for qn in still_unpaired:
+        target = _carried_container(qn, renames, paired_new, added, before, after)
+        if target is not None:
+            renames.append(
+                RenameFinding(old=qn, new=target, path=before.definitions[qn].path)
+            )
+            paired_new.add(target)
+
+    renames.extend(
+        _pair_lone_containers(
+            still_unpaired, renames, paired_new, added, before, after, declared
+        )
+    )
     return renames
 
 
@@ -329,10 +491,14 @@ def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     return changed
 
 
-def _symbols(before: Snapshot, after: Snapshot) -> SymbolDelta:
+def _symbols(
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
+) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after)
+    renamed = _renames(removed, added, before, after, declared)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -824,6 +990,15 @@ def _tests_reaching(
 # --- the delta ----------------------------------------------------------------
 
 
+def _inbound_calls(snap: Snapshot) -> int:
+    return sum(
+        1
+        for site in snap.sites
+        if site.rel == cs.RelationshipType.CALLS.value
+        and site.callee in snap.definitions
+    )
+
+
 def structural_delta(
     fetch_all: QueryFn,
     project_name: str,
@@ -831,10 +1006,16 @@ def structural_delta(
     after: Snapshot,
     report: ReingestReport | None = None,
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
-    """Diff two snapshots of the same paths, then look up what they touch."""
+    """Diff two snapshots of the same paths, then look up what they touch.
+
+    `declared_renames` are pairs the CALLER applied and therefore knows. They
+    are needed only where the snapshots cannot show identity -- an empty
+    container -- and are empty for a plain write, which really is inferring.
+    """
     started = time.perf_counter()
-    symbols = _symbols(before, after)
+    symbols = _symbols(before, after, declared_renames)
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -854,12 +1035,68 @@ def structural_delta(
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh),
         new_import_cycles=_new_import_cycles(before, after),
+        stale_importers=_stale_importers(after, symbols),
         tests_reaching=_tests_reaching(fetch_all, project_name, touched)
         if touched
         else [],
+        call_sites=SiteCounts(
+            before=_inbound_calls(before), after=_inbound_calls(after)
+        ),
         reingest_ms=round(report.elapsed_ms, 1) if report else 0.0,
         delta_ms=round((time.perf_counter() - started) * 1000, 1),
     )
+
+
+def _module_of(qualified_name: str) -> str:
+    """The module a symbol's qualified name sits in, or "" if it has none."""
+    head, sep, _tail = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    return head if sep else ""
+
+
+def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporter]:
+    """Importers still naming a module every moved symbol has left.
+
+    A MOVE is a rename whose module segment changed; a plain rename keeps the
+    module and is not one, so it contributes no vacated module and this
+    returns empty for it. That is what keeps the check specific to moves
+    without the contract having to say so (#1825).
+
+    "Vacated" is the load-bearing word. A module that still defines anything
+    is a legitimate import target, so only a module the moved symbols left
+    EMPTY counts -- otherwise moving one helper out of a busy module would
+    report every importer of its remaining siblings.
+    """
+    vacated: set[str] = set()
+    for renamed in symbols["renamed"]:
+        old_module = _module_of(str(renamed["old"]))
+        new_module = _module_of(str(renamed["new"]))
+        if old_module and old_module != new_module:
+            vacated.add(old_module)
+    if not vacated:
+        return []
+    # Anything the graph still defines under a vacated module means the module
+    # is alive and importing it is correct.
+    still_defined = {
+        _module_of(qn) for qn in after.definitions if _module_of(qn) in vacated
+    }
+    vacated -= still_defined
+    if not vacated:
+        return []
+    stale: list[StaleImporter] = []
+    for importer, targets in after.imports.items():
+        # One entry per IMPORTER, not per stale target: the finding is that
+        # this module still points at somewhere the move emptied, and naming
+        # the same importer once per vacated target would repeat it.
+        if not targets & vacated:
+            continue
+        stale.append(
+            StaleImporter(
+                importer=importer,
+                path=after.module_paths.get(importer, ""),
+                line=0,
+            )
+        )
+    return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
 
 
 def observe(
@@ -868,6 +1105,7 @@ def observe(
     paths: Iterable[str],
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -881,7 +1119,15 @@ def observe(
     report = apply()
     reingest_ms = (time.perf_counter() - apply_started) * 1000
     after = snapshot(fetch_all, project_name, path_list)
-    delta = structural_delta(fetch_all, project_name, before, after, report, repo_root)
+    delta = structural_delta(
+        fetch_all,
+        project_name,
+        before,
+        after,
+        report,
+        repo_root,
+        declared_renames=declared_renames,
+    )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.

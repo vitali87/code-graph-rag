@@ -210,7 +210,9 @@ def test_ensure_node_batch_no_oneof_mapping_logs_warning(tmp_path: Path) -> None
     ingestor.ensure_node_batch(
         cs.NodeLabel.PROJECT, {"name": "test_proj", "qualified_name": "test_proj"}
     )
-    assert "test_proj" in ingestor._nodes
+    # Node identity is (label, id): a Field and a Method may share one
+    # qualified name and both must survive the export (#1899).
+    assert (cs.NodeLabel.PROJECT, "test_proj") in ingestor._nodes
 
 
 def test_ensure_relationship_batch_dedup(tmp_path: Path) -> None:
@@ -367,7 +369,10 @@ def test_cross_label_qn_collision_does_not_clear_existing_payload(
     # Rust `mod run` and `fn run` share one qn string across labels. A
     # later ensure under a DIFFERENT label must not merge into the stored
     # node: writing through the other oneof field would switch the payload
-    # and clear the first label's data.
+    # and clear the first label's data. Identity is (label, qn), so the
+    # second label gets its OWN record rather than being dropped -- the
+    # export keeps both, nothing is cleared (#1899: a Field and a Method
+    # sharing `<owner>.<name>` was losing one of the pair).
     output_dir = tmp_path / "out_collision"
     output_dir.mkdir(parents=True, exist_ok=True)
     ingestor = ProtobufFileIngestor(str(output_dir), split_index=False)
@@ -385,7 +390,8 @@ def test_cross_label_qn_collision_does_not_clear_existing_payload(
     deserialized_index = pb.GraphCodeIndex()
     deserialized_index.ParseFromString((output_dir / "index.bin").read_bytes())
 
-    assert len(deserialized_index.nodes) == 1
-    node = deserialized_index.nodes[0]
-    assert node.WhichOneof("payload") == "module"
-    assert node.module.path == "src/run.rs"
+    assert len(deserialized_index.nodes) == 2
+    by_kind = {n.WhichOneof("payload"): n for n in deserialized_index.nodes}
+    assert set(by_kind) == {"module", "function"}
+    assert by_kind["module"].module.path == "src/run.rs"
+    assert by_kind["function"].function.start_line == 3

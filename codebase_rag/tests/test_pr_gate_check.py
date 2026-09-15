@@ -28,6 +28,7 @@ import json
 
 import pytest
 
+from codebase_rag.tests.conftest import assert_fixture_covers
 from scripts import check_pr_gated
 from scripts.check_pr_gated import (
     AGGREGATED_JOBS,
@@ -1654,12 +1655,18 @@ class TestTheAllConcludedFixtureCoversEveryDependency:
 
     def test_the_fixture_covers_every_aggregated_job(self) -> None:
         covered = {
-            check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+            job
             for entry in REAL_ROLLUP_ALL_CONCLUDED
-        } - {None}
+            if (
+                job := check_pr_gated.aggregated_job_for(
+                    check_pr_gated.context_name(entry)
+                )
+            )
+            is not None
+        }
 
-        assert covered == set(AGGREGATED_JOBS), (
-            f"fixture no longer covers: {sorted(set(AGGREGATED_JOBS) - covered)}"
+        assert_fixture_covers(
+            covered, set(AGGREGATED_JOBS), what="the all-concluded rollup"
         )
 
     def test_one_unfinished_dependency_flips_the_verdict(self) -> None:
