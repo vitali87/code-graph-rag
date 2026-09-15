@@ -62,6 +62,7 @@ TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
+TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # Match statement: arms are exclusive; an UNGUARDED `case _` (empty
 # case_pattern) always matches, removing the implicit no-match path.
 TS_PY_MATCH_STATEMENT = "match_statement"
@@ -76,6 +77,11 @@ TS_PY_DOTTED_NAME = "dotted_name"
 # `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
 # node, invisible to named_children.
 TS_PY_UNION_PATTERN = "union_pattern"
+# `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
+TS_PY_KEYWORD_PATTERN = "keyword_pattern"
+TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `import x as y` / `from m import x as y`; the alias is a local binding.
+TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"

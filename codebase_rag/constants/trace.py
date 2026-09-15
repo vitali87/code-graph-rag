@@ -56,6 +56,8 @@ TRACE_SYNTHETIC_PREFIX = "<"
 # V8 cpuprofile markers.
 TRACE_QUALNAME_ANONYMOUS = "<anonymous>"
 TRACE_JS_FILE_URL_PREFIX = "file://"
+TRACE_JS_LOCAL_FILE_HOST = "localhost"
+TRACE_JS_UNC_PATH = "//{host}{path}"
 
 TRACE_ERR_BAD_CPUPROFILE = "{path} is not a V8 .cpuprofile (missing node tree)."
 

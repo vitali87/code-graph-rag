@@ -20,6 +20,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass
+from os.path import normcase
 from pathlib import Path
 from typing import cast
 from urllib.parse import unquote, urlparse
@@ -83,8 +84,11 @@ def _url_to_path(url: str) -> str:
     """
     # V8 URLs (and Path.as_uri) percent-encode spaces and other characters;
     # decode so the path matches the real repo prefix.
-    path = unquote(urlparse(url).path)
-    if _DRIVE_LETTER.match(path):
+    parsed = urlparse(url)
+    path = unquote(parsed.path)
+    if parsed.netloc and parsed.netloc.lower() != cs.TRACE_JS_LOCAL_FILE_HOST:
+        path = cs.TRACE_JS_UNC_PATH.format(host=parsed.netloc, path=path)
+    elif _DRIVE_LETTER.match(path):
         path = path[1:]
     # Normalise to POSIX separators so a Windows drive path (`C:\repo\main.js`)
     # matches the POSIX `root_prefix`; the graph stores POSIX paths too.
@@ -129,9 +133,9 @@ def _project_frame(
         path, source_line = remapped
     else:
         path, source_line = generated_path, line + 1
-    if not path.startswith(root_prefix):
+    if not normcase(path).startswith(normcase(root_prefix)):
         return None
-    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(path).parts):
+    if not cs.TRACE_EXCLUDED_DIR_NAMES.isdisjoint(Path(normcase(path)).parts):
         return None
     # Only project frames count toward the resolution rate; the source-map
     # outcome categorises whether each landed on its source or fell back.

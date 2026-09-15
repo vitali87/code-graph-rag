@@ -992,7 +992,7 @@ class MCPToolsRegistry:
         # (issue #1828; caught in review of #1856). Exactly the rule the
         # incomplete-run marker follows two lines below.
         if isinstance(self.ingestor, QueryProtocol):
-            prune_orphaned_glosses(self.ingestor)
+            prune_orphaned_glosses(self.ingestor, project_name)
         # Invariant (b). The marker sits on its own node so `delete_project`
         # cannot reach it -- which is what lets it survive an index's
         # delete-then-rebuild -- so a deliberate delete must remove it. The
