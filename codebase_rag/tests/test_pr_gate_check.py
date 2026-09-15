@@ -2070,9 +2070,102 @@ class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:
 
         monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
 
+        reasons, caveats = check_pr_gated.check("1930")
+
+        # The unread run is now reported by its own, more specific reason
+        # rather than folded into the ownership message: the question
+        # "did every run's detail parse" is prior to "which PR do they name".
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+        # And it is a REASON, never a caveat -- the closure excuse must not
+        # reach it, which is the whole point of this case.
+        assert not any("cleared its runs" in c for c in caveats), caveats
+
+    def _fake_two_runs(self, state: str, second_detail: str):
+        """Two CI runs at one head: 777 names this PR, 888 is `second_detail`."""
+        view = {
+            "headRefOid": self.HEAD,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+            "state": state,
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={self.HEAD}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": rid,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": self.HEAD,
+                            }
+                            for rid in (777, 888)
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/777"):
+                return json.dumps({"pull_requests": [{"number": 1930}]})
+            if args[0] == "api" and args[1].endswith("/actions/runs/888"):
+                return second_detail
+            return ""
+
+        return fake
+
+    def test_one_readable_run_does_not_excuse_an_unreadable_sibling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A matching owner must not mask incomplete evidence (bot review).
+
+        A head can carry several CI runs. When one resolves to this PR and
+        another cannot be read, `pr in owners` is true, so folding the
+        read-check into that condition reports nothing at all -- and the
+        unread run may be the one naming a different PR. Ownership is a claim
+        about EVERY run at the head, so it is checked first and on its own.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_two_runs("OPEN", "")
+        )
+
         reasons, _caveats = check_pr_gated.check("1930")
 
-        assert any("does not resolve to" in r for r in reasons), reasons
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+
+    def test_an_unreadable_sibling_is_not_excused_by_closure_either(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same on a MERGED PR, where the closure excuse might cover it."""
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_two_runs("MERGED", "")
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+
+    def test_a_detail_omitting_the_field_is_missing_data_not_a_clear(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A truthy detail with no `pull_requests` KEY is absent data.
+
+        GitHub's cleared form is `"pull_requests": []` -- the key present and
+        empty (verified on run 34874043546, a 35-key object). A response that
+        omits the key says nothing about ownership, so excusing it on a merged
+        PR would treat missing data as a verified clear.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            self._fake_two_runs("MERGED", json.dumps({"id": 888, "status": "done"})),
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
 
     def test_an_open_pr_owned_by_another_number_still_fails_closed(
         self, monkeypatch: pytest.MonkeyPatch

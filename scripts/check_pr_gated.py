@@ -658,13 +658,18 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             detail = _json_dict(
                 _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
             )
-            if not detail:
+            associated = detail.get("pull_requests")
+            if not detail or not isinstance(associated, list):
+                # Unreadable, or readable but carrying no `pull_requests` FIELD.
+                # A truthy detail that omits the key entirely is missing data,
+                # not a cleared association: GitHub's own cleared form is
+                # `"pull_requests": []`, a present-but-empty list (verified on
+                # run 34874043546, a 35-key object). Treating an absent key as
+                # cleared would excuse incomplete evidence on a closed PR.
                 all_details_read = False
                 continue
             owners.update(
-                str(p.get("number"))
-                for p in detail.get("pull_requests", [])
-                if isinstance(p, dict)
+                str(p.get("number")) for p in associated if isinstance(p, dict)
             )
         # GitHub CLEARS a run's `pull_requests` once its PR closes or merges
         # (issue #1944), so on a closed PR an empty owner set is GitHub's own
@@ -683,7 +688,18 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         cleared_by_close = (
             not owners and all_details_read and state in ("MERGED", "CLOSED")
         )
-        if pr not in owners and not cleared_by_close:
+        if not all_details_read:
+            # Checked BEFORE the owner match, not folded into it. A head can
+            # carry several CI runs: if one resolves to this PR and another is
+            # unreadable, `pr in owners` is true and the incomplete evidence
+            # would never be reported. Ownership is a claim about EVERY run at
+            # the head, so one unread run makes the answer unverified however
+            # good the others look.
+            reasons.append(
+                f"could not read every CI run detail at {head[:8]}, so run "
+                "ownership is unverified; an unread run may name another PR"
+            )
+        elif pr not in owners and not cleared_by_close:
             # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
             # fetch failed, or one reporting `pull_requests: []`, leaves
             # `owners` empty; the earlier `if owners and ...` guard then never
