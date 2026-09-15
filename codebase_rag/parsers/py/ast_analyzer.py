@@ -337,6 +337,44 @@ def _locally_bound_names(caller: Node, import_map: dict[str, str]) -> frozenset[
     return frozenset(names)
 
 
+def reimport_restore_points(caller: Node, import_map: dict[str, str]) -> dict[str, int]:
+    """Where a body-level re-import puts an otherwise locally bound name back
+    on the module.
+
+    {@link _locally_bound_names} treats such a name as not shadowed at all,
+    which is right for a call written after the import and wrong for one
+    written before it. `helpers = supplied` binds the name for the whole body,
+    so a call sitting between the assignment and `from . import helpers` reads
+    the local, and only a call below the import reads the module.
+
+    The offset is the end of the EARLIEST restoring import, because that is the
+    first point from which the module binding holds. Only names the caller also
+    binds some other way are reported: a body whose single binding IS the
+    import has no local for a call to read instead, and keeps the answer it has
+    today rather than gaining a shadow no assignment created.
+    """
+    restores: dict[str, int] = {}
+    otherwise_bound: set[str] = set()
+    scope: Node | None = caller
+    while scope is not None:
+        if scope.id == caller.id or scope.type == cs.TS_PY_FUNCTION_DEFINITION:
+            declared = _declared_non_local(scope)
+            for binder, identifier in _bindings_in(scope):
+                name = safe_decode_text(identifier)
+                if not name or name in declared:
+                    continue
+                if _reimports(binder, name, import_map):
+                    previous = restores.get(name)
+                    if previous is None or binder.end_byte < previous:
+                        restores[name] = binder.end_byte
+                elif not _guards_an_optional_import(binder, name, import_map):
+                    otherwise_bound.add(name)
+        scope = scope.parent
+    return {
+        name: offset for name, offset in restores.items() if name in otherwise_bound
+    }
+
+
 def _call_bound_by(binder: Node) -> Node | None:
     """The call a plain `p = call()` binds to its WHOLE target, else None:
     `p, q = fw()`, `p += x`, `for p in xs`, `with cm as p`, `(p := x)` and
@@ -528,6 +566,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not import_map:
             return frozenset()
         return _locally_bound_names(caller, import_map) & frozenset(import_map)
+
+    def reimport_restore_points(self, caller: Node, module_qn: str) -> dict[str, int]:
+        """Byte offsets from which a re-import puts a shadowed name back on the
+        module, for the names {@link shadowed_import_names} therefore leaves
+        out. A call BELOW the offset reads the module; one above it reads the
+        local the body also binds.
+        """
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if not import_map:
+            return {}
+        points = reimport_restore_points(caller, import_map)
+        return {name: offset for name, offset in points.items() if name in import_map}
 
     queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]

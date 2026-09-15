@@ -161,6 +161,85 @@ _HANDLER_GUARDS_ANOTHER_IMPORT = (
 )
 
 
+_REIMPORT_BELOW_THE_CALL = (
+    "def use(supplied) -> int:\n"
+    "    helpers = supplied\n"
+    "    w = helpers.make_pair()\n"
+    "    from . import helpers\n"
+    "    return w[0]\n"
+)
+
+_REIMPORT_ABOVE_THE_CALL = (
+    "def use(supplied) -> int:\n"
+    "    helpers = supplied\n"
+    "    from . import helpers\n"
+    "    w = helpers.make_pair()\n"
+    "    return w[0]\n"
+)
+
+
+def test_a_reimport_below_the_call_does_not_reach_back_up(tmp_path: Path) -> None:
+    """A re-import restores the module binding from where it runs, not for the
+    whole body.
+
+    `helpers = supplied` makes the name local for every line of `use`, and the
+    call above the import reads what the assignment put there. Treating the
+    re-import as caller-wide answered that call with the module, which is an
+    edge to code it cannot reach -- the same defect #1907 is about, one step
+    further in.
+    """
+    calls = _calls_from_use(_build(tmp_path, _REIMPORT_BELOW_THE_CALL))
+    assert "proj.helpers.make_pair" not in calls, sorted(calls)
+
+
+def test_a_reimport_above_the_call_still_keeps_the_edge(tmp_path: Path) -> None:
+    """The control for it, and the reason the rule is positional rather than a
+    refusal: the same body with the two lines swapped reads the module, so the
+    cell above measures the position and not the presence of the assignment."""
+    calls = _calls_from_use(_build(tmp_path, _REIMPORT_ABOVE_THE_CALL))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+_TWO_REIMPORTS_AROUND_THE_CALL = (
+    "def use(supplied) -> int:\n"
+    "    helpers = supplied\n"
+    "    from . import helpers\n"
+    "    w = helpers.make_pair()\n"
+    "    from . import helpers\n"
+    "    return w[0]\n"
+)
+
+_REIMPORT_IS_THE_ONLY_BINDING = (
+    "def use() -> int:\n"
+    "    w = helpers.make_pair()\n"
+    "    from . import helpers\n"
+    "    return w[0]\n"
+)
+
+
+def test_the_earliest_reimport_is_the_one_that_restores(tmp_path: Path) -> None:
+    """Two re-imports of the same name, with the call between them. The module
+    binding holds from the FIRST one, so the call reads the module; taking the
+    last would put the call above the restore point and drop a real edge."""
+    calls = _calls_from_use(_build(tmp_path, _TWO_REIMPORTS_AROUND_THE_CALL))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
+def test_an_import_that_is_the_only_binding_keeps_todays_answer(
+    tmp_path: Path,
+) -> None:
+    """The scope line, stated as a cell rather than left to the comment.
+
+    Here the body binds `helpers` only by importing it, so there is no local
+    for the call above the import to read; at runtime that line is a
+    `NameError` either way. Positioning it would turn the edge off, which is a
+    change this PR is not making, so the restore point is withheld for a name
+    nothing else binds and the answer stays what it is on `main`.
+    """
+    calls = _calls_from_use(_build(tmp_path, _REIMPORT_IS_THE_ONLY_BINDING))
+    assert "proj.helpers.make_pair" in calls, sorted(calls)
+
+
 def test_an_optional_import_fallback_is_not_a_shadow(tmp_path: Path) -> None:
     """`except ImportError: helpers = None` guarding `from . import helpers`
     binds the name, but on the path where it resolves to anything reachable

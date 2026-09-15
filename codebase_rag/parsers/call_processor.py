@@ -3188,6 +3188,16 @@ class CallProcessor:
                 self._resolver.python_shadowed_imports[caller_qn] = shadowed
             else:
                 self._resolver.python_shadowed_imports.pop(caller_qn, None)
+            # Names the set above leaves out because a body-level re-import
+            # restores them, with the offset that restore takes effect from:
+            # a call written ABOVE it still reads the local (issue #1907).
+            restores = self._resolver.type_inference.python_type_inference.reimport_restore_points(
+                caller_node, module_qn
+            )
+            if restores:
+                self._resolver.python_reimport_points[caller_qn] = restores
+            else:
+                self._resolver.python_reimport_points.pop(caller_qn, None)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;

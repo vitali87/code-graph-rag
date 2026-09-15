@@ -149,6 +149,7 @@ class CallResolver:
     __slots__ = (
         "_py_rel_to_module",
         "python_shadowed_imports",
+        "python_reimport_points",
         "function_registry",
         "import_processor",
         "type_inference",
@@ -195,6 +196,7 @@ class CallResolver:
         # caller qn -> import-map names that caller binds as locals (#1907);
         # filled by the call processor before the caller's calls resolve.
         self.python_shadowed_imports: dict[str, frozenset[str]] = {}
+        self.python_reimport_points: dict[str, dict[str, int]] = {}
         # Every inline `mod` qn the class pass ingested (shared ref). A Rust
         # enclosing scope is an inline mod IFF it is in here: an impl target is
         # not, and neither is registered under a type label when it is a
@@ -458,14 +460,26 @@ class CallResolver:
         call_name: str,
         caller_qn: str | None,
         local_var_types: dict[str, str] | None,
+        call_point: int | None = None,
     ) -> bool:
         if not caller_qn or cs.SEPARATOR_DOT not in call_name:
             return False
-        shadowed = self.python_shadowed_imports.get(caller_qn)
-        if not shadowed:
-            return False
         head = call_name.split(cs.SEPARATOR_DOT, 1)[0]
-        return head in shadowed and not (local_var_types and head in local_var_types)
+        if local_var_types and head in local_var_types:
+            return False
+        shadowed = head in (self.python_shadowed_imports.get(caller_qn) or frozenset())
+        # A body-level re-import is positional, and the caller-wide set cannot
+        # say so. `helpers = supplied` above `from . import helpers` binds the
+        # name for the whole body -- which is why the set holds it -- but the
+        # import puts the module back from the line it runs, so a call below it
+        # reads the module and one above it reads the local. Where there is a
+        # restore point the position decides on its own; the set decides only
+        # when the call has no position to judge by, which keeps the answer it
+        # gave before this was positional.
+        offset = (self.python_reimport_points.get(caller_qn) or {}).get(head)
+        if offset is None:
+            return shadowed
+        return shadowed if call_point is None else call_point < offset
 
     def _resolve_inline_receiver_call(
         self,
@@ -1208,7 +1222,9 @@ class CallResolver:
             # poisoning theirs), and the bare-name trie must not guess
             # either (issue #1907). A typed shadow (`helpers: W = ...`)
             # resolves through its type as any local does.
-            if self._receiver_is_untyped_shadow(call_name, caller_qn, local_var_types):
+            if self._receiver_is_untyped_shadow(
+                call_name, caller_qn, local_var_types, call_point
+            ):
                 return None
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
