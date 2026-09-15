@@ -1061,3 +1061,128 @@ def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
     assert delta["symbols"]["renamed"] == []
     assert _qn("pkg.empty.Alpha") in delta["symbols"]["removed"]
     assert _qn("pkg.empty.Renamed") in delta["symbols"]["added"]
+
+
+def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # Issue #1836, fixed in #1880 -- this is the regression guard for it.
+    # The three tests above each rename ONE empty class, so the candidate
+    # sets are unique and a uniqueness precondition never fires. Renaming two
+    # empty classes in the same file is the case that broke: each candidate
+    # then has a peer, so a guard that ranks uniqueness ahead of `declared`
+    # drops a pairing the operation explicitly named, and the contract sees
+    # two removals plus two additions instead of two renames -- rolling back
+    # a correct edit. Verified sensitive: reinstating that precondition on
+    # main reddens this test and the one below, and no other.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n\n\nclass Beta:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Gamma:\n    pass\n\n\nclass Delta:\n    pass\n")
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {
+                (_qn("pkg.empty.Alpha"), _qn("pkg.empty.Gamma")),
+                (_qn("pkg.empty.Beta"), _qn("pkg.empty.Delta")),
+            }
+        ),
+    )
+
+    assert sorted(delta["symbols"]["renamed"], key=lambda r: r["old"]) == [
+        {
+            "old": _qn("pkg.empty.Alpha"),
+            "new": _qn("pkg.empty.Gamma"),
+            "path": "pkg/empty.py",
+        },
+        {
+            "old": _qn("pkg.empty.Beta"),
+            "new": _qn("pkg.empty.Delta"),
+            "path": "pkg/empty.py",
+        },
+    ]
+
+
+def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The known-positive for the test above: admitting a declared pair past
+    # the uniqueness guard must NOT admit an undeclared one alongside it.
+    # Only Alpha->Gamma is declared, so Beta and Delta stay a removal plus an
+    # addition even though both sit in the same ambiguous group.
+    root, store, updater = indexed
+    _write(root, "pkg/empty.py", "class Alpha:\n    pass\n\n\nclass Beta:\n    pass\n")
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(root, "pkg/empty.py", "class Gamma:\n    pass\n\n\nclass Delta:\n    pass\n")
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset({(_qn("pkg.empty.Alpha"), _qn("pkg.empty.Gamma"))}),
+    )
+
+    assert delta["symbols"]["renamed"] == [
+        {
+            "old": _qn("pkg.empty.Alpha"),
+            "new": _qn("pkg.empty.Gamma"),
+            "path": "pkg/empty.py",
+        }
+    ]
+    assert _qn("pkg.empty.Beta") in delta["symbols"]["removed"]
+    assert _qn("pkg.empty.Delta") in delta["symbols"]["added"]
+
+
+def test_two_declared_nested_class_renames_are_both_reported(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The nested shape, which is what issue #1836 actually describes. The
+    # test above renames two MODULE-LEVEL empty classes, so a regression
+    # specific to nested qualified names would pass it (CodeRabbit on
+    # #1945). Here both renamed classes sit inside a stable enclosing
+    # class, so their qualified names carry the enclosing scope.
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/empty.py",
+        "class Outer:\n    class Alpha:\n        pass\n\n"
+        "    class Beta:\n        pass\n",
+    )
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(
+        root,
+        "pkg/empty.py",
+        "class Outer:\n    class Gamma:\n        pass\n\n"
+        "    class Delta:\n        pass\n",
+    )
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {
+                (_qn("pkg.empty.Outer.Alpha"), _qn("pkg.empty.Outer.Gamma")),
+                (_qn("pkg.empty.Outer.Beta"), _qn("pkg.empty.Outer.Delta")),
+            }
+        ),
+    )
+
+    assert sorted(delta["symbols"]["renamed"], key=lambda r: r["old"]) == [
+        {
+            "old": _qn("pkg.empty.Outer.Alpha"),
+            "new": _qn("pkg.empty.Outer.Gamma"),
+            "path": "pkg/empty.py",
+        },
+        {
+            "old": _qn("pkg.empty.Outer.Beta"),
+            "new": _qn("pkg.empty.Outer.Delta"),
+            "path": "pkg/empty.py",
+        },
+    ]
