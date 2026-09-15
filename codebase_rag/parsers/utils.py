@@ -24,6 +24,7 @@ from ..types_defs import (
     TreeSitterNodeProtocol,
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
+from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .endpoints import emit_endpoints, queue_endpoints
 
@@ -322,6 +323,10 @@ def _decorator_tail_names(decorators: list[str]) -> set[str]:
 
 def _is_property_decorator(decorators: list[str]) -> bool:
     return bool(_decorator_tail_names(decorators) & cs.PROPERTY_DECORATORS)
+
+
+def _is_static_decorator(decorators: list[str]) -> bool:
+    return bool(_decorator_tail_names(decorators) & cs.STATIC_DECORATORS)
 
 
 def _is_abstract_decorator(decorators: list[str]) -> bool:
@@ -1234,8 +1239,8 @@ def ingest_method(
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[ASTNode], str | None],
-    language: cs.SupportedLanguage | None = None,
+    get_docstring_func: Callable[[ASTNode, cs.SupportedLanguage], str | None],
+    language: cs.SupportedLanguage,
     lang_queries: LanguageQueries | None = None,
     method_qualified_name: str | None = None,
     file_path: Path | None = None,
@@ -1247,6 +1252,7 @@ def ingest_method(
     skip_cpp_artifact_check: bool = False,
     pending_endpoints: list | None = None,
     type_fact_sink: list | None = None,
+    parameter_type_sink: list | None = None,
 ) -> str | None:
     # Returns the registered method qn (post register_unique_qn, so with any
     # @line dedup suffix) so a caller can wire further edges to the exact node,
@@ -1339,11 +1345,9 @@ def ingest_method(
         # Dart method signatures end before their sibling function_body;
         # extend the span over the body (no-op for other languages).
         cs.KEY_END_LINE: _method_end_line(method_node, language),
-        cs.KEY_DOCSTRING: get_docstring_func(method_node),
-        cs.KEY_IS_EXPORTED: (
-            export_detection.is_exported(method_node, method_name, language)
-            if language is not None
-            else False
+        cs.KEY_DOCSTRING: get_docstring_func(method_node, language),
+        cs.KEY_IS_EXPORTED: export_detection.is_exported(
+            method_node, method_name, language
         ),
     }
     if file_path is not None and repo_path is not None:
@@ -1363,10 +1367,17 @@ def ingest_method(
 
     type_facts = extract_type_facts(method_node, language)
     method_props.update(type_facts_props(type_facts))
+    method_path = method_props.get(cs.KEY_PATH)
     queue_type_facts(
-        type_fact_sink, cs.NodeLabel.METHOD, method_qn, module_qn, type_facts
+        type_fact_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        type_facts,
+        method_path if isinstance(method_path, str) else None,
     )
     method_props.update(fingerprint_props(method_node))
+    method_props.update(anchor_hash_props(method_node, decorators))
 
     # Persist @property status on the node so an incremental rebuild can restore
     # the registry's property-name set for unchanged files (it re-marks from this
@@ -1420,6 +1431,23 @@ def ingest_method(
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
+    # AFTER the Method node is queued: a batch flush writes nodes before
+    # relationships, and a HAS_PARAMETER whose owner is still pending would
+    # match nothing and be dropped. Local import for the same reason as
+    # type_facts above.
+    from .parameter_nodes import emit_declared_parameters
+
+    emit_declared_parameters(
+        ingestor,
+        parameter_type_sink,
+        cs.NodeLabel.METHOD,
+        method_qn,
+        module_qn,
+        method_node,
+        language,
+        method_props,
+        has_receiver=not _is_static_decorator(decorators),
+    )
     if pending_endpoints is not None:
         # Deferred so router mount prefixes can resolve after Pass 2 (#877).
         queue_endpoints(
@@ -1513,6 +1541,7 @@ def module_function_props(
         props[cs.KEY_PATH] = cached_relative_path(file_path, repo_path).as_posix()
         props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
     props.update(fingerprint_props(function_node))
+    props.update(anchor_hash_props(function_node))
     return props
 
 
@@ -1524,7 +1553,8 @@ def ingest_exported_function(
     ingestor: IngestorProtocol,
     function_registry: FunctionRegistryTrieProtocol,
     simple_name_lookup: SimpleNameLookup,
-    get_docstring_func: Callable[[ASTNode], str | None],
+    get_docstring_func: Callable[[ASTNode, cs.SupportedLanguage], str | None],
+    language: cs.SupportedLanguage,
     is_export_inside_function_func: Callable[[ASTNode], bool],
     file_path: Path | None,
     repo_path: Path | None,
@@ -1562,7 +1592,7 @@ def ingest_exported_function(
         function_qn,
         function_name,
         function_node,
-        get_docstring_func(function_node),
+        get_docstring_func(function_node, language),
         file_path,
         repo_path,
     )
@@ -1613,6 +1643,30 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
             return False
         current = current.parent
     return False
+
+
+def enclosing_class_node(
+    func_node: ASTNode, lang_config: LanguageSpec
+) -> ASTNode | None:
+    """The nearest class node above func_node, or None if the module comes first.
+
+    Unlike is_method_node this does not stop at an enclosing function, so a
+    `def inner()` nested in a method still reports its class. The call
+    processor uses it to hand everything scoped inside a class body to the
+    class pass instead of walking it a second time (issue #1903).
+    """
+    current = func_node.parent
+    if not isinstance(current, Node):
+        return None
+    class_types = lang_config.class_node_types
+    module_types = lang_config.module_node_types
+    while current is not None:
+        if current.type in module_types:
+            return None
+        if current.type in class_types:
+            return current
+        current = current.parent
+    return None
 
 
 def module_qn_for_entity(

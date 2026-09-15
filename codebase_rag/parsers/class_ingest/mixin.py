@@ -31,8 +31,10 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
+from ..parameter_nodes import PendingParameterType
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -198,6 +200,8 @@ class ClassIngestMixin:
     rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
+    pending_field_types: list[PendingFieldType]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -222,7 +226,9 @@ class ClassIngestMixin:
         )
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
@@ -1084,7 +1090,7 @@ class ClassIngestMixin:
             cs.KEY_START_LINE: class_start_line,
             cs.KEY_START_COL: class_start_col,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(class_node),
+            cs.KEY_DOCSTRING: self._get_docstring(class_node, language),
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:
@@ -1130,6 +1136,25 @@ class ClassIngestMixin:
         # type_spec is class_node, so this is a no-op for non-templates and for
         # Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
+        # Declared fields ride with their owner: same gate, same props source
+        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
+        # Emitted AFTER the owner node so a batch flush never writes the edge
+        # before its endpoint, and from member_node: a templated C++ class's
+        # wrapper has no body, its members live on the inner class_specifier
+        # (local review P1).
+        emit_declared_fields(
+            self.ingestor,
+            self.pending_field_types,
+            # `determine_node_type` returns a NodeType; every member's value is a
+            # NodeLabel value (checked when this was written), so the owner
+            # label is the same name in the graph's own enum.
+            cs.NodeLabel(node_type.value),
+            class_qn,
+            module_qn,
+            member_node,
+            language,
+            class_props,
+        )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
@@ -1412,6 +1437,7 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             # Record where this method landed, same as the generic method
             # path: the registered qn (a collision deduplicates it to
@@ -1562,6 +1588,7 @@ class ClassIngestMixin:
                 annotated_override_sink=annotated_override_sink,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             if (
                 ingested_qn is not None

@@ -851,6 +851,13 @@ class PendingTypeFact(NamedTuple):
     module_qn: str
     return_type: str | None
     param_types: list[str] | None
+    # The owning file's relative path. Scoped re-ingestion discards the facts
+    # of the files it re-parses by THIS, not by module_qn: `foo.py` and
+    # `foo/__init__.py` share `proj.foo`, and keying on the qn dropped the
+    # unchanged file's facts with the re-parsed one's, leaving its detached
+    # RETURNS/ACCEPTS unbuilt (issue #1892). None only when the definition
+    # was ingested without a file, in which case the module qn is the key.
+    path: str | None = None
 
 
 class DeferredImportEdge(NamedTuple):
@@ -910,11 +917,46 @@ _GLOSS_TARGET_LABELS = (
     NodeLabel.UNION,
 )
 
+# The labels a parameter's annotation can resolve to: what `TypeReferenceResolver`
+# returns today for ACCEPTS, minus nothing -- a parameter typed as a Function
+# is a callable annotation, which the resolver does not produce.
+_PARAMETER_TYPE_LABELS = (
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+
+_PARAMETER_NODE_PROPS = (
+    "{qualified_name: string, name: string, index: int, path: string, "
+    "absolute_path: string, start_line: int?, start_col: int?, "
+    "type_name: string?, is_variadic: boolean?, has_default: boolean?}"
+)
+
+# A field's owner is any label that can declare one; its OF_TYPE targets are
+# the Parameter set, for the same reason (issue #1805).
+_FIELD_OWNER_LABELS = (
+    NodeLabel.CLASS,
+    NodeLabel.INTERFACE,
+    NodeLabel.ENUM,
+    NodeLabel.TYPE,
+    NodeLabel.UNION,
+)
+
+_FIELD_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, type_name: string?, "
+    "modifiers: list[string]?, is_static: boolean?, docstring: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
     "target_qn: string, target_hash: string?, anchor_quote: string?, "
-    "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string}"
+    "anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, "
+    "moved_from: string?, candidate_qns: list[string]?, project: string?, "
+    "write_id: string?, mention_qns: list[string]?}"
 )
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
@@ -938,11 +980,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}",
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
@@ -986,6 +1028,8 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.CODE_SMELL, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.SECURITY_ISSUE, _FINDING_NODE_PROPS),
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
+    NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
+    NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
 )
 
 
@@ -1218,5 +1262,20 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.GLOSS,),
         RelationshipType.MENTIONS,
         _GLOSS_TARGET_LABELS,
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.HAS_PARAMETER,
+        (NodeLabel.PARAMETER,),
+    ),
+    RelationshipSchema(
+        _FIELD_OWNER_LABELS,
+        RelationshipType.HAS_FIELD,
+        (NodeLabel.FIELD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PARAMETER, NodeLabel.FIELD),
+        RelationshipType.OF_TYPE,
+        _PARAMETER_TYPE_LABELS,
     ),
 )

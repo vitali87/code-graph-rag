@@ -213,6 +213,40 @@ def index_extension_method(
     )
 
 
+def _property_field(member: Node) -> tuple[str, str] | None:
+    """(name, annotated type) for a property declaration, or None if either is absent."""
+    name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
+    type_text = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
+    if not name or not type_text:
+        return None
+    return name, annotate_type_ref(type_text)
+
+
+def _declared_fields(member: Node) -> list[tuple[str, str]]:
+    """(name, annotated type) for every declarator of one field declaration.
+
+    `private Widget _a, _b;` declares two names sharing one type.
+    """
+    var_decl = next(
+        (c for c in member.children if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION),
+        None,
+    )
+    if var_decl is None:
+        return []
+    type_text = safe_decode_text(var_decl.child_by_field_name(cs.FIELD_TYPE))
+    if not type_text:
+        return []
+    annotated = annotate_type_ref(type_text)
+    declared: list[tuple[str, str]] = []
+    for declarator in var_decl.children:
+        if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
+            continue
+        name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
+        if name:
+            declared.append((name, annotated))
+    return declared
+
+
 def build_field_type_map(class_node: Node) -> dict[str, str]:
     # {field-or-property name: type name} for members declared directly on
     # this class body, recorded at ingestion so a receiver typed to a field
@@ -224,49 +258,41 @@ def build_field_type_map(class_node: Node) -> dict[str, str]:
     fields: dict[str, str] = {}
     for member in body.children:
         if member.type == cs.TS_CSHARP_PROPERTY_DECLARATION:
-            name = safe_decode_text(member.child_by_field_name(cs.FIELD_NAME))
-            type_text = safe_decode_text(member.child_by_field_name(cs.FIELD_TYPE))
-            if name and type_text:
-                fields[name] = annotate_type_ref(type_text)
+            if (prop := _property_field(member)) is not None:
+                fields[prop[0]] = prop[1]
         elif member.type == cs.TS_CSHARP_FIELD_DECLARATION:
-            var_decl = next(
-                (
-                    c
-                    for c in member.children
-                    if c.type == cs.TS_CSHARP_VARIABLE_DECLARATION
-                ),
-                None,
-            )
-            if var_decl is None:
-                continue
-            type_text = safe_decode_text(var_decl.child_by_field_name(cs.FIELD_TYPE))
-            if not type_text:
-                continue
-            for declarator in var_decl.children:
-                if declarator.type != cs.TS_CSHARP_VARIABLE_DECLARATOR:
-                    continue
-                name = safe_decode_text(declarator.child_by_field_name(cs.FIELD_NAME))
-                if name:
-                    fields[name] = annotate_type_ref(type_text)
+            fields.update(_declared_fields(member))
     return fields
 
 
-def synthesize_method_name(method_node: Node) -> str | None:
-    # The registered leaf name for a C# member. Operators expose no `name`
-    # field, so synthesize `operator_<symbol>` (binary/unary operators) or
-    # `operator_<target-type>` (conversion operators). A destructor HAS a
-    # `name` field equal to the type name, which would collide with the
-    # constructor, so prefix `~`. Everything else uses the plain `name` leaf.
-    # Kept identical to _csharp_get_name so the FQN scope walk and the node
-    # qn agree.
+def _operator_name(method_node: Node) -> str | None:
+    """`operator_<symbol>` / `operator_<target-type>`, or None for a non-operator.
+
+    Operators expose no `name` field, so the leaf is synthesized from the
+    `operator` field (binary and unary) or the `type` field (conversion).
+    """
     if method_node.type == cs.TS_CSHARP_OPERATOR_DECLARATION:
-        op_node = method_node.child_by_field_name(cs.TS_CSHARP_FIELD_OPERATOR)
-        symbol = safe_decode_text(op_node) if op_node and op_node.text else None
-        return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + symbol if symbol else None
-    if method_node.type == cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION:
-        type_node = method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE)
-        target = safe_decode_text(type_node) if type_node and type_node.text else None
-        return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + target if target else None
+        field = cs.TS_CSHARP_FIELD_OPERATOR
+    elif method_node.type == cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION:
+        field = cs.TS_CSHARP_FIELD_TYPE
+    else:
+        return None
+    node = method_node.child_by_field_name(field)
+    symbol = safe_decode_text(node) if node is not None and node.text else None
+    return cs.TS_CSHARP_OPERATOR_NAME_PREFIX + symbol if symbol else None
+
+
+def synthesize_method_name(method_node: Node) -> str | None:
+    # The registered leaf name for a C# member. Operators are synthesized (see
+    # _operator_name). A destructor HAS a `name` field equal to the type name,
+    # which would collide with the constructor, so prefix `~`. Everything else
+    # uses the plain `name` leaf. Kept identical to _csharp_get_name so the FQN
+    # scope walk and the node qn agree.
+    if method_node.type in (
+        cs.TS_CSHARP_OPERATOR_DECLARATION,
+        cs.TS_CSHARP_CONVERSION_OPERATOR_DECLARATION,
+    ):
+        return _operator_name(method_node)
     name_node = method_node.child_by_field_name(cs.FIELD_NAME)
     name = safe_decode_text(name_node) if name_node and name_node.text else None
     if name and method_node.type == cs.TS_CSHARP_DESTRUCTOR_DECLARATION:
