@@ -397,7 +397,9 @@ class TypeInferenceEngine:
         language: cs.SupportedLanguage,
         class_context: str | None = None,
     ) -> dict[str, str]:
-        local = self._build_local_variable_type_map(caller_node, module_qn, language)
+        local = self._build_local_variable_type_map(
+            caller_node, module_qn, language, class_context
+        )
         # When the caller is a method, overlay its class's member-field types as a
         # base so a bare `field_.method()` receiver resolves; a same-named parameter
         # or local shadows a field, so the local map wins on conflict.
@@ -942,12 +944,18 @@ class TypeInferenceEngine:
         return fields
 
     def _build_local_variable_type_map(
-        self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None = None,
     ) -> dict[str, str]:
         match language:
             case cs.SupportedLanguage.PYTHON:
+                # The Python builder seeds `self`/`cls` from the class itself,
+                # ahead of its assignment walk (issue #1901).
                 return self.python_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node, module_qn, class_context
                 )
             case (
                 cs.SupportedLanguage.JS

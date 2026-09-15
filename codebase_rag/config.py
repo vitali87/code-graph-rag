@@ -104,6 +104,16 @@ def format_missing_api_key_errors(
 
 LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA})
 
+# The provider-owned variable `validate_api_key` accepts INSTEAD of the role's
+# own `<ROLE>_API_KEY`. Module level so `cgr doctor` can name the same variable
+# the gate reads rather than restating the rule and drifting from it (#1910).
+# A provider absent here is satisfied only by the role variable.
+PROVIDER_ENV_KEYS = {
+    cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
+    cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+    cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
+}
+
 
 @dataclass
 class ModelConfig:
@@ -125,12 +135,7 @@ class ModelConfig:
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
         provider_lower = self.provider.lower()
-        provider_env_keys = {
-            cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
-            cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
-            cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
-        }
-        env_key = provider_env_keys.get(provider_lower)
+        env_key = PROVIDER_ENV_KEYS.get(provider_lower)
         if (
             provider_lower in LOCAL_PROVIDERS
             or (

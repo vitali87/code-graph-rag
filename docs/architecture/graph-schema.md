@@ -16,8 +16,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
+| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
+| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Enum | same as Interface |
 | Type | same as Interface, but `path` and `absolute_path` are optional |
@@ -166,6 +166,40 @@ reason, even when they do carry the marker:
 - **Separator rules** -- `--------`, `////////` -- are decoration, not prose.
 - **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
   marker in JavaScript, TypeScript or TSX; `/**` is.
+
+## Definition Documentation
+
+`Class`, `Function`, `Method`, `Interface`, `Enum`, `Type` and `Union` carry
+the documentation of that one definition in the same optional `docstring`
+property. Python's is the string literal that opens the body; every other
+language's is the doc comment immediately above the declaration -- or above
+the statement that wraps it: an `export`, a Go `type`, a `const f = () =>`
+assignment, a `module.exports.f = function` assignment. A comment that trails
+the previous line (`int a; ///< the a field`) is that line's remark, never the
+next declaration's documentation.
+
+The markers are the ones in the module table with one exception: Rust
+documents a definition with the **outer** forms, `///` and `/**`, while `//!`
+and `/*!` describe the enclosing module and are never attached to an item. Go
+has no marker at either level, so `//` directly above a declaration is its doc.
+
+Whether a comment belongs to the file or to the declaration beneath it is one
+decision, made once, from the blank line: a doc comment touching a declaration
+is that declaration's, a detached one is the file's. So `/** Class docs */`
+directly above `class C {}` lands on the `Class` node and not on the `Module`,
+and the same comment separated by a blank line does the reverse. Rust is the one
+language where a detached `///` belongs to neither -- it documents nothing, and
+`rustc` warns on it.
+
+An attribute between the comment and its declaration does not detach it
+(`/// doc` / `#[derive(Debug)]` / `struct S`). In the other languages an
+annotation is part of the declaration node itself, so the comment is already
+adjacent and no skipping is needed.
+
+The exclusions are the module table's -- separator rules, directives, ordinary
+comments without the marker -- for the same reason: an `// ordinary note`
+recorded as a function's documentation is a wrong answer that reads like a
+right one.
 
 ## Nested Definitions
 

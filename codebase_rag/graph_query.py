@@ -135,6 +135,20 @@ def _symbol_key(row: SymbolRow) -> tuple[str, str]:
     return (row["qualified_name"], row["path"] or "")
 
 
+def parse_location(target: str) -> tuple[str, int] | None:
+    """`(path, line)` when `target` is a `path:line` location, else None.
+
+    One parser for every tool that accepts a resolve target, so "is this a
+    location" is answered the same way by `resolve` and by anything that
+    decides differently for a location (a gloss anchors to the innermost
+    definition spanning a line, and refuses an ambiguous NAME).
+    """
+    path, sep, line_text = target.rpartition(cs.CHAR_COLON)
+    if sep and line_text.isdigit() and path:
+        return path, int(line_text)
+    return None
+
+
 # --- resolve ------------------------------------------------------------------
 
 
@@ -147,14 +161,15 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     returns the innermost definitions spanning that line.
     """
     prefix = _prefix(project_name)
-    path, sep, line_text = target.rpartition(cs.CHAR_COLON)
-    if sep and line_text.isdigit() and path:
+    location = parse_location(target)
+    if location is not None:
+        path, line = location
         rows = fetch_all(
             cq.CYPHER_GRAPH_RESOLVE_LOCATION,
             {
                 cs.KEY_PROJECT_PREFIX: prefix,
                 cs.KEY_PATH: path,
-                cs.KEY_LINE: int(line_text),
+                cs.KEY_LINE: line,
             },
         )
         symbols = [_symbol_row(r) for r in rows]

@@ -74,8 +74,13 @@ def _git_line(repo_path: Path, *args: str) -> str | None:
     return proc.stdout.strip()
 
 
+def head_commit(repo_path: Path) -> str | None:
+    """The checkout's HEAD commit, or None when it is not a git repository."""
+    return _git_line(repo_path, "rev-parse", "HEAD")
+
+
 def _source_state(repo_path: Path) -> JsonDict:
-    commit = _git_line(repo_path, "rev-parse", "HEAD")
+    commit = head_commit(repo_path)
     status = _git_line(repo_path, "status", "--porcelain")
     return {
         "commit": commit,
