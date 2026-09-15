@@ -289,6 +289,31 @@ MCP_PARAM_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites too (default false)."
 )
 MCP_PARAM_RENAME_DRY_RUN = "Plan only: report the sites and diff, write nothing."
+MCP_CHANGE_SIGNATURE = (
+    "Change a Python function's or method's parameter list and rewrite every "
+    "call site the graph knows, on the definition and on every override in "
+    "both directions. `new_params` lists the new parameters in order (`n: int`, "
+    "`limit: int = 10`, or a bare old name to carry it over unchanged). "
+    "`mapping` says where each new parameter's value comes from at a call site: "
+    "an old parameter's name, its 0-based index, or `=literal` to insert that "
+    "text at every site; a new parameter absent from the mapping takes the old "
+    "parameter of the same name. A site the mapping cannot complete (a missing "
+    "required value, a splat, a surplus argument, an undeclared keyword) or "
+    "that the graph resolved heuristically is left as written and listed as "
+    "`unmapped`; pass `allow_heuristic` to rewrite guessed sites too. Every "
+    "rewritten file must still parse, and with an indexed project the change "
+    "is undone when its postcondition fails. Set `dry_run` to see the plan and "
+    "diff without touching the tree. Applied edits are recorded for `cgr edits "
+    "undo`."
+)
+MCP_PARAM_NEW_PARAMS = (
+    "The new parameter list in order, one entry per parameter (`name`, "
+    "`name: type`, `name = default`, `name: type = default`)."
+)
+MCP_PARAM_MAPPING = (
+    "Optional. New parameter name to its source: an old parameter name, a "
+    "0-based old index, or `=literal`."
+)
 
 MCP_QUERY_CODE_GRAPH = (
     "Prefer the deterministic tools (resolve, definition, callers, callees, "
@@ -475,6 +500,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
+    MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,
