@@ -10,6 +10,7 @@ from pathlib import Path
 
 from codebase_rag.parsers.python_source_roots import (
     _package_dir_remaps,
+    discover_python_source_roots,
     resolve_via_source_roots,
 )
 
@@ -214,3 +215,195 @@ def test_the_longest_dotted_prefix_is_tried_first(tmp_path: Path) -> None:
     assert (
         resolve_via_source_roots(tmp_path, roots, "acme.widgets.impl") == "other.impl"
     )
+
+
+# --- discover_python_source_roots -------------------------------------------
+#
+# One test per branch of the walk. Every assertion pins the WHOLE mapping
+# rather than membership, so a refactor that adds a spurious root fails here
+# too; `x in roots` would not see it.
+
+
+def _pkg(repo: Path, rel: str) -> Path:
+    """Create a package directory (with __init__.py) at `rel`."""
+    d = repo / rel
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "__init__.py").write_text("", encoding="utf-8")
+    return d
+
+
+def test_a_root_level_package_is_not_mapped(tmp_path: Path) -> None:
+    # Its import name already equals its path, so it needs no remap.
+    _pkg(tmp_path, "proj")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_a_nested_package_maps_to_its_dotted_path(tmp_path: Path) -> None:
+    _pkg(tmp_path, "libs/proj")
+    assert discover_python_source_roots(tmp_path) == {"proj": [("proj", "libs.proj")]}
+
+
+def test_a_subpackage_of_a_package_is_not_a_root(tmp_path: Path) -> None:
+    # `inner`'s parent is itself a package, so `inner` is reachable as
+    # `proj.inner` and is not a separate root.
+    _pkg(tmp_path, "libs/proj")
+    _pkg(tmp_path, "libs/proj/inner")
+    assert discover_python_source_roots(tmp_path) == {"proj": [("proj", "libs.proj")]}
+
+
+def test_the_repo_root_itself_is_never_mapped(tmp_path: Path) -> None:
+    # A repo whose own root carries __init__.py must not map itself.
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_an_ignored_directory_is_not_descended_into(tmp_path: Path) -> None:
+    _pkg(tmp_path, "node_modules/proj")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_a_dot_prefixed_directory_is_not_descended_into(tmp_path: Path) -> None:
+    _pkg(tmp_path, ".hidden/proj")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_a_src_child_without_init_is_mapped(tmp_path: Path) -> None:
+    # PEP 420 namespace package: a src child directory with no __init__.py.
+    (tmp_path / "src/ns").mkdir(parents=True)
+    (tmp_path / "src/ns/mod.py").write_text("", encoding="utf-8")
+    assert discover_python_source_roots(tmp_path) == {"ns": [("ns", "src.ns")]}
+
+
+def test_a_src_child_with_init_is_mapped_by_the_package_signal_only(
+    tmp_path: Path,
+) -> None:
+    # A src child that IS a package is caught by the package branch on the
+    # next iteration, so the src-child branch must skip it rather than
+    # recording a duplicate.
+    _pkg(tmp_path, "src/proj")
+    assert discover_python_source_roots(tmp_path) == {"proj": [("proj", "src.proj")]}
+
+
+def test_a_single_module_file_under_src_is_mapped(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/lonely.py").write_text("", encoding="utf-8")
+    assert discover_python_source_roots(tmp_path) == {
+        "lonely": [("lonely", "src.lonely")]
+    }
+
+
+def test_an_init_file_under_src_is_not_mapped_as_a_module(tmp_path: Path) -> None:
+    # src/__init__.py would otherwise map the name `__init__`.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "src/real.py").write_text("", encoding="utf-8")
+    assert discover_python_source_roots(tmp_path) == {"real": [("real", "src.real")]}
+
+
+def test_a_non_python_file_under_src_is_not_mapped(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/README.md").write_text("", encoding="utf-8")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_a_pyproject_remap_is_mapped(tmp_path: Path) -> None:
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nacme = "lib"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {"acme": [("acme", "lib")]}
+
+
+def test_a_remap_whose_dotted_dir_equals_its_name_is_skipped(tmp_path: Path) -> None:
+    # `acme = "acme"` maps the name onto itself, which resolution already
+    # handles without a root entry.
+    (tmp_path / "acme").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nacme = "acme"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_a_dotted_remap_name_is_keyed_by_its_top_level(tmp_path: Path) -> None:
+    (tmp_path / "other").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\n"acme.widgets" = "other"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {
+        "acme": [("acme.widgets", "other")]
+    }
+
+
+def test_the_same_pair_from_two_signals_is_recorded_once(tmp_path: Path) -> None:
+    # src/proj is both a nested package AND a pyproject remap naming the same
+    # dotted dir. The dedup check must keep one entry.
+    _pkg(tmp_path, "src/proj")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nproj = "src/proj"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {"proj": [("proj", "src.proj")]}
+
+
+def test_two_same_named_roots_both_survive(tmp_path: Path) -> None:
+    # Resolution disambiguates later by which one holds the submodule, so
+    # discovery must keep both candidates.
+    _pkg(tmp_path, "a/common")
+    _pkg(tmp_path, "b/common")
+    assert discover_python_source_roots(tmp_path) == {
+        "common": [("common", "a.common"), ("common", "b.common")]
+    }
+
+
+def test_a_nested_pyproject_remaps_relative_to_its_own_directory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "packages/one/lib").mkdir(parents=True)
+    (tmp_path / "packages/one/pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nacme = "lib"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {
+        "acme": [("acme", "packages.one.lib")]
+    }
+
+
+def test_a_src_child_package_under_a_package_src_is_not_a_root(
+    tmp_path: Path,
+) -> None:
+    # `src` is ITSELF a package here, so the package signal skips `src/proj`
+    # (its parent is a package) and nothing else records it. This is what makes
+    # the src-child __init__.py filter load-bearing rather than a dedup mirror:
+    # without it the walk invents `proj` as a root.
+    _pkg(tmp_path, "src")
+    _pkg(tmp_path, "src/proj")
+    assert discover_python_source_roots(tmp_path) == {}
+
+
+def test_candidate_order_follows_the_sorted_walk(tmp_path: Path) -> None:
+    # Parent names deliberately NOT in creation order, so an unsorted walk is
+    # observable. `resolve_via_source_roots` returns the first disk-confirmed
+    # match, so this order decides which root answers an import.
+    _pkg(tmp_path, "zz/common")
+    _pkg(tmp_path, "aa/common")
+    _pkg(tmp_path, "mm/common")
+    assert discover_python_source_roots(tmp_path) == {
+        "common": [
+            ("common", "aa.common"),
+            ("common", "mm.common"),
+            ("common", "zz.common"),
+        ]
+    }
+
+
+def test_the_package_signal_is_recorded_before_the_pyproject_signal(
+    tmp_path: Path,
+) -> None:
+    # Both signals fire in `libs/acme` and both key on `acme`, so the order of
+    # the two candidates is decided by the order the signals are collected in.
+    _pkg(tmp_path, "libs/acme")
+    (tmp_path / "libs/acme/inner").mkdir()
+    (tmp_path / "libs/acme/pyproject.toml").write_text(
+        '[tool.setuptools.package-dir]\nacme = "inner"\n', encoding="utf-8"
+    )
+    assert discover_python_source_roots(tmp_path) == {
+        "acme": [("acme", "libs.acme"), ("acme", "libs.acme.inner")]
+    }
