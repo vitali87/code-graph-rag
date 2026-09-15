@@ -15,6 +15,7 @@ from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.constant_nodes import (
     _FINAL,
     DeclaredConstant,
+    _final_match,
     declared_constants,
     python_declared_constants,
 )
@@ -168,22 +169,41 @@ def test_no_nesting_shape_leaks_a_constant_into_module_scope() -> None:
 def test_a_final_annotation_is_recognised_through_a_unicode_module() -> None:
     """Python identifiers are not ASCII-only, and the annotation match knows it.
 
-    `café.Final` is a legal annotation (`'café'.isidentifier()` is True), and
-    the original ASCII-only module prefix silently refused it, so the name
-    would have been skipped unless it also happened to be UPPER_CASE. Widened
-    to `[^\\W\\d]\\w*`, which is the real leading-character rule; a bare
-    `\\w*` would admit a leading digit, so both directions are asserted.
+    Two separate ways a regex gets this wrong, both found by review:
+
+    * An ASCII-only prefix refused `café.Final`, which is legal
+      (`'café'.isidentifier()` is True), so the name was skipped unless it also
+      happened to be UPPER_CASE.
+    * `[^\\W\\d]\\w*` fixed that but still rejected a DECOMPOSED identifier,
+      because `\\w` does not match a combining mark. `café_mod` written as
+      `cafe` + U+0301 is the same identifier to Python, which NFKC-normalises
+      it, and `str.isidentifier()` is True for both spellings.
+
+    So the prefix is validated with `str.isidentifier()` rather than by a
+    character class. Both spellings are asserted here, and the negative cases
+    are asserted too, since a predicate that accepts everything would satisfy
+    the positive half alone.
     """
-    assert _names("café_mod = None\nvalue: café_mod.Final = 1\n") == ["value"]
-    assert [c.type_name for c in _constants("v: café_mod.Final[int] = 1\n")] == ["int"]
-    # The leading-digit half is asserted against the PATTERN, not through a
-    # source fixture: `value: 1bad.Final = 1` is not valid Python (CPython
-    # rejects it), and tree-sitter error-recovers it into an ERROR node plus
-    # the annotation `bad.Final`, which legitimately matches. A fixture the
+    composed = "caf\u00e9_mod"
+    decomposed = "cafe\u0301_mod"
+    assert composed != decomposed
+    assert composed.isidentifier() and decomposed.isidentifier()
+
+    for module in (composed, decomposed):
+        assert _names(f"{module} = None\nvalue: {module}.Final = 1\n") == ["value"]
+        assert [c.type_name for c in _constants(f"v: {module}.Final[int] = 1\n")] == [
+            "int"
+        ]
+
+    # The rejected shapes are asserted against the matcher, not through source
+    # fixtures: `value: 1bad.Final = 1` is not valid Python (CPython rejects
+    # it), and tree-sitter error-recovers it into an ERROR node plus the
+    # annotation `bad.Final`, which legitimately matches. A fixture the
     # language rejects tests the recovery, not the rule.
-    assert _FINAL.match("1bad.Final") is None
-    assert _FINAL.match(".Final") is None
-    assert _FINAL.match("café_mod.Final") is not None
+    for rejected in ("1bad.Final", ".Final", "bad-name.Final", "a..b.Final"):
+        assert _final_match(_FINAL, rejected) is None, rejected
+    for accepted in (composed + ".Final", decomposed + ".Final", "a.b.c.Final"):
+        assert _final_match(_FINAL, accepted) is not None, accepted
 
 
 def test_the_declaration_predicate_holds_at_its_awkward_edges() -> None:

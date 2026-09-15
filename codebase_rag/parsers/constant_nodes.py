@@ -41,14 +41,37 @@ _DUNDER = re.compile(r"^__.*__$")
 # constant regardless of case: `Final` is the language saying so explicitly,
 # where UPPER_CASE is only a convention.
 #
-# The module prefix is `[^\W\d]\w*`, not `[A-Za-z_][A-Za-z0-9_]*`: Python
-# identifiers may be non-ASCII (`café.Final` is legal and `'café'.isidentifier()`
-# is True), so the ASCII form silently refused a valid annotation. `[^\W\d]`
-# is "a word character that is not a digit", which is the leading-character
-# rule; a bare `\w*` would wrongly admit a leading digit.
-_FINAL = re.compile(r"^(?:[^\W\d]\w*\.)*Final(?:\s*\[.*\])?$", re.DOTALL)
+# The module prefix is matched loosely here and validated with
+# `str.isidentifier()` below, rather than encoding Python's identifier rules in
+# a character class. Identifiers may be non-ASCII (`café.Final` is legal), and
+# an ASCII-only class silently refused one; but `[^\W\d]\w*` is still wrong,
+# because `\w` rejects a combining mark, so the DECOMPOSED spelling of the same
+# identifier (`cafe\u0301_mod`) failed while the precomposed one passed. Python
+# accepts both and NFKC-normalises them to one name. `str.isidentifier()` is the
+# authority; anything narrower is an approximation of it that drifts.
+_FINAL_PREFIX = r"(?P<prefix>[^\s.\[\]]+(?:\.[^\s.\[\]]+)*\.)?"
+_FINAL = re.compile(_FINAL_PREFIX + r"Final(?:\s*\[.*\])?$", re.DOTALL)
 # The argument of a `Final[...]` wrapper, so `x: Final[int]` has type `int`.
-_FINAL_ARG = re.compile(r"^(?:[^\W\d]\w*\.)*Final\s*\[(?P<arg>.*)\]$", re.DOTALL)
+_FINAL_ARG = re.compile(_FINAL_PREFIX + r"Final\s*\[(?P<arg>.*)\]$", re.DOTALL)
+
+
+def _final_match(pattern: re.Pattern[str], annotation: str) -> re.Match[str] | None:
+    """`pattern` matched against `annotation`, with the module prefix validated.
+
+    The regex cannot decide what a Python identifier is -- that is
+    `str.isidentifier()`, which accepts non-ASCII and decomposed forms alike.
+    So the prefix is captured loosely and each dotted segment checked here; a
+    prefix that is not a dotted run of identifiers is not a `Final` annotation.
+    """
+    match = pattern.match(annotation)
+    if match is None:
+        return None
+    prefix = match.group("prefix")
+    if prefix is not None and not all(
+        segment.isidentifier() for segment in prefix.rstrip(".").split(".")
+    ):
+        return None
+    return match
 
 
 class DeclaredConstant(NamedTuple):
@@ -169,7 +192,7 @@ def _python_constant(
     if not name or _DUNDER.match(name):
         return None
     annotation = _annotation_text(assignment)
-    is_final = annotation is not None and _FINAL.match(annotation) is not None
+    is_final = annotation is not None and _final_match(_FINAL, annotation) is not None
     if not is_final and not _UPPER_CASE.match(name):
         return None
     return DeclaredConstant(
@@ -199,10 +222,10 @@ def _type_name(annotation: str | None) -> str | None:
     """
     if annotation is None:
         return None
-    match = _FINAL_ARG.match(annotation)
+    match = _final_match(_FINAL_ARG, annotation)
     if match is not None:
         return match.group("arg").strip() or None
-    if _FINAL.match(annotation):
+    if _final_match(_FINAL, annotation):
         return None
     return annotation
 
