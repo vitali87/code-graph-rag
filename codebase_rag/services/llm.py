@@ -29,29 +29,59 @@ def _create_provider_model(config: ModelConfig) -> Model:
     return provider.create_model(config.model_id)
 
 
+def _fenced_block(query: str) -> str | None:
+    """The query inside a ``` fence, or None if there is no complete fence.
+
+    An opening fence with no closing one leaves fewer than three parts; that is
+    not a fence, so the caller keeps the text as it stands rather than treating
+    the remainder as code.
+    """
+    parts = query.split(cs.CYPHER_FENCE)
+    if len(parts) < 3:
+        return None
+    block = parts[1]
+    if block.lower().startswith(cs.CYPHER_PREFIX):
+        block = block[len(cs.CYPHER_PREFIX) :]
+    return block.strip()
+
+
+def _strip_bold_spans(query: str) -> str:
+    """Drop `**...**` labels, and the `:` that usually follows one."""
+    while cs.CYPHER_BOLD in query:
+        start = query.index(cs.CYPHER_BOLD)
+        end = query.find(cs.CYPHER_BOLD, start + len(cs.CYPHER_BOLD))
+        if end == -1:
+            break
+        after = end + len(cs.CYPHER_BOLD)
+        if after < len(query) and query[after] == cs.CYPHER_COLON:
+            after += 1
+        query = query[:start] + query[after:].lstrip()
+    return query
+
+
+def _strip_markdown(query: str) -> str:
+    """Remove the decoration an unfenced response carries.
+
+    Order matters: the leading-`cypher` check runs on the text left after the
+    bold spans go, so `**Q:** cypher MATCH ...` loses both.
+    """
+    query = _strip_bold_spans(query)
+    query = query.replace(cs.CYPHER_BACKTICK, "")
+    if query.lower().startswith(cs.CYPHER_PREFIX):
+        query = query[len(cs.CYPHER_PREFIX) :].strip()
+    return query
+
+
 def _clean_cypher_response(response_text: str) -> str:
     query = response_text.strip()
 
-    if "```" in query:
-        parts = query.split("```")
-        if len(parts) >= 3:
-            block = parts[1]
-            if block.lower().startswith("cypher"):
-                block = block[len("cypher") :]
-            query = block.strip()
+    if cs.CYPHER_FENCE in query:
+        # `is not None`, never `or`: an empty fence yields "", which is a
+        # successful extraction and must not fall back to the raw text.
+        block = _fenced_block(query)
+        query = query if block is None else block
     else:
-        while "**" in query:
-            start = query.index("**")
-            end = query.find("**", start + 2)
-            if end == -1:
-                break
-            after = end + 2
-            if after < len(query) and query[after] == ":":
-                after += 1
-            query = query[:start] + query[after:].lstrip()
-        query = query.replace(cs.CYPHER_BACKTICK, "")
-        if query.lower().startswith(cs.CYPHER_PREFIX):
-            query = query[len(cs.CYPHER_PREFIX) :].strip()
+        query = _strip_markdown(query)
 
     if not query.endswith(cs.CYPHER_SEMICOLON):
         query += cs.CYPHER_SEMICOLON
