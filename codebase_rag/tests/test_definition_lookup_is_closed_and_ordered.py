@@ -30,8 +30,8 @@ from codebase_rag.cypher_queries import (
     CYPHER_GLOSS_TARGET,
     CYPHER_GRAPH_DEFINITION,
 )
+from codebase_rag.schema_parse import parsed_node_schemas
 from codebase_rag.tools.code_retrieval import CodeRetriever
-from codebase_rag.types_defs import NODE_SCHEMAS
 
 # Every lookup that resolves one qualified name to a single definition row.
 _DEFINITION_LOOKUPS = {
@@ -182,13 +182,19 @@ def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
     Every other test in this file takes its cases from
     SNIPPET_NODE_LABELS or its two halves, so each one proves the constant
     is consistent with the query and none can fail when the CONSTANT is
-    wrong. Add a span-bearing label to NODE_SCHEMAS and forget
+    wrong. Add a span-bearing label to the schema and forget
     SPAN_BEARING_NODE_LABELS, and they all stay green while
     find_code_snippet reports missing-location for that label -- issue
     #1925's own symptom, on a new label (issue #1950).
 
     `NODE_SCHEMAS` is the independent source: it is what the graph is
-    actually built to, and it is maintained for its own reasons. Equality
+    actually built to, and it is maintained for its own reasons. Read
+    through `parsed_node_schemas()` rather than by substring, because a
+    substring test matches any property CONTAINING the key -- and
+    `name_start_line` is already in this schema's vocabulary (Function and
+    Method declare it), so a label carrying only `name_start_line` and
+    `name_end_line`, with no real span, would otherwise be demanded in the
+    allowlist. Equality
     rather than a subset, so it fails in both directions -- a label that
     gains a span and is not admitted, and a label kept in the allowlist
     after losing one.
@@ -203,10 +209,9 @@ def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
     would readmit them.
     """
     declared = {
-        schema.label
-        for schema in NODE_SCHEMAS
-        if cs.KEY_START_LINE in schema.properties
-        and cs.KEY_END_LINE in schema.properties
+        label
+        for label, specs in parsed_node_schemas().items()
+        if {cs.KEY_START_LINE, cs.KEY_END_LINE} <= {spec.name for spec in specs}
     }
     assert declared == cs.SNIPPET_NODE_LABELS, (
         "SNIPPET_NODE_LABELS has drifted from the schema. "
