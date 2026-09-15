@@ -10,7 +10,9 @@ the ORDER the three applies-to guards fire in, and `_parse_rules` itself.
 The guard order matters because #1669 turned three sequential `if`s into one
 loop; the loop's order is now what preserves which error a multi-violation
 rule reports. Each test asserts the WHOLE rule rather than one field, so a
-refactor that drops or invents a field fails here.
+refactor that drops or invents a field fails here -- which only holds while
+some test expects a TRUTHY value for each field, since a slot left at its
+default is invisible to equality. The last two tests exist for that reason.
 """
 
 import pytest
@@ -71,7 +73,18 @@ def test_unknown_keys_are_ignored() -> None:
     assert _parse({"pattern": "p", "nonsense": "x"}) == _Rule(pattern="p")
 
 
-# --- the type guard ---------------------------------------------------------
+def test_a_truthy_has_child_reaches_the_rule() -> None:
+    # Without a positive value for has_child somewhere, whole-object equality
+    # cannot see that slot being dropped: every other expectation here leaves
+    # it at its default.
+    assert _parse({"kind": "k", "has_child": "c"}) == _Rule(kind="k", has_child="c")
+
+
+def test_a_truthy_name_head_reaches_the_rule() -> None:
+    # Same for name_head, which is the only bool field.
+    assert _parse({"pattern": "p", "name_head": True}) == _Rule(
+        pattern="p", name_head=True
+    )
 
 
 # --- _parse_rules, the caller ------------------------------------------------
