@@ -1136,3 +1136,53 @@ def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
     ]
     assert _qn("pkg.empty.Beta") in delta["symbols"]["removed"]
     assert _qn("pkg.empty.Delta") in delta["symbols"]["added"]
+
+
+def test_two_declared_nested_class_renames_are_both_reported(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    # The nested shape, which is what issue #1836 actually describes. The
+    # test above renames two MODULE-LEVEL empty classes, so a regression
+    # specific to nested qualified names would pass it (CodeRabbit on
+    # #1945). Here both renamed classes sit inside a stable enclosing
+    # class, so their qualified names carry the enclosing scope.
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/empty.py",
+        "class Outer:\n    class Alpha:\n        pass\n\n"
+        "    class Beta:\n        pass\n",
+    )
+    _observe(root, store, updater, ["pkg/empty.py"])
+
+    _write(
+        root,
+        "pkg/empty.py",
+        "class Outer:\n    class Gamma:\n        pass\n\n"
+        "    class Delta:\n        pass\n",
+    )
+    delta = _observe(
+        root,
+        store,
+        updater,
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {
+                (_qn("pkg.empty.Outer.Alpha"), _qn("pkg.empty.Outer.Gamma")),
+                (_qn("pkg.empty.Outer.Beta"), _qn("pkg.empty.Outer.Delta")),
+            }
+        ),
+    )
+
+    assert sorted(delta["symbols"]["renamed"], key=lambda r: r["old"]) == [
+        {
+            "old": _qn("pkg.empty.Outer.Alpha"),
+            "new": _qn("pkg.empty.Outer.Gamma"),
+            "path": "pkg/empty.py",
+        },
+        {
+            "old": _qn("pkg.empty.Outer.Beta"),
+            "new": _qn("pkg.empty.Outer.Delta"),
+            "path": "pkg/empty.py",
+        },
+    ]
