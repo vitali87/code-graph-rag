@@ -16,9 +16,11 @@ function id>`, and Cypher's own quantifier is the shape that would bite here:
 
 Non-f-string literals split two ways. In a plain string a brace is inert; in a
 `.format()` template it is not, and a stray brace raises `KeyError` at CALL
-time rather than at import -- quieter still. The templates here are
-`CYPHER_AUDIT_MISSING_REQUIRED`, `CYPHER_AUDIT_IS_NULL` (both formatted in
-`graph_audit.py`) and `CYPHER_MEMORY_LIMIT_SUFFIX` (`graph_dialects.py`).
+time rather than at import -- quieter still. The templates in THIS file are
+`CYPHER_AUDIT_MISSING_REQUIRED` and `CYPHER_AUDIT_IS_NULL`, both formatted in
+`graph_audit.py`. (`constants.graph` holds another,
+`CYPHER_MEMORY_LIMIT_SUFFIX`, formatted in `graph_dialects.py`; the same rule
+applies there.)
 """
 
 from .constants import (
