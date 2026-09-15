@@ -175,7 +175,9 @@ class TestBuildLocalVariableTypeMapDispatch:
             )
 
         assert result == expected
-        mock_method.assert_called_once_with(mock_node, "proj.module")
+        # The Python engine also receives the class context (None here); a
+        # method's class is forwarded so `self` can be seeded (issue #1901).
+        mock_method.assert_called_once_with(mock_node, "proj.module", None)
 
     def test_dispatches_to_js_engine(
         self, engine: TypeInferenceEngine, mock_node: MagicMock
