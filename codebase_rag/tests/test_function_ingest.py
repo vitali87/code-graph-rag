@@ -468,7 +468,11 @@ class TestBuildFunctionProps:
 
         lang_queries = parsers_and_queries[1][cs.SupportedLanguage.PYTHON]
         result = definition_processor._build_function_props(
-            func_node, resolution, "proj.module", lang_queries
+            func_node,
+            resolution,
+            "proj.module",
+            lang_queries,
+            cs.SupportedLanguage.PYTHON,
         )
 
         assert result["qualified_name"] == "proj.module.my_function"
@@ -502,7 +506,11 @@ class TestBuildFunctionProps:
 
         lang_queries = parsers_and_queries[1][cs.SupportedLanguage.PYTHON]
         result = definition_processor._build_function_props(
-            func_node, resolution, "proj.module", lang_queries
+            func_node,
+            resolution,
+            "proj.module",
+            lang_queries,
+            cs.SupportedLanguage.PYTHON,
         )
 
         assert result["is_exported"] is True
