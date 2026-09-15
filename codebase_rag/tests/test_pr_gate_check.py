@@ -630,9 +630,13 @@ class TestCheckResolvesRunOwnershipWithTheRestField:
 
         monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
 
-        reasons = check_pr_gated.check("1826")
+        reasons, _caveats = check_pr_gated.check("1826")
 
-        assert not any("does not resolve to" in r for r in reasons)
+        # Unpacked: `check` returns (reasons, caveats), so iterating the tuple
+        # yields two LISTS and `"..." in r` is a list-membership test that can
+        # never match a substring. The assertion then held whether or not the
+        # reason was present, and could not fail (found while fixing #1944).
+        assert not any("does not resolve to" in r for r in reasons), reasons
 
 
 class TestCiRunsAtHeadFailsClosedOnMalformedPages:
@@ -1908,3 +1912,99 @@ class TestTheArmsAreOrderedMostSpecificFirst:
             )
 
             assert marker in reason, f"{marker!r} not in {reason!r}"
+
+
+class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:
+    """GitHub clears a run's `pull_requests` once its PR closes (issue #1944).
+
+    The ownership check treats an empty owner set as UNVERIFIED rather than
+    clean, which is right and closed a real fail-open: a run whose detail
+    fetch failed looked identical to one that genuinely named the PR. But on
+    a MERGED PR the field is cleared by GitHub itself, so a correctly gated
+    PR reports "does not resolve to #N; owners: none".
+
+    Reproduced live on #1930, which this session merged after verifying the
+    gate: its CI run at the merged head carries `pull_requests: []` while an
+    open PR's carries one entry. Same repo, same workflow, same author -- the
+    only difference is PR state.
+
+    So state is what distinguishes them, and the strictness must survive for
+    OPEN PRs, where an empty set still means the question went unanswered.
+    """
+
+    HEAD = "e" * 40
+
+    def _fake_gh(self, state: str, owners: list[dict[str, int]]):
+        view = {
+            "headRefOid": self.HEAD,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+            "state": state,
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={self.HEAD}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 777,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": self.HEAD,
+                            }
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/777"):
+                return json.dumps({"pull_requests": owners})
+            return ""
+
+        return fake
+
+    def test_a_merged_pr_does_not_report_an_unresolvable_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("MERGED", [])
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert not any("does not resolve to" in r for r in reasons), reasons
+
+    def test_an_open_pr_with_no_owner_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control, and the half that must not regress.
+
+        Without it this fix would read as "stop complaining about ownership",
+        which would reopen the fail-open the empty-is-unverified rule closed.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("OPEN", [])
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("does not resolve to" in r for r in reasons), reasons
+
+    def test_an_open_pr_owned_by_another_number_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A populated owner set naming a DIFFERENT PR is the rebase-collision
+        case the message describes, and it must keep failing whatever the
+        state. Distinguishes "cleared by GitHub" from "resolved elsewhere"."""
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            self._fake_gh("MERGED", [{"number": 4242}]),
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("does not resolve to" in r for r in reasons), reasons

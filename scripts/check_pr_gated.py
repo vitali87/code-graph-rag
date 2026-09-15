@@ -623,7 +623,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "--repo",
             REPO,
             "--json",
-            "headRefOid,baseRefName,statusCheckRollup,comments,reviews",
+            "headRefOid,baseRefName,statusCheckRollup,comments,reviews,state",
         )
     )
     if not view:
@@ -657,16 +657,35 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                 for p in detail.get("pull_requests", [])
                 if isinstance(p, dict)
             )
-        if pr not in owners:
-            # Empty is UNVERIFIED, not clean. A run whose detail fetch failed,
-            # or one reporting `pull_requests: []`, leaves `owners` empty; the
-            # earlier `if owners and ...` guard then never fired and scored the
-            # absence of an answer as a pass (Greptile on PR #1625) -- the same
-            # fail-open shape this checker exists to catch.
+        # GitHub CLEARS a run's `pull_requests` once its PR closes or merges
+        # (issue #1944), so on a closed PR an empty owner set is GitHub's own
+        # doing rather than an unanswered question. Reported as unverified it
+        # made every correctly gated merged PR read as ungated -- measured on
+        # #1930, whose merged head carries `pull_requests: []` while an open
+        # PR's carries one entry, same repo and workflow.
+        #
+        # Only the EMPTY case is excused, and only when closed. A populated
+        # set naming a different PR is the rebase collision the message
+        # describes and still fails, whatever the state.
+        state = str(view.get("state", "")).upper()
+        cleared_by_close = not owners and state in ("MERGED", "CLOSED")
+        if pr not in owners and not cleared_by_close:
+            # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
+            # fetch failed, or one reporting `pull_requests: []`, leaves
+            # `owners` empty; the earlier `if owners and ...` guard then never
+            # fired and scored the absence of an answer as a pass (Greptile on
+            # PR #1625) -- the same fail-open shape this checker exists to
+            # catch.
             found = sorted(owners) if owners else "none (could not be determined)"
             reasons.append(
                 f"the CI run at {head[:8]} does not resolve to #{pr}; owners: {found}. "
                 "Branches sharing a head SHA after a rebase report each other's runs"
+            )
+        elif cleared_by_close:
+            caveats.append(
+                f"#{pr} is {state}, so GitHub has cleared its runs' "
+                "`pull_requests`; run ownership could not be re-checked and is "
+                "taken on trust here (issue #1944)"
             )
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
