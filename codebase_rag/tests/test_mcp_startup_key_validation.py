@@ -77,8 +77,7 @@ def test_the_exemption_list_covers_every_provider_env_key(
     # moved to module level when `cgr doctor` began reading it, which made a
     # source scan see nothing while the exemptions still applied (#1910).
     assert PROVIDER_ENV_KEYS, (
-        "fixture guard: PROVIDER_ENV_KEYS is empty, so this test cannot detect "
-        "drift"
+        "fixture guard: PROVIDER_ENV_KEYS is empty, so this test cannot detect drift"
     )
     for provider, env_var in PROVIDER_ENV_KEYS.items():
         monkeypatch.setenv(env_var, "ambient-key")
