@@ -530,3 +530,40 @@ def test_a_later_pr_on_the_same_branch_still_creates_ambiguity() -> None:
         ).returncode
         != 0
     )
+
+
+class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
+    """`ci_count == 0` has several causes; the message named only one.
+
+    The gate prints every run it found, then asserted "No 'CI' workflow
+    run matches" and recommended `gh workflow run` -- the remedy for the
+    absent case. On a queued run that advice adds a second run without
+    releasing the first, and the listing above contradicts the error
+    (issue #1948). Each state now reports its own reason and its own
+    remedy.
+    """
+
+    def test_a_queued_run_is_not_reported_as_absent(self) -> None:
+        run = _make_workflow_run(status="queued", conclusion=None)
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "no ci.yml run exists" not in result.stdout
+        assert "has not completed" in result.stdout
+        assert "Do NOT dispatch another" in result.stdout
+        assert "gh workflow run ci.yml" not in result.stdout
+
+    def test_an_absent_run_still_gets_the_dispatch_remedy(self) -> None:
+        result = _execute_workflow_check([[]])
+
+        assert result.returncode == 1
+        assert "no ci.yml run exists at this head" in result.stdout
+        assert "gh workflow run ci.yml" in result.stdout
+
+    def test_a_foreign_association_is_named_rather_than_denied(self) -> None:
+        run = _make_workflow_run(prs=(9999,))
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "not this PR" in result.stdout
+        assert "gh workflow run ci.yml" not in result.stdout

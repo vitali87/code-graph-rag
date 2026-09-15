@@ -146,20 +146,67 @@ jobs:
 
           if [ "$ci_count" -eq 0 ]; then
             echo
+            # Say WHY, per run, rather than asserting absence. `ci_count`
+            # reaches 0 through several different states -- no ci.yml run
+            # at this head at all, one that ran for another PR after a
+            # shared-head rebase, one whose PR association could not be
+            # resolved -- and each wants a different response. Reporting
+            # only the first sends a reader to `gh workflow run` when the
+            # run already exists (issue #1948); the listing above shows it
+            # while the error denies it.
+            ci_at_head=$(echo "$runs" | jq -r \
+              --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
+              --arg head_repo "$HEAD_REPO" --argjson pr "$PR_NUMBER" '
+                [.[] | select(.path == ".github/workflows/ci.yml")] as $ci
+                | if ($ci | length) == 0 then
+                    "  no ci.yml run exists at this head"
+                  else
+                    $ci[] | "  ci.yml run: status=\(.status)/\(.conclusion // "pending")"
+                      + " source=\(.head_repo):\(.head_branch) PRs=\(.prs|tostring)"
+                      + " -- excluded because "
+                      + (if (.head_sha != $sha) then "its head SHA differs"
+                         elif (.head_branch != $branch or .head_repo != $head_repo)
+                           then "it belongs to another source branch or repository"
+                         elif ((.prs | index($pr)) | not)
+                           then (if (.prs | length) == 0
+                                 then "it carries no PR association and the source-branch fallback did not resolve it to this PR"
+                                 else "its PR association names \(.prs|tostring), not this PR" end)
+                         else "of an unrecognised condition" end)
+                  end' 2>/dev/null) || ci_at_head="  (could not summarise runs)"
+            echo "Why no run counted for this PR:"
+            echo "$ci_at_head"
+            echo
             echo "::error::No 'CI' workflow run matches PR #$PR_NUMBER at head $HEAD_SHA."
             echo "This PR has not been verified by the test suite at the commit"
             echo "being merged. A superseded run drops off the PR, leaving"
             echo "whatever happened to run at the current head -- often CodeQL"
             echo "alone -- which reads as a clean result (issue #1582)."
             echo
-            echo "Ensure ci.yml runs for this pull request's base branch."
-            echo "Fork runs without PR associations require a source branch"
-            echo "used by this PR alone; reused or shared branches are ambiguous."
-            echo
-            echo "Note: pushing an empty commit is NOT sufficient on a branch"
-            echo "whose base is not main -- it creates a new head, CodeQL"
-            echo "re-runs green, and the page looks freshly validated while no"
-            echo "test has run."
+            # The remedy depends on the state above. Dispatching a run is
+            # right only when none exists; when one is queued or waiting on
+            # fork approval, a second dispatch adds a run without releasing
+            # the first.
+            if echo "$ci_at_head" | grep -q "no ci.yml run exists"; then
+              echo "Ensure ci.yml runs for this pull request's base branch."
+              echo "Trigger one with:"
+              echo "  gh workflow run ci.yml --ref <branch>"
+              echo
+              echo "Note: pushing an empty commit is NOT sufficient on a branch"
+              echo "whose base is not main -- it creates a new head, CodeQL"
+              echo "re-runs green, and the page looks freshly validated while no"
+              echo "test has run."
+            elif echo "$ci_at_head" | grep -qE "status=(queued|waiting|in_progress)"; then
+              echo "A ci.yml run exists at this head but has not completed."
+              echo "Do NOT dispatch another; it would not release this one."
+              echo "On a fork PR this usually means the run is awaiting"
+              echo "maintainer approval -- sibling runs reporting"
+              echo "completed/action_required are the tell."
+            else
+              echo "Fork runs without PR associations require a source branch"
+              echo "used by this PR alone; reused or shared branches are ambiguous."
+              echo "A run naming a different PR is the shared-head case a"
+              echo "rebase produces (issue #1582); it is not this PR's evidence."
+            fi
             exit 1
           fi
 
