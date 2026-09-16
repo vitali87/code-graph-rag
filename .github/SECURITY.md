@@ -37,7 +37,7 @@ This policy applies to the `code-graph-rag` Python package and its official repo
 
 ## Security Measures in This Project
 
-- **Dependency scanning**: Dependabot is enabled for automated dependency updates, covering GitHub Actions, Docker and pip
+- **Dependency scanning**: Dependabot alerts and security updates are enabled, with version updates configured weekly for GitHub Actions, Docker and pip
 - **Secret scanning**: GitHub secret scanning is active on this repository
 - **Push protection**: Secret scanning push protection blocks commits containing supported secrets before they reach the repository
 - **Code scanning**: CodeQL default setup runs weekly across the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository
