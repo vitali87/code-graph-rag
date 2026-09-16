@@ -77,6 +77,12 @@ To work in a virtual environment instead, create it with the pinned interpreter 
 uv venv --python 3.12 --seed && source .venv/bin/activate
 ```
 
+Without `uv`, install CPython 3.12 yourself and call it directly:
+
+```bash
+python3.12 -m pip install "code-graph-rag[treesitter-full,semantic]"
+```
+
 Dependencies may still need platform wheels or build tools, such as `cmake` for
 `pymgclient`.
 

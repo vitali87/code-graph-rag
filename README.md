@@ -132,7 +132,7 @@ uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.c
 You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md) for the commands.
+> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 
