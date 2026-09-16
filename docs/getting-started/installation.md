@@ -6,7 +6,7 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
 
 ## Prerequisites
 
-- Python 3.12+ (the wheel is pure Python, but the interpreter floor is strict; Debian Bookworm ships Python 3.11, which is why the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows as failed. On Raspberry Pi OS Bookworm, run the install commands below inside a Python 3.12 environment, for example `uv venv --python 3.12 --seed && source .venv/bin/activate`, so pip exists in the environment and actually uses 3.12.)
+- Python 3.12+ (see [Older system interpreters](#older-system-interpreters) if your distribution ships an older Python)
 - Docker & Docker Compose (for Memgraph)
 - **cmake** (required for building pymgclient dependency)
 - **ripgrep** (`rg`) (required for shell command text searching)
@@ -54,6 +54,31 @@ description: "Install Code-Graph-RAG and set up Memgraph for multi-language code
     ```
 
     ripgrep may need to be installed from EPEL or via `cargo install ripgrep`.
+
+### Older system interpreters
+
+The wheel is pure Python (`py3-none-any`), so it installs on any platform, but the
+interpreter floor is strict. Some distributions ship a Python below it: Debian
+Bookworm, and therefore Raspberry Pi OS Bookworm, ships Python 3.11. This is also why
+the [piwheels](https://www.piwheels.org/project/code-graph-rag/) Bookworm build shows
+as failed; it is the interpreter version, not a problem with the package.
+
+Pin the interpreter explicitly on those systems. For a tool install, `uv` downloads
+Python 3.12 itself:
+
+```bash
+uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"
+```
+
+To work in a virtual environment instead, create it with the pinned interpreter so
+`pip` inside it actually uses 3.12:
+
+```bash
+uv venv --python 3.12 --seed && source .venv/bin/activate
+```
+
+Dependencies may still need platform wheels or build tools, such as `cmake` for
+`pymgclient`.
 
 ## Install from PyPI
 
