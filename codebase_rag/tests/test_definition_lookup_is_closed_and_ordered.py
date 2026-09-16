@@ -33,6 +33,13 @@ from codebase_rag.cypher_queries import (
 from codebase_rag.schema_parse import parsed_node_schemas
 from codebase_rag.tools.code_retrieval import CodeRetriever
 
+# The scalar type names the schema grammar uses, as `schema_parse` reports
+# them in `PropertySpec.type_name`. Spelled here rather than imported because
+# `schema_parse` keeps its vocabulary private, and a test naming the literal
+# is what catches a rename of the declared type itself.
+_SCHEMA_TYPE_STRING = "string"
+_SCHEMA_TYPE_INT = "int"
+
 # Every lookup that resolves one qualified name to a single definition row.
 _DEFINITION_LOOKUPS = {
     "find_by_qualified_name": CYPHER_FIND_BY_QUALIFIED_NAME,
@@ -211,12 +218,32 @@ def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
     two labels this file exists to keep out are kept out BY the predicate
     rather than by an exception list, and a start_line-only predicate
     would readmit them.
+
+    The predicate pairs each name with its declared TYPE, because the
+    grammar accepts every scalar and a name alone cannot tell
+    `end_line: int?` from `end_line: string?` -- retype one and a
+    name-only predicate stays green while retrieval's int check rejects
+    every row for that label (CodeRabbit on #1951).
+
+    It deliberately does NOT require the declarations to be mandatory.
+    Eight of the twelve admitted labels declare their span as optional
+    (`start_line: int?`), including every definition label, because a
+    span is absent for a synthesised node rather than never present --
+    `find_code_snippet` validates the VALUE on the row it got, which is
+    a runtime question the declaration does not answer. Requiring
+    `optional is False` here would demand the allowlist shrink to the
+    four labels that happen to declare a mandatory span, which is not
+    the eligibility contract.
     """
-    readable = {cs.KEY_START_LINE, cs.KEY_END_LINE, cs.KEY_PATH}
+    readable = {
+        (cs.KEY_PATH, _SCHEMA_TYPE_STRING),
+        (cs.KEY_START_LINE, _SCHEMA_TYPE_INT),
+        (cs.KEY_END_LINE, _SCHEMA_TYPE_INT),
+    }
     declared = {
         label
         for label, specs in parsed_node_schemas().items()
-        if readable <= {spec.name for spec in specs}
+        if readable <= {(spec.name, spec.type_name) for spec in specs}
     }
     assert declared == cs.SNIPPET_NODE_LABELS, (
         "SNIPPET_NODE_LABELS has drifted from the schema. "
