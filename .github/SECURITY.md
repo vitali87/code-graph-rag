@@ -37,9 +37,13 @@ This policy applies to the `code-graph-rag` Python package and its official repo
 
 ## Security Measures in This Project
 
-- **Dependency scanning**: Dependabot is enabled for automated dependency updates
+- **Dependency scanning**: Dependabot is enabled for automated dependency updates, covering GitHub Actions, Docker and pip
 - **Secret scanning**: GitHub secret scanning is active on this repository
-- **Branch protection**: The `main` branch requires pull request reviews before merging
+- **Push protection**: Secret scanning push protection blocks commits containing supported secrets before they reach the repository
+- **Code scanning**: CodeQL default setup runs weekly across the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository
+- **Supply chain scorecard**: The [OpenSSF Scorecard](https://github.com/ossf/scorecard) workflow audits the repository's supply chain posture and reports findings to the Security tab
+- **Private vulnerability reporting**: Enabled, so vulnerabilities can be reported privately through the Security tab as described above
+- **Branch protection**: The `main` branch is covered by a ruleset that requires changes to arrive by pull request with the `All Checks Pass` status check green, and blocks branch deletion and force pushes
 
 ## Preferred Languages
 
