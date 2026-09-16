@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from tree_sitter import Language, Parser
 
+from codebase_rag.constants import SupportedLanguage
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -61,7 +62,7 @@ class TestModuleDocstringExtraction:
 
         tree = py_parser.parse(code)
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        return processor._get_docstring(tree.root_node)
+        return processor._get_docstring(tree.root_node, SupportedLanguage.PYTHON)
 
     def test_triple_quoted_module_docstring(self, py_parser: Parser) -> None:
         code = b'"""Module summary."""\n\nimport os\n'
@@ -102,7 +103,12 @@ class TestModuleDocstringExtraction:
         code = b'def f():\n    """Function doc."""\n    pass\n'
         tree = py_parser.parse(code)
         processor = DefinitionProcessor.__new__(DefinitionProcessor)
-        assert processor._get_docstring(tree.root_node.children[0]) == "Function doc."
+        assert (
+            processor._get_docstring(
+                tree.root_node.children[0], SupportedLanguage.PYTHON
+            )
+            == "Function doc."
+        )
 
 
 @pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
@@ -590,3 +596,113 @@ class TestModuleDocstringPerLanguage:
         of it. Left there, that slash became the file's documentation.
         """
         assert self._extract("java", source) is None
+
+
+class TestAFunctionValuedBindingOwnsItsDoc:
+    """Issue #1887: a doc above `const f = () => {}` is the function's, not the file's.
+
+    The definition-level extractor attaches that comment to the function, so
+    the module claiming it too gave one comment two owners. Plain constants are
+    deliberately NOT changed -- `/** File docs */ const c = 1` stays the file's,
+    as the parametrised cases above pin -- because only a function- or
+    class-valued binding has a second claimant.
+    """
+
+    @pytest.fixture(scope="class")
+    def parsers(self) -> dict:
+        loaded, _ = load_parsers()
+        return loaded
+
+    @staticmethod
+    def _module_doc(parsers: dict, lang: str, source: bytes):
+        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.parsers.module_docstring import extract_module_docstring
+
+        parser = parsers.get(lang)
+        if parser is None:
+            pytest.skip(f"{lang} parser not available")
+        return extract_module_docstring(
+            parser.parse(source).root_node, SupportedLanguage(lang)
+        )
+
+    @pytest.mark.parametrize(
+        ("lang", "source"),
+        [
+            ("javascript", b"/** Arrow doc */\nconst arrow = () => {};\n"),
+            ("typescript", b"/** Arrow doc */\nconst arrow = () => {};\n"),
+            ("javascript", b"/** Fn doc */\nconst f = function () {};\n"),
+            ("javascript", b"/** Cls doc */\nconst C = class {};\n"),
+            ("javascript", b"/** CJS doc */\nmodule.exports.f = function () {};\n"),
+            ("typescript", b"/** Exported arrow */\nexport const g = () => {};\n"),
+            # Anonymous `export default` unwraps to the bare VALUE, not a
+            # declaration or a binding; missed by the first version
+            # (greptile-local on #1887). The commonest React/Express shape.
+            ("javascript", b"/** Default fn */\nexport default function () {}\n"),
+            ("javascript", b"/** Default arrow */\nexport default () => {};\n"),
+            ("typescript", b"/** Default class */\nexport default class {}\n"),
+            # Transparent wrappers around the value: parentheses, and
+            # TypeScript's `as` / `satisfies` / `!`. The definition pass binds
+            # the inner value, so the module must look through them too
+            # (Greptile and CodeRabbit on #1889).
+            ("javascript", b"/** Paren arrow */\nconst f = (() => {});\n"),
+            (
+                "typescript",
+                b"/** Cast arrow */\nexport const f = (() => {}) as Handler;\n",
+            ),
+            ("typescript", b"/** Satisfies */\nconst g = (() => {}) satisfies Fn;\n"),
+            ("typescript", b"/** Non-null */\nconst h = (function () {})!;\n"),
+            ("javascript", b"/** Default paren */\nexport default (() => {});\n"),
+            # `<T>expr`: the type comes FIRST in the grammar (CodeRabbit on #1889).
+            ("typescript", b"/** Assert doc */\nconst f = <Fn>(() => {});\n"),
+        ],
+        ids=[
+            "js-arrow",
+            "ts-arrow",
+            "js-function-expr",
+            "js-class-expr",
+            "cjs",
+            "ts-export-arrow",
+            "js-default-anon-fn",
+            "js-default-arrow",
+            "ts-default-anon-class",
+            "js-paren-arrow",
+            "ts-cast-arrow",
+            "ts-satisfies",
+            "ts-non-null",
+            "js-default-paren",
+            "ts-type-assertion",
+        ],
+    )
+    def test_an_adjacent_doc_above_a_function_binding_is_not_the_files(
+        self, parsers: dict, lang: str, source: bytes
+    ) -> None:
+        assert self._module_doc(parsers, lang, source) is None
+
+    def test_a_detached_doc_above_a_function_binding_is_still_the_files(
+        self, parsers: dict
+    ) -> None:
+        """The control: the blank line keeps deciding, exactly as for classes."""
+        src = b"/** File docs */\n\nconst arrow = () => {};\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_parenthesised_plain_value_is_still_the_files(
+        self, parsers: dict
+    ) -> None:
+        """The control for the unwrap: `(1)` unwraps to a number, not a definition."""
+        src = b"/** File docs */\nconst c = (1);\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_plain_constant_is_unchanged(self, parsers: dict) -> None:
+        """Pinned here as well as above: no second claimant, so no change."""
+        src = b"/** File docs */\nconst c = 1;\n"
+        assert self._module_doc(parsers, "javascript", src) == "File docs"
+
+    def test_a_mixed_declaration_counts_as_a_definition(self, parsers: dict) -> None:
+        """`const a = 1, f = () => {}` binds a function, so the doc is not the file's.
+
+        Nor is it the function's: the definition-level extractor does not climb
+        a multi-declarator statement. No doc tool reads it as file
+        documentation, so nobody owning it is the honest result.
+        """
+        src = b"/** Mixed */\nconst a = 1, f = () => {};\n"
+        assert self._module_doc(parsers, "javascript", src) is None

@@ -204,7 +204,31 @@ jobs:
           HIGHLIGHTS_API_TOKEN: ${{ secrets.HIGHLIGHTS_API_TOKEN }}
           HIGHLIGHTS_RESOLVE: ${{ secrets.HIGHLIGHTS_RESOLVE }}
         run: |
-          [ -n "$HIGHLIGHTS_API_URL" ] || exit 0
+          # continue-on-error stays: a flaky highlights endpoint must not fail
+          # a release. What it must not do is render every outcome as the same
+          # green tick (issue #1605). Each exit below therefore records a
+          # distinct outcome in the job summary, so "not configured", "the API
+          # failed" and "it worked" are told apart at a glance instead of from
+          # a log line that reads the same in all three cases.
+          set -o pipefail
+          note() { echo "- **Highlights:** $1" >> "$GITHUB_STEP_SUMMARY"; }
+          # The step runs under `bash -e`, so with pipefail on, a curl or jq
+          # failure aborts at the pipeline itself and no line after it runs.
+          # Without this trap that abort would write no summary at all, which
+          # is the silent-green failure this issue is about, just relocated.
+          # ERR fires on the aborting command; the trap clears itself so the
+          # deliberate `exit 1` below reports its own message instead.
+          # The file is REMOVED as well as reported. A pipeline that fails
+          # after its first stage emitted valid bullets leaves them on disk,
+          # and because the next step also carries continue-on-error it would
+          # then insert that half-written response into NEWS.md and the release
+          # body. Reporting the failure without deleting the evidence of it
+          # publishes output no stage vouched for.
+          trap 'rm -f /tmp/highlights.md; note "FAILED, the highlights API call did not complete"' ERR
+          if [ -z "$HIGHLIGHTS_API_URL" ]; then
+            note 'skipped, HIGHLIGHTS_API_URL is not configured'
+            exit 0
+          fi
           RESOLVE_ARGS=()
           [ -n "$HIGHLIGHTS_RESOLVE" ] && RESOLVE_ARGS=(--resolve "$HIGHLIGHTS_RESOLVE")
           sed -E 's| by @[^ ]+ in https://[^ ]+||' /tmp/notes.md > /tmp/titles.md
@@ -220,6 +244,47 @@ jobs:
           | jq -er '.choices[0].message.content // empty' \
           | sed -e '/<think>/,/<\/think>/d' \
           | perl -CSD -pe 's/[\x{2014}\x{2013}]/-/g' > /tmp/highlights.md
+          # `pipefail` rather than PIPESTATUS: a curl or jq failure is invisible
+          # in $? because the pipeline's status is the LAST stage's, and
+          # PIPESTATUS would work here but is clobbered by the next command
+          # run, so a line inserted above this check would silently disable it.
+          # The theme count below is a separate check and not redundant: the
+          # redirection creates the file whether or not anything is written to
+          # it, so its existence proves nothing, and a file with no themes in
+          # it reaches update_news.py indistinguishably from a release that
+          # genuinely had none.
+          trap - ERR
+          # Counted by ASKING THE PARSER, not by approximating it in grep. Two
+          # rounds of review found two different mismatches in a hand-rolled
+          # pattern: `^\*` missed dash bullets (undercount), then `^[-*] `
+          # missed tabs (undercount), and `^[-*][[:space:]]+` accepted
+          # `- **Theme**  text`, which BULLET_PATTERN rejects for having no
+          # colon (overcount). A count that disagrees with the inserter in
+          # either direction is a wrong number in the one line whose job is to
+          # be right, so the number now comes from extract_bullets itself.
+          # `|| true` and the `:-0` default keep a non-zero exit or empty
+          # output from making the numeric test below a syntax error instead of
+          # a failure report.
+          themes=$(python3 -c 'import sys; sys.path.insert(0, "."); from scripts.update_news import extract_bullets; print(len(extract_bullets(open(sys.argv[1], encoding="utf-8").read())))' /tmp/highlights.md 2>/dev/null || true)
+          themes=${themes:-0}
+          # Emptiness and bulletlessness are one failure, not two. A model that
+          # answers in prose, or returns an error string, produces a non-empty
+          # file containing no themes -- which passes a `-s` test and would be
+          # reported as a successful release that generated 0 themes. That is
+          # the silent green this whole change exists to remove, so the count
+          # decides, not the file size.
+          if [ "$themes" -eq 0 ]; then
+            note 'FAILED, the API returned no usable themes; NEWS.md will not change'
+            exit 1
+          fi
+          # `[-*] ` and not `\*`: update_news.py's HIGHLIGHT_BULLET accepts both
+          # markers, so counting only stars reports 0 themes on a dash-bulleted
+          # response that NEWS.md then gains entries from -- this line existing
+          # to prevent exactly that kind of confident wrong number. The trailing
+          # space keeps an `*emphasis*` line from counting as a bullet, and
+          # `|| true` rather than `|| echo 0` because grep -c already prints 0
+          # when it matches nothing; echoing another splits the summary in two.
+          note "generated $themes theme(s)"
 
       - name: Install uv
         if: steps.decide.outputs.release == 'true'
@@ -241,7 +306,22 @@ jobs:
           # highlight becomes a news entry.
           # A NEWS.md change without the README re-render would drift from the
           # generate-README pre-commit hook, so revert both if the render fails.
-          python3 scripts/update_news.py /tmp/highlights.md
+          # update_news.py already reports "parsed N, deduped N, inserted N"
+          # and exits 1 when bullet-shaped lines fail to parse (#1605). That
+          # exit code is swallowed by continue-on-error, which is wanted -- a
+          # dead highlights endpoint must not fail a release -- but it must not
+          # also be unobservable, so the outcome is recorded either way.
+          if news_out=$(python3 scripts/update_news.py /tmp/highlights.md 2>&1); then
+            # The "parsed/deduped/inserted" line, not the last line: the last
+            # line is "no new themes to add" on a quiet release and "added: ..."
+            # on a busy one, and neither distinguishes a working parser from a
+            # dead one. The counts are what #1605 added for exactly that.
+            counts=$(printf '%s\n' "$news_out" | grep -m1 '^parsed ' || true)
+            echo "- **NEWS.md:** ${counts:-$news_out}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **NEWS.md:** FAILED, $news_out" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "$news_out"
           if ! git diff --quiet NEWS.md; then
             if ! (uv sync --frozen && uv run --frozen python scripts/generate_readme.py); then
               git checkout -- NEWS.md README.md

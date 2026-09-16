@@ -1,4 +1,12 @@
-from .constants import CYPHER_DEFAULT_LIMIT, NodeLabel, RelationshipType
+from .constants import (
+    ANCHOR_HASH_VERSION,
+    CYPHER_DEFAULT_LIMIT,
+    DEFINITION_NODE_LABELS,
+    SNIPPET_NODE_LABELS,
+    GlossAnchorState,
+    NodeLabel,
+    RelationshipType,
+)
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 
@@ -141,7 +149,7 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -276,11 +284,32 @@ RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
        n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
-CYPHER_FIND_BY_QUALIFIED_NAME = """
-MATCH (n) WHERE n.qualified_name = $qn
+# One source for every definition lookup (issue #1925): see
+# DEFINITION_NODE_LABELS. Sorted so the generated Cypher is stable across runs
+# rather than varying with frozenset iteration order.
+_GRAPH_DEFINITION_LABELS = "|".join(
+    sorted(label.value for label in DEFINITION_NODE_LABELS)
+)
+_SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
+
+# A lookup keyed on qualified_name alone can match more than one node: identity
+# constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
+# LIMIT 1 without an ORDER BY then picks by storage order. Ordering by label and
+# path makes the pick total and stable across a re-index, since qualified_name
+# ties by definition in exactly the ambiguous case (issue #1925).
+_DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
+
+# Fields and Parameters share the `<owner>.<name>` key space with Methods (a
+# Python class may have a field and a method both called `total`), and a Field
+# row carries no `end`, so one winning here made an indexed definition read as
+# not found. Matched against the definition allowlist rather than excluding
+# those two labels by name, which fails open as labels are added (issue #1925).
+CYPHER_FIND_BY_QUALIFIED_NAME = f"""
+MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
+ORDER BY labels(n)[0], m.path, n.start_line
 LIMIT 1
 """
 
@@ -462,18 +491,6 @@ def build_create_relationship_query(
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
-_GRAPH_DEFINITION_LABELS = "|".join(
-    (
-        NodeLabel.FUNCTION.value,
-        NodeLabel.METHOD.value,
-        NodeLabel.CLASS.value,
-        NodeLabel.INTERFACE.value,
-        NodeLabel.ENUM.value,
-        NodeLabel.TYPE.value,
-        NodeLabel.UNION.value,
-        NodeLabel.MODULE.value,
-    )
-)
 CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
@@ -489,7 +506,199 @@ WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
+{_DEFINITION_TIEBREAK}
 LIMIT 1"""
+# Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
+# edge are ONE statement, so a write is all or nothing: the subject and every
+# mentioned definition are matched first, the `WHERE size(...)` gate drops the
+# row when any of them is missing, and nothing after it runs. A gloss can thus
+# never exist unattached or with a partial set of mentions, and a failed
+# request leaves the graph exactly as it was. The caller reads the node back to
+# learn whether the write landed rather than trusting a silent statement.
+# `ON CREATE SET` keeps the original author and creation time on a repeat write
+# of the same deterministic key; the other properties are SET by name (a null
+# unsets one): the ingestor's parameter type carries scalars and string lists,
+# not a nested map, so `SET g += $props` is not expressible on the wire.
+# `write_id` is a per-call nonce: the statement returns nothing through the
+# write API, and on a repeat write the node's mere presence cannot tell a
+# gated-out request from the earlier note, so the caller reads it back and
+# checks the nonce. A repeat write REPLACES the note's MENTIONS edges (collect
+# then FOREACH DELETE, so an empty set is a no-op), because the edges belong to
+# the note's current text and a stale one would say something the note no
+# longer does. `UNWIND` of an empty list yields no rows; the MERGEs above it
+# have already run.
+_GLOSS = NodeLabel.GLOSS.value
+_ANNOTATES = RelationshipType.ANNOTATES.value
+_MENTIONS = RelationshipType.MENTIONS.value
+CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
+RETURN n.anchor_hash AS target_hash
+{_DEFINITION_TIEBREAK}
+LIMIT 1"""
+# The key is deterministic in (subject, kind, body), so a repeat write of a
+# note that has since MOVED finds the same node still attached to the
+# definition it followed. A fresh write against a name is EXACT at that
+# name: any other subject edge is dropped before the new one is merged, and
+# the repair state (`moved_from`, `candidate_qns`) is cleared (bot review).
+CYPHER_GLOSS_WRITE = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (m:{_GRAPH_DEFINITION_LABELS})
+WHERE m.qualified_name IN $mention_qns AND m.qualified_name STARTS WITH $project_prefix
+WITH t, collect(DISTINCT m) AS mentioned
+WHERE size(mentioned) = size($mention_qns)
+MERGE (g:{_GLOSS} {{qualified_name: $qn}})
+ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
+SET g.kind = $kind, g.status = $status, g.body = $body,
+    g.commit_sha = $commit_sha, g.target_qn = $target_qn,
+    g.target_hash = $target_hash, g.anchor_state = $anchor_state,
+    g.write_id = $write_id, g.mention_qns = $mention_qns,
+    g.project = $project_name, g.moved_from = null, g.candidate_qns = null
+WITH g, t, mentioned
+OPTIONAL MATCH (g)-[old:{_ANNOTATES}]->(prev)
+WHERE prev <> t
+WITH g, t, mentioned, collect(old) AS stale_subjects
+FOREACH (edge IN stale_subjects | DELETE edge)
+MERGE (g)-[:{_ANNOTATES}]->(t)
+WITH g, mentioned
+OPTIONAL MATCH (g)-[stale:{_MENTIONS}]->()
+WITH g, mentioned, collect(stale) AS stale_edges
+FOREACH (edge IN stale_edges | DELETE edge)
+WITH g, mentioned
+UNWIND mentioned AS m
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+_STATE_EXACT = GlossAnchorState.EXACT.value
+_STATE_MOVED = GlossAnchorState.MOVED.value
+_STATE_STALE = GlossAnchorState.STALE.value
+# Re-anchoring by qualified name, the EXACT tier of the repair chain the issue
+# describes. A gloss records its subject (`target_qn`) and mentions
+# (`mention_qns`) as properties, so when a rebuild has deleted and recreated
+# the definitions, or an inbound-edge capture could not be read, the edges are
+# rebuilt from the note's own record rather than lost. A subject whose name is
+# gone stays unattached here; `gloss_repair` then grades it MOVED, AMBIGUOUS
+# or LOST by content hash. Nothing here re-binds a note to a different name.
+# Re-attaching by name resets the state: a note the previous run graded LOST
+# or AMBIGUOUS whose name has come back is EXACT again (grading may demote it
+# to STALE right after), and a MOVED note stays MOVED, because `target_qn` is
+# by then the name it moved to.
+# "Unattached" is asked with OPTIONAL MATCH plus a count, not a pattern
+# predicate in WHERE, which Memgraph 3 rejects (test_memgraph3_cypher_compat).
+CYPHER_REANCHOR_GLOSSES = f"""MATCH (g:{_GLOSS})
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+MATCH (t:{_GRAPH_DEFINITION_LABELS} {{qualified_name: g.target_qn}})
+MERGE (g)-[:{_ANNOTATES}]->(t)
+SET g.anchor_state = CASE WHEN g.moved_from IS NULL
+    THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
+    g.candidate_qns = null"""
+# The repair tiers below the name match (issue #1808, stage four), driven by
+# `gloss_repair.repair_unanchored`: the notes still unattached after the
+# query above, the definitions in a project carrying a set of content hashes,
+# and the two outcomes -- follow the hash to its one new home (MOVED) or
+# record why the note could not be placed (AMBIGUOUS with its candidates,
+# LOST with none). Neither writes an edge to a guessed subject, and nothing
+# here deletes.
+CYPHER_UNANCHORED_GLOSSES = f"""MATCH (g:{_GLOSS})
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
+       g.target_hash AS target_hash, g.anchor_state AS anchor_state,
+       g.moved_from AS moved_from, g.candidate_qns AS candidate_qns,
+       g.project AS project"""
+CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
+RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
+# The move re-validates its own precondition and binds the node it found:
+# the definitions carrying the note's hash in its project are collected
+# INSIDE the statement, and the note is bound only if there is exactly one
+# PHYSICAL node -- so a same-name pair across two labels (two nodes, one
+# qualified name) is refused rather than given two edges, and a match that
+# appeared or a hash that changed between the repair pass's read and this
+# write makes the statement a no-op instead of a wrong binding (bot review).
+# The note's own precondition is re-checked here too: the pass selected it
+# while it had no subject, but a writer may have attached it since, and a
+# MERGE would then give it a second subject. A note that already has one is
+# left exactly as the other writer left it (bot review, second round).
+# `origin` is the name the note was first written against (its first move
+# recorded it in `moved_from`). Following the hash back to that name is a
+# return home, not another move: the note is EXACT again with no `moved_from`.
+# Computed in a WITH so both SETs read the pre-update values.
+CYPHER_GLOSS_MOVE = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.anchor_hash = $target_hash AND t.qualified_name STARTS WITH $project_prefix
+WITH g, collect(t) AS targets
+WHERE size(targets) = 1
+WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
+OPTIONAL MATCH (g)-[held:{_ANNOTATES}]->()
+WITH g, t, origin, count(held) AS subjects
+WHERE subjects = 0
+SET g.anchor_state = CASE WHEN origin = t.qualified_name
+    THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
+    g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END,
+    g.target_qn = t.qualified_name, g.candidate_qns = null
+MERGE (g)-[:{_ANNOTATES}]->(t)"""
+CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
+CYPHER_REANCHOR_GLOSS_MENTIONS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->()
+WHERE g.mention_qns IS NOT NULL
+UNWIND g.mention_qns AS mention_qn
+MATCH (m:{_GRAPH_DEFINITION_LABELS} {{qualified_name: mention_qn}})
+MERGE (g)-[:{_MENTIONS}]->(m)"""
+# Staleness (issue #1808): a gloss recorded its subject's `anchor_hash` as
+# `target_hash` when it was written; after a sync the two are compared and the
+# note graded EXACT or STALE. A subject with no hash (a class, a module) or a
+# note written before hashes existed is left as it is rather than guessed at.
+# So is a note whose recorded hash is not in the current format (the prefix
+# gate): stage two recorded the clone skeleton, which is not comparable, and
+# reading it as STALE would be wrong for an unchanged definition. A STALE
+# note goes back to EXACT if the code is reverted -- or back to MOVED, if it
+# had followed its definition to a new name: `moved_from` keeps the move
+# visible for as long as the hashes agree. Nothing here moves a note or
+# deletes one.
+CYPHER_GRADE_GLOSS_ANCHORS = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
+WHERE g.target_hash IS NOT NULL AND t.anchor_hash IS NOT NULL
+  AND g.target_hash STARTS WITH '{ANCHOR_HASH_VERSION}'
+SET g.anchor_state = CASE WHEN g.target_hash = t.anchor_hash
+    THEN (CASE WHEN g.moved_from IS NULL
+          THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END)
+    ELSE '{_STATE_STALE}' END"""
+_GLOSS_ROW = (
+    "g.qualified_name AS qualified_name, g.kind AS kind, g.status AS status, "
+    "g.body AS body, g.created_by AS created_by, g.created_at AS created_at, "
+    "g.commit_sha AS commit_sha, g.target_qn AS target_qn, "
+    "g.target_hash AS target_hash, g.anchor_state AS anchor_state, "
+    "g.moved_from AS moved_from, g.candidate_qns AS candidate_qns, "
+    "g.write_id AS write_id, collect(m.qualified_name) AS mentions"
+)
+CYPHER_GLOSS_READ = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_ANNOTATING = f"""MATCH (g:{_GLOSS})-[:{_ANNOTATES}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+CYPHER_GLOSSES_MENTIONING = f"""MATCH (g:{_GLOSS})-[:{_MENTIONS}]->(t)
+WHERE t.qualified_name = $qn
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+# The notes written against a name that no longer resolves: unattached, with
+# `target_qn` still naming the definition they were about. This is how a
+# LOST or AMBIGUOUS note stays visible through the same read that would have
+# found it attached (issue #1808).
+# Scoped to the project the way every gloss read is, by the recorded
+# `project` (falling back to the qn prefix for a note written before that
+# property existed), and matching the target the way `resolve` names one: the
+# full qualified name or a dotted suffix of it (`Store.get`).
+CYPHER_GLOSSES_ORPHANED_ON = f"""MATCH (g:{_GLOSS})
+WHERE (g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
+  AND (g.target_qn = $qn OR g.target_qn ENDS WITH $suffix)
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
 # One row per call SITE (edges carry the site from issue #1522).
 CYPHER_GRAPH_CALLERS = """MATCH (caller)-[r:CALLS]->(callee)
 WHERE callee.qualified_name = $qn AND caller.qualified_name STARTS WITH $project_prefix
