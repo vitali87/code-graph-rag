@@ -400,6 +400,70 @@ def missing_aggregated_jobs(rollup: list[dict[str, object]]) -> list[str]:
     return [job for job in AGGREGATED_JOBS if not any(n.startswith(job) for n in names)]
 
 
+# A conclusion that is not a failure. SKIPPED and NEUTRAL are how a
+# conditional job reports "did not apply", and branch protection treats both
+# as satisfied, so counting them would fire the caveat below on almost every
+# PR and teach the reader to scroll past it.
+NON_FAILING_CONCLUSIONS = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
+
+# How many failing unrequired contexts to name before summarising the rest. An
+# Actions outage reds many at once (#1941 was filed during one), and a caveat
+# that prints thirty names is one nobody reads.
+UNREQUIRED_CAVEAT_LIMIT = 8
+
+
+def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
+    """Finished contexts that did not succeed and that THIS gate does not require.
+
+    The gate answers "is `REQUIRED_CONTEXT` present and satisfied", so a red
+    check outside it is correctly not a reason. It was not outside the
+    READER's question: the verdict read as "nothing is failing", and a red
+    check nobody was told about is the direction that produces a bad merge
+    (#1941).
+
+    "Unrequired" here means "not required BY THIS GATE", which is weaker than
+    "not required by the ruleset". `check` reads the branch rule's `type` only,
+    to answer whether any status-check rule covers the base; it never reads
+    that rule's required-context list. So a context the ruleset does require
+    would land in this set, and the caveat says so rather than calling it
+    unrequired.
+
+    `REQUIRED_CONTEXT` is excluded because a red one is already a reason, and
+    naming it twice reads as two problems. The jobs it AGGREGATES are not
+    excluded: `All Checks Pass` reports one verdict over all of them, and
+    naming the job that actually failed is the point.
+    """
+    names = {
+        name
+        for entry in rollup
+        if (name := context_name(entry))
+        and name != REQUIRED_CONTEXT
+        and entry_finished(entry)
+        and (
+            outcome := str(entry.get("conclusion") or entry.get("state") or "").upper()
+        )
+        and outcome not in NON_FAILING_CONCLUSIONS
+    }
+    return sorted(names)
+
+
+def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
+    """The caveat for `failing_unrequired_contexts`, or nothing."""
+    failing = failing_unrequired_contexts(rollup)
+    if not failing:
+        return []
+    shown = failing[:UNREQUIRED_CAVEAT_LIMIT]
+    rest = len(failing) - len(shown)
+    return [
+        f"{len(failing)} check(s) this gate does not require are failing at the "
+        f"head: {', '.join(shown)}" + (f" (+{rest} more)" if rest else "") + ". "
+        f"The gate requires only '{REQUIRED_CONTEXT}' and does not read the "
+        "ruleset's required-context list, so it cannot say whether these are "
+        "required. They do not block it, and they are not evidence the change "
+        "is sound"
+    ]
+
+
 def required_contexts_present(
     rollup: list[dict[str, object]], required: list[str]
 ) -> list[str]:
@@ -762,6 +826,8 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     else:
         caveats.extend(review_execution_caveats(real_reviews))
 
+    caveats.extend(unrequired_failure_caveat(rollup))
+
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
         reasons.append(thread_error)
@@ -786,7 +852,8 @@ def main(argv: list[str]) -> int:
 
     if not reasons:
         sys.stdout.write(
-            f"PR #{pr}: gated (every check present and satisfied"
+            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied; no "
+            "other context was tested for being required"
             f"{'; see caveat(s) above' if caveats else ''})\n"
         )
         return 0
