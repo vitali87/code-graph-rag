@@ -62,3 +62,9 @@ TS_PHP_DEFAULT_STATEMENT = "default_statement"
 # leaves an implicit skip path), an `else_clause` is the terminal not-then path.
 TS_PHP_ELSE_IF_CLAUSE = "else_if_clause"
 TS_PHP_ELSE_CLAUSE = "else_clause"
+
+# Formal parameters beside `simple_parameter`: `...$rest`, and a constructor's
+# `private int $x` promotion, which declares a parameter AND a property.
+TS_PHP_VARIADIC_PARAMETER = "variadic_parameter"
+TS_PHP_PROPERTY_PROMOTION_PARAMETER = "property_promotion_parameter"
+TS_PHP_FIELD_DEFAULT_VALUE = "default_value"

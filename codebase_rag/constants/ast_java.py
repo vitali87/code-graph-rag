@@ -316,3 +316,6 @@ JAVA_RANK_WIDENED = 1
 JAVA_RANK_BOXED = 2
 JAVA_RANK_SUPERTYPE = 3
 JAVA_RANK_OBJECT = 4
+
+# `void m(C this, int b)`: the explicit receiver, which no caller supplies.
+TS_RECEIVER_PARAMETER = "receiver_parameter"
