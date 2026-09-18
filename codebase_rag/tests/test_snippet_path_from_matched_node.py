@@ -110,7 +110,9 @@ def _path_order_terms(query: str) -> list[str] | None:
     return [term for term in _split_top_level(clause) if _PATH_PROPERTY.search(term)]
 
 
-async def _retrieve(tmp_path: Path, projected_path: str | None) -> CodeSnippet:
+async def _retrieve_projected_path_snippet(
+    tmp_path: Path, projected_path: str | None
+) -> CodeSnippet:
     ingestor = MagicMock()
     ingestor.fetch_all.return_value = [
         {
@@ -136,7 +138,7 @@ async def test_an_isolated_module_resolves_to_its_own_path(tmp_path: Path) -> No
     path = _project_path(
         CYPHER_FIND_BY_QUALIFIED_NAME, {"n": {"path": source.name}, "m": None}
     )
-    result = await _retrieve(tmp_path, path)
+    result = await _retrieve_projected_path_snippet(tmp_path, path)
 
     assert result.found, result.error_message
     assert result.file_path == source.name
@@ -160,7 +162,7 @@ async def test_the_matched_node_outranks_a_related_module(tmp_path: Path) -> Non
         CYPHER_FIND_BY_QUALIFIED_NAME,
         {"n": {"path": own.name}, "m": {"path": neighbour.name}},
     )
-    result = await _retrieve(tmp_path, path)
+    result = await _retrieve_projected_path_snippet(tmp_path, path)
 
     assert result.file_path == own.name
     assert result.source_code == "one\ntwo\nthree\n"
@@ -179,7 +181,7 @@ async def test_a_node_without_a_path_still_uses_the_related_module(
     path = _project_path(
         CYPHER_FIND_BY_QUALIFIED_NAME, {"n": {}, "m": {"path": source.name}}
     )
-    result = await _retrieve(tmp_path, path)
+    result = await _retrieve_projected_path_snippet(tmp_path, path)
 
     assert result.found, result.error_message
     assert result.file_path == source.name
