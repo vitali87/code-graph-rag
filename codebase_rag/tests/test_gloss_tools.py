@@ -106,7 +106,15 @@ class FakeGraph:
         elif query == cq.CYPHER_GLOSS_TARGET:
             n = self.nodes.get(str(p[cs.KEY_QN]))
             if n is not None:
-                out.append({cs.KEY_TARGET_HASH: n.get(cs.KEY_ANCHOR_HASH)})
+                out.append(
+                    {
+                        cs.KEY_TARGET_HASH: n.get(cs.KEY_ANCHOR_HASH),
+                        cs.KEY_NAME: n.get(cs.KEY_NAME),
+                        cs.KEY_PATH: n.get(cs.KEY_PATH),
+                        cs.KEY_START_LINE: n.get(cs.KEY_START_LINE),
+                        cs.KEY_END_LINE: n.get(cs.KEY_END_LINE),
+                    }
+                )
         elif query == cq.CYPHER_GLOSS_READ:
             key = str(p[cs.KEY_QN])
             if key in self.glosses:
@@ -1091,3 +1099,113 @@ def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(
     )
     updater._restore_inbound_edges([_captured("Gloss", "gloss:abc", "ANNOTATES", RUN)])
     ingestor.ensure_relationship_batch.assert_not_called()
+
+
+# --- the text-quote anchor at write time (stage five) ------------------------
+
+APP_PY = (
+    "import os\n\n\ndef run(v):\n    y = helper(v)\n    return y * 2\n\n\n" + "\n" * 12
+)
+
+
+def _reader(files: dict[str, str]) -> tuple[list[tuple[str, str]], Any]:
+    calls: list[tuple[str, str]] = []
+
+    def read(project: str, path: str) -> str | None:
+        calls.append((project, path))
+        return files.get(path)
+
+    return calls, read
+
+
+def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() -> None:
+    from codebase_rag.gloss_anchor import text_anchor
+
+    graph = FakeGraph()
+    calls, read = _reader({"app.py": APP_PY})
+    row = _write(graph, RUN, read_source=read)
+    assert not _is_refusal(row)
+    stored = graph.glosses[row["qualified_name"]]
+    expected = text_anchor(APP_PY, "run", 3, 8)
+    assert expected is not None
+    assert stored[cs.KEY_ANCHOR_QUOTE] == expected.quote
+    assert stored[cs.KEY_ANCHOR_PREFIX] == expected.prefix
+    assert stored[cs.KEY_ANCHOR_SUFFIX] == expected.suffix
+    assert calls == [(P, "app.py")]
+
+
+def test_a_note_without_a_reader_or_without_the_file_carries_no_quote() -> None:
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    assert not _is_refusal(row)
+    assert cs.KEY_ANCHOR_QUOTE not in graph.glosses[row["qualified_name"]]
+    _calls, read = _reader({})
+    row = _write(graph, STORE_GET, read_source=read)
+    assert not _is_refusal(row)
+    assert cs.KEY_ANCHOR_QUOTE not in graph.glosses[row["qualified_name"]]
+
+
+def test_the_write_statement_records_the_three_anchor_fields() -> None:
+    q = cq.CYPHER_GLOSS_WRITE
+    for field in ("anchor_quote", "anchor_prefix", "anchor_suffix"):
+        assert f"g.{field} = ${field}" in q
+    for field in ("name", "path", "start_line", "end_line"):
+        assert f"AS {field}" in cq.CYPHER_GLOSS_TARGET
+
+
+def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
+    tmp_path: Path,
+) -> None:
+    foreign = _registry(FakeGraph(), tmp_path)
+    assert foreign._source_reader_for(P) is None
+    own = _registry(FakeGraph(root=str(tmp_path)), tmp_path)
+    read = own._source_reader_for(P)
+    assert read is not None
+    (tmp_path / "app.py").write_text("x = 1\n")
+    assert read(P, "app.py") == "x = 1\n"
+    # Another project, a path that escapes the root, a missing file: None.
+    assert read("other", "app.py") is None
+    assert read(P, "../app.py") is None
+    assert read(P, "missing.py") is None
+
+
+@pytest.mark.anyio
+async def test_mcp_annotate_hands_the_reader_to_the_write(tmp_path: Path) -> None:
+    registry = _registry(FakeGraph(root=str(tmp_path)), tmp_path)
+    with patch("codebase_rag.mcp.tools.gloss.write_gloss") as write:
+        write.return_value = {"qualified_name": "k"}
+        await registry.annotate(
+            target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
+        )
+    assert callable(write.call_args.args[-1])
+
+
+def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("x = 1\n")
+    updater = GraphUpdater(
+        ingestor=_RecordingStore(),  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    assert updater._read_project_source(updater.project_name, "app.py") == "x = 1\n"
+    assert updater._read_project_source("other", "app.py") is None
+    assert updater._read_project_source(updater.project_name, "../app.py") is None
+    assert updater._read_project_source(updater.project_name, "missing.py") is None
+
+
+def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
+    tmp_path: Path,
+) -> None:
+    store = _RecordingStore()
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    with patch("codebase_rag.graph_updater.repair_unanchored") as repair:
+        updater._reanchor_glosses()
+    repair.assert_called_once_with(
+        store.fetch_all, store.execute_write, updater._read_project_source
+    )
