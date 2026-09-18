@@ -66,22 +66,16 @@ as failed; it is the interpreter version, not a problem with the package.
 Pin the interpreter explicitly on those systems. For a tool install, `uv` downloads
 Python 3.12 itself:
 
-```bash
-uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"
-```
+    uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"
 
 To work in a virtual environment instead, create it with the pinned interpreter so
 `pip` inside it actually uses 3.12:
 
-```bash
-uv venv --python 3.12 --seed && source .venv/bin/activate
-```
+    uv venv --python 3.12 --seed && source .venv/bin/activate
 
 Without `uv`, install CPython 3.12 yourself and call it directly:
 
-```bash
-python3.12 -m pip install "code-graph-rag[treesitter-full,semantic]"
-```
+    python3.12 -m pip install "code-graph-rag[treesitter-full,semantic]"
 
 Dependencies may still need platform wheels or build tools, such as `cmake` for
 `pymgclient`.

@@ -73,10 +73,9 @@ pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/c
 The wheel is pure Python (`py3-none-any`), so it installs on any platform with
 Python 3.12 or newer. Some distributions ship an older interpreter (Debian
 Bookworm, and so Raspberry Pi OS Bookworm, ships 3.11), which also explains the
-failed piwheels Bookworm build. On those systems pin the interpreter, for example
-`uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"`; see the
-[installation guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#older-system-interpreters)
-for the alternatives.
+failed piwheels Bookworm build. On those systems, see the [installation
+guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#older-system-interpreters)
+for the available interpreter-pinning alternatives.
 
 ## CLI Quick Start
 
