@@ -215,6 +215,7 @@ def create_rag_orchestrator(
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
+    backend: str | None = None,
 ) -> tuple[Agent, str]:
     """Build the main agent and return it with its system prompt."""
     try:
@@ -228,6 +229,7 @@ def create_rag_orchestrator(
             tools,
             project_instructions=project_instructions,
             active_projects=active_projects,
+            backend=backend or settings.GRAPH_BACKEND,
         )
 
         agent = Agent(
