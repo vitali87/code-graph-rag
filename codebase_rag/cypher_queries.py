@@ -1,3 +1,28 @@
+"""Cypher query literals.
+
+Many of these are f-strings, so that a label set derived once from the
+`constants.graph` enums (`_SNIPPET_LABELS`, `_GLOSS`, ... -- defined below,
+from those enums) is interpolated rather than respelled per query. **In an
+f-string query every literal brace must be doubled**: `{{qualified_name:
+$qn}}`, not `{qualified_name: $qn}`.
+
+A missed doubling in Cypher's map syntax is loud, because the colon is parsed
+as a format spec: `{name: $x}` raises `NameError` at import, and `{id: $x}`
+(a builtin key) raises `TypeError`. The quiet case is a COLON-FREE brace whose
+contents resolve as a name -- usually a builtin, which is always in scope
+whatever this module defines. `f"RETURN {id}"` yields `RETURN <built-in
+function id>`, and Cypher's own quantifier is the shape that would bite here:
+`f"-[:CALLS*{2}]->"` yields `-[:CALLS*2]->`.
+
+Non-f-string literals split two ways. In a plain string a brace is inert; in a
+`.format()` template it is not, and a stray brace raises `KeyError` at CALL
+time rather than at import -- quieter still. The templates in THIS file are
+`CYPHER_AUDIT_MISSING_REQUIRED` and `CYPHER_AUDIT_IS_NULL`, both formatted in
+`graph_audit.py`. (`constants.graph` holds another,
+`CYPHER_MEMORY_LIMIT_SUFFIX`, formatted in `graph_dialects.py`; the same rule
+applies there.)
+"""
+
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
