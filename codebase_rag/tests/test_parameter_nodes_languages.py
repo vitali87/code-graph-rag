@@ -228,6 +228,20 @@ def test_java_varargs_and_receiver_parameter() -> None:
     assert _shape(got) == [("b", 0, "int", False, False)]
 
 
+def test_java_varargs_type_survives_a_modifier_or_annotation() -> None:
+    """`final String... xs`: the spread's first named child is `modifiers`,
+    which is not the element type (local review P1)."""
+    got = _params(
+        cs.SupportedLanguage.JAVA,
+        "class C { void m(final String... xs, @NonNull List<String>... ys) {} }\n",
+        "method_declaration",
+    )
+    assert [(p.name, p.type_name, p.is_variadic) for p in got] == [
+        ("xs", "String...", True),
+        ("ys", "List<String>...", True),
+    ]
+
+
 def test_java_constructor_generic_type_text() -> None:
     got = _params(
         cs.SupportedLanguage.JAVA,
@@ -391,6 +405,18 @@ def test_rust_closure_parameters_may_be_bare_identifiers() -> None:
     ]
 
 
+def test_rust_closure_patterns_and_blank_keep_their_positions() -> None:
+    """In a closure the patterns are bare and `_` is an anonymous token, so
+    a walk over named children alone drops `x` and mis-indexes `z` (local
+    review P1)."""
+    got = _params(
+        cs.SupportedLanguage.RUST,
+        "fn f() { let c = |(a, b), &x, mut y, _, z| z; }\n",
+        "closure_expression",
+    )
+    assert [(p.name, p.index) for p in got] == [("x", 1), ("y", 2), ("z", 4)]
+
+
 # --- C -----------------------------------------------------------------------
 
 
@@ -533,6 +559,52 @@ def test_dart_method_and_setter_signatures() -> None:
     assert _shape(_params(cs.SupportedLanguage.DART, src, "setter_signature")) == [
         ("x", 0, "int", False, False)
     ]
+
+
+def test_dart_annotation_is_not_part_of_the_type() -> None:
+    """`@Deprecated('x') int b` (local review P1); a `final` after the
+    annotation is dropped too."""
+    got = _params(
+        cs.SupportedLanguage.DART,
+        "void f({@Deprecated('x') int b, @required final String? c}) {}\n",
+        "function_signature",
+    )
+    assert [(p.name, p.type_name) for p in got] == [("b", "int"), ("c", "String?")]
+
+
+def test_dart_super_initialising_formal_is_a_parameter() -> None:
+    got = _params(
+        cs.SupportedLanguage.DART,
+        "class C extends B { C(super.x, this.y); }\n",
+        "constructor_signature",
+    )
+    assert [(p.name, p.index, p.type_name) for p in got] == [
+        ("x", 0, None),
+        ("y", 1, None),
+    ]
+
+
+def test_dart_old_style_function_typed_parameter_is_named() -> None:
+    """`void cb(int i)` has no `name` field; its own parameter list is not
+    a type expression, so it carries no type."""
+    got = _params(
+        cs.SupportedLanguage.DART,
+        "void f(void cb(int i), String Function(int) g) {}\n",
+        "function_signature",
+    )
+    assert [(p.name, p.index, p.type_name) for p in got] == [
+        ("cb", 0, None),
+        ("g", 1, "String Function(int)"),
+    ]
+
+
+def test_dart_colon_default_is_a_default() -> None:
+    got = _params(
+        cs.SupportedLanguage.DART,
+        "void f({int b: 1, int c}) {}\n",
+        "function_signature",
+    )
+    assert [(p.name, p.has_default) for p in got] == [("b", True), ("c", False)]
 
 
 # --- Dispatch ----------------------------------------------------------------

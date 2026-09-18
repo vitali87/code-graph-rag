@@ -206,3 +206,6 @@ DART_CONSTRUCTOR_SIGNATURE_TYPES = frozenset(
 TS_DART_CONSTRUCTOR_PARAM = "constructor_param"
 # Keywords that may precede a formal parameter's type and are not part of it.
 DART_PARAMETER_MODIFIERS = frozenset({"final", "const", "var", "covariant"})
+
+# `C(super.x)`: an initialising formal forwarded to the superclass constructor.
+TS_DART_SUPER_FORMAL_PARAMETER = "super_formal_parameter"

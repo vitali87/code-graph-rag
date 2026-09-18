@@ -393,6 +393,9 @@ def _c_family_name_node(declarator: Node | None) -> Node | None:
 # --- Java --------------------------------------------------------------------
 
 
+_JAVA_NOT_ELEMENT_TYPES = frozenset({cs.TS_MODIFIERS, cs.TS_VARIABLE_DECLARATOR})
+
+
 def java_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     """`String... xs` is one variadic slot typed `String...`, matching the
     owner's `param_types`; `C this` is the receiver and takes no slot."""
@@ -404,7 +407,16 @@ def java_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
         if param.type == cs.TS_FORMAL_PARAMETER:
             slots.add(param.child_by_field_name(cs.FIELD_NAME), _field_type_text(param))
         elif param.type == cs.TS_SPREAD_PARAMETER:
-            element = next(iter(param.named_children), None)
+            # `final String... xs` / `@NonNull T... ys`: the first named child
+            # is then `modifiers`, not the element type (local review P1).
+            element = next(
+                (
+                    c
+                    for c in param.named_children
+                    if c.type not in _JAVA_NOT_ELEMENT_TYPES
+                ),
+                None,
+            )
             declarator = _first_named(param, cs.TS_VARIABLE_DECLARATOR)
             slots.add(
                 declarator.child_by_field_name(cs.FIELD_NAME) if declarator else None,
@@ -506,14 +518,27 @@ def rust_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     if params is None:
         return []
     slots = _Slots()
-    for param in params.named_children:
-        if param.type == cs.TS_IDENTIFIER:
-            slots.add(param, None)
-        elif param.type == cs.TS_RS_PARAMETER:
+    # `children`, not `named_children`: a closure's `_` is an anonymous token
+    # (in a fn it is a `parameter` whose pattern is `_`), and it is a slot.
+    for param in params.children:
+        if not param.is_named:
+            if param.type == cs.CHAR_UNDERSCORE:
+                slots.skip()
+            continue
+        if (
+            param.type == cs.TS_RS_SELF_PARAMETER
+            or cs.AST_FP_COMMENT_SUBSTRING in param.type
+        ):
+            continue
+        if param.type == cs.TS_RS_PARAMETER:
             pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
             if pattern is not None and pattern.type == cs.TS_RS_SELF:
                 continue
             slots.add(_rust_binding(pattern), _field_type_text(param))
+        else:
+            # A closure's bare pattern: an identifier, or `(a, b)` / `&x` /
+            # `mut y`, unwrapped the same way a fn parameter's pattern is.
+            slots.add(_rust_binding(param), None)
     return slots.declared
 
 
@@ -589,37 +614,59 @@ def dart_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     return slots.declared
 
 
+_DART_INITIALISING_FORMALS = (
+    cs.TS_DART_CONSTRUCTOR_PARAM,
+    cs.TS_DART_SUPER_FORMAL_PARAMETER,
+)
+# `{int b = 1}` and the older, still legal `{int b: 1}`.
+_DART_DEFAULT_SEPARATORS = frozenset({cs.CHAR_EQUALS, cs.CHAR_COLON})
+
+
 def _dart_slot(param: Node, slots: _Slots) -> None:
     following = param.next_sibling
-    has_default = following is not None and following.type == cs.CHAR_EQUALS
+    has_default = following is not None and following.type in _DART_DEFAULT_SEPARATORS
     name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
     if name_node is not None:
         slots.add(name_node, _dart_type_text(param, name_node), has_default=has_default)
         return
-    initialiser = _first_named(param, cs.TS_DART_CONSTRUCTOR_PARAM)
-    field_name = (
-        next(
-            (
-                c
-                for c in reversed(initialiser.children)
-                if c.type == cs.TS_DART_IDENTIFIER
-            ),
-            None,
-        )
-        if initialiser is not None
-        else None
-    )
-    slots.add(field_name, None, has_default=has_default)
+    # `this.x` / `super.x`: the name is the field's, inside the initialiser.
+    for initialiser_type in _DART_INITIALISING_FORMALS:
+        initialiser = _first_named(param, initialiser_type)
+        if initialiser is not None:
+            field_name = next(
+                (
+                    c
+                    for c in reversed(initialiser.children)
+                    if c.type == cs.TS_DART_IDENTIFIER
+                ),
+                None,
+            )
+            slots.add(field_name, None, has_default=has_default)
+            return
+    # An old-style function-typed parameter (`void cb(int i)`) has no `name`
+    # field: the identifier before its own parameter list is the name, and
+    # its type is the whole shape, which is not a type expression.
+    slots.add(_first_named(param, cs.TS_DART_IDENTIFIER), None, has_default=has_default)
 
 
 def _dart_type_text(param: Node, name_node: Node) -> str | None:
-    # The type is not a field: it is whatever precedes the name, minus any
-    # leading `final` / `covariant` keyword.
-    raw = param.text[: name_node.start_byte - param.start_byte] if param.text else b""
-    tokens = raw.decode(cs.ENCODING_UTF8, errors="replace").split()
-    while tokens and tokens[0] in cs.DART_PARAMETER_MODIFIERS:
-        tokens.pop(0)
-    return " ".join(tokens) or None
+    # The type is not a field: it is what precedes the name, minus any
+    # annotation (`@Deprecated('x')`, local review P1) and any `final` /
+    # `covariant` keyword. Sliced from the source between the first and the
+    # last kept child so `int?` and `List<String>` keep their spelling.
+    kept = [
+        c
+        for c in param.children
+        if c.end_byte <= name_node.start_byte
+        and c.type != cs.TS_DART_ANNOTATION
+        and safe_decode_text(c) not in cs.DART_PARAMETER_MODIFIERS
+    ]
+    if not kept or param.text is None:
+        return None
+    raw = param.text[
+        kept[0].start_byte - param.start_byte : kept[-1].end_byte - param.start_byte
+    ]
+    return " ".join(raw.decode(cs.ENCODING_UTF8, errors="replace").split()) or None
 
 
 _ENUMERATORS: dict[cs.SupportedLanguage, Callable[[Node], list[DeclaredParameter]]] = {
