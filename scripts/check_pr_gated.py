@@ -755,6 +755,70 @@ def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
     return [str(c) for c in contexts] if isinstance(contexts, list) else []
 
 
+def effective_entry(
+    rollup: list[dict[str, object]], name: str
+) -> dict[str, object] | None:
+    """The one rollup entry that decides `name`: the most recent.
+
+    A rerun leaves the earlier run's entry in the rollup beside the new one,
+    and GitHub judges a required context by its latest run. Judging every
+    entry kept a stale failure blocking after a green rerun and named it
+    once per stale entry (bot review on PR #1968). Recency is the entry's
+    own timestamp; entries without one keep rollup order, the later winning.
+    """
+    candidates = [
+        (index, entry)
+        for index, entry in enumerate(rollup)
+        if context_name(entry) == name
+    ]
+    if not candidates:
+        return None
+
+    def when(item: tuple[int, dict[str, object]]) -> tuple[str, int]:
+        index, entry = item
+        stamp = next(
+            (
+                str(entry[key])
+                for key in ("completedAt", "startedAt", "createdAt")
+                if isinstance(entry.get(key), str) and entry.get(key)
+            ),
+            "",
+        )
+        return stamp, index
+
+    return max(candidates, key=when)[1]
+
+
+def entry_outcome(entry: dict[str, object]) -> str:
+    """The terminal result of a rollup entry, whichever shape it is.
+
+    A `CheckRun` reports `conclusion`; a `StatusContext` reports `state`
+    and has no `conclusion` at all. Read by shape, or every third-party
+    status is unfinished forever (bot review on PR #1968).
+    """
+    return str(entry.get("conclusion") or entry.get("state") or "").upper()
+
+
+def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[str]:
+    """Why the classic-required context `name` is not satisfied, if it is not.
+
+    GitHub accepts SUCCESS, SKIPPED and NEUTRAL for a required check, so
+    those are satisfied; PENDING and EXPECTED are not terminal.
+    """
+    entry = effective_entry(rollup, name)
+    if entry is None:
+        return [
+            f"context '{name}', required by classic branch protection, is absent "
+            "at the head"
+        ]
+    if not entry_finished(entry):
+        return [f"'{name}' (required by classic branch protection) has not concluded"]
+    outcome = entry_outcome(entry)
+    if outcome in NON_FAILING_CONCLUSIONS:
+        return []
+    return [f"'{name}' (required by classic branch protection) concluded {outcome}"]
+
+
 def approvals(reviews: list[Any]) -> int:
     """Distinct reviewers whose LATEST verdict is an approval.
 
@@ -829,16 +893,25 @@ def approval_findings(
     ]
     admins = protection.get("enforce_admins")
     enforced = isinstance(admins, dict) and admins.get("enabled") is True
-    reasons.append(
-        f"base '{base}' requires {required} approving review(s) "
-        f"({' and '.join(sources)}) and #{pr} has {have}, so `gh pr merge` is "
-        "refused with 'the base branch policy prohibits the merge'; "
-        f"{merge_remedies()}; "
-        + (
+    # `enforce_admins` is a CLASSIC setting. When the binding requirement is
+    # the ruleset's, its own bypass list decides, and claiming `--admin`
+    # works could send a maintainer down a refused path (bot review, #1968).
+    if "classic branch protection" in sources:
+        admin_route = (
             "the rule is enforced for administrators too"
             if enforced
             else "`--admin` would bypass it, which is a decision, not a fix"
         )
+    else:
+        admin_route = (
+            "whether `--admin` bypasses it is the ruleset's bypass list's call, "
+            "not read here"
+        )
+    reasons.append(
+        f"base '{base}' requires {required} approving review(s) "
+        f"({' and '.join(sources)}) and #{pr} has {have}, so `gh pr merge` is "
+        "refused with 'the base branch policy prohibits the merge'; "
+        f"{merge_remedies()}; {admin_route}"
     )
     return reasons, caveats
 
@@ -986,25 +1059,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     for name in classic_contexts:
         if name == REQUIRED_CONTEXT:
             continue
-        if required_contexts_present(rollup, [name]):
-            reasons.append(
-                f"context '{name}', required by classic branch protection, is "
-                "absent at the head"
-            )
-            continue
-        for entry in rollup:
-            if context_name(entry) != name:
-                continue
-            if not is_concluded(entry):
-                reasons.append(
-                    f"'{name}' (required by classic branch protection) has not "
-                    "concluded"
-                )
-            elif str(entry.get("conclusion", "")).upper() != "SUCCESS":
-                reasons.append(
-                    f"'{name}' (required by classic branch protection) concluded "
-                    f"{entry.get('conclusion')}"
-                )
+        reasons.extend(classic_context_reasons(name, rollup))
 
     absent_jobs = missing_aggregated_jobs(rollup)
     if absent_jobs:

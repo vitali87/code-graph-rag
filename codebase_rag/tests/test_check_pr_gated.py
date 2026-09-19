@@ -478,3 +478,94 @@ def test_a_classic_required_failure_is_a_reason_not_also_a_caveat(
     ]
     assert len(caveats) == 1
     assert "Other" in caveats[0] and "Extra Gate" not in caveats[0]
+
+
+def _status(context: str, state: str, **extra: object) -> dict[str, object]:
+    return {"__typename": "StatusContext", "context": context, "state": state, **extra}
+
+
+def test_a_classic_required_status_context_is_judged_by_its_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit status carries `state`, not `conclusion`; SKIPPED and
+    NEUTRAL check runs satisfy a required check as GitHub does (bot review
+    on PR #1968)."""
+    protection: dict[str, object] = {
+        "required_status_checks": {
+            "contexts": [REQUIRED_CONTEXT, "Third Party", "Optional Job"]
+        },
+        "enforce_admins": {"enabled": False},
+    }
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch,
+        [
+            *_GREEN,
+            _status("Third Party", "SUCCESS"),
+            check_run("Optional Job", "SKIPPED"),
+        ],
+        protection=protection,
+    )
+    assert reasons == []
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch,
+        [
+            *_GREEN,
+            _status("Third Party", "FAILURE"),
+            check_run("Optional Job", "NEUTRAL"),
+        ],
+        protection=protection,
+    )
+    assert reasons == [
+        "'Third Party' (required by classic branch protection) concluded FAILURE"
+    ]
+
+
+def test_a_rerun_context_is_judged_by_its_latest_entry_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT, "Extra Gate"]},
+        "enforce_admins": {"enabled": False},
+    }
+    stale = {
+        **check_run("Extra Gate", "FAILURE"),
+        "completedAt": "2026-09-19T00:00:00Z",
+    }
+    cancelled = {
+        **check_run("Extra Gate", "CANCELLED"),
+        "completedAt": "2026-09-19T00:01:00Z",
+    }
+    fresh = {
+        **check_run("Extra Gate", "SUCCESS"),
+        "completedAt": "2026-09-19T00:02:00Z",
+    }
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, [*_GREEN, fresh, stale, cancelled], protection=protection
+    )
+    assert reasons == []
+    # The other way round, one reason, not one per stale entry.
+    late_failure = {
+        **check_run("Extra Gate", "FAILURE"),
+        "completedAt": "2026-09-19T00:03:00Z",
+    }
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, [*_GREEN, fresh, late_failure, stale], protection=protection
+    )
+    assert reasons == [
+        "'Extra Gate' (required by classic branch protection) concluded FAILURE"
+    ]
+
+
+def test_the_admin_remedy_is_claimed_only_for_a_classic_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`enforce_admins` is a classic setting; a ruleset's bypass list is not
+    read here, so the message must not promise `--admin` for it."""
+    rules: list[dict[str, object]] = [
+        {"type": "required_status_checks"},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+    ]
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, rules=rules, protection=None)
+    assert "(ruleset)" in reasons[0]
+    assert "bypass list" in reasons[0]
+    assert "would bypass it" not in reasons[0]
