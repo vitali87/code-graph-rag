@@ -142,3 +142,24 @@ def test_an_identifier_inside_an_interpolation_is_code() -> None:
     assert _anchor(renamed, "execute", 8, 10).quote == before.quote
     literal_too = renamed.replace('f"{execute()} run"', 'f"{execute()} execute"')
     assert _anchor(literal_too, "execute", 8, 10).quote != before.quote
+
+
+def test_a_bare_dart_substitution_is_literal_text() -> None:
+    """`"value: $run"` has no braces: the name is the string's own text, so a
+    rename that also changes it is a body change; `"${run()}"` is code
+    (bot review on PR #1966, second round)."""
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+
+    def dart(source: str, name: str) -> str:
+        parsed = ParsedSource(source, parse_source(parsers, Path("mod.dart"), source))
+        anchor = text_anchor(parsed, name, 1, 3)
+        assert anchor is not None
+        return anchor.quote
+
+    bare = 'String run() {\n  return "value: $run";\n}\n'
+    bare_renamed = bare.replace("run()", "execute()").replace("$run", "$execute")
+    assert dart(bare, "run") != dart(bare_renamed, "execute")
+    braced = 'String run() {\n  return "value: ${run()}";\n}\n'
+    assert dart(braced, "run") == dart(braced.replace("run()", "execute()"), "execute")
