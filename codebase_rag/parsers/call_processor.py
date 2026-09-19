@@ -3906,10 +3906,11 @@ class CallProcessor:
                 )
 
             if not callee_info:
-                if call_name:
+                if call_name and language not in cs.IMPORT_BOUND_CALL_LANGUAGES:
                     # The callee may be defined by a file added later; keep
                     # its simple name so that file's arrival re-parses this
-                    # one (issue #1568).
+                    # one (issue #1568). Not where an import would be needed
+                    # anyway: the importer lookup finds those waiters.
                     simple = call_name.replace(
                         cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
                     ).rsplit(cs.SEPARATOR_DOT, 1)[-1]

@@ -4437,11 +4437,17 @@ class GraphUpdater:
         # the files that referenced it while it was missing recorded the
         # names they could not resolve, and are found from those (issue
         # #1568). The importer lookup existed for the scoped path only.
-        added_entries = [
-            (file_key, file_bytes)
-            for _fp, file_key, is_new, file_bytes in changed_entries
-            if is_new
-        ]
+        # On a full build every file is new and the graph holds no waiter,
+        # so the lookup (which parses each added file once more) is skipped.
+        added_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if is_new
+            ]
+        )
         added_keys = [key for key, _b in added_entries]
         affected = 0
         for caller_key in sorted(
@@ -5400,7 +5406,10 @@ class GraphUpdater:
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
     def _reingest_dependents(
-        self, present: dict[str, Path], gone: dict[str, Path]
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        created: set[str] | None = None,
     ) -> dict[str, Path]:
         # Files whose bindings the change can move (one level, from the
         # graph's own edges) plus any file whose delombok overlay changed.
@@ -5412,8 +5421,15 @@ class GraphUpdater:
         for caller_key in (
             *self._affected_caller_keys(keys),
             *self._unresolved_importer_keys(sorted(present)),
+            # Only files this call CREATED can satisfy a recorded name; a
+            # modified file's definitions were already there to resolve
+            # against (local review).
             *self._unresolved_reference_waiters(
-                [(key, _read_bytes(path)) for key, path in sorted(present.items())]
+                [
+                    (key, _read_bytes(path))
+                    for key, path in sorted(present.items())
+                    if created is not None and key in created
+                ]
             ),
         ):
             caller_path = self.repo_path / caller_key
@@ -5720,7 +5736,11 @@ class GraphUpdater:
             flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
             survivors.update(flip_siblings)
 
-            affected = self._reingest_dependents({**present, **survivors}, gone)
+            affected = self._reingest_dependents(
+                {**present, **survivors},
+                gone,
+                created={key for key in present if key not in hashes},
+            )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
         except Exception as exc:

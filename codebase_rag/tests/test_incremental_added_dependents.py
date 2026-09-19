@@ -117,14 +117,27 @@ def test_a_module_records_what_it_could_not_resolve_and_clears_it(
     recorded = module[cs.KEY_UNRESOLVED_REFERENCES]
     # The base class resolved nowhere; the import itself became a phantom
     # ExternalModule, which the existing importer lookup finds from the
-    # graph, so it is not recorded twice.
-    assert "Base" in recorded
+    # graph, so it is not recorded twice. The unresolved calls (`super()`,
+    # `.run()`) are not recorded either: in Python a callee from another
+    # file needs an import, so recording them would only re-parse every
+    # module calling a method of that name when such a file is added.
+    assert recorded == ["Base"]
 
     _add_after_cache(root, "pkg/base.py", PYTHON["pkg/base.py"])
     _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
     module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.pkg.derived")]
-    # `Base` and `run` now resolve; `super()` never does and stays, honestly.
-    assert module[cs.KEY_UNRESOLVED_REFERENCES] == ["super"]
+    assert module[cs.KEY_UNRESOLVED_REFERENCES] == []
+
+
+def test_a_go_module_records_its_unresolved_calls(temp_repo: Path) -> None:
+    """Go sees a same-package definition with no import, so the callee's
+    name is the only link to the file that will define it."""
+    root = temp_repo / "proj"
+    _materialise(root, {rel: text for rel, text in GO.items() if rel != "base.go"})
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.GO, force=True)
+    module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.derived")]
+    assert "Run" in module[cs.KEY_UNRESOLVED_REFERENCES]
 
 
 def test_the_batch_path_asks_both_added_file_lookups(
@@ -156,3 +169,48 @@ def test_the_batch_path_asks_both_added_file_lookups(
     monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy_waiters)
     _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
     assert asked == {"importers": ["pkg/base.py"], "waiters": ["pkg/base.py"]}
+    # A full build has no waiter in the graph: nothing is offered, so the
+    # added files are not parsed a second time for their names.
+    asked.clear()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert asked == {"importers": [], "waiters": []}
+
+
+def test_the_scoped_path_offers_created_files_only(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A modified file's definitions were already there to resolve against;
+    only a file the call created can satisfy a recorded name, so an edit
+    that defines a common method name does not re-parse every module
+    calling one (local review)."""
+    from codebase_rag.parser_loader import load_parsers
+
+    root = temp_repo / "proj"
+    _materialise(
+        root, {rel: text for rel, text in PYTHON.items() if rel != "pkg/base.py"}
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    )
+    updater.run(force=True)
+    asked: list[list[str]] = []
+    waiters = GraphUpdater._unresolved_reference_waiters
+
+    def spy(self: GraphUpdater, added: list[tuple[str, bytes]]) -> list[str]:
+        asked.append([key for key, _b in added])
+        return waiters(self, added)
+
+    monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy)
+    (root / "pkg/derived.py").write_text(
+        PYTHON["pkg/derived.py"] + "\n\ndef get():\n    return 1\n"
+    )
+    updater.reingest(["pkg/derived.py"])
+    (root / "pkg/base.py").write_text(PYTHON["pkg/base.py"])
+    updater.reingest(["pkg/base.py"])
+    assert asked == [[], ["pkg/base.py"]]
