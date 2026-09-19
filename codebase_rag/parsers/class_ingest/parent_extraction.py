@@ -219,6 +219,36 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
+    # Julia `struct Dog <: Animal` / `abstract type Mammal <: Animal`: the
+    # `<:` base lives in the type_head, whose first named child is a
+    # binary_expression (type name left, supertype right, dotted for a
+    # qualified base). `primitive type` has no base.
+    if class_node.type in (
+        cs.TS_JULIA_STRUCT_DEFINITION,
+        cs.TS_JULIA_ABSTRACT_DEFINITION,
+    ):
+        type_head = find_child_by_type(class_node, cs.TS_JULIA_TYPE_HEAD)
+        if type_head is not None and type_head.named_children:
+            head = type_head.named_children[0]
+            if head.type == cs.TS_BINARY_EXPRESSION and head.named_children:
+                base = head.named_children[-1]
+                if base.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+                    # `struct Dog{T} <: Animal{T}`: the base name is the
+                    # parametrized expression's first named child.
+                    base = next(iter(base.named_children), None)
+                if (
+                    base is not None
+                    and base.type
+                    in (
+                        cs.TS_JULIA_IDENTIFIER,
+                        cs.TS_JULIA_FIELD_EXPRESSION,
+                        cs.TS_JULIA_SCOPED_IDENTIFIER,
+                    )
+                    and base.text
+                ):
+                    if name := safe_decode_text(base):
+                        parent_classes.append(resolve_to_qn(name, module_qn))
+
     if class_node.type in cs.SPEC_SCALA_CLASS_TYPES:
         parent_classes.extend(
             extract_scala_parent_classes(class_node, module_qn, resolve_to_qn)

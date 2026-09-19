@@ -128,6 +128,7 @@ treesitter-full = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
+    "tree-sitter-julia>=0.23.1",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-dart>=0.1.0",

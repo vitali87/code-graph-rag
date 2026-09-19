@@ -284,6 +284,7 @@ The function- and class-defining AST node types captured per language (auto-gene
 - **Go**: `function_declaration`, `method_declaration`, `type_alias`, `type_spec`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function`, `generator_function_declaration`, `method_definition`
+- **Julia**: `abstract_definition`, `arrow_function_expression`, `assignment`, `function_definition`, `macro_definition`, `primitive_definition`, `struct_definition`
 - **Lua**: `function_declaration`, `function_definition`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `interface_declaration`, `method_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`

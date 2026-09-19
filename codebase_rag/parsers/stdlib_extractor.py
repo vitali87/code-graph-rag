@@ -178,6 +178,12 @@ class StdlibExtractor:
                 return self._extract_csharp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.LUA:
                 return self._extract_lua_stdlib_path(full_qualified_name)
+            case cs.SupportedLanguage.JULIA:
+                # A Julia `using A.B` path is the module path AS WRITTEN:
+                # there is no trailing class segment to strip (the generic
+                # heuristic would collapse `Pkg.SomeModule` onto `Pkg`,
+                # merging distinct externals into one phantom node).
+                return full_qualified_name
             case _:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 

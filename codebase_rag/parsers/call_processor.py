@@ -42,6 +42,7 @@ from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
+from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -1419,8 +1420,42 @@ class CallProcessor:
             if body is None:
                 # a Dart body is a SIBLING of its signature, not a field
                 body = dart_utils.dart_body_node(func_node)
-            if body is None:
+            if body is None and func_node.type in (
+                cs.TS_JULIA_FUNCTION_DEFINITION,
+                cs.TS_JULIA_MACRO_DEFINITION,
+            ):
+                # The Julia grammar has no body field: the body is everything
+                # after the signature child. Exclude by span, keeping def-time
+                # calls in the signature (default args) module-attributed like
+                # the other languages. A head the naming pass refuses (error
+                # recovery swallowed the signature) owns no body either: its
+                # calls bubble to the module, like any unattributable call,
+                # instead of being swallowed by a node never registered under
+                # a real name (issue #1882 review).
+                if func_node.named_children and julia_utils.julia_function_head_name(
+                    func_node
+                ):
+                    start = func_node.named_children[0].end_byte
+                    end = func_node.end_byte
+                    lo = bisect_left(call_starts, start)
+                    hi = bisect_right(call_starts, end)
+                    for call in all_call_nodes[lo:hi]:
+                        if call.end_byte <= end:
+                            nested_starts.add(call.start_byte)
                 continue
+            if body is None:
+                if (
+                    func_node.type
+                    in (
+                        cs.TS_JULIA_ASSIGNMENT,
+                        cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION,
+                    )
+                    and len(func_node.named_children) >= 2
+                ):
+                    # Concise method / arrow: the RHS is the body.
+                    body = func_node.named_children[-1]
+                else:
+                    continue
             for call in self._filter_calls_in_node(all_call_nodes, call_starts, body):
                 nested_starts.add(call.start_byte)
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
@@ -2111,6 +2146,16 @@ class CallProcessor:
                             cs.TS_IDENTIFIER,
                         ),
                     )
+            if not func_name and language == cs.SupportedLanguage.JULIA:
+                # Julia's definition nodes carry no `name` field (the head is
+                # a positional `signature` or the concise method's left side,
+                # and an arrow takes its name from its assignment); the
+                # definition pass names them through these same helpers, so
+                # recover the name here or every body is skipped. The
+                # recorded-caller branch below then reuses the registered qn.
+                func_name = julia_utils.julia_function_head_name(
+                    func_node
+                ) or julia_utils.julia_arrow_assigned_name(func_node)
             if not func_name:
                 # A nameless JS/TS function expression that a NAMED pass
                 # registered (`exports.f = function`, `x: function`) has a
@@ -2724,6 +2769,16 @@ class CallProcessor:
         # chain, not inside the node.
         if language == cs.SupportedLanguage.DART:
             return dart_utils.dart_call_name(call_node)
+        if language == cs.SupportedLanguage.JULIA:
+            # The grammar gives no `function` field on call_expression (the
+            # callee is the first named child), and a definition's own head
+            # IS a call_expression (signature `f(x)`, concise left side
+            # `f(x) = ...`): drop definition heads here, since the venv's
+            # tree-sitter has no query negation patterns to exclude them at
+            # capture time.
+            if julia_utils.julia_is_signature_head(call_node):
+                return None
+            return julia_utils.julia_call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -3844,14 +3899,21 @@ class CallProcessor:
                     in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
                     and call_node.type in _OBJECT_CREATION_NODE_TYPES,
                 )
-            if callee_info and language == cs.SupportedLanguage.RUST:
-                # Rust macros and functions live in SEPARATE namespaces:
-                # a macro invocation (write!) must not bind a same-named fn
-                # (std-prelude macro names collide with common fn names and
-                # the false edge revives dead code), and a fn call must not
-                # bind a same-named macro.
+            if callee_info and language in (
+                cs.SupportedLanguage.RUST,
+                cs.SupportedLanguage.JULIA,
+            ):
+                # Rust and Julia macros and functions live in SEPARATE
+                # namespaces: a macro invocation (write! / @assert) must not
+                # bind a same-named fn (macro names collide with common fn
+                # names and the false edge revives dead code), and a fn call
+                # must not bind a same-named macro.
                 is_macro_target = callee_info[1] in self.macro_qns
-                if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
+                is_macro_invocation = call_node.type in (
+                    cs.TS_RS_MACRO_INVOCATION,
+                    cs.TS_JULIA_MACROCALL_EXPRESSION,
+                )
+                if is_macro_target != is_macro_invocation:
                     callee_info = None
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
