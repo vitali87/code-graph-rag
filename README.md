@@ -51,6 +51,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
+- **Cross-Service Consumers**: `endpoints`, `endpoint_callers` and `remote_dependencies` MCP tools read the EXPOSES / RESOLVES_TO edges, and `cgr dead-code --no-endpoint-roots` reports an endpoint no indexed call site reaches.
 - **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
 - **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.
 - **Gloss Node & Notes**: Introduced the Gloss node for agent-authored notes and enabled writing and reading Gloss notes via the MCP server.
