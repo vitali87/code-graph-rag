@@ -241,11 +241,11 @@ def _link_remote_callers(store: _StatefulIngestor) -> None:
     store.ensure_relationship_batch(
         (resource, qn, "client.net"), rel.RESOLVES_TO.value, (resource, qn, "svc.ep")
     )
-    store.ensure_relationship_batch(
-        (function, qn, "client.app.call"),
-        rel.READS_FROM.value,
-        (resource, qn, "client.net"),
-    )
+    # Reads and writes one URL: one remote caller, not two.
+    for access in (rel.READS_FROM.value, rel.WRITES_TO.value):
+        store.ensure_relationship_batch(
+            (function, qn, "client.app.call"), access, (resource, qn, "client.net")
+        )
     store.ensure_relationship_batch(
         (function, qn, "client.rpc.hello"),
         rel.WRITES_TO.value,
@@ -259,7 +259,8 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
     """A changed handler's remote call sites, through the NETWORK resource
     that resolves to its endpoint and directly for its RPC resource, in any
     project (issue #1603). No CALLS edge lists them, so `sites` alone says
-    the change is contained when it is not."""
+    the change is contained when it is not. A client that both reads and
+    writes the URL is one caller (local review P2)."""
     root, store, updater = indexed
     _write(
         root,

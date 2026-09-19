@@ -44,14 +44,15 @@ ORDER BY path
 # ENDPOINT a handler exposes, and an RPC or dispatch resource is exposed by
 # its handler directly, so a flow that reaches the resource continues into
 # the handler -- in whatever project it lives. Graph-wide by design: the edge
-# exists to cross projects. `project` is the handler's, so its own FLOWS_TO
-# edges can be loaded before the walk.
+# exists to cross projects. The handler's project is read off its qualified
+# name (only ENDPOINT resources carry a `project` property; RPC and dispatch
+# ones do not, local review), so its own FLOWS_TO edges can be loaded.
 CYPHER_FLOW_REMOTE_EDGES = f"""MATCH (n:{cs.NodeLabel.RESOURCE.value} {{kind: 'NETWORK'}})-[:{cs.RelationshipType.RESOLVES_TO.value}]->(e:{cs.NodeLabel.RESOURCE.value})<-[:{cs.RelationshipType.EXPOSES.value}]-(h)
-RETURN n.qualified_name AS source, h.qualified_name AS target, e.project AS project
+RETURN n.qualified_name AS source, h.qualified_name AS target
 UNION
 MATCH (e:{cs.NodeLabel.RESOURCE.value})<-[:{cs.RelationshipType.EXPOSES.value}]-(h)
 WHERE e.kind IN ['RPC', 'DISPATCH']
-RETURN e.qualified_name AS source, h.qualified_name AS target, e.project AS project
+RETURN e.qualified_name AS source, h.qualified_name AS target
 """
 
 
@@ -98,19 +99,14 @@ def flow_reachability_verdict(
     # continue on the other side of the boundary (issue #1603). Coverage
     # gaps stay this project's: the verdict is asked of it.
     remote: set[tuple[str, str]] = set()
-    remote_rows = fetch_all(CYPHER_FLOW_REMOTE_EDGES, None)
-    for row in remote_rows:
+    handler_projects: set[str] = set()
+    for row in fetch_all(CYPHER_FLOW_REMOTE_EDGES, None):
         source, target = row.get("source"), row.get("target")
         if isinstance(source, str) and isinstance(target, str):
             edges.setdefault(source, []).append(target)
             remote.add((source, target))
-    for other in sorted(
-        {
-            str(row["project"])
-            for row in remote_rows
-            if isinstance(row.get("project"), str) and row["project"] != project_name
-        }
-    ):
+            handler_projects.add(target.split(cs.SEPARATOR_DOT, 1)[0])
+    for other in sorted(handler_projects - {project_name}):
         _add_edges(
             edges,
             fetch_all(

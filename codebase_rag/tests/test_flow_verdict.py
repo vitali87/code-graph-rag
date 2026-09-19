@@ -24,13 +24,14 @@ from codebase_rag.parser_loader import load_parsers
 def _query_fn(
     edges: list[tuple[str, str]],
     gaps: list[str],
-    remote: list[tuple[str, str, str]] | None = None,
+    remote: list[tuple[str, str]] | None = None,
     other_edges: dict[str, list[tuple[str, str]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
 ):
-    """`remote` rows are (source, target, handler project); `other_edges`
-    holds the flow edges of every project other than the asked one, keyed
-    by project name; `calls` records every (query, params) issued."""
+    """`remote` rows are (source, target) with the handler's project read
+    off its name, as the graph has it; `other_edges` holds the flow edges of
+    every project other than the asked one, keyed by project name; `calls`
+    records every (query, params) issued."""
 
     def fetch_all(query: str, params=None):
         if calls is not None:
@@ -43,9 +44,7 @@ def _query_fn(
         if query == CYPHER_FLOW_COVERAGE_GAPS:
             return [{"path": p} for p in gaps]
         if query == CYPHER_FLOW_REMOTE_EDGES:
-            return [
-                {"source": s, "target": t, "project": p} for s, t, p in remote or []
-            ]
+            return [{"source": s, "target": t} for s, t in remote or []]
         raise AssertionError(query)
 
     return fetch_all
@@ -72,7 +71,7 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
     project's own flow edges, and names the hop that crossed the boundary
     (issue #1603). Before, the path ended at the resource: NO_FLOW with
     full coverage, a verified absence that was not one."""
-    remote = [("p.client.net", "q.api.handler", "q")]
+    remote = [("p.client.net", "q.api.handler")]
     result = flow_reachability_verdict(
         _query_fn(
             [("p.a.src", "p.client.net")],
@@ -91,19 +90,28 @@ def test_a_network_resource_continues_into_the_handler_of_another_project() -> N
 
 def test_an_rpc_resource_continues_into_its_handler_directly() -> None:
     """RPC and dispatch resources are exposed by their handler with no
-    RESOLVES_TO in between, so the resource itself is the hop's source."""
+    RESOLVES_TO in between, so the resource itself is the hop's source; the
+    resource node carries no project, so the handler's is read off its name
+    and that project's edges are loaded (local review P1)."""
     result = flow_reachability_verdict(
         _query_fn(
-            [("p.a.src", "p.rpc.Greeter")],
+            [("p.a.src", "resource::RPC::Greeter.Hello")],
             [],
-            remote=[("p.rpc.Greeter", "p.server.greet", "p")],
+            remote=[("resource::RPC::Greeter.Hello", "q.server.greet")],
+            other_edges={"q": [("q.server.greet", "q.db.sink")]},
         ),
         "p",
         "p.a.src",
-        "p.server.greet",
+        "q.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_FOUND
-    assert result.remote_hops == (("p.rpc.Greeter", "p.server.greet"),)
+    assert result.path == (
+        "p.a.src",
+        "resource::RPC::Greeter.Hello",
+        "q.server.greet",
+        "q.db.sink",
+    )
+    assert result.remote_hops == (("resource::RPC::Greeter.Hello", "q.server.greet"),)
 
 
 def test_a_path_inside_one_service_has_no_remote_hops() -> None:
@@ -114,7 +122,7 @@ def test_a_path_inside_one_service_has_no_remote_hops() -> None:
         _query_fn(
             [("p.a.src", "p.a.sink")],
             [],
-            remote=[("p.other.net", "q.api.handler", "q")],
+            remote=[("p.other.net", "q.api.handler")],
             other_edges={"q": []},
         ),
         "p",
@@ -134,7 +142,7 @@ def test_coverage_gaps_are_read_for_the_asked_project_only() -> None:
         _query_fn(
             [("p.a.src", "p.client.net")],
             ["p/uncovered.php"],
-            remote=[("p.client.net", "q.api.handler", "q")],
+            remote=[("p.client.net", "q.api.handler")],
             other_edges={"q": [("q.api.handler", "q.other")]},
             calls=calls,
         ),

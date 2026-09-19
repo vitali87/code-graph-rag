@@ -61,7 +61,7 @@ def _registry(
         if query == CYPHER_FLOW_EDGES and remote:
             return [{"source": f"{module}.dispatch", "target": f"{module}.net"}]
         if query == CYPHER_FLOW_REMOTE_EDGES and remote:
-            return [{"source": s, "target": t, "project": project} for s, t in remote]
+            return [{"source": s, "target": t} for s, t in remote]
         if query in (
             CYPHER_FLOW_EDGES,
             CYPHER_FLOW_REMOTE_EDGES,
