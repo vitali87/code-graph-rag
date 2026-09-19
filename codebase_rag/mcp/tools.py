@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import itertools
 import json
 import sys
@@ -7,7 +8,7 @@ from collections.abc import Callable, Collection
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from rich.console import Console
 
 from codebase_rag import constants as cs
@@ -820,11 +821,59 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
+    def _agent_query_tool(self) -> Tool:
+        """The graph-query tool the agent gets: the workspace's, if any.
+
+        The pre-built tool is bound to the project this server's root
+        derives to, which a workspace need not contain, so through
+        `ask_agent` it answered for a project outside the allow-list (bot
+        review on PR #1972). With a workspace the tool is bound to the
+        workspace default; without a default it refuses naming the choices,
+        the same answer `query_code_graph` gives a bare request.
+        """
+        if self.workspace is None:
+            return self._query_tool
+        default, scope_error = self._workspace_scope(None)
+        if scope_error is None and default is not None:
+            return create_query_tool(
+                ingestor=self.ingestor,
+                cypher_gen=self.cypher_gen,
+                console=self._stderr_console,
+                project_name=default,
+            )
+
+        async def refuse(natural_language_query: str) -> str:
+            return str(scope_error)
+
+        return Tool(
+            refuse, name=td.AgenticToolName.QUERY_GRAPH, description=td.CODEBASE_QUERY
+        )
+
+    def _workspace_scoped_tool(self, tool: Tool) -> Tool:
+        """`tool` with its `project` argument held to the workspace allow-list
+        and default, for the agent; a no-op without a workspace. `wraps`
+        keeps the signature, which is the tool's schema."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(*args: object, **kwargs: object) -> object:
+            project, scope_error = self._workspace_scope(
+                kwargs.get(cs.MCPParamName.PROJECT)  # type: ignore[arg-type]
+            )
+            if scope_error is not None:
+                return scope_error
+            kwargs[cs.MCPParamName.PROJECT] = project
+            return await original(*args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
             tools = [
-                self._query_tool,
+                self._agent_query_tool(),
                 self._code_tool,
                 self._file_reader_tool,
                 self._file_writer_tool,
@@ -834,11 +883,13 @@ class MCPToolsRegistry:
                 # The same instances the direct MCP tools use: a second copy
                 # would give the orchestrator its own roots cache and let the
                 # two routes disagree about a project indexed mid-session.
+                # Under a workspace the project-taking ones are wrapped so
+                # the agent cannot reach outside the allow-list (#1972).
                 self._function_source_tool,
-                self._find_duplicates_tool,
+                self._workspace_scoped_tool(self._find_duplicates_tool),
             ]
             if self._semantic_search_tool is not None:
-                tools.append(self._semantic_search_tool)
+                tools.append(self._workspace_scoped_tool(self._semantic_search_tool))
             if self._structural_available:
                 tools.append(self._structural_search_tool)
                 tools.append(self._structural_editor_tool)
@@ -1023,6 +1074,12 @@ class MCPToolsRegistry:
 
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
+        # A workspace server may delete only what it serves (bot review on
+        # PR #1972): the destructive path takes the same allow-list as the
+        # reads, before any lock or write.
+        _scoped, scope_error = self._workspace_scope(project_name)
+        if scope_error is not None:
+            return DeleteProjectErrorResult(success=False, error=scope_error)
         try:
             async with self._ingestor_lock:
                 return await asyncio.to_thread(self._delete_project_sync, project_name)

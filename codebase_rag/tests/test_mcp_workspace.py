@@ -219,3 +219,75 @@ async def test_every_project_taking_tool_applies_the_workspace_allow_list(
     assert await registry.find_duplicate_code() == ambiguous
     registry._semantic_search_tool.function.assert_not_called()
     registry._find_duplicates_tool.function.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_delete_project_is_held_to_the_workspace(tmp_path: Path) -> None:
+    """A workspace server may delete only what it serves (bot review on
+    PR #1972); an indexed project outside the workspace is refused before
+    any write."""
+    ws = _workspace(tmp_path, ("a", ALPHA))
+    registry = _registry(tmp_path, ws)
+    result = await registry.delete_project("other__9999")
+    assert result["success"] is False
+    assert result["error"] == cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+        project="other__9999", workspace="ws", known=ALPHA
+    )
+    registry.ingestor.delete_project.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> None:
+    """`ask_agent` builds its own tool list; under a workspace the graph
+    query is bound to the workspace default and the project-taking tools
+    refuse a project outside the allow-list (bot review on PR #1972)."""
+    (tmp_path / "a").mkdir()
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="a")
+    registry._semantic_search_tool = MagicMock()
+    registry._semantic_search_tool.function = MagicMock(return_value="ran")
+    registry._semantic_search_tool.name = "semantic_search"
+    registry._semantic_search_tool.description = "d"
+
+    async def duplicates(project: str | None = None) -> str:
+        return f"dups:{project}"
+
+    # `name=` on a MagicMock is its repr, not an attribute: set it explicitly.
+    dup_tool = MagicMock()
+    dup_tool.function = duplicates
+    dup_tool.name = "find_duplicate_code"
+    dup_tool.description = "d"
+    registry._find_duplicates_tool = dup_tool
+    with (
+        patch("codebase_rag.mcp.tools.create_rag_orchestrator") as build,
+        patch("codebase_rag.mcp.tools.create_query_tool") as query_tool,
+    ):
+        build.return_value = (MagicMock(), None)
+        registry.rag_agent
+    # The graph query is bound to the workspace default (the repo rooted here).
+    assert query_tool.call_args.kwargs["project_name"] == ALPHA
+    tools = {t.name: t for t in build.call_args.kwargs["tools"] if hasattr(t, "name")}
+    dup = tools["find_duplicate_code"]
+    assert await dup.function(project="other__9999") == (
+        cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+            project="other__9999", workspace="ws", known=f"{ALPHA}, {BETA}"
+        )
+    )
+    # A bare call takes the workspace default; an allowed name passes through.
+    assert await dup.function() == f"dups:{ALPHA}"
+    assert await dup.function(project=BETA) == f"dups:{BETA}"
+
+
+def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="elsewhere")
+    tool = registry._agent_query_tool()
+    import asyncio
+
+    answer = asyncio.run(tool.function("anything"))
+    assert answer == cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+        workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
+    )
+    assert registry._agent_query_tool() is not registry._query_tool
+    plain = _registry(tmp_path, None)
+    assert plain._agent_query_tool() is plain._query_tool
