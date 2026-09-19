@@ -1156,12 +1156,18 @@ def test_the_write_statement_records_the_three_anchor_fields() -> None:
 def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
     tmp_path: Path,
 ) -> None:
-    foreign = _registry(FakeGraph(), tmp_path)
+    # The checkout is one level down and a file is planted ABOVE it, so the
+    # escaping path exists on disk: a None for it comes from the root guard,
+    # not from a missing file (local review P2).
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "app.py").write_text("SECRET\n")
+    (repo / "app.py").write_text("x = 1\n")
+    foreign = _registry(FakeGraph(), repo)
     assert foreign._source_reader_for(P) is None
-    own = _registry(FakeGraph(root=str(tmp_path)), tmp_path)
+    own = _registry(FakeGraph(root=str(repo)), repo)
     read = own._source_reader_for(P)
     assert read is not None
-    (tmp_path / "app.py").write_text("x = 1\n")
     assert read(P, "app.py") == "x = 1\n"
     # Another project, a path that escapes the root, a missing file: None.
     assert read("other", "app.py") is None
@@ -1181,15 +1187,19 @@ async def test_mcp_annotate_hands_the_reader_to_the_write(tmp_path: Path) -> Non
 
 
 def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
-    (tmp_path / "app.py").write_text("x = 1\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "app.py").write_text("SECRET\n")
+    (repo / "app.py").write_text("x = 1\n")
     updater = GraphUpdater(
         ingestor=_RecordingStore(),  # type: ignore[arg-type]
-        repo_path=tmp_path,
+        repo_path=repo,
         parsers={},
         queries={},
     )
     assert updater._read_project_source(updater.project_name, "app.py") == "x = 1\n"
     assert updater._read_project_source("other", "app.py") is None
+    # The planted file above the root exists: None here is the guard.
     assert updater._read_project_source(updater.project_name, "../app.py") is None
     assert updater._read_project_source(updater.project_name, "missing.py") is None
 
