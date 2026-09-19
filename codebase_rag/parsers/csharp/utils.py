@@ -152,26 +152,40 @@ def _declared_name(node: Node) -> str | None:
     return safe_decode_text(name_node)
 
 
+def _file_scoped_namespace(unit: Node) -> str | None:
+    # A file-scoped `namespace N;` is a SIBLING of the declarations it
+    # governs under the compilation unit, not their ancestor.
+    for child in unit.children:
+        if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+            return _declared_name(child)
+    return None
+
+
+def _scope_of(node: Node) -> tuple[bool, str] | None:
+    # (is namespace, name) when `node` is a scope the qualified name walks.
+    if node.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+        name = _declared_name(node)
+        return (True, name) if name else None
+    if node.type in _CSHARP_TYPE_DECLARATIONS:
+        name = _declared_name(node)
+        return (False, name) if name else None
+    if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
+        name = _file_scoped_namespace(node)
+        return (True, name) if name else None
+    return None
+
+
 def _enclosing_scopes(node: Node) -> tuple[list[str], list[str]]:
     # (namespace segments, enclosing type names) of `node`, outermost first.
-    # Block namespaces are ancestors and nest; a file-scoped `namespace N;`
-    # is a sibling under the compilation unit, so it is read from there.
+    # Block namespaces are ancestors and nest; the file-scoped one is read
+    # from the compilation unit.
     namespaces: list[str] = []
     types: list[str] = []
     current = node.parent
     while current is not None:
-        if current.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
-            if name := _declared_name(current):
-                namespaces.append(name)
-        elif current.type in _CSHARP_TYPE_DECLARATIONS:
-            if name := _declared_name(current):
-                types.append(name)
-        elif current.type == cs.TS_CSHARP_COMPILATION_UNIT:
-            for child in current.children:
-                if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
-                    if name := _declared_name(child):
-                        namespaces.append(name)
-                    break
+        scope = _scope_of(current)
+        if scope is not None:
+            (namespaces if scope[0] else types).append(scope[1])
         current = current.parent
     namespaces.reverse()
     types.reverse()
