@@ -23,6 +23,7 @@ from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.types_defs import PropertyDict
 from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
@@ -360,6 +361,110 @@ class TestFingerprintStamping:
         assert settled._is_already_in_sync() is True
         settled.run()
         assert settled._reparsed_file_keys == set()
+
+    def test_a_stale_stamp_re_indexes_rather_than_rebuilds(
+        self, py_project: Path
+    ) -> None:
+        """The forced re-parse is a RE-INDEX of an indexed tree, not a first
+        build: each file's previous subtree is deleted first and its registry
+        entries dropped, so a reused updater does not register every
+        definition again as an `@N` duplicate beside the old one (caught by
+        the delombok overlay test in CI on the #1977 fix)."""
+        from evals.cgr_graph import _StatefulIngestor
+
+        store = _StatefulIngestor()
+        updater = _make_updater(py_project, store)  # type: ignore[arg-type]
+        updater.run()
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+        updater.run()
+
+        assert updater._is_full_build is False
+        assert updater._reparsed_file_keys == {"module_a.py"}
+        qn = f"{base_module_qn(Path('module_a.py'), py_project.name)}.func_a"
+        functions = sorted(
+            name for label, name in store.nodes if label == cs.NodeLabel.FUNCTION.value
+        )
+        assert functions == [qn]
+        assert updater.factory.function_registry.variants(qn) == [qn]
+        stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
+        assert stored == compute_parser_fingerprint(repo_path=py_project)
+
+    def test_a_stale_stamp_still_drops_a_file_deleted_since_the_last_run(
+        self, py_project: Path
+    ) -> None:
+        """The cache's keys move into the forced re-parse set on a parser
+        change, so a file the cache names and the walk no longer finds must
+        still leave the graph: Module, definitions and File node."""
+        from evals.cgr_graph import _StatefulIngestor
+
+        store = _StatefulIngestor()
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+        _make_updater(py_project, store).run()  # type: ignore[arg-type]
+        module_b = base_module_qn(Path("module_b.py"), py_project.name)
+        assert (cs.NodeLabel.MODULE.value, module_b) in store.nodes
+        (py_project / "module_b.py").unlink()
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+        # The store swallows a module delete and a File delete alike, so the
+        # statements themselves are recorded: the ORDER shows the deletion
+        # happened before the re-parse wrote anything (the same-stem rule the
+        # overlay path follows), and the File delete is the one statement the
+        # module subtree delete does not cover.
+        events: list[tuple[str, str]] = []
+        real_write, real_node = store.execute_write, store.ensure_node_batch
+
+        def spy_write(query: str, params: PropertyDict | None = None) -> None:
+            path = str((params or {}).get(cs.KEY_PATH, ""))
+            if query == cs.CYPHER_DELETE_MODULE:
+                events.append(("delete_module", path))
+            elif query == cs.CYPHER_DELETE_FILE:
+                events.append(("delete_file", path))
+            real_write(query, params)
+
+        def spy_node(label: str, properties: PropertyDict) -> None:
+            events.append(("node", str(properties.get(cs.KEY_QUALIFIED_NAME, ""))))
+            real_node(label, properties)
+
+        store.execute_write = spy_write  # type: ignore[method-assign]
+        store.ensure_node_batch = spy_node  # type: ignore[method-assign]
+
+        updater = _make_updater(py_project, store)  # type: ignore[arg-type]
+        updater.run()
+
+        assert updater._reparsed_file_keys == {"module_a.py"}
+        assert (cs.NodeLabel.MODULE.value, module_b) not in store.nodes
+        assert (cs.NodeLabel.FUNCTION.value, f"{module_b}.func_b") not in store.nodes
+        module_a = base_module_qn(Path("module_a.py"), py_project.name)
+        gone_first = events.index(("delete_module", "module_b.py"))
+        reparsed = events.index(("node", module_a))
+        assert gone_first < reparsed, events
+        assert any(
+            kind == "delete_file" and path.endswith("module_b.py")
+            for kind, path in events
+        ), events
+
+    def test_a_stale_stamp_over_an_empty_cache_is_a_full_build(
+        self, py_project: Path
+    ) -> None:
+        """A cache file that loads empty (corrupt JSON here) names nothing to
+        force, so the run stays the full build it always was and asks the
+        graph what it holds; a reused updater still ends with one node per
+        definition (bot review)."""
+        from evals.cgr_graph import _StatefulIngestor
+
+        store = _StatefulIngestor()
+        updater = _make_updater(py_project, store)  # type: ignore[arg-type]
+        updater.run()
+        (py_project / cs.HASH_CACHE_FILENAME).write_text('{"module_a.py": "ab')
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+        updater.run()
+
+        assert updater._is_full_build is True
+        qn = f"{base_module_qn(Path('module_a.py'), py_project.name)}.func_a"
+        functions = sorted(
+            name for label, name in store.nodes if label == cs.NodeLabel.FUNCTION.value
+        )
+        assert functions == [qn]
+        assert updater.factory.function_registry.variants(qn) == [qn]
 
     def test_an_unchanged_stamp_reparses_nothing(
         self, py_project: Path, mock_ingestor: MagicMock

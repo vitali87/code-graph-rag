@@ -1834,8 +1834,9 @@ class GraphUpdater:
         # the flushes above, survived a full build that died in between and
         # claimed this parser's edges were in a graph that held none of them,
         # so the very run that failed was the one the warning stayed silent
-        # for. Set only by a full build (`_process_files`), so incremental runs
-        # keep the stale stamp and the warning with it.
+        # for. Set by a full build or a parser-changed re-index
+        # (`_process_files`), so ordinary incremental runs keep the stale
+        # stamp and the warning with it.
         if self._pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
                 self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
@@ -4020,10 +4021,7 @@ class GraphUpdater:
         # file, so treat it as gone for this run (issue #1647). Without this the
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
-        # `_parser_changed`: the cache names files the old inputs parsed;
-        # every file re-parses once and the run stamps the new fingerprint
-        # (issue #1977).
-        cache_is_dead = self._cache_discarded_in_memory or self._parser_changed
+        cache_is_dead = self._cache_discarded_in_memory
         old_hashes = (
             _load_hash_cache(cache_path) if not (force or cache_is_dead) else {}
         )
@@ -4064,7 +4062,25 @@ class GraphUpdater:
         }
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)
-        is_full_build = (force or not old_hashes) and self._single_file is None
+        # `_parser_changed`: the cache names files the old inputs parsed, so
+        # every one of them is forced through a re-parse the same way an
+        # overlay change forces its files (issue #1977). Forced, not merely
+        # forgotten: a file dropped from `old_hashes` alone reads as NEW,
+        # skips delete-before-reingest and keeps its previous registry
+        # entries, so a reused updater registers each definition again as
+        # an `@N` duplicate (the delombok overlay test caught it in CI).
+        # Only when the cache named something: a cache file that loads empty
+        # (corrupt JSON, or one this run already discarded) leaves nothing to
+        # force, and that run stays the full build it always was, asking the
+        # graph what it holds (bot review).
+        reindex_all = self._parser_changed and bool(old_hashes)
+        if reindex_all:
+            forced_reparse_keys |= set(old_hashes)
+            old_hashes.clear()
+        # That run is a RE-INDEX of an indexed tree, not a first build.
+        is_full_build = (
+            force or (not old_hashes and not reindex_all)
+        ) and self._single_file is None
         self._is_full_build = is_full_build
         cache_mtime = (
             _trustworthy_cache_mtime(cache_path) if cache_path.is_file() else 0.0
@@ -4304,7 +4320,12 @@ class GraphUpdater:
         # property to rely on, so the scope rule is stated here.
         deleted_before_parse = (
             sorted(
-                (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
+                (
+                    set(old_hashes)
+                    | self._delombok_stale_keys
+                    | forced_reparse_keys
+                    | graph_only_gone
+                )
                 - eligible_by_key.keys()
                 - unreadable_keys
             )
@@ -4579,7 +4600,10 @@ class GraphUpdater:
         # in `run`, after the final flush (issue #1634): a build that dies
         # between here and that flush must leave no stamp, or its successor
         # reads its own fingerprint back and never warns.
-        if is_full_build:
+        # A parser-changed project run re-parsed every file too, so it stamps
+        # the fingerprint it parsed under; a single-file run did not, and
+        # leaves the stale stamp for the next project run (issue #1977).
+        if is_full_build or (self._parser_changed and self._single_file is None):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
                 repo_path=self.repo_path, capture=self.capture
             )
