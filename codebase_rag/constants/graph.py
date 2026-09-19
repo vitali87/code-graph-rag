@@ -886,6 +886,18 @@ CYPHER_UNRESOLVED_REFERENCE_WAITERS = (
 )
 CYPHER_PARAM_NAMES = "names"
 CYPHER_PARAM_PREFIXES = "prefixes"
+# SET, not merge, so a name that now resolves is gone from the list (issue
+# #1568); after a flush, so the Module nodes of a first build exist to
+# match. Two shapes because a parameter value is a scalar or a list of
+# strings: the modules with nothing unresolved (most of them) in one
+# statement, and one statement per module that recorded names.
+CYPHER_CLEAR_UNRESOLVED_REFERENCES = (
+    "UNWIND $qns AS qn MATCH (m:Module {qualified_name: qn}) "
+    "SET m.unresolved_references = []"
+)
+CYPHER_SET_UNRESOLVED_REFERENCES = (
+    "MATCH (m:Module {qualified_name: $qn}) SET m.unresolved_references = $names"
+)
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "

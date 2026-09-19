@@ -1093,6 +1093,20 @@ class _StatefulIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
+                # Modules with nothing unresolved this parse (issue #1568).
+                raw_qns = params.get(cs.KEY_QNS) if params else None
+                for qn in raw_qns if isinstance(raw_qns, list) else []:
+                    node = self.nodes.get((_MODULE_LABEL, qn))
+                    if node is not None:
+                        node[cs.KEY_UNRESOLVED_REFERENCES] = []
+            case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
+                # One module's list, replaced so a resolved name leaves it.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:
