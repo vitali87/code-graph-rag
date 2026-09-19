@@ -186,3 +186,27 @@ def test_only_a_gone_path_escapes_the_mark(
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert gu._vanished(present) is False
     assert gu._vanished(link) is True
+
+
+def test_a_link_whose_target_cannot_be_reached_is_not_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A symlink to a target whose metadata lookup fails with a permission
+    error is unreadable, not vanished: the mark must be recorded and the
+    run must not raise (bot review on PR #1993)."""
+    target = tmp_path / "target.py"
+    target.write_text("x = 1\n")
+    link = tmp_path / "link.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks need privileges on this host")
+    real_stat = os.stat
+
+    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if Path(str(path)) == link and not kwargs.get("follow_symlinks", True) is False:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(gu.os, "stat", denied)
+    assert gu._vanished(link) is False

@@ -176,7 +176,17 @@ def _vanished(filepath: Path) -> bool:
         return True
     except OSError:
         return False
-    return filepath.is_symlink() and not filepath.exists()
+    if not filepath.is_symlink():
+        return False
+    # A dangling link is gone; a link whose target cannot be reached is
+    # not, and `Path.exists()` would raise on that (bot review).
+    try:
+        os.stat(filepath)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def _hash_file(filepath: Path) -> str:
