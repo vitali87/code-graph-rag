@@ -4499,7 +4499,22 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         if self._single_file is None:
             self._pending_hash_cache = (cache_path, new_hashes)
-            self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
+            # A file this run could not read is absent from the cache, but
+            # its directory's mtime is unchanged: the next run's fast path
+            # would report "in sync" and never retry it (issue #1983). With
+            # no directory stamp the next run walks the tree, finds the file
+            # missing from the cache and parses it; the stamp returns once a
+            # run reads every eligible file.
+            if unreadable_keys:
+                logger.warning(
+                    ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
+                )
+                self._pending_dir_mtimes = None
+            else:
+                self._pending_dir_mtimes = (
+                    dir_mtimes_path,
+                    self._collected_dir_mtimes,
+                )
         else:
             # Two different remedies, because the run has different standing
             # on each (#1619). It DID hash its one file, so that hash is worth
