@@ -3,7 +3,8 @@
 # incremental sync silently keeps every edge the OLD parser produced for
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
-# later sync against a different parser warns loudly until a clean rebuild.
+# later sync against a different parser warns, re-parses every file once and
+# re-stamps (issue #1977).
 import ast
 import inspect
 import textwrap
@@ -432,8 +433,8 @@ class TestStalenessWarning:
     def test_in_sync_fast_path_still_warns_on_stale_stamp(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
     ) -> None:
-        # The fast path skips all passes, which is exactly the silent
-        # no-op that must not hide a stale graph.
+        # A stale stamp must warn even when nothing on disk changed: the
+        # run re-parses rather than taking the fast path (issue #1977).
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
@@ -474,7 +475,7 @@ class TestStalenessWarning:
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
     ) -> None:
         # A graph synced before this safeguard existed was built by an
-        # unknown parser: treat it as stale until a clean rebuild.
+        # unknown parser: treat it as stale and re-parse every file once.
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).unlink()
 
