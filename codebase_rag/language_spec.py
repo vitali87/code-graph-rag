@@ -245,6 +245,51 @@ def _dart_get_name(node: Node) -> str | None:
     return dart_utils.dart_get_name(node)
 
 
+def _julia_get_name(node: Node) -> str | None:
+    # The single implementation of function naming lives in
+    # parsers.julia.utils, which the call pass reaches directly; the import
+    # is deferred here because language_spec is imported from inside parsers.
+    from .parsers.julia import utils as julia_utils
+
+    if node.type in (
+        cs.TS_JULIA_FUNCTION_DEFINITION,
+        cs.TS_JULIA_MACRO_DEFINITION,
+        cs.TS_JULIA_ASSIGNMENT,
+    ):
+        return julia_utils.julia_function_head_name(node)
+    if node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
+        return julia_utils.julia_arrow_assigned_name(node)
+    if node.type in cs.JULIA_TYPE_DEFINITION_TYPES:
+        # The name sits in a positional `type_head` child; with a `<:` base
+        # the head's first named child is a binary_expression whose own
+        # first named child is the type name (`struct Point <: Shape`).
+        type_head = next(
+            (c for c in node.children if c.type == cs.TS_JULIA_TYPE_HEAD), None
+        )
+        head = next(iter(type_head.named_children), None) if type_head else None
+        if head is not None and head.type == cs.TS_BINARY_EXPRESSION:
+            head = next(iter(head.named_children), None)
+        if head is not None and head.type == cs.TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION:
+            # `struct Point{T}` wraps the name in a parametrized expression;
+            # the base name is its first named child (drop `{T}` from the qn).
+            head = next(iter(head.named_children), None)
+        if head is None or not head.text:
+            return None
+        name = decode_node_text(head.text)
+        # The same recovered-span refusal as the function path: a type head
+        # the grammar error-recovered spans source lines (a `binary_expression`
+        # chain, not a type name), so naming it would mint a qn out of source
+        # code; a nameless class registers nothing, as on a missing name.
+        if "\n" in name:
+            return None
+        return name
+    if node.type == cs.TS_JULIA_SOURCE_FILE:
+        # The file's own name comes from file_to_module_parts, not here.
+        return None
+    # module_definition (and anything else) names through a `name` field.
+    return _generic_get_name(node)
+
+
 PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
@@ -343,6 +388,13 @@ DART_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+JULIA_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_JULIA_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_JULIA_FUNCTION_TYPES),
+    get_name=_julia_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -359,6 +411,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.DART: DART_FQN_SPEC,
     cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
+    cs.SupportedLanguage.JULIA: JULIA_FQN_SPEC,
 }
 
 
@@ -696,6 +749,42 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_query=cs.DART_CALL_QUERY,
         import_node_types=cs.SPEC_DART_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_DART_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.JULIA: LanguageSpec(
+        language=cs.SupportedLanguage.JULIA,
+        file_extensions=cs.JULIA_EXTENSIONS,
+        function_node_types=cs.SPEC_JULIA_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_JULIA_CLASS_TYPES,
+        module_node_types=cs.SPEC_JULIA_MODULE_TYPES,
+        call_node_types=cs.SPEC_JULIA_CALL_TYPES,
+        import_node_types=cs.SPEC_JULIA_IMPORT_TYPES,
+        import_from_node_types=(),
+        # Bare captures (like C/C++/C#): the grammar gives no `name` field on
+        # function heads, and the concise method `f(x) = ...` is an
+        # `assignment` that must be constrained to its LEFT side (the `.`
+        # first-child anchor) or every `x = f()` call site becomes a function.
+        # A return type wraps the head in `typed_expression`, a `where`
+        # clause in `where_expression`, and the two nest in either order
+        # (`f(x)::Int`, `f(x) where T`, `f(x)::Int where T`).
+        function_query="""
+        (function_definition) @function
+        (macro_definition) @function
+        (arrow_function_expression) @function
+        (assignment . (call_expression)) @function
+        (assignment . (where_expression (call_expression))) @function
+        (assignment . (typed_expression (call_expression))) @function
+        (assignment . (where_expression (typed_expression (call_expression)))) @function
+        """,
+        class_query="""
+        (struct_definition) @class
+        (abstract_definition) @class
+        (primitive_definition) @class
+        """,
+        call_query="""
+        (call_expression) @call
+        (macrocall_expression) @call
+        (broadcast_call_expression) @call
+        """,
     ),
 }
 

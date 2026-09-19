@@ -8,4 +8,4 @@ class Greeter:
 
 def main():
     return Greeter().greet('x')
-	
+

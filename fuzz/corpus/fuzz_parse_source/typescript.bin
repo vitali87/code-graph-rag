@@ -5,4 +5,4 @@ export class Greeter {
 }
 
 export function main(): string { return new Greeter().greet('x'); }
-
+
