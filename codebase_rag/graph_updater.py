@@ -902,6 +902,10 @@ class GraphUpdater:
         # disk, so this run must ignore it in memory rather than trust it
         # (issue #1647).
         self._cache_discarded_in_memory: bool = False
+        # A parser input changed since the graph was built (issue #1977):
+        # the hash cache describes files parsed by other inputs, so this run
+        # ignores it and re-parses every file once. Set per run.
+        self._parser_changed: bool = False
         # Written at the post-flush commit point in `run`, never inside
         # `_process_files` (issue #1615).
         self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
@@ -1629,9 +1633,10 @@ class GraphUpdater:
         # that call would clear the flag it just raised and make the in-memory
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
+        self._parser_changed = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
-            self._warn_if_parser_changed()
+            self._reparse_all_if_parser_changed()
 
         # Discovery must precede the in-sync check: a build that appeared
         # since the cached run changes the eligible set, and the check walks
@@ -1823,7 +1828,7 @@ class GraphUpdater:
             )
 
         # The parser fingerprint commits here too, for the same reason
-        # (issue #1634). `_warn_if_parser_changed` compares the stored stamp
+        # (issue #1634). `_reparse_all_if_parser_changed` compares the stored stamp
         # with the current fingerprint to tell the user the graph was built by
         # different parser code; a stamp written inside `_process_files`, before
         # the flushes above, survived a full build that died in between and
@@ -3783,7 +3788,18 @@ class GraphUpdater:
                 self._cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
-    def _warn_if_parser_changed(self) -> None:
+    def _reparse_all_if_parser_changed(self) -> None:
+        """Ignore the hash cache for this run when a parser input changed.
+
+        The cache records which files the PREVIOUS inputs parsed; a file
+        unchanged since then would be skipped, and whatever the new inputs
+        emit for it (a property added to a node kind, a new edge) would
+        never be written until the file happened to change. Treating the
+        cache as dead re-parses every file once, and the completed run
+        stamps the new fingerprint, so the next run parses nothing again
+        (issue #1977). A re-parse only removes what a module DEFINES, so
+        this is not a clean rebuild; the warning says what survives.
+        """
         # No hash cache means a full build is coming: nothing to compare.
         if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
             return
@@ -3796,6 +3812,7 @@ class GraphUpdater:
         if stored is None or stored != compute_parser_fingerprint(
             repo_path=self.repo_path, capture=self.capture
         ):
+            self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _exclusions_match_last_run(self) -> bool:
@@ -3815,7 +3832,7 @@ class GraphUpdater:
             return True
         # A missing stamp means an index built before it existed, whose
         # exclusion set is unknown rather than known-equal -- the posture
-        # `_warn_if_parser_changed` takes for a missing fingerprint. Reported
+        # `_reparse_all_if_parser_changed` takes for a missing fingerprint. Reported
         # apart from a real change so a user seeing an unexpected full pass
         # can tell which of the two they are looking at.
         if stored is None:
@@ -3847,7 +3864,9 @@ class GraphUpdater:
         cache_mtime = _trustworthy_cache_mtime(cache_path)
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = (
-            {} if self._cache_discarded_in_memory else _load_hash_cache(cache_path)
+            {}
+            if self._cache_discarded_in_memory or self._parser_changed
+            else _load_hash_cache(cache_path)
         )
         old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
         if not old_hashes or not old_dir_mtimes:
@@ -4001,7 +4020,10 @@ class GraphUpdater:
         # file, so treat it as gone for this run (issue #1647). Without this the
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
-        cache_is_dead = self._cache_discarded_in_memory
+        # `_parser_changed`: the cache names files the old inputs parsed;
+        # every file re-parses once and the run stamps the new fingerprint
+        # (issue #1977).
+        cache_is_dead = self._cache_discarded_in_memory or self._parser_changed
         old_hashes = (
             _load_hash_cache(cache_path) if not (force or cache_is_dead) else {}
         )

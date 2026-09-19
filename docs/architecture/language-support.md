@@ -125,14 +125,16 @@ Requires the `treesitter-full` extra.
 The wipe is needed there because that case *renames* existing nodes: the old
 unsuffixed document modules have to go, and re-parsing alone would not remove
 them. A change that only *adds* edges does not need it. Enabling a capture
-group is the common example -- `CGR_CAPTURE=io` on an indexed project reports
-"already in sync" and emits nothing, because the hash cache keys file
-contents and every file is unchanged. Deleting that one repository's
+group is the common example -- `CGR_CAPTURE=io` on an indexed project: the
+hash cache keys file contents and every file is unchanged, but the capture
+selection is part of the parser fingerprint, so the next `--update-graph`
+sees the mismatch, ignores the cache for that run, re-parses every file of
+this repository once and emits the newly enabled edges, then rewrites the
 `.cgr-hash-cache.json`, `.cgr-dir-mtimes.json` and `.cgr-parser-fingerprint`
-makes the next `--update-graph` treat every file as new and emit the newly
-enabled edges, leaving every other project in the shared graph untouched.
-The capture selection is part of the parser fingerprint, so a run that would
-skip in this way warns first rather than silently doing nothing (issue #1630).
+stamps; every other project in the shared graph is untouched, and the run
+after parses nothing again (issues #1630 and #1977). The warning it logs says
+what such a re-parse cannot do: it removes only what a re-parsed module
+DEFINES, so a change that renames nodes still needs the wipe above.
 
 ## Language-Agnostic Design
 

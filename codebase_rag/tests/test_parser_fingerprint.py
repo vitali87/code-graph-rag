@@ -306,7 +306,7 @@ class TestFingerprintStamping:
         Stamped inside `_process_files`, before the final flush, a full build
         that died in between left a fingerprint claiming this parser's edges
         were in the graph while the graph held none of them; the next run
-        compared equal and `_warn_if_parser_changed` stayed silent for exactly
+        compared equal and `_reparse_all_if_parser_changed` stayed silent for exactly
         the run that failed (issue #1634). The exclusion stamp, the hash cache
         and the directory mtimes already commit after the flush; this pins the
         fingerprint to the same point.
@@ -337,19 +337,41 @@ class TestFingerprintStamping:
         _make_updater(py_project, mock_ingestor).run()
         assert _fingerprint_path(py_project).is_file()
 
-    def test_incremental_sync_does_not_overwrite_stale_stamp(
+    def test_a_stale_stamp_reparses_every_file_once_and_is_refreshed(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
-        # Incremental syncs keep old-parser edges for unchanged files, so
-        # re-stamping would silence the warning while the graph stays stale.
+        """An incremental sync used to keep the old inputs' results for every
+        unchanged file, so a property a newer parser adds was never written
+        until the file happened to change (issue #1977). The sync now
+        ignores the hash cache once: every file re-parses, the completed
+        run stamps the new fingerprint, and the run after parses nothing."""
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
 
-        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
-        _make_updater(py_project, mock_ingestor).run()
+        updater = _make_updater(py_project, mock_ingestor)
+        updater.run()
 
+        assert updater._reparsed_file_keys == {"module_a.py", "module_b.py"}
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
-        assert stored == STALE_FINGERPRINT
+        assert stored == compute_parser_fingerprint(repo_path=py_project)
+        settled = _make_updater(py_project, mock_ingestor)
+        assert settled._is_already_in_sync() is True
+        settled.run()
+        assert settled._reparsed_file_keys == set()
+
+    def test_an_unchanged_stamp_reparses_nothing(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The control: with the stamp matching, the cache is trusted and an
+        unchanged file is not re-parsed."""
+        _make_updater(py_project, mock_ingestor).run()
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+
+        updater = _make_updater(py_project, mock_ingestor)
+        updater.run()
+
+        assert updater._reparsed_file_keys == {"module_b.py"}
 
     def test_forced_rebuild_refreshes_stale_stamp(
         self, py_project: Path, mock_ingestor: MagicMock
