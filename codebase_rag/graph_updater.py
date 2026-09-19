@@ -2366,7 +2366,7 @@ class GraphUpdater:
             name = row.get(cs.KEY_NAME)
             if isinstance(name, str) and name:
                 names.add(name)
-        registered: list[str] = sorted(names, key=len, reverse=True)
+        registered = sorted(names, key=lambda name: len(name), reverse=True)
         self._registered_projects = registered
         return registered
 
