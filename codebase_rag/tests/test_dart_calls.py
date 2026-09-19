@@ -214,8 +214,8 @@ def test_body_calls_not_attributed_to_module(
 
 
 CMP_DART = """
-class Box {
-  Box(int v);
+class Box<T> {
+  Box(T v);
   int abs() => 1;
 }
 
