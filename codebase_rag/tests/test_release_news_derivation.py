@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -128,6 +129,11 @@ def test_the_readme_render_is_its_own_blocking_step() -> None:
     assert "generate_readme.py" not in _news_update_script()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the step runs under the Ubuntu runner's bash; on the Windows runner "
+    "`bash` resolves to the WSL launcher, which has no distribution installed",
+)
 def test_a_failed_render_restores_the_files_and_fails_the_step(tmp_path: Path) -> None:
     """The render step's own shell, run against a fake `uv` whose generator
     exits 23: NEWS.md and README.md come back as committed and the step
@@ -152,8 +158,8 @@ def test_a_failed_render_restores_the_files_and_fails_the_step(tmp_path: Path) -
     fake_uv.write_text('#!/bin/sh\nif [ "$1" = sync ]; then exit 0; fi\nexit 23\n')
     fake_uv.chmod(0o755)
     env = {
-        **dict(__import__("os").environ),
-        "PATH": f"{fake_bin}:{__import__('os').environ.get('PATH', '')}",
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
     }
     result = subprocess.run(
