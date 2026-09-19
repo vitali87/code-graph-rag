@@ -363,10 +363,7 @@ def _walk_sites(
         next_frontier: list[str] = []
         for qn in sorted(frontier):
             rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for row in rows:
-                if not owns(_text_qn(row)):
-                    continue
-                site = _site_row(row, level, qn)
+            for site in _owned_sites(rows, owns, level, qn):
                 out.append(site)
                 other = site["qualified_name"]
                 if other not in seen:
@@ -376,6 +373,14 @@ def _walk_sites(
         if not frontier:
             break
     return sorted(out, key=_site_sort_key)
+
+
+def _owned_sites(
+    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
+) -> list[CallSiteRow]:
+    """The sites among `rows` whose other endpoint this project owns: a
+    foreign row is neither reported nor a hop the walk continues through."""
+    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
 
 
 def callers(
