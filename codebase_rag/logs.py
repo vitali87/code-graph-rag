@@ -1066,6 +1066,10 @@ FILE_UNREADABLE = (
     "Skipping unreadable file (broken symlink or removed): {path} ({error})"
 )
 INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
+INCREMENTAL_UNREADABLE_RETRY = (
+    "{count} unreadable file(s) are marked in the cache, so the next update "
+    "retries them whatever their directories' mtimes say"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
