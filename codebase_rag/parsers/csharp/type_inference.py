@@ -26,6 +26,7 @@ from .utils import (
     annotate_type_ref,
     generic_arity_of_type_text,
     split_type_ref,
+    strip_generic_arguments,
 )
 
 if TYPE_CHECKING:
@@ -1398,7 +1399,8 @@ class CSharpTypeInferenceEngine:
             return sorted(
                 {
                     qn
-                    for base in self.class_inheritance.get(own or "", [])
+                    for root in self._partial_roots(own or "")
+                    for base in self.class_inheritance.get(root, [])
                     for qn in self._method_group_on(base, name)
                 }
             )
@@ -1406,18 +1408,42 @@ class CSharpTypeInferenceEngine:
             receiver, local_var_types, module_qn, caller_qn
         )
         if class_qn is None and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # `Outer.Inner.Go`, `Lib.Util.Helper`: a dotted PascalCase receiver
-            # is a TYPE written with its enclosing type or namespace, which
-            # the receiver typing does not cover but the type lookup does
-            # (bot review).
-            dotted = safe_decode_text(receiver) or ""
-            if dotted and all(
-                seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
-            ):
-                class_qn = self._type_name_to_qn(dotted, module_qn)
+            # `Outer.Inner.Go`, `Lib.Util.Helper`: a dotted receiver the
+            # receiver typing does not cover is a TYPE written with its
+            # enclosing type or namespace, but only when a registered type
+            # sits at exactly that written path. The last segment alone
+            # would also bind `Config.Default.Handle`, a property value
+            # chain, to an unrelated `Default` type (bot review).
+            class_qn = self._dotted_type_path_qn(
+                safe_decode_text(receiver) or "", module_qn
+            )
         if class_qn is None:
             return []
         return self._method_group_on(class_qn, name)
+
+    def _dotted_type_path_qn(self, dotted: str, module_qn: str) -> str | None:
+        # A written type path (`Outer.Inner`, `myLib.Util.Helper`, generic
+        # arguments stripped from EVERY segment, so `Lib.Util<int>.Helper`
+        # keeps its leaf) names a registered type whose qn ends with the
+        # WHOLE path at a segment boundary; a namespace's case is no signal.
+        written = strip_generic_arguments(dotted)
+        if not written:
+            return None
+        if self.function_registry.get(written) in _TYPE_DECLS:
+            return written
+        simple = written.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{written}"
+        candidates = [
+            qn
+            for qn in self.simple_name_lookup.get(simple, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS and qn.endswith(suffix)
+        ]
+        # The leaf's own arity picks between same-name twins.
+        return self._disambiguate_type_candidates(
+            candidates,
+            generic_arity_of_type_text(dotted.rsplit(cs.SEPARATOR_DOT, 1)[-1]),
+            module_qn,
+        )
 
     def _method_group_on(self, class_qn: str, name: str) -> list[str]:
         seen: set[str] = set()

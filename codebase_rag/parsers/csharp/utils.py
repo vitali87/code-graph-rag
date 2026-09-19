@@ -61,6 +61,24 @@ def _normalize_type_name(text: str) -> str:
     return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
+def strip_generic_arguments(text: str) -> str:
+    """A type path with every segment's generic arguments removed.
+
+    `Lib.Util<int>.Helper<T>` -> `Lib.Util.Helper`: unlike a cut at the
+    first `<`, a generic NON-LEAF segment keeps the segments after it.
+    """
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out).replace(" ", "")
+
+
 def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to

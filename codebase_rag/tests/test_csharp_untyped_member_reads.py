@@ -119,3 +119,82 @@ def test_base_nested_and_namespace_qualified_method_groups_bind(tmp_path: Path) 
     )
     assert any(t.endswith(".Outer.Inner.Go(string)") for t in targets), sorted(targets)
     assert any(t.endswith(".Util.Helper(string)") for t in targets), sorted(targets)
+
+
+# After the bot review: a base list declared on ANOTHER part (another file)
+# of a partial class, a lowercase namespace on a type path, and a value chain on an
+# external receiver (`Remote.Default`) beside a decoy type named `Default`.
+REVIEW = {
+    "src/Lib.cs": (
+        "namespace myLib\n{\n    public static class Util\n    {\n"
+        "        public static class Helper\n        {\n"
+        "            public static void Run(string s) { }\n        }\n    }\n}\n\n"
+        "namespace Lib\n{\n"
+        "    public class BaseHandler\n    {\n        public void Handle(string s) { }\n    }\n\n"
+        "    public class Default\n    {\n        public void Handle(string s) { }\n    }\n\n"
+        "    public class Config\n    {\n"
+        "        public void Each(System.Action<string> f) { }\n    }\n}\n"
+    ),
+    "src/App.cs": (
+        "using Lib;\n\nnamespace App\n{\n"
+        "    public partial class Bench\n    {\n"
+        "        public void Run()\n        {\n            var config = new Config();\n"
+        "            config.Each(base.Handle);\n"
+        "            config.Each(myLib.Util.Helper.Run);\n"
+        "            config.Each(Remote.Default.Handle);\n"
+        "        }\n    }\n}\n"
+    ),
+    # A plain stem: a dotted one (`Bench.Base.cs`) defeats the syntactic
+    # partial key on main until #1999 lands.
+    "src/BenchBase.cs": (
+        "using Lib;\n\nnamespace App\n{\n"
+        "    public partial class Bench : BaseHandler\n    {\n    }\n}\n"
+    ),
+}
+
+
+def test_a_base_list_on_another_partial_part_binds_base_handle(tmp_path: Path) -> None:
+    targets = {target for _kind, target in _edges(tmp_path / "proj", REVIEW)}
+    assert any(t.endswith(".BaseHandler.Handle(string)") for t in targets), sorted(
+        targets
+    )
+
+
+def test_a_lowercase_namespace_type_path_binds(tmp_path: Path) -> None:
+    targets = {target for _kind, target in _edges(tmp_path / "proj", REVIEW)}
+    assert any(t.endswith(".Util.Helper.Run(string)") for t in targets), sorted(targets)
+
+
+def test_an_external_value_chain_does_not_bind_a_decoy_type(tmp_path: Path) -> None:
+    targets = {target for _kind, target in _edges(tmp_path / "proj", REVIEW)}
+    assert not any(t.endswith(".Default.Handle(string)") for t in targets), sorted(
+        targets
+    )
+
+
+# After the local review: a generic NON-LEAF segment (`Lib.Util<int>.Helper`)
+# must keep the segments after it; a cut at the first `<` bound the outer
+# type's same-name method.
+GENERIC_SEGMENT = {
+    "src/Lib.cs": (
+        "namespace Lib\n{\n"
+        "    public class Config\n    {\n"
+        "        public void Each(System.Action<string> f) { }\n    }\n\n"
+        "    public static class Util<T>\n    {\n"
+        "        public static void Run(string s) { }\n\n"
+        "        public static class Helper\n        {\n"
+        "            public static void Run(string s) { }\n        }\n    }\n}\n"
+    ),
+    "src/App.cs": (
+        "using Lib;\n\nnamespace App;\n\npublic class Bench\n{\n"
+        "    public void Run()\n    {\n        var config = new Config();\n"
+        "        config.Each(Lib.Util<int>.Helper.Run);\n"
+        "    }\n}\n"
+    ),
+}
+
+
+def test_a_generic_non_leaf_segment_keeps_the_leaf(tmp_path: Path) -> None:
+    targets = {target for _kind, target in _edges(tmp_path / "proj", GENERIC_SEGMENT)}
+    assert any(t.endswith(".Util.Helper.Run(string)") for t in targets), sorted(targets)
+    assert not any(t.endswith(".Util.Run(string)") for t in targets), sorted(targets)
