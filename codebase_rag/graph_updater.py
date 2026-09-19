@@ -798,6 +798,37 @@ def _project_root_for_single_file(target: Path) -> Path:
     return git_root if git_root is not None else target.parent
 
 
+def _definition_names(node: Node) -> set[str]:
+    """Simple names a captured definition node declares: its `name` field, or
+    the `name` fields of its named children (a Go `type_declaration` holds
+    `type_spec`s), or the identifier under a C++ declarator chain."""
+    names: set[str] = set()
+    if (name := node.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+        names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+        return names
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        inner = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is None:
+            if declarator.text:
+                names.add(declarator.text.decode(cs.ENCODING_UTF8, errors="replace"))
+            break
+        declarator = inner
+    if names:
+        return names
+    for child in node.named_children:
+        if (name := child.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+            names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+    return names
+
+
+def _read_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -1777,6 +1808,7 @@ class GraphUpdater:
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
 
         self.factory.definition_processor.process_all_method_overrides()
 
@@ -2883,6 +2915,158 @@ class GraphUpdater:
             }
             | self._specifier_waiter_keys(present_keys)
         )
+
+    def _unresolved_reference_waiters(
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]] | None = None,
+    ) -> list[str]:
+        """Files whose recorded unresolved references an ADDED file, or a
+        definition a MODIFIED file gained, satisfies.
+
+        Offered per added file: its module qn (a dropped `from .base import`
+        recorded the guessed qn), its import spellings, every suffix of its
+        path (a quoted include is recorded as a repository path suffix), and
+        the simple names it defines (a base class or a callee is recorded by
+        its written name); a Rust `use` records the whole path, matched under
+        the module qn as a prefix. A modified file offers only the simple
+        names it defines now and did not before (a Go or Java caller of a
+        same-package function has no edge into the file that gains it; bot
+        review on PR #1979). A failed read degrades to the previous
+        behaviour, never worse (issue #1568).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        names: set[str] = set(self._module_names_for([key for key, _b in added]))
+        prefixes: set[str] = set()
+        for key, file_bytes in added:
+            module_qn = base_module_qn(Path(key), self.project_name)
+            names.add(module_qn)
+            prefixes.add(f"{module_qn}{cs.SEPARATOR_DOT}")
+            parts = PurePosixPath(key).parts
+            names.update(cs.SEPARATOR_SLASH.join(parts[i:]) for i in range(len(parts)))
+            names.update(self._defined_simple_names(key, file_bytes))
+        if modified:
+            known = self._known_simple_names_by_path([key for key, _b in modified])
+            for key, file_bytes in modified:
+                had = known.get(key, set())
+                if "*" in had:
+                    continue
+                names.update(self._defined_simple_names(key, file_bytes) - had)
+        if not names:
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
+                {
+                    cs.CYPHER_PARAM_NAMES: sorted(names),
+                    cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    # The root module (`__init__.py`, `mod.rs`) IS the
+                    # project name, not under its prefix (bot review).
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
+    def _known_simple_names_by_path(self, keys: list[str]) -> dict[str, set[str]]:
+        """The simple names of the definitions the graph holds per file, so a
+        modified file's GAINED definitions can be told from the ones it had.
+        A failed read marks every file fully known: nothing extra is offered."""
+        known: dict[str, set[str]] = {}
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.CYPHER_PARAM_PATHS: keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions")
+            return {key: {"*"} for key in keys}
+        for row in rows:
+            qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(path, str):
+                known.setdefault(path, set()).add(
+                    qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
+                )
+        return known
+
+    def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
+        """The simple names of the functions and classes a file defines, from
+        a parse of its bytes with the language's combined query: what a
+        waiting module wrote as a base or a callee (issue #1568). A language
+        without a parser or a combined query offers nothing."""
+        language = get_language_for_extension(PurePosixPath(key).suffix)
+        parser = self.parsers.get(language) if language is not None else None
+        query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
+        if parser is None or query is None:
+            return set()
+        try:
+            tree = parser.parse(file_bytes)
+            captures = sorted_captures(QueryCursor(query), tree.root_node)
+        except Exception:
+            return set()
+        names: set[str] = set()
+        for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+            for node in captures.get(capture, ()):
+                names.update(_definition_names(node))
+        return names
+
+    def _write_unresolved_references(self) -> None:
+        """Write every re-parsed module's unresolved references onto its node,
+        the empty list included, so a name that now resolves is gone (issue
+        #1568). A property SET rather than a second node write: a node write
+        carrying two keys reads as the whole node to every store that does
+        not merge. Flushed first so the Module nodes of a first build exist
+        to match; the modules with nothing recorded (most) are cleared in
+        one statement, the rest set one by one. A store that cannot take a
+        write is left as it was, which reads as "nothing waited"."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        recorded = self.factory.import_processor.unresolved_references
+        cleared: list[str] = []
+        pending: list[tuple[str, list[str]]] = []
+        for (
+            module_qn,
+            path,
+        ) in self.factory.definition_processor.module_qn_to_file_path.items():
+            try:
+                key = path.relative_to(self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if key not in self._reparsed_file_keys:
+                continue
+            names = sorted(recorded.get(module_qn, ()))
+            if names:
+                pending.append((module_qn, names))
+            else:
+                cleared.append(module_qn)
+        if not cleared and not pending:
+            return
+        self.ingestor.flush_all()
+        try:
+            if cleared:
+                self.ingestor.execute_write(
+                    cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES, {cs.KEY_QNS: cleared}
+                )
+            for module_qn, names in pending:
+                self.ingestor.execute_write(
+                    cs.CYPHER_SET_UNRESOLVED_REFERENCES,
+                    {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
+                )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
@@ -4313,6 +4497,31 @@ class GraphUpdater:
         foreign_definers = self._foreign_definer_keys(
             {*reindexed_keys, *deleted_before_parse}
         )
+        # An ADDED file has no inbound edges for the caller query to follow:
+        # the files that referenced it while it was missing recorded the
+        # names they could not resolve, and are found from those (issue
+        # #1568). The importer lookup existed for the scoped path only.
+        # On a full build every file is new and the graph holds no waiter,
+        # so the lookup (which parses each added file once more) is skipped.
+        added_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if is_new
+            ]
+        )
+        added_keys = [key for key, _b in added_entries]
+        modified_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if not is_new
+            ]
+        )
         affected = 0
         for caller_key in sorted(
             {
@@ -4321,6 +4530,8 @@ class GraphUpdater:
                 ),
                 *siblings,
                 *foreign_definers,
+                *self._unresolved_importer_keys(added_keys),
+                *self._unresolved_reference_waiters(added_entries, modified_entries),
             }
         ):
             if caller_key in present:
@@ -5268,7 +5479,10 @@ class GraphUpdater:
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
     def _reingest_dependents(
-        self, present: dict[str, Path], gone: dict[str, Path]
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        created: set[str] | None = None,
     ) -> dict[str, Path]:
         # Files whose bindings the change can move (one level, from the
         # graph's own edges) plus any file whose delombok overlay changed.
@@ -5280,6 +5494,20 @@ class GraphUpdater:
         for caller_key in (
             *self._affected_caller_keys(keys),
             *self._unresolved_importer_keys(sorted(present)),
+            # Created files offer everything; modified files offer only the
+            # definitions they gained (bot review on PR #1979).
+            *self._unresolved_reference_waiters(
+                [
+                    (key, _read_bytes(path))
+                    for key, path in sorted(present.items())
+                    if created is not None and key in created
+                ],
+                [
+                    (key, _read_bytes(path))
+                    for key, path in sorted(present.items())
+                    if created is None or key not in created
+                ],
+            ),
         ):
             caller_path = self.repo_path / caller_key
             if (
@@ -5420,6 +5648,7 @@ class GraphUpdater:
         import_processor.requeue_csharp_import_edges()
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
         self.factory.definition_processor.process_all_method_overrides()
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
@@ -5584,7 +5813,11 @@ class GraphUpdater:
             flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
             survivors.update(flip_siblings)
 
-            affected = self._reingest_dependents({**present, **survivors}, gone)
+            affected = self._reingest_dependents(
+                {**present, **survivors},
+                gone,
+                created={key for key in present if key not in hashes},
+            )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
         except Exception as exc:
