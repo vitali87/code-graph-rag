@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -91,6 +92,10 @@ def edges(tmp_path_factory: pytest.TempPathFactory) -> set[tuple[str, str, str]]
     (root / "lib").mkdir(parents=True)
     (root / "lib" / "box.dart").write_text(SOURCE, encoding="utf-8")
     parsers, queries = load_parsers()
+    if cs.SupportedLanguage.DART not in parsers:
+        # A module-scoped fixture runs before the per-test grammar skip
+        # hook is installed, so a base install must skip here.
+        pytest.skip("dart parser not available")
     store = _StatefulIngestor()
     GraphUpdater(
         ingestor=store,  # type: ignore[arg-type]
