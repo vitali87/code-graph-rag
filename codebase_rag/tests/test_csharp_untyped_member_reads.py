@@ -198,3 +198,37 @@ def test_a_generic_non_leaf_segment_keeps_the_leaf(tmp_path: Path) -> None:
     targets = {target for _kind, target in _edges(tmp_path / "proj", GENERIC_SEGMENT)}
     assert any(t.endswith(".Util.Helper.Run(string)") for t in targets), sorted(targets)
     assert not any(t.endswith(".Util.Run(string)") for t in targets), sorted(targets)
+
+
+# After the bot review: a qualified type argument on the leaf
+# (`Lib.Helper<System.String>`) must keep the leaf's arity, so the generic
+# twin (declared second, so it carries the duplicate marker) is chosen
+# over the non-generic one that holds the natural qn.
+QUALIFIED_TYPE_ARGUMENT = {
+    "src/Lib.cs": (
+        "namespace Lib\n{\n"
+        "    public class Config\n    {\n"
+        "        public void Each(System.Action<string> f) { }\n    }\n\n"
+        "    public static class Helper\n    {\n"
+        "        public static void Run(string s) { }\n    }\n\n"
+        "    public static class Helper<T>\n    {\n"
+        "        public static void Run(string s) { }\n    }\n}\n"
+    ),
+    "src/App.cs": (
+        "using Lib;\n\nnamespace App;\n\npublic class Bench\n{\n"
+        "    public void Run()\n    {\n        var config = new Config();\n"
+        "        config.Each(Lib.Helper<System.String>.Run);\n"
+        "    }\n}\n"
+    ),
+}
+
+
+def test_a_qualified_type_argument_keeps_the_leaf_arity(tmp_path: Path) -> None:
+    targets = {
+        target for _kind, target in _edges(tmp_path / "proj", QUALIFIED_TYPE_ARGUMENT)
+    }
+    assert any(
+        t.startswith("proj.src.Lib.Lib.Helper@") and t.endswith(".Run(string)")
+        for t in targets
+    ), sorted(targets)
+    assert "proj.src.Lib.Lib.Helper.Run(string)" not in targets, sorted(targets)

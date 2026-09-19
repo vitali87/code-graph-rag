@@ -79,6 +79,23 @@ def strip_generic_arguments(text: str) -> str:
     return "".join(out).replace(" ", "")
 
 
+def leaf_type_segment(text: str) -> str:
+    """The last segment of a type path, split at the last dot OUTSIDE generic
+    arguments: `Lib.Helper<System.String>` -> `Helper<System.String>`, where a
+    plain rsplit would hand back `String>`.
+    """
+    depth = 0
+    cut = -1
+    for index, ch in enumerate(text):
+        if ch == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            depth = max(depth - 1, 0)
+        elif ch == cs.SEPARATOR_DOT and depth == 0:
+            cut = index
+    return text[cut + 1 :]
+
+
 def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to

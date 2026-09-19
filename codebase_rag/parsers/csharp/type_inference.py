@@ -25,6 +25,7 @@ from .utils import (
     _normalize_type_name,
     annotate_type_ref,
     generic_arity_of_type_text,
+    leaf_type_segment,
     split_type_ref,
     strip_generic_arguments,
 )
@@ -1436,12 +1437,17 @@ class CSharpTypeInferenceEngine:
         candidates = [
             qn
             for qn in self.simple_name_lookup.get(simple, set())
-            if self.function_registry.get(qn) in _TYPE_DECLS and qn.endswith(suffix)
+            if self.function_registry.get(qn) in _TYPE_DECLS
+            # A same-file twin carries a duplicate marker (`Helper@12`)
+            # after the path; the leaf's arity then picks between them.
+            and qn.split(cs.DUP_QN_MARKER, 1)[0].endswith(suffix)
         ]
-        # The leaf's own arity picks between same-name twins.
+        # The leaf's own arity picks between same-name twins; the leaf is
+        # cut at the last dot outside generic arguments, so a qualified type
+        # argument (`Helper<System.String>`) keeps its arity (bot review).
         return self._disambiguate_type_candidates(
             candidates,
-            generic_arity_of_type_text(dotted.rsplit(cs.SEPARATOR_DOT, 1)[-1]),
+            generic_arity_of_type_text(leaf_type_segment(dotted)),
             module_qn,
         )
 
