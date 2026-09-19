@@ -40,6 +40,62 @@ public class App { public void Run() { var w = new Widget(); w.Area(); } }
     )
 
 
+def test_alias_qualified_type_receiver_keeps_namespace_identity(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Zeta.cs").write_text(
+        """
+namespace Zeta;
+public class Widget {
+    public Widget(int n) {}
+    public static void AliasS() {}
+    public static void GlobalS() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "Other.cs").write_text(
+        """
+namespace Other;
+public class Widget {
+    public Widget(int n) {}
+    public static void AliasS() {}
+    public static void GlobalS() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using Z = Zeta;
+using Zeta = Other;
+namespace App;
+public class Q {
+    public void Run() {
+        var w = new Z::Widget(1);
+        Z::Widget.AliasS();
+        Z.Widget.AliasS();
+        global::Zeta.Widget.GlobalS();
+        Missing::AliasS();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    instantiates = {
+        c.args[2][2] for c in get_relationships(mock_ingestor, "INSTANTIATES")
+    }
+    calls = _call_targets(mock_ingestor)
+    assert any(t.endswith("Zeta.Widget") for t in instantiates), instantiates
+    assert any(t.endswith("Zeta.Widget.AliasS") for t in calls), calls
+    assert any(t.endswith("Zeta.Widget.GlobalS") for t in calls), calls
+    assert not any(t.endswith("Other.Widget") for t in instantiates), instantiates
+    assert not any(t.endswith("Other.Widget.AliasS") for t in calls), calls
+    assert not any(t.endswith("Other.Widget.GlobalS") for t in calls), calls
+
+
 def test_parameter_typed_receiver_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

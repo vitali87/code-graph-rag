@@ -203,6 +203,7 @@ TS_CSHARP_USING_DIRECTIVE = "using_directive"
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
 TS_CSHARP_QUALIFIED_NAME = "qualified_name"
+TS_CSHARP_ALIAS_QUALIFIED_NAME = "alias_qualified_name"
 TS_CSHARP_IDENTIFIER = "identifier"
 
 # Expression body `=> expr` on methods, properties, and accessors.

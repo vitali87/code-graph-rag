@@ -1393,6 +1393,12 @@ class CallResolver:
         ):
             return None
 
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and cs.SEPARATOR_DOUBLE_COLON in call_name
+        ):
+            return self._try_resolve_csharp_qualified_call(call_name, module_qn)
+
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
@@ -2086,6 +2092,9 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.CSHARP:
+            if result := self._try_resolve_csharp_qualified_call(call_name, module_qn):
+                return result
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
         elif cs.CHAR_COLON in call_name:
@@ -2117,6 +2126,39 @@ class CallResolver:
         return self._resolve_multi_part_call(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _try_resolve_csharp_qualified_call(
+        self, call_name: str, module_qn: str
+    ) -> tuple[str, str] | None:
+        path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        is_global = path.startswith(global_prefix)
+        if path.startswith(global_prefix):
+            path = path[len(global_prefix) :]
+        parts = path.split(cs.SEPARATOR_DOT)
+        if len(parts) < 2 or any(not part for part in parts):
+            return None
+
+        type_inference = self.type_inference.csharp_type_inference
+        for cut in range(len(parts), 0, -1):
+            type_path = cs.SEPARATOR_DOT.join(parts[:cut])
+            if is_global:
+                type_path = f"global{cs.SEPARATOR_DOUBLE_COLON}{type_path}"
+            class_qn = type_inference._qualified_type_name_to_qn(type_path, module_qn)
+            if class_qn is None:
+                continue
+            if cut == len(parts):
+                return cs.NodeLabel.CLASS, class_qn
+            member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
+                cs.CHAR_ANGLE_OPEN, 1
+            )[0]
+            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
+            if method_qn in self.function_registry:
+                return self.function_registry[method_qn], method_qn
+            if cs.SEPARATOR_DOT not in member_name:
+                if inherited := self._resolve_inherited_method(class_qn, member_name):
+                    return inherited
+        return None
 
     def _has_separator(self, call_name: str) -> bool:
         return (
