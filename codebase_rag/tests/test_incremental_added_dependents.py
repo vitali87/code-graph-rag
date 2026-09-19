@@ -151,8 +151,6 @@ def test_the_batch_path_asks_both_added_file_lookups(
         root, {rel: text for rel, text in PYTHON.items() if rel != "pkg/base.py"}
     )
     store = _StatefulIngestor()
-    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
-    _add_after_cache(root, "pkg/base.py", PYTHON["pkg/base.py"])
     asked: dict[str, list[str]] = {}
     importers = GraphUpdater._unresolved_importer_keys
     waiters = GraphUpdater._unresolved_reference_waiters
@@ -167,13 +165,15 @@ def test_the_batch_path_asks_both_added_file_lookups(
 
     monkeypatch.setattr(GraphUpdater, "_unresolved_importer_keys", spy_importers)
     monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy_waiters)
-    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
-    assert asked == {"importers": ["pkg/base.py"], "waiters": ["pkg/base.py"]}
-    # A full build has no waiter in the graph: nothing is offered, so the
-    # added files are not parsed a second time for their names.
-    asked.clear()
+    # A fresh index is a full build in which every file is new and no
+    # waiter exists yet: nothing is offered, so the files are not parsed a
+    # second time for their names.
     _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
     assert asked == {"importers": [], "waiters": []}
+    asked.clear()
+    _add_after_cache(root, "pkg/base.py", PYTHON["pkg/base.py"])
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    assert asked == {"importers": ["pkg/base.py"], "waiters": ["pkg/base.py"]}
 
 
 def test_the_scoped_path_offers_created_files_only(
