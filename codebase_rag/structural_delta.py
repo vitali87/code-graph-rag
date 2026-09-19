@@ -677,9 +677,9 @@ def _arity_findings(after: Snapshot, repo_root: Path | None) -> list[ArityAtSite
 
 
 def _remote_callers(
-    fetch_all: QueryFn, handlers: list[str]
+    fetch_all: QueryFn, project_name: str, handlers: list[str]
 ) -> dict[str, list[RemoteCaller]]:
-    """Per changed definition, the call sites in any project reaching an
+    """Per changed definition, the call sites in OTHER projects reaching an
     endpoint it exposes; one read per shape, only when something changed."""
     found: dict[str, list[RemoteCaller]] = {}
     if not handlers:
@@ -688,7 +688,10 @@ def _remote_callers(
         cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
         cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
     ):
-        for row in fetch_all(query, {cs.KEY_QNS: handlers}):
+        for row in fetch_all(
+            query,
+            {cs.KEY_QNS: handlers, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+        ):
             handler = _text(row.get(cs.KEY_HANDLER))
             caller = RemoteCaller(
                 qualified_name=_text(row.get(cs.KEY_QUALIFIED_NAME)),
@@ -710,6 +713,7 @@ def _signature_changes(
     symbols: SymbolDelta,
     repo_root: Path | None,
     fetch_all: QueryFn | None = None,
+    project_name: str = "",
 ) -> list[SignatureChange]:
     out: list[SignatureChange] = []
     changed = [
@@ -718,7 +722,11 @@ def _signature_changes(
         if before.definitions[qn].positional_params
         != after.definitions[qn].positional_params
     ]
-    remote = _remote_callers(fetch_all, changed) if fetch_all is not None else {}
+    remote = (
+        _remote_callers(fetch_all, project_name, changed)
+        if fetch_all is not None
+        else {}
+    )
     for qn in changed:
         old, new = before.definitions[qn], after.definitions[qn]
         sites = [
@@ -1080,7 +1088,7 @@ def structural_delta(
         symbols=symbols,
         dangling_callers=_dangling(before, after, symbols),
         signature_changes=_signature_changes(
-            before, after, symbols, repo_root, fetch_all
+            before, after, symbols, repo_root, fetch_all, project_name
         ),
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh),

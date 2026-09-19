@@ -107,14 +107,14 @@ async def test_flow_verdict_returns_the_remote_hops(tmp_path):
     verdict computed for nobody."""
     project = derive_project_name(tmp_path)
     module = f"{project}.app.service"
-    registry = _registry(tmp_path, remote=[(f"{module}.net", f"{module}.handle")])
+    registry = _registry(tmp_path, remote=[(f"{module}.net", "other.api.handle")])
     result = await registry.flow_verdict(
         source_qualified_name=f"{module}.dispatch",
-        sink_qualified_name=f"{module}.handle",
+        sink_qualified_name="other.api.handle",
     )
     assert result["verdict"] == "FOUND"
-    assert result["path"] == [f"{module}.dispatch", f"{module}.net", f"{module}.handle"]
-    assert result["remote_hops"] == [[f"{module}.net", f"{module}.handle"]]
+    assert result["path"] == [f"{module}.dispatch", f"{module}.net", "other.api.handle"]
+    assert result["remote_hops"] == [[f"{module}.net", "other.api.handle"]]
 
 
 async def test_explain_traceback_returns_resolved_frames(tmp_path):

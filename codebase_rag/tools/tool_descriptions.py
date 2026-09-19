@@ -418,7 +418,8 @@ MCP_FLOW_VERDICT = (
     "absent path must never be read as a verified absence when coverage "
     "gaps exist. The path may cross a service boundary: a NETWORK resource "
     "that resolves to another project's endpoint continues into that "
-    "handler, and `remote_hops` lists the (from, to) pairs where it does."
+    "handler, `remote_hops` lists the (from, to) pairs where it does, and "
+    "the coverage of every project entered counts towards the verdict."
 )
 
 MCP_PARAM_PROJECT = (
