@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag.tests.conftest import git_env
+
 _WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "version-bump.yml"
 )
@@ -134,42 +136,58 @@ def test_the_readme_render_is_its_own_blocking_step() -> None:
     reason="the step runs under the Ubuntu runner's bash; on the Windows runner "
     "`bash` resolves to the WSL launcher, which has no distribution installed",
 )
-def test_a_failed_render_restores_the_files_and_fails_the_step(tmp_path: Path) -> None:
+def test_a_failed_render_restores_the_files_and_fails_the_step(
+    git_repo: Path, tmp_path: Path
+) -> None:
     """The render step's own shell, run against a fake `uv` whose generator
-    exits 23: NEWS.md and README.md come back as committed and the step
-    exits non-zero, where the old shape exited 0 after the restore."""
+    rewrites README.md and then exits 23: NEWS.md and README.md both come
+    back as committed and the step exits non-zero, where the old shape
+    exited 0 after the restore."""
     import subprocess
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "t@example.com"], cwd=repo, check=True
+    # `git_env`, not `{**os.environ, ...}`: an inherited GIT_DIR or
+    # GIT_WORK_TREE would point every git call here, and the step's own
+    # `git checkout`, at some other repository (bot review).
+    env = git_env(
+        GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig-absent"),
+        GIT_CONFIG_SYSTEM=str(tmp_path / "gitconfig-absent"),
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@example.com",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@example.com",
     )
-    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
-    (repo / "NEWS.md").write_text("old news\n")
-    (repo / "README.md").write_text("old readme\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True)
-    (repo / "NEWS.md").write_text("new news\n")
+    (git_repo / "NEWS.md").write_text("old news\n")
+    (git_repo / "README.md").write_text("old readme\n")
+    subprocess.run(["git", "add", "-A"], cwd=git_repo, check=True, env=env)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "base"], cwd=git_repo, check=True, env=env
+    )
+    (git_repo / "NEWS.md").write_text("new news\n")
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_uv = fake_bin / "uv"
-    fake_uv.write_text('#!/bin/sh\nif [ "$1" = sync ]; then exit 0; fi\nexit 23\n')
+    # The generator gets as far as rewriting README.md before it fails: the
+    # partially-written shape the restore exists for.
+    fake_uv.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = sync ]; then exit 0; fi\n'
+        'printf "half-rendered readme\\n" > README.md\n'
+        "exit 23\n"
+    )
     fake_uv.chmod(0o755)
-    env = {
-        **os.environ,
-        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
-        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
-    }
     result = subprocess.run(
         ["bash", "-e", "-c", _render_step()["run"]],
-        cwd=repo,
-        env=env,
+        cwd=git_repo,
+        env={
+            **env,
+            "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        },
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode != 0, result.stdout + result.stderr
-    assert (repo / "NEWS.md").read_text() == "old news\n"
+    assert (git_repo / "NEWS.md").read_text() == "old news\n"
+    assert (git_repo / "README.md").read_text() == "old readme\n"
     assert "FAILED" in (tmp_path / "summary.md").read_text()
