@@ -113,13 +113,16 @@ def test_parameter_of_type_keeps_the_suffixed_modules_own_widget(
 class _ModuleRows:
     """A query-capable store answering only the module-path read."""
 
-    def __init__(self, rows: list[dict]) -> None:
+    def __init__(self, rows: list[dict], *, fail: bool = False) -> None:
         self.rows = rows
         self.reads = 0
+        self.fail = fail
 
     def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
         assert query == cs.CYPHER_ALL_MODULE_PATHS_INTERNAL
         self.reads += 1
+        if self.fail:
+            raise RuntimeError("transient graph outage")
         return list(self.rows)
 
     def execute_write(self, query: str, params: dict | None = None) -> None:
@@ -151,3 +154,27 @@ def test_the_recorded_owner_map_is_scoped_to_this_project(tmp_path: Path) -> Non
     assert updater._recorded_module_qn("unknown.py") == "proj.unknown"
     # Read once per rehydration, not per fact.
     assert store.reads == 1
+
+
+def test_a_failed_module_read_degrades_on_a_full_build_and_aborts_an_incremental_run(
+    tmp_path: Path,
+) -> None:
+    """The posture every read in `_rehydrate_registry_from_graph` takes
+    (local review): a full build parsed every file and falls back to the
+    bare derivation; an incremental run would requeue under the wrong
+    owner, so the outage propagates."""
+    import pytest
+
+    store = _ModuleRows([], fail=True)
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path / "proj",
+        parsers={},
+        queries={},
+    )
+    updater._is_full_build = True
+    assert updater._recorded_module_qn("settings.py") == "proj.settings"
+    updater._module_qns_by_path = None
+    updater._is_full_build = False
+    with pytest.raises(RuntimeError):
+        updater._recorded_module_qn("settings.py")

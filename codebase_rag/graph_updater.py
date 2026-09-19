@@ -2269,8 +2269,19 @@ class GraphUpdater:
         if not isinstance(self.ingestor, QueryProtocol):
             return {}
         prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        # The same posture as every other read in `_rehydrate_registry_from_graph`
+        # (local review): a full build parsed every file and degrades to the
+        # bare derivation with a warning; an incremental run would requeue
+        # under the wrong owner, so the outage aborts it.
+        try:
+            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return {}
         found: dict[str, str] = {}
-        for row in self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL):
+        for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
