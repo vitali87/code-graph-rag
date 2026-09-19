@@ -84,7 +84,14 @@ and important external-tool paths include:
   `auto`, `hybrid` or `roslyn` can enable the Roslyn path when the required
   toolchain is available. It runs `dotnet restore`, evaluates MSBuild files and
   can execute source generators with the user's privileges. Keep Tree-sitter
-  selected for repositories whose build you do not trust.
+  selected for repositories whose build you do not trust. The .NET CLI is
+  invoked with `DOTNET_CLI_TELEMETRY_OPTOUT=1`, which disables .NET CLI
+  telemetry only; no network restriction is applied to restore, MSBuild or the
+  analysed project's own source generators. When the toolchain is absent the
+  mode degrades to Tree-sitter, and the two cases log differently: an explicit
+  `hybrid`/`roslyn` that cannot run is a WARNING, while an `auto` downgrade is
+  recorded at info level, since falling back is what `auto` promises. Watching
+  only for warnings will therefore miss an `auto` downgrade.
 - **Go:** `GO_FRONTEND=auto` enables the Go semantic frontend when its toolchain
   is available. `GO_FRONTEND=treesitter` disables it.
 - **Java:** `JAVA_FRONTEND=heuristic` is the default; `javac` enables compiler
@@ -129,7 +136,17 @@ again before sending them to its backend. These checks compare against content
 recorded by participating repository-read tools in the session.
 [Text matching](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/taint.py)
 does not reliably detect paraphrased, transformed or unrecorded data. It is not
-a general secret scanner or a network-wide egress control.
+a general secret scanner or a network-wide egress control. The rule is also
+narrower than "any verbatim quote": a long recording is matched on a verbatim
+window of 24 characters, and a short recording (output that is entirely one
+token) only as a complete token, so a shorter quotation passes.
+
+Transport security depends on the endpoints configured rather than on
+enforcement here. Requests use httpx with its default certificate
+verification, but model and embedding base URLs are accepted as given,
+including `http://` ones (the default Ollama URL is plain HTTP to localhost),
+and the search client follows redirects without requiring the target to remain
+HTTPS. Point remote providers at HTTPS endpoints.
 
 Local inference and embeddings do not by themselves make a session offline.
 Research, toolchain dependency downloads, operator-configured remote stores and
