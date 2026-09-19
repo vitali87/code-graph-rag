@@ -40,8 +40,8 @@ public class Svc {
 def test_static_method_call_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Same-class static helper call, resolved via the trie/simple-name
-    # lookup (typed receiver and new->ctor resolution land in Phase 3).
+    # A same-class static helper remains reachable through C#'s enclosing-type
+    # lookup without relying on the global simple-name trie.
     (csharp_project / "Calc.cs").write_text(
         """
 namespace N;
@@ -57,6 +57,37 @@ public class Calc {
     targets = _call_targets(mock_ingestor)
     # Square takes one parameter, so it registers with a signature (Phase 3).
     assert any(t.endswith("N.Calc.Square(int)") for t in targets), targets
+
+
+def test_unresolved_bare_call_does_not_fall_to_name_trie(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Other.cs").write_text(
+        """
+namespace Other;
+public static class X {
+    public static int Abs(int x) => x;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static System.Math;
+namespace App;
+public class A {
+    public int Run() { return Abs(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        source.endswith("App.A.Run") and target.endswith("Other.X.Abs(int)")
+        for source, target in pairs
+    ), pairs
 
 
 def _reference_targets(mock_ingestor: MagicMock) -> set[str]:

@@ -3721,10 +3721,16 @@ class CallProcessor:
                     # name-trie fallback that would fabricate one onto an
                     # unrelated same-name first-party member.
                     callee_info = None
-                elif callee_info is None:
-                    # A C# member call whose receiver could not be typed (or a
-                    # bare call) falls back to the generic simple-name resolver,
-                    # which keeps Phase 1 intra-file resolution working.
+                elif callee_info is None and (
+                    (fn_node := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION))
+                    is None
+                    or fn_node.type
+                    not in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME)
+                ):
+                    # An untyped C# MEMBER call retains the generic fallback. A
+                    # bare call has already exhausted C#'s legitimate scopes
+                    # (local function, enclosing type, and static import), so a
+                    # miss is external rather than a name-wide guess (#2005).
                     callee_info = resolve_func(
                         call_name,
                         module_qn,
