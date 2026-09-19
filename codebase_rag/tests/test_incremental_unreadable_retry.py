@@ -7,6 +7,7 @@
 # deleted first rather than as a new file.
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 
@@ -186,6 +187,56 @@ def test_only_a_gone_path_escapes_the_mark(
     monkeypatch.setattr(Path, "exists", lambda self: False)
     assert gu._vanished(present) is False
     assert gu._vanished(link) is True
+
+
+def test_a_link_with_no_target_at_all_is_gone(tmp_path: Path) -> None:
+    """A symlink cycle (ELOOP) and a target path through a regular file
+    (ENOTDIR) have no target any more than a dangling link does: both are
+    gone, so neither is marked unreadable and retried on every run (bot
+    review on PR #1993)."""
+    cycle = tmp_path / "cycle.py"
+    try:
+        cycle.symlink_to(cycle)
+    except OSError:
+        pytest.skip("symlinks need privileges on this host")
+    regular = tmp_path / "regular.py"
+    regular.write_text("x = 1\n")
+    through_a_file = tmp_path / "through.py"
+    through_a_file.symlink_to(regular / "child.py")
+    assert gu._vanished(cycle) is True
+    assert gu._vanished(through_a_file) is True
+
+
+def test_a_windows_reparse_loop_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows reports a symlink cycle as ERROR_CANT_RESOLVE_FILENAME (1921)
+    mapped to EINVAL, not ELOOP; the Windows runner skips the real-cycle
+    test, so the shape is raised here (bot review on PR #1993)."""
+    target = tmp_path / "target.py"
+    target.write_text("x = 1\n")
+    link = tmp_path / "link.py"
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks need privileges on this host")
+    real_stat = os.stat
+
+    winerror: int | None = 1921
+
+    def unresolvable(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if Path(str(path)) == link and kwargs.get("follow_symlinks", True) is not False:
+            exc = OSError(errno.EINVAL, "cannot resolve", str(path))
+            if winerror is not None:
+                exc.winerror = winerror  # type: ignore[attr-defined]
+            raise exc
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(gu.os, "stat", unresolvable)
+    assert gu._vanished(link) is True
+    # Any other EINVAL is still "unreadable", not gone.
+    winerror = None
+    assert gu._vanished(link) is False
 
 
 def test_a_link_whose_target_cannot_be_reached_is_not_gone(

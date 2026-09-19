@@ -1,5 +1,6 @@
 """Orchestrate parsing a repository into graph nodes and edges and ingest them."""
 
+import errno
 import hashlib
 import json
 import os
@@ -165,6 +166,12 @@ type DirMtimesCache = dict[str, float]
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
 
 
+_LINK_TARGET_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+# Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
+# CPython maps to EINVAL rather than ELOOP (bot review).
+_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
 def _vanished(filepath: Path) -> bool:
     """Whether an unreadable path is GONE rather than unreachable: the path
     is absent, or a symlink whose target is. Judged without following the
@@ -178,14 +185,18 @@ def _vanished(filepath: Path) -> bool:
         return False
     if not filepath.is_symlink():
         return False
-    # A dangling link is gone; a link whose target cannot be reached is
-    # not, and `Path.exists()` would raise on that (bot review).
+    # A link with no target at all is gone: dangling, a cycle, or a target
+    # path through a non-directory. Retrying one would mark the cache
+    # `unreadable` on every run for as long as the link stays broken (bot
+    # review). A link whose target exists but cannot be reached is not gone,
+    # and `Path.exists()` would raise on that (bot review).
     try:
         os.stat(filepath)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
+    except OSError as exc:
+        return (
+            exc.errno in _LINK_TARGET_GONE_ERRNOS
+            or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+        )
     return False
 
 
