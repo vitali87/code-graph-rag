@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
 from codebase_rag.tests.conftest import git_env
 
 _WORKFLOW = (
@@ -185,6 +186,7 @@ def test_a_failed_render_restores_the_files_and_fails_the_step(
         },
         capture_output=True,
         text=True,
+        encoding=cs.ENCODING_UTF8,
         check=False,
     )
     assert result.returncode != 0, result.stdout + result.stderr
