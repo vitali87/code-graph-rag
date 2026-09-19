@@ -165,19 +165,29 @@ def _construction_class_name(node: Node) -> str | None:
     return decode_node_text(spine[0].text)
 
 
-def _construction_receiver_class(node: Node) -> str | None:
+def _construction_receiver_class(
+    node: Node, allow_ambiguous: bool = False
+) -> str | None:
     # The class constructed by the receiver hop AT this chain position.
-    # `new X(1).m` reaches the new_expression itself. In the mis-parsed
-    # generic (`X<int>(1).m`) the chain instead bottoms out at the call's
-    # `(1)`, whose PARENT relational_expression carries the class, so a
-    # parenthesized hop defers to that parent.
+    # `new X(1).m` / `const X(1).m` reach the construction node itself and are
+    # unambiguous. In the mis-parsed generic (`X<int>(1).m`) the chain instead
+    # bottoms out at the call's `(1)`, whose PARENT relational_expression
+    # carries the class; that shape is token-for-token identical to the
+    # comparison `a < b > (1).m`, so it is only read as a construction when
+    # the caller can reject a shadowing local (allow_ambiguous). The CALL path
+    # cannot, and does not need it: `X<int>(1).m()` already binds through the
+    # pre-existing argument_part hop.
     if node.type == cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        if not allow_ambiguous:
+            return None
         parent = node.parent
         return _construction_class_name(parent) if parent is not None else None
     return _construction_class_name(node)
 
 
-def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
+def _walk_chain(
+    node: Node | None, allow_calls: bool = False, allow_ambiguous: bool = False
+) -> list[str] | None:
     # Backward walk over a selector chain, shared by plain and cascade calls:
     # None means the chain is broken (index selector, arbitrary expression)
     # and has no static name; an empty list means it bottomed out at
@@ -192,7 +202,9 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
             parts_rev.append(_CALL_HOP)
             node = node.prev_named_sibling
             continue
-        if allow_calls and (class_name := _construction_receiver_class(node)):
+        if allow_calls and (
+            class_name := _construction_receiver_class(node, allow_ambiguous)
+        ):
             # A construction receiver is its own base: the class name plus a
             # call hop, with nothing further to walk behind it.
             parts_rev.append(_CALL_HOP)
@@ -328,7 +340,9 @@ def dart_member_read_name(selector_node: Node) -> str | None:
     member = _selector_member_name(selector_node)
     if member is None:
         return None
-    receiver = _walk_chain(selector_node.prev_named_sibling, allow_calls=True)
+    receiver = _walk_chain(
+        selector_node.prev_named_sibling, allow_calls=True, allow_ambiguous=True
+    )
     if receiver is None:
         return None
     return _assemble_chain([*receiver, member])

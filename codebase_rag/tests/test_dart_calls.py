@@ -211,3 +211,37 @@ def test_body_calls_not_attributed_to_module(
     ), sorted(calls)
     module_sources = {src for src, _ in calls if src.endswith("dcalls.app")}
     assert not module_sources, sorted(calls)
+
+
+CMP_DART = """
+class Box {
+  Box(int v);
+  int abs() => 1;
+}
+
+dynamic cmp(dynamic Box, dynamic b) {
+  return Box < b > (1).abs();
+}
+
+void genCall() { Box<int>(1).abs(); }
+void newCall() { new Box(1).abs(); }
+"""
+
+
+def test_shadowed_comparison_emits_no_construction_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+):
+    # `Box < b > (1).abs()` with a parameter named `Box` is a COMPARISON,
+    # not `Box<int>(1).abs()`: the two are token-for-token identical
+    # (issue #2015). The call path cannot consult scope, so it declines the
+    # ambiguous reading entirely. `genCall` is the control proving that
+    # costs nothing, since the generic call binds through the pre-existing
+    # argument_part hop, and `newCall` covers the form this fix adds.
+    root = temp_repo / "dcmp"
+    root.mkdir()
+    (root / "app.dart").write_text(CMP_DART, encoding="utf-8")
+    run_updater(root, mock_ingestor, skip_if_missing=SKIP)
+    calls = _edges(mock_ingestor, cs.RelationshipType.CALLS.value)
+    assert not _has(calls, ".app.cmp", ".Box.abs"), sorted(calls)
+    assert _has(calls, ".app.genCall", ".Box.abs"), sorted(calls)
+    assert _has(calls, ".app.newCall", ".Box.abs"), sorted(calls)
