@@ -198,6 +198,24 @@ def review_execution_caveats(real_reviews: list[tuple[str, str]]) -> list[str]:
     ]
 
 
+def _gh_result(*args: str) -> tuple[str, str, int]:
+    """`gh` stdout, stderr and exit code; ("", "", 1) when it cannot run.
+
+    For a call whose failure has more than one meaning: the classic
+    protection endpoint answers 404 when there is no classic layer, and
+    401/403/a network error when there may be one that could not be read.
+    `_gh_stdout_or_empty` collapses both to "", which reads as "no layer"
+    -- the fail-open direction (local review on #1957).
+    """
+    try:
+        done = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, check=False, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return "", str(error), 1
+    return done.stdout, done.stderr, done.returncode
+
+
 def _gh_stdout_or_empty(*args: str) -> str:
     """`gh` stdout, or "" when the call fails.
 
@@ -412,7 +430,9 @@ NON_FAILING_CONCLUSIONS = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
 UNREQUIRED_CAVEAT_LIMIT = 8
 
 
-def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
+def failing_unrequired_contexts(
+    rollup: list[dict[str, object]], exclude: frozenset[str] = frozenset()
+) -> list[str]:
     """Finished contexts that did not succeed and that THIS gate does not require.
 
     The gate answers "is `REQUIRED_CONTEXT` present and satisfied", so a red
@@ -429,15 +449,18 @@ def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
     unrequired.
 
     `REQUIRED_CONTEXT` is excluded because a red one is already a reason, and
-    naming it twice reads as two problems. The jobs it AGGREGATES are not
-    excluded: `All Checks Pass` reports one verdict over all of them, and
-    naming the job that actually failed is the point.
+    naming it twice reads as two problems; so are the contexts in `exclude`,
+    the ones classic branch protection requires, for the same reason. The
+    jobs it AGGREGATES are not excluded: `All Checks Pass` reports one
+    verdict over all of them, and naming the job that actually failed is the
+    point.
     """
     names = {
         name
         for entry in rollup
         if (name := context_name(entry))
         and name != REQUIRED_CONTEXT
+        and name not in exclude
         and entry_finished(entry)
         and (
             outcome := str(entry.get("conclusion") or entry.get("state") or "").upper()
@@ -447,9 +470,11 @@ def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
     return sorted(names)
 
 
-def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
+def unrequired_failure_caveat(
+    rollup: list[dict[str, object]], exclude: frozenset[str] = frozenset()
+) -> list[str]:
     """The caveat for `failing_unrequired_contexts`, or nothing."""
-    failing = failing_unrequired_contexts(rollup)
+    failing = failing_unrequired_contexts(rollup, exclude)
     if not failing:
         return []
     shown = failing[:UNREQUIRED_CAVEAT_LIMIT]
@@ -457,10 +482,10 @@ def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
     return [
         f"{len(failing)} check(s) this gate does not require are failing at the "
         f"head: {', '.join(shown)}" + (f" (+{rest} more)" if rest else "") + ". "
-        f"The gate requires only '{REQUIRED_CONTEXT}' and does not read the "
-        "ruleset's required-context list, so it cannot say whether these are "
-        "required. They do not block it, and they are not evidence the change "
-        "is sound"
+        f"The gate requires only '{REQUIRED_CONTEXT}' and the contexts classic "
+        "branch protection names, and does not read the ruleset's "
+        "required-context list, so it cannot say whether these are required. "
+        "They do not block it, and they are not evidence the change is sound"
     ]
 
 
@@ -679,10 +704,23 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
 # classic layer", never as an error.
 
 
-def classic_protection(base: str) -> dict[str, Any]:
-    """The classic branch-protection layer on `base`, or {} when there is none."""
-    return _json_dict(
-        _gh_stdout_or_empty("api", f"repos/{REPO}/branches/{base}/protection")
+def classic_protection(base: str) -> tuple[dict[str, Any], str | None]:
+    """The classic branch-protection layer on `base`, and why it is unknown.
+
+    ({}, None) when the endpoint says there is no classic layer (HTTP 404,
+    the normal case on a rulesets-only repo); ({}, reason) when it could not
+    be read for any other cause, which must be reported rather than taken as
+    absence; (layer, None) when read.
+    """
+    out, err, code = _gh_result("api", f"repos/{REPO}/branches/{base}/protection")
+    if code == 0:
+        return _json_dict(out), None
+    if "HTTP 404" in err:
+        return {}, None
+    detail = err.strip().splitlines()[-1] if err.strip() else f"exit {code}"
+    return {}, (
+        f"could not read classic branch protection on '{base}' ({detail}), so its "
+        "approval and status-check requirements are unverified"
     )
 
 
@@ -722,8 +760,10 @@ def approvals(reviews: list[Any]) -> int:
 
     GitHub counts a reviewer's most recent non-comment review: an approval
     followed by "changes requested" is no longer an approval, and a
-    comment-only review changes nothing. Bot accounts never satisfy a
-    branch-policy approval requirement.
+    comment-only review changes nothing. The reviewing bots are excluded
+    by the login shapes `gh pr view` returns (`coderabbitai`, no suffix, as
+    `TRUSTED_REVIEWERS` lists them); whether GitHub would count an app's
+    approval was not verified, so this errs on not counting it.
     """
     latest: dict[str, str] = {}
     for review in reviews:
@@ -733,7 +773,7 @@ def approvals(reviews: list[Any]) -> int:
         if state in ("", "COMMENTED", "PENDING"):
             continue
         author = _author_login(review)
-        if author.endswith("[bot]"):
+        if author in TRUSTED_REVIEWERS or author.endswith("[bot]"):
             continue
         latest[author] = state
     return sum(1 for state in latest.values() if state == "APPROVED")
@@ -838,7 +878,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     )
     rule_types = {r.get("type") for r in rules if isinstance(r, dict)}
     # Both enforcement layers (issue #1957): rulesets AND classic protection.
-    protection = classic_protection(base)
+    protection, protection_error = classic_protection(base)
+    if protection_error:
+        reasons.append(protection_error)
     classic_contexts = classic_required_contexts(protection)
     if "required_status_checks" not in rule_types and not classic_contexts:
         reasons.append(
@@ -991,7 +1033,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     else:
         caveats.extend(review_execution_caveats(real_reviews))
 
-    caveats.extend(unrequired_failure_caveat(rollup))
+    caveats.extend(unrequired_failure_caveat(rollup, frozenset(classic_contexts)))
 
     # The approval requirement of both layers, counted against the reviews
     # actually on the PR (issue #1957): the refusal it predicts is the one
@@ -1027,8 +1069,9 @@ def main(argv: list[str]) -> int:
 
     if not reasons:
         sys.stdout.write(
-            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied; no "
-            "other context was tested for being required"
+            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied, as is "
+            "every context classic branch protection requires; no other context "
+            "was tested for being required"
             f"{'; see caveat(s) above' if caveats else ''})\n"
         )
         return 0

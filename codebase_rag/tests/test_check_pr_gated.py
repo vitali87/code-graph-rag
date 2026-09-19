@@ -169,6 +169,7 @@ def _gate_a_green_pr(
     protection: dict[str, object] | None = None,
     reviews: list[dict[str, object]] | None = None,
     repo: dict[str, object] | None = None,
+    protection_error: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Run `check()` over a PR that is gated on every other axis.
 
@@ -198,7 +199,7 @@ def _gate_a_green_pr(
         if args[0] == "api" and args[1].startswith("repos/") and "/rules/" in args[1]:
             return json.dumps(ruleset)
         if args[0] == "api" and args[1].endswith("/protection"):
-            # A repo with no classic layer 404s, which reads as "".
+            # A repo with no classic layer 404s (see fake_result below).
             return json.dumps(protection) if protection is not None else ""
         if args[0] == "api" and args[1] == f"repos/{check_pr_gated.REPO}":
             return json.dumps(repo if repo is not None else {"allow_auto_merge": False})
@@ -206,7 +207,17 @@ def _gate_a_green_pr(
             return json.dumps({"pull_requests": [{"number": 1930}]})
         return ""
 
+    def fake_result(*args: str) -> tuple[str, str, int]:
+        # The classic endpoint through `_gh_result`: absent reads as a 404,
+        # `protection_error` stands in for a 401 or a network failure.
+        if protection_error is not None:
+            return "", protection_error, 1
+        if protection is None:
+            return "", "gh: Branch not protected (HTTP 404)", 1
+        return json.dumps(protection), "", 0
+
     monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake_gh)
+    monkeypatch.setattr(check_pr_gated, "_gh_result", fake_result)
     monkeypatch.setattr(
         check_pr_gated, "ci_runs_at_head", lambda _head: [{"id": 1, "path": "x"}]
     )
@@ -419,7 +430,7 @@ def test_approvals_count_each_reviewers_latest_verdict() -> None:
         _review("b", "APPROVED"),
         _review("b", "CHANGES_REQUESTED"),  # withdrawn
         _review("c", "CHANGES_REQUESTED"),
-        _review("coderabbitai[bot]", "APPROVED"),  # never counts
+        _review("coderabbitai", "APPROVED"),  # the shape gh returns; never counts
     ]
     assert check_pr_gated.approvals(reviews) == 1
     # Granted after changes were requested: the latest verdict wins.
@@ -432,3 +443,38 @@ def test_ruleset_and_classic_counts_are_read_from_their_own_shapes() -> None:
     assert check_pr_gated.classic_review_count(_CLASSIC_ONE_APPROVAL) == 1
     assert check_pr_gated.classic_review_count({}) is None
     assert check_pr_gated.classic_required_contexts(_CLASSIC_ONE_APPROVAL) == []
+
+
+def test_an_unreadable_protection_endpoint_is_a_reason_not_an_absence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 401 or a network failure must not read as "no classic layer": that
+    is the fail-open the script exists to close (local review P1)."""
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, _GREEN, protection_error="gh: Bad credentials (HTTP 401)"
+    )
+    assert reasons == [
+        "could not read classic branch protection on 'main' (gh: Bad credentials "
+        "(HTTP 401)), so its approval and status-check requirements are unverified"
+    ]
+
+
+def test_a_classic_required_failure_is_a_reason_not_also_a_caveat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One red check, one report: the classic-required context is a reason,
+    so the unrequired-failure caveat leaves it out (local review P2)."""
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT, "Extra Gate"]},
+        "enforce_admins": {"enabled": False},
+    }
+    reasons, caveats = _gate_a_green_pr(
+        monkeypatch,
+        [*_GREEN, check_run("Extra Gate", "FAILURE"), check_run("Other", "FAILURE")],
+        protection=protection,
+    )
+    assert reasons == [
+        "'Extra Gate' (required by classic branch protection) concluded FAILURE"
+    ]
+    assert len(caveats) == 1
+    assert "Other" in caveats[0] and "Extra Gate" not in caveats[0]
