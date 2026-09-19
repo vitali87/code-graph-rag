@@ -253,11 +253,43 @@ def _extract_formal_param_type(param_node: ASTNode) -> str | None:
     return None
 
 
+# Inside a `spread_parameter` the element type is the named child that is
+# neither the `modifiers` (`final`, an annotation) nor the declarator that
+# carries the name: a generic, array or primitive element is not a
+# `type_identifier`, and matching that alone yielded no parameter at all
+# for `List<String>... xs`, `String[]... xs` and `int... xs` (issue #1974).
+# A comment between the modifiers and the type is a named child of the
+# spread parameter too, and is not the element type either.
+_JAVA_NOT_ELEMENT_TYPES = frozenset(
+    {
+        cs.TS_MODIFIERS,
+        cs.TS_VARIABLE_DECLARATOR,
+        cs.TS_LINE_COMMENT,
+        cs.TS_BLOCK_COMMENT,
+    }
+)
+
+
+def spread_element_type_node(spread_node: ASTNode) -> ASTNode | None:
+    """The element-type node of a `spread_parameter`, whatever its shape."""
+    # `children`, not `named_children`: the lightweight node doubles the Java
+    # tests build carry only `children`, and the one anonymous child here is
+    # the `...` token, excluded by name.
+    return next(
+        (
+            child
+            for child in spread_node.children
+            if child.type not in _JAVA_NOT_ELEMENT_TYPES
+            and child.type != cs.LANG_ELLIPSIS
+        ),
+        None,
+    )
+
+
 def _extract_spread_param_type(spread_node: ASTNode) -> str | None:
-    for subchild in spread_node.children:
-        if subchild.type == cs.TS_TYPE_IDENTIFIER:
-            if param_type_text := safe_decode_text(subchild):
-                return f"{param_type_text}..."
+    element = spread_element_type_node(spread_node)
+    if element is not None and (param_type_text := safe_decode_text(element)):
+        return f"{param_type_text}..."
     return None
 
 

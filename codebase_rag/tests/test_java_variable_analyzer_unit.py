@@ -182,6 +182,34 @@ class TestAnalyzeJavaParameters:
         assert "args" in local_var_types
         assert local_var_types["args"] == "java.lang.String[]"
 
+    @pytest.mark.parametrize(
+        ("signature", "expected"),
+        [
+            ("java.util.List<String>... xs", {"xs": "java.util.List<String>[]"}),
+            ("String[]... ys", {"ys": "java.lang.String[][]"}),
+            ("int... zs", {"zs": "int[]"}),
+            ("final /* c */ String... vs", {"vs": "java.lang.String[]"}),
+        ],
+    )
+    def test_spread_parameter_of_every_shape_binds_a_local(
+        self, engine: JavaTypeInferenceEngine, signature: str, expected: dict[str, str]
+    ) -> None:
+        """Parsed with the real grammar: a generic, array or primitive varargs
+        bound no local before, since only `type_identifier` was read
+        (issue #1974); a comment after `final` is not the type either."""
+        tsjava = pytest.importorskip("tree_sitter_java")
+        source = f"class Example {{ void run({signature}) {{}} }}"
+        tree = Parser(Language(tsjava.language())).parse(source.encode())
+        assert not tree.root_node.has_error
+        class_body = tree.root_node.named_children[0].child_by_field_name(cs.FIELD_BODY)
+        assert class_body is not None
+        method = class_body.named_children[0]
+        local_var_types: dict[str, str] = {}
+
+        engine._analyze_java_parameters(method, local_var_types, "com.example")
+
+        assert local_var_types == expected
+
     def test_formal_parameter_missing_name(
         self, engine: JavaTypeInferenceEngine
     ) -> None:
