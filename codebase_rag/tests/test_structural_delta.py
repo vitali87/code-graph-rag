@@ -617,6 +617,48 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
     assert indexed_scope(root, "other_project") == (None, None)
 
 
+def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
+    temp_repo: Path,
+) -> None:
+    """A repository cache must not make a sibling project look indexed."""
+    from codebase_rag.graph_updater import _load_exclusion_state
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="project_a",
+    ).run(force=True)
+
+    second = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="project_b",
+    )
+    second.run()
+
+    assert second.skipped_because_in_sync is False
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
+        for properties in store.nodes.values()
+    )
+    assert _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME) == {
+        "exclude": [],
+        "unignore": [],
+        "project": "project_b",
+        "named": "1",
+    }
+
+
 def test_check_keeps_excluded_files_out_of_the_graph(
     temp_repo: Path,
 ) -> None:

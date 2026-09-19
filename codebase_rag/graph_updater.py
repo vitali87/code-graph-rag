@@ -3805,11 +3805,29 @@ class GraphUpdater:
         if self._exclusion_match is not None:
             return self._exclusion_match
         stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
-        current = _exclusion_state(self.exclude_paths, self.unignore_paths)
-        # The project key is informational for readers such as `cgr check`;
-        # the sync decision compares the scope itself, as it always has.
+        current = _exclusion_state(
+            self.exclude_paths,
+            self.unignore_paths,
+            self.project_name,
+            named=self.project_named,
+        )
         if stored is not None:
-            stored = {k: v for k, v in stored.items() if k != "project"}
+            # The cache and directory mtimes are repository-scoped, but the
+            # graph they justify is project-scoped. A stamp from another
+            # project cannot authorize this project's in-sync fast path.
+            if (
+                stored.get("project") != self.project_name
+                or bool(stored.get("named")) != self.project_named
+            ):
+                logger.info(
+                    ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
+                )
+                self._exclusion_match = False
+                return False
+            stored = {k: v for k, v in stored.items() if k not in {"project", "named"}}
+            current = {
+                k: v for k, v in current.items() if k not in {"project", "named"}
+            }
         if stored == current:
             self._exclusion_match = True
             return True
