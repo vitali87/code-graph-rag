@@ -310,7 +310,8 @@ def _review(login: str, state: str) -> dict[str, object]:
 
 def test_no_classic_layer_adds_no_reason(monkeypatch: pytest.MonkeyPatch) -> None:
     reasons, caveats = _gate_a_green_pr(monkeypatch, _GREEN, protection=None)
-    assert reasons == [] and caveats == []
+    assert reasons == []
+    assert caveats == []
 
 
 def test_a_classic_approval_requirement_the_pr_does_not_meet_is_a_reason(
@@ -477,7 +478,8 @@ def test_a_classic_required_failure_is_a_reason_not_also_a_caveat(
         "'Extra Gate' (required by classic branch protection) concluded FAILURE"
     ]
     assert len(caveats) == 1
-    assert "Other" in caveats[0] and "Extra Gate" not in caveats[0]
+    assert "Other" in caveats[0]
+    assert "Extra Gate" not in caveats[0]
 
 
 def _status(context: str, state: str, **extra: object) -> dict[str, object]:
