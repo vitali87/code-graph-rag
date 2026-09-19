@@ -208,6 +208,146 @@ def test_signature_change_lists_every_site_with_a_verdict(
     assert site["declared_count"] == 2
 
 
+def _link_remote_callers(store: _StatefulIngestor) -> None:
+    """A handler in this project exposes an endpoint and an RPC resource;
+    another project's client reaches the endpoint through a NETWORK resource
+    and the RPC directly. Edges added the way the extractors emit them."""
+    resource = cs.NodeLabel.RESOURCE.value
+    function = cs.NodeLabel.FUNCTION.value
+    qn = cs.KEY_QUALIFIED_NAME
+    store.ensure_node_batch(
+        resource,
+        {qn: "svc.ep", cs.KEY_NAME: "GET /helper", cs.KEY_KIND: "ENDPOINT"},
+    )
+    store.ensure_node_batch(
+        resource, {qn: "svc.rpc", cs.KEY_NAME: "Greeter", cs.KEY_KIND: "RPC"}
+    )
+    store.ensure_node_batch(
+        resource,
+        {qn: "client.net", cs.KEY_NAME: "http://svc/helper", cs.KEY_KIND: "NETWORK"},
+    )
+    store.ensure_node_batch(
+        function, {qn: "client.app.call", cs.KEY_PATH: "app.py", cs.KEY_NAME: "call"}
+    )
+    store.ensure_node_batch(
+        function, {qn: "client.rpc.hello", cs.KEY_PATH: "rpc.py", cs.KEY_NAME: "hello"}
+    )
+    # A caller inside the handler's own project, over HTTP and over RPC: a
+    # local site, not a remote caller (bot review on PR #1978).
+    store.ensure_node_batch(
+        function,
+        {
+            qn: _qn("pkg.local.self_call"),
+            cs.KEY_PATH: "pkg/local.py",
+            cs.KEY_NAME: "self_call",
+        },
+    )
+    helper = (function, qn, _qn("pkg.util.helper"))
+    rel = cs.RelationshipType
+    store.ensure_relationship_batch(helper, rel.EXPOSES.value, (resource, qn, "svc.ep"))
+    store.ensure_relationship_batch(
+        helper, rel.EXPOSES.value, (resource, qn, "svc.rpc")
+    )
+    store.ensure_relationship_batch(
+        (resource, qn, "client.net"), rel.RESOLVES_TO.value, (resource, qn, "svc.ep")
+    )
+    # Reads and writes one URL: one remote caller, not two.
+    for access in (rel.READS_FROM.value, rel.WRITES_TO.value):
+        store.ensure_relationship_batch(
+            (function, qn, "client.app.call"), access, (resource, qn, "client.net")
+        )
+    store.ensure_relationship_batch(
+        (function, qn, "client.rpc.hello"),
+        rel.WRITES_TO.value,
+        (resource, qn, "svc.rpc"),
+    )
+    for target in ("client.net", "svc.rpc"):
+        store.ensure_relationship_batch(
+            (function, qn, _qn("pkg.local.self_call")),
+            rel.READS_FROM.value,
+            (resource, qn, target),
+        )
+
+
+def test_signature_change_lists_the_remote_callers_of_its_endpoint(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A changed handler's remote call sites, through the NETWORK resource
+    that resolves to its endpoint and directly for its RPC resource, in any
+    project (issue #1603). No CALLS edge lists them, so `sites` alone says
+    the change is contained when it is not. A client that both reads and
+    writes the URL is one caller (local review P2); a caller in the
+    handler's own project is not listed (bot review on PR #1978)."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+
+    def apply() -> None:
+        # Re-ingesting the file rebuilds the handler, and the route
+        # extractor would re-emit its EXPOSES edges with it; the fixture
+        # has no route decorator, so the edges are laid after the rebuild.
+        updater.reingest(["pkg/util.py"], deleted=[])
+        _link_remote_callers(store)
+
+    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert [s["path"] for s in change["sites"]] == ["pkg/app.py"]
+    assert change["remote_callers"] == [
+        {
+            "qualified_name": "client.app.call",
+            "label": cs.NodeLabel.FUNCTION.value,
+            "path": "app.py",
+            "url": "http://svc/helper",
+            "endpoint": "GET /helper",
+        },
+        {
+            "qualified_name": "client.rpc.hello",
+            "label": cs.NodeLabel.FUNCTION.value,
+            "path": "rpc.py",
+            "url": "Greeter",
+            "endpoint": "Greeter",
+        },
+    ]
+
+
+def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
+    """The indirect and the direct query are each DISTINCT within
+    themselves; a row both return is one caller (bot review on PR #1978)."""
+    from codebase_rag.structural_delta import _remote_callers
+
+    row = {
+        cs.KEY_HANDLER: "svc.h",
+        cs.KEY_ENDPOINT: "GET /x",
+        cs.KEY_LABEL: "Function",
+        cs.KEY_QUALIFIED_NAME: "client.app.call",
+        cs.KEY_PATH: "app.py",
+        cs.KEY_URL: "http://svc/x",
+    }
+    found = _remote_callers(lambda query, params=None: [dict(row)], "svc", ["svc.h"])
+    assert [c["qualified_name"] for c in found["svc.h"]] == ["client.app.call"]
+
+
+def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """The control: the same change on a definition that exposes nothing
+    reports an empty list, not a missing key."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+    delta = _observe(root, store, updater, ["pkg/util.py"])
+
+    (change,) = delta["signature_changes"]
+    assert change["remote_callers"] == []
+
+
 def test_variadic_callee_is_never_too_many(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
