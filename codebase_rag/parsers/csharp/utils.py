@@ -224,8 +224,6 @@ def index_extension_method(
     store: dict[str, list[tuple[str, str, str, int]]],
     ingested_qn: str,
     method_node: Node,
-    class_qn: str,
-    module_qn: str | None,
 ) -> None:
     # Index an extension method by simple name + receiver type + declaring
     # namespace so a `recv.Ext()` call binds to the static method even though it

@@ -218,11 +218,17 @@ _CSHARP_NAMESPACE_SCOPES = frozenset(
 def _module_directory_qn(module_qn: str, file_path: Path | None) -> str:
     # The module qn minus the file's own segment. The stem may carry dots
     # (`Foo.TResult.cs`), so it is removed by name rather than at the last
-    # dot; without a path the last segment is the best available guess.
+    # dot, and a same-stem sibling of another language gives the module a
+    # `<stem>.<ext>` segment instead (`proj.src.Foo.cs`). A module whose
+    # own segment is neither has no known directory, and nothing folds
+    # (bot review); without a path the last segment is the only guess.
     if file_path is not None:
-        suffix = f"{cs.SEPARATOR_DOT}{module_stem(file_path.name)}"
-        if module_qn.endswith(suffix):
-            return module_qn[: -len(suffix)]
+        stem = module_stem(file_path.name)
+        for own in (stem, f"{stem}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip('.')}"):
+            suffix = f"{cs.SEPARATOR_DOT}{own}"
+            if module_qn.endswith(suffix):
+                return module_qn[: -len(suffix)]
+        return ""
     if cs.SEPARATOR_DOT in module_qn:
         return module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
     return ""

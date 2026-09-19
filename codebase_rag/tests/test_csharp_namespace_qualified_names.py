@@ -289,3 +289,55 @@ class TestObjectCreationNamesAType:
             "proj.test.Serilog.Tests.Core.CapturingTests.CapturingTests.Made",
             "proj.test.Serilog.Tests.Support.Some.Some.LogEventProperty",
         ) in calls, sorted(calls)
+
+
+class TestWrittenNamespaceQualifiedNames:
+    def test_a_qualified_base_list_resolves_to_the_folded_types(
+        self, tmp_path: Path
+    ) -> None:
+        """`class Q : Zeta.BaseC, Zeta.ISink` matched the tail of the base's
+        qn; with the mirrored namespace folded out, the declared form is
+        looked up instead (bot review)."""
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/Zeta/Base.cs": (
+                    "namespace Zeta;\n\npublic interface ISink { }\n\n"
+                    "public class BaseC { }\n"
+                ),
+                "src/App/Q.cs": (
+                    "namespace App;\n\npublic class Q : Zeta.BaseC, Zeta.ISink { }\n"
+                ),
+            },
+        )
+        edges = {
+            (rel, str(source), str(target))
+            for _sl, source, rel, _tl, target in store.edges
+            if rel in ("INHERITS", "IMPLEMENTS")
+        }
+        assert ("INHERITS", "proj.src.App.Q.Q", "proj.src.Zeta.Base.BaseC") in edges, (
+            edges
+        )
+        assert (
+            "IMPLEMENTS",
+            "proj.src.App.Q.Q",
+            "proj.src.Zeta.Base.ISink",
+        ) in edges, edges
+
+    def test_a_same_stem_sibling_of_another_language_does_not_fold(
+        self, tmp_path: Path
+    ) -> None:
+        """`src/Foo.c` beside `src/Foo.cs` gives the C# module the qn
+        `proj.src.Foo.cs`; its directory is `src`, which does not spell
+        `namespace Foo`, so the namespace stays (bot review)."""
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/Foo.c": "int foo(void) { return 1; }\n",
+                "src/Foo.cs": "namespace Foo;\n\npublic class Bar { }\n",
+                "src/Foo/Baz.cs": "namespace Foo;\n\npublic class Baz { }\n",
+            },
+        )
+        classes = _qns(store, cs.NodeLabel.CLASS.value)
+        assert "proj.src.Foo.cs.Foo.Bar" in classes, classes
+        assert "proj.src.Foo.Baz.Baz" in classes, classes

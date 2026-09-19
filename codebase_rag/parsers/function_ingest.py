@@ -1868,11 +1868,7 @@ class FunctionIngestMixin:
         if csharp_has_override_modifier(func_node):
             self.csharp_override_methods.add(ingested_qn)
         csharp_utils.index_extension_method(
-            self.csharp_extension_methods,
-            ingested_qn,
-            func_node,
-            class_qn,
-            module_qn,
+            self.csharp_extension_methods, ingested_qn, func_node
         )
         return True
 

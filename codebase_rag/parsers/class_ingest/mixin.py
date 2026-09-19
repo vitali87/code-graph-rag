@@ -175,6 +175,7 @@ class ClassIngestMixin:
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
     csharp_class_namespaced: dict[str, str]
+    csharp_namespaced_qns: dict[str, set[str]]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -1104,9 +1105,9 @@ class ClassIngestMixin:
             # not the qn repeats it (issue #1629).
             if namespace := csharp_utils.declared_namespace(class_node):
                 class_props[cs.KEY_NAMESPACE] = namespace
-            self.csharp_class_namespaced[class_qn] = (
-                csharp_utils.namespace_qualified_name(class_node)
-            )
+            namespaced = csharp_utils.namespace_qualified_name(class_node)
+            self.csharp_class_namespaced[class_qn] = namespaced
+            self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -1657,11 +1658,7 @@ class ClassIngestMixin:
                 # `recv.Ext()` call binds to the static method even though it
                 # lives on an unrelated static class (not in recv's hierarchy).
                 csharp_utils.index_extension_method(
-                    self.csharp_extension_methods,
-                    ingested_qn,
-                    method_node,
-                    class_qn,
-                    module_qn,
+                    self.csharp_extension_methods, ingested_qn, method_node
                 )
             # A Java method declared inside an anonymous class body
             # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
@@ -2042,9 +2039,18 @@ class ClassIngestMixin:
                     )
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        return resolve_class_name(
+        resolved = resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
+        if resolved is not None:
+            return resolved
+        # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to
+        # match the tail of the class qn; a namespace the directory spells is
+        # no longer in it, so the declared form is looked up instead. Several
+        # carriers are the parts of one partial type, any of which spans the
+        # group (issue #1629).
+        carriers = self.csharp_namespaced_qns.get(class_name)
+        return min(carriers) if carriers else None
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:
         return pe.extract_cpp_base_class_name(parent_text)
