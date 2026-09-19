@@ -1114,6 +1114,7 @@ class _JsFileBindingCollector:
 class CallProcessor:
     __slots__ = (
         "ingestor",
+        "_unresolved_references",
         "_site_node",
         "_resolution",
         "_site_cache",
@@ -1209,6 +1210,8 @@ class CallProcessor:
         self.js_symbol_member_types: dict[str, set[str]] = {}
         self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
 
+        # Shared with the import processor, which owns the record (#1568).
+        self._unresolved_references = import_processor.unresolved_references
         self._resolver = CallResolver(
             function_registry=function_registry,
             import_processor=import_processor,
@@ -3903,6 +3906,17 @@ class CallProcessor:
                 )
 
             if not callee_info:
+                if call_name:
+                    # The callee may be defined by a file added later; keep
+                    # its simple name so that file's arrival re-parses this
+                    # one (issue #1568).
+                    simple = call_name.replace(
+                        cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
+                    ).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    if simple:
+                        self._unresolved_references.setdefault(module_qn, set()).add(
+                            simple
+                        )
                 if (
                     is_js_ts
                     and class_context

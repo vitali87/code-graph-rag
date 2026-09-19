@@ -798,6 +798,37 @@ def _project_root_for_single_file(target: Path) -> Path:
     return git_root if git_root is not None else target.parent
 
 
+def _definition_names(node: Node) -> set[str]:
+    """Simple names a captured definition node declares: its `name` field, or
+    the `name` fields of its named children (a Go `type_declaration` holds
+    `type_spec`s), or the identifier under a C++ declarator chain."""
+    names: set[str] = set()
+    if (name := node.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+        names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+        return names
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        inner = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is None:
+            if declarator.text:
+                names.add(declarator.text.decode(cs.ENCODING_UTF8, errors="replace"))
+            break
+        declarator = inner
+    if names:
+        return names
+    for child in node.named_children:
+        if (name := child.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+            names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+    return names
+
+
+def _read_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -1777,6 +1808,7 @@ class GraphUpdater:
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
 
         self.factory.definition_processor.process_all_method_overrides()
 
@@ -2883,6 +2915,94 @@ class GraphUpdater:
             }
             | self._specifier_waiter_keys(present_keys)
         )
+
+    def _unresolved_reference_waiters(
+        self, added: list[tuple[str, bytes]]
+    ) -> list[str]:
+        """Files whose recorded unresolved references an ADDED file satisfies.
+
+        Offered per added file: its module qn (a dropped `from .base import`
+        recorded the guessed qn), its import spellings, every suffix of its
+        path (a quoted include is recorded as written), and the simple names
+        it defines (a base class or a callee is recorded by its written
+        name); a Rust `use` records the whole path, matched under the module
+        qn as a prefix. A failed read degrades to the previous behaviour,
+        never worse (issue #1568).
+        """
+        if not added or not isinstance(self.ingestor, QueryProtocol):
+            return []
+        names: set[str] = set(self._module_names_for([key for key, _b in added]))
+        prefixes: set[str] = set()
+        for key, file_bytes in added:
+            module_qn = base_module_qn(Path(key), self.project_name)
+            names.add(module_qn)
+            prefixes.add(f"{module_qn}{cs.SEPARATOR_DOT}")
+            parts = PurePosixPath(key).parts
+            names.update(cs.SEPARATOR_SLASH.join(parts[i:]) for i in range(len(parts)))
+            names.update(self._defined_simple_names(key, file_bytes))
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
+                {
+                    cs.CYPHER_PARAM_NAMES: sorted(names),
+                    cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
+    def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
+        """The simple names of the functions and classes a file defines, from
+        a parse of its bytes with the language's combined query: what a
+        waiting module wrote as a base or a callee (issue #1568). A language
+        without a parser or a combined query offers nothing."""
+        language = get_language_for_extension(PurePosixPath(key).suffix)
+        parser = self.parsers.get(language) if language is not None else None
+        query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
+        if parser is None or query is None:
+            return set()
+        try:
+            tree = parser.parse(file_bytes)
+            captures = sorted_captures(QueryCursor(query), tree.root_node)
+        except Exception:
+            return set()
+        names: set[str] = set()
+        for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+            for node in captures.get(capture, ()):
+                names.update(_definition_names(node))
+        return names
+
+    def _write_unresolved_references(self) -> None:
+        """Write every re-parsed module's unresolved references onto its node,
+        the empty list included: `SET n += props` never removes a property,
+        so the write is what clears a name that now resolves (issue #1568)."""
+        recorded = self.factory.import_processor.unresolved_references
+        for (
+            module_qn,
+            path,
+        ) in self.factory.definition_processor.module_qn_to_file_path.items():
+            try:
+                key = path.relative_to(self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if key not in self._reparsed_file_keys:
+                continue
+            self.ingestor.ensure_node_batch(
+                cs.NodeLabel.MODULE,
+                {
+                    cs.KEY_QUALIFIED_NAME: module_qn,
+                    cs.KEY_UNRESOLVED_REFERENCES: sorted(recorded.get(module_qn, ())),
+                },
+            )
 
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
@@ -4313,6 +4433,16 @@ class GraphUpdater:
         foreign_definers = self._foreign_definer_keys(
             {*reindexed_keys, *deleted_before_parse}
         )
+        # An ADDED file has no inbound edges for the caller query to follow:
+        # the files that referenced it while it was missing recorded the
+        # names they could not resolve, and are found from those (issue
+        # #1568). The importer lookup existed for the scoped path only.
+        added_entries = [
+            (file_key, file_bytes)
+            for _fp, file_key, is_new, file_bytes in changed_entries
+            if is_new
+        ]
+        added_keys = [key for key, _b in added_entries]
         affected = 0
         for caller_key in sorted(
             {
@@ -4321,6 +4451,8 @@ class GraphUpdater:
                 ),
                 *siblings,
                 *foreign_definers,
+                *self._unresolved_importer_keys(added_keys),
+                *self._unresolved_reference_waiters(added_entries),
             }
         ):
             if caller_key in present:
@@ -5280,6 +5412,9 @@ class GraphUpdater:
         for caller_key in (
             *self._affected_caller_keys(keys),
             *self._unresolved_importer_keys(sorted(present)),
+            *self._unresolved_reference_waiters(
+                [(key, _read_bytes(path)) for key, path in sorted(present.items())]
+            ),
         ):
             caller_path = self.repo_path / caller_key
             if (
@@ -5420,6 +5555,7 @@ class GraphUpdater:
         import_processor.requeue_csharp_import_edges()
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
         self.factory.definition_processor.process_all_method_overrides()
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's

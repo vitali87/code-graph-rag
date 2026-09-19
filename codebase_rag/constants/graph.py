@@ -110,6 +110,13 @@ KEY_PATH = "path"
 # target-side lookup to match, so the waiting importer is recorded here and
 # stays findable from the created file's path alone (issue #1714).
 KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
+# Names this module referenced and could not resolve when it was parsed: an
+# import that named no module (the guessed qn and the written name), a quoted
+# include matching no file, a base class that resolved to nothing or to a
+# phantom, a call with no callee. A file ADDED later is matched against them
+# so the modules that waited for it are re-parsed (issue #1568). Written
+# unconditionally on every parse so a resolved name clears.
+KEY_UNRESOLVED_REFERENCES = "unresolved_references"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -861,6 +868,23 @@ CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS = (
     "importer.unresolved_specifiers AS specifiers"
 )
 CYPHER_KEY_SPECIFIERS = "specifiers"
+# Modules whose recorded unresolved references name a file that now exists:
+# by one of its names exactly (its module qn, its import spellings, its path
+# suffixes, the simple names it defines) or under one of its qn prefixes (a
+# Rust `use crate::base::Base` records the whole path). Project-scoped on the
+# waiting side; self-selecting, since a re-parse that resolves the name
+# rewrites the list without it (issue #1568).
+CYPHER_UNRESOLVED_REFERENCE_WAITERS = (
+    "MATCH (m:Module) "
+    "WHERE m.path IS NOT NULL "
+    "AND m.qualified_name STARTS WITH $project_prefix "
+    "AND m.unresolved_references IS NOT NULL "
+    "AND any(n IN m.unresolved_references WHERE n IN $names "
+    "OR any(p IN $prefixes WHERE n STARTS WITH p)) "
+    "RETURN DISTINCT m.path AS caller_path"
+)
+CYPHER_PARAM_NAMES = "names"
+CYPHER_PARAM_PREFIXES = "prefixes"
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "

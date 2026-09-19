@@ -894,6 +894,38 @@ class _StatefulIngestor:
                             seen_paths.add(importer_path)
                             importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
                 return importer_rows
+            case cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS:
+                # Modules whose recorded unresolved references an added file
+                # satisfies, by an exact name or under a qn prefix (issue
+                # #1568). Emulated for the same reason as the specifier
+                # lookup below: an unanswered query reads as "no waiters".
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
+                wanted = set(raw_names) if isinstance(raw_names, list) else set()
+                wanted_prefixes = (
+                    [str(p) for p in raw_prefixes]
+                    if isinstance(raw_prefixes, list)
+                    else []
+                )
+                waiting: set[str] = set()
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
+                    if not path or not (prefix and qn.startswith(prefix)):
+                        continue
+                    if not isinstance(recorded, list):
+                        continue
+                    if any(
+                        n in wanted
+                        or any(str(n).startswith(p) for p in wanted_prefixes)
+                        for n in recorded
+                    ):
+                        waiting.add(path)
+                return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
                 # Modules carrying a dropped relative specifier (issue #1714).
                 # Emulated rather than left to fall through: an unanswered

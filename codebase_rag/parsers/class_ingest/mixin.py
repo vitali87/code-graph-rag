@@ -131,6 +131,15 @@ def _skip_method(
     return _is_nested_inside_function(method_node, class_body, lang_config)
 
 
+def _written_simple_name(name: str) -> str:
+    """The last segment of a written base name, whatever the separator:
+    `geo::Shape` and `pkg.Base` both name the class the way a defining
+    file's own simple name does (issue #1568)."""
+    return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]
+
+
 class _DeferredForwardDecl(NamedTuple):
     # A C/C++ forward declaration held back until every file's real definitions
     # are registered, so we can tell an only-forward-declared type (keep it) from
@@ -461,6 +470,13 @@ class ClassIngestMixin:
         for entry in deferred:
             parent_qn = self._resolve_cpp_base_qn(entry)
             if parent_qn is None:
+                module_qn = module_qn_for_entity(
+                    entry.child_qn, self.module_qn_to_file_path
+                )
+                if module_qn is not None:
+                    self.import_processor.note_unresolved(
+                        module_qn, _written_simple_name(entry.base_name)
+                    )
                 continue
             bases = self.class_inheritance.get(entry.child_qn)
             if bases is not None and entry.base_index < len(bases):
@@ -527,6 +543,12 @@ class ClassIngestMixin:
                 continue
             resolved = self._resolve_deferred_parent_qn(entry)
             is_dart = entry.language == cs.SupportedLanguage.DART
+            if resolved is None or resolved[1]:
+                # Resolved nowhere, or to a node outside the index: the file
+                # defining this base may be added later (issue #1568).
+                self.import_processor.note_unresolved(
+                    entry.module_qn, _written_simple_name(entry.parent_qn)
+                )
             if resolved is None:
                 continue
             parent_qn, is_external = resolved
