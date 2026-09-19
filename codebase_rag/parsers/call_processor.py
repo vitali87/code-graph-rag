@@ -4159,9 +4159,14 @@ class CallProcessor:
                     # takes its constructors too: `Box@8` for `class Box<T>`
                     # declares `Box@8.Box(T)`, which is not a variant of the
                     # natural twin's `Box.Box` (issue #2007).
+                    # The same class-typed gate INSTANTIATES applies above: a
+                    # variant of another kind (a colliding function, a merged
+                    # namespace) has no constructor to redirect to.
                     ctor_edges = [
                         (ctor_type, variant)
                         for class_variant in class_variants
+                        if resolver.function_registry.get(class_variant)
+                        in (None, NodeType.CLASS)
                         for ctor_type, ctor_qn in sorted(
                             resolver.java_constructor_targets(class_variant)
                         )
