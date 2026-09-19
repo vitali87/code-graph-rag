@@ -18,7 +18,7 @@ code-graph-rag parses codebases into a knowledge graph stored in a local Memgrap
 1. Tree-sitter parsing of analysed repository content must never execute that content. Frontends that invoke a language toolchain on the analysed project must be documented, along with how to disable them.
 2. Credentials (LLM API keys, MCP tokens) must never appear in source code or in the graph.
 3. The MCP server must not expose the graph or the tools to other hosts unauthenticated.
-4. The paths by which code can leave the machine must be documented and controlled by explicit configuration.
+4. The paths by which code can leave the machine must be documented, and each must be either controlled by explicit configuration or gated so that repository content cannot cross it unrecognised.
 5. Agent tool use (shell commands, file edits) must be constrained to the project being analysed, with any escape hatch requiring an explicit user choice.
 
 ## Trust boundaries and threat model
