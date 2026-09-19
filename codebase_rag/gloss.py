@@ -108,6 +108,24 @@ def resolve_one(
     `resolve` orders its rows innermost first, and the innermost is the one
     the line "is in".
     """
+    base, descriptor = _split_descriptor(target)
+    if descriptor is not None:
+        if descriptor not in cs.GLOSS_DESCRIPTORS:
+            return GlossRefusal(
+                error=cs.MCP_GLOSS_DESCRIPTOR_UNKNOWN.format(
+                    descriptor=descriptor,
+                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(cs.GLOSS_DESCRIPTORS)),
+                )
+            )
+        # The base is resolved once, here; its refusal (not found, ambiguous)
+        # is the descriptor target's refusal too.
+        natural = resolve_one(fetch_all, project_name, base)
+        if _is_refusal(natural):
+            return natural
+        natural_row: SymbolRow = natural  # type: ignore[assignment]
+        return _resolve_descriptor(
+            fetch_all, project_name, target, natural_row, descriptor
+        )
     rows = graph_query.resolve(fetch_all, project_name, target)
     if not rows:
         return GlossRefusal(
@@ -133,6 +151,84 @@ def resolve_one(
         error=cs.MCP_GLOSS_TARGET_AMBIGUOUS.format(target=target, count=len(rows)),
         candidates=rows,
     )
+
+
+def _split_descriptor(target: str) -> tuple[str, str | None]:
+    """`pkg.C.x#setter` -> (`pkg.C.x`, `setter`); a target without `#` is
+    its own base. A `#` that opens a name is part of it, not a descriptor:
+    a JS/TS private member keeps its `#` in the qualified name
+    (`Bank.#validatePin`), so a `#` right after a dot, or at the start,
+    leaves the target whole (bot review)."""
+    if cs.GLOSS_DESCRIPTOR_SEPARATOR not in target:
+        return target, None
+    base, descriptor = target.rsplit(cs.GLOSS_DESCRIPTOR_SEPARATOR, 1)
+    if not base or base.endswith(cs.SEPARATOR_DOT) or cs.SEPARATOR_DOT in descriptor:
+        return target, None
+    return base, descriptor.strip().lower()
+
+
+def _variant_prefix(qualified_name: str) -> str:
+    """The prefix every `name@<line>` variant of a definition shares."""
+    return f"{qualified_name.split(cs.DUP_QN_MARKER, 1)[0]}{cs.DUP_QN_MARKER}"
+
+
+def _resolve_descriptor(
+    fetch_all: QueryFn,
+    project_name: str,
+    target: str,
+    natural_row: SymbolRow,
+    descriptor: str,
+) -> SymbolRow | GlossRefusal:
+    """The variant of the resolved base definition `natural_row` that
+    carries the descriptor's decorator: a property's getter (`@property`),
+    setter (`@x.setter`) or deleter (`@x.deleter`). The registry names the
+    later members `x@<line>`, which shifts with the file; the descriptor is
+    the stable address (issue #1808)."""
+    qn = natural_row["qualified_name"].split(cs.DUP_QN_MARKER, 1)[0]
+    marker = cs.GLOSS_DESCRIPTORS[descriptor]
+    for row in fetch_all(
+        cq.CYPHER_GLOSS_VARIANTS,
+        {
+            cs.KEY_QN: qn,
+            cs.KEY_VARIANT_PREFIX: _variant_prefix(qn),
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        },
+    ):
+        decorators = row.get(cs.KEY_DECORATORS)
+        if not isinstance(decorators, list):
+            continue
+        if any(
+            str(d) == marker if marker.startswith("@") else str(d).endswith(marker)
+            for d in decorators
+        ):
+            return graph_query._symbol_row(row)
+    return GlossRefusal(
+        error=cs.MCP_GLOSS_DESCRIPTOR_NOT_FOUND.format(
+            target=target, qn=qn, descriptor=marker
+        )
+    )
+
+
+def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[GlossRow]:
+    """The unattached notes written against `target`. A note on a
+    descriptor target (`Store.x#setter`) was filed on the member's
+    `x@<line>` name, so when the base still resolves the search covers
+    every variant of it rather than the literal target (bot review)."""
+    params: PropertyDict = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+    }
+    base, descriptor = _split_descriptor(target)
+    natural = resolve_one(fetch_all, project_name, base) if descriptor else None
+    if natural is not None and not _is_refusal(natural):
+        natural_row: SymbolRow = natural  # type: ignore[assignment]
+        qn = natural_row["qualified_name"].split(cs.DUP_QN_MARKER, 1)[0]
+        params[cs.KEY_QN] = qn
+        params[cs.KEY_VARIANT_PREFIX] = _variant_prefix(qn)
+        return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_UNDER, params))
+    params[cs.KEY_QN] = target
+    params[cs.KEY_SUFFIX] = f"{cs.SEPARATOR_DOT}{target}"
+    return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_ON, params))
 
 
 def _is_refusal(value: object) -> bool:
@@ -347,17 +443,7 @@ def glosses_for(
         # visible, never re-bound to a lookalike. An ambiguous name is not
         # gone, so it gets no such list.
         if cs.KEY_CANDIDATES not in refusal:
-            orphaned = _sort_gloss_rows(
-                fetch_all(
-                    cq.CYPHER_GLOSSES_ORPHANED_ON,
-                    {
-                        cs.KEY_PROJECT_NAME: project_name,
-                        cs.KEY_PROJECT_PREFIX: _prefix(project_name),
-                        cs.KEY_QN: target,
-                        cs.KEY_SUFFIX: f"{cs.SEPARATOR_DOT}{target}",
-                    },
-                )
-            )
+            orphaned = _orphaned_on(fetch_all, project_name, target)
             if orphaned:
                 refusal[cs.KEY_ORPHANED] = orphaned
         return refusal
