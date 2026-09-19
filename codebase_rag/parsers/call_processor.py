@@ -5337,16 +5337,20 @@ class CallProcessor:
         # neither has a call node, so both get the redirect. sorted(): the
         # target label is a hash-randomized StrEnum, so sort for determinism.
         registry = self._resolver.function_registry
-        targets = self._resolver.java_constructor_targets(
-            class_qn
-        ) | self._resolver.cpp_destructor_targets(class_qn)
-        for target_type, target_qn in sorted(targets):
-            for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            targets = self._resolver.java_constructor_targets(
+                class_variant
+            ) | self._resolver.cpp_destructor_targets(class_variant)
+            for target_type, target_qn in sorted(targets):
+                for variant in registry.variants(target_qn):
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
 
     @staticmethod
     def _cpp_member_init_head_name(initializer: Node) -> str | None:
