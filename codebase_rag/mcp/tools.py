@@ -317,6 +317,15 @@ class MCPToolsRegistry:
         # exposes no web-reaching tool for it to guard.
         self._find_duplicates_tool = create_find_duplicates_tool(self.ingestor)
         self._function_source_tool = create_get_function_source_tool(self.ingestor)
+        # Held to the workspace ONCE, here, so the direct MCP handlers and
+        # the agent's tool list share the guard: wrapping only the agent's
+        # copies left the MCP client itself served source from outside the
+        # allow-list (local review P1 on PR #1972). No-ops without a
+        # workspace.
+        self._code_tool = self._workspace_scoped_by_name(self._code_tool)
+        self._function_source_tool = self._workspace_scoped_by_node(
+            self._function_source_tool
+        )
 
         self._rag_agent: Agent | None = None
 
@@ -935,7 +944,7 @@ class MCPToolsRegistry:
         if self._rag_agent is None:
             tools = [
                 self._agent_query_tool(),
-                self._workspace_scoped_by_name(self._code_tool),
+                self._code_tool,
                 self._file_reader_tool,
                 self._file_writer_tool,
                 self._file_editor_tool,
@@ -946,7 +955,7 @@ class MCPToolsRegistry:
                 # two routes disagree about a project indexed mid-session.
                 # Under a workspace the project-taking ones are wrapped so
                 # the agent cannot reach outside the allow-list (#1972).
-                self._workspace_scoped_by_node(self._function_source_tool),
+                self._function_source_tool,
                 self._workspace_scoped_tool(self._find_duplicates_tool),
             ]
             if self._semantic_search_tool is not None:
@@ -3076,6 +3085,11 @@ class MCPToolsRegistry:
                         error=refusal, found=False, error_message=refusal
                     )
                 snippet = await self._code_tool.function(qualified_name=qualified_name)
+            if isinstance(snippet, str):
+                # The workspace guard answered instead of the retriever.
+                return CodeSnippetResultDict(
+                    error=snippet, found=False, error_message=snippet
+                )
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 return CodeSnippetResultDict(

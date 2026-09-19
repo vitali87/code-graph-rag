@@ -11,6 +11,7 @@ check, never a second, weaker path to the same decision.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -260,8 +261,10 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     dup_tool.description = "d"
     registry._find_duplicates_tool = dup_tool
 
-    async def snippet(qualified_name: str) -> str:
-        return f"code:{qualified_name}"
+    async def snippet(qualified_name: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            model_dump=lambda: {"found": True, "qualified_name": qualified_name}
+        )
 
     async def source(node_id: int) -> str:
         return f"source:{node_id}"
@@ -270,12 +273,14 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     code_tool.function = snippet
     code_tool.name = "get_code_snippet"
     code_tool.description = "d"
-    registry._code_tool = code_tool
     source_tool = MagicMock()
     source_tool.function = source
     source_tool.name = "get_function_source_by_id"
     source_tool.description = "d"
-    registry._function_source_tool = source_tool
+    # The registry wraps the real tools once at construction; the doubles
+    # take the same wrap, since both routes call the wrapped instances.
+    registry._code_tool = registry._workspace_scoped_by_name(code_tool)
+    registry._function_source_tool = registry._workspace_scoped_by_node(source_tool)
     # Node 7 is defined in a served project, node 8 outside, node 9 nowhere.
     by_id = {7: f"{BETA}.pkg.f", 8: "other__9999.pkg.g"}
     registry.ingestor.fetch_all.side_effect = lambda query, params=None: (
@@ -308,12 +313,45 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     )
     code = tools["get_code_snippet"]
     assert await code.function("other__9999.pkg.g") == refused
-    assert await code.function(f"{BETA}.pkg.f") == f"code:{BETA}.pkg.f"
+    allowed = await code.function(f"{BETA}.pkg.f")
+    assert allowed.model_dump()["qualified_name"] == f"{BETA}.pkg.f"
     by_node = tools["get_function_source_by_id"]
     assert await by_node.function(7) == "source:7"
     assert await by_node.function(8) == refused
     # An unknown id is the tool's to report, not the allow-list's.
     assert await by_node.function(9) == "source:9"
+    # The direct MCP handlers share the guard (local review P1): the same
+    # inputs are refused there too, before the graph is consulted.
+    direct = await registry.get_code_snippet("other__9999.pkg.g")
+    assert direct["error_message"] == refused
+    assert direct["found"] is False
+    assert await registry.get_function_source(8) == refused
+    assert (await registry.get_code_snippet(f"{BETA}.pkg.f"))["found"] is True
+
+
+@pytest.mark.anyio
+async def test_the_direct_handlers_refuse_with_the_real_tools_wrapped_once(
+    tmp_path: Path,
+) -> None:
+    """The guard is applied to the tool instances at construction, so the
+    MCP handlers refuse without any double standing in: a name outside the
+    workspace never reaches the retriever, a node id is resolved to its
+    name first (local review P1 on PR #1972)."""
+    (tmp_path / "a").mkdir()
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="a")
+    registry.ingestor.fetch_all.side_effect = lambda query, params=None: (
+        [{"qualified_name": "other__9999.pkg.g"}]
+        if params and params.get("node_id") == 8
+        else []
+    )
+    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+        name="other__9999.pkg.g", workspace="ws", known=f"{ALPHA}, {BETA}"
+    )
+    snippet = await registry.get_code_snippet("other__9999.pkg.g")
+    assert snippet["error_message"] == refused
+    assert snippet["found"] is False
+    assert await registry.get_function_source(8) == refused
 
 
 def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> None:
