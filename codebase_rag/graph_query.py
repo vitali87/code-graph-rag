@@ -514,8 +514,11 @@ class ReachIndex:
     ) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
         nodes: dict[_NodeId, PropertyDict] = {}
+        owns = _owner_check(fetch_all, project_name)
         for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
             qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+            if not owns(qn):
+                continue
             if qn:
                 nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
         reverse: dict[str, set[str]] = {}
@@ -524,7 +527,9 @@ class ReachIndex:
                 continue
             src = str(row.get(cs.KEY_FROM_QN) or "")
             dst = str(row.get(cs.KEY_TO_QN) or "")
-            if src and dst:
+            # Both ends owned: a foreign caller must neither be reported
+            # nor be a hop the walk continues through (issue #1982).
+            if src and dst and owns(src) and owns(dst):
                 reverse.setdefault(dst, set()).add(src)
         return cls(nodes, reverse, test_patterns)
 

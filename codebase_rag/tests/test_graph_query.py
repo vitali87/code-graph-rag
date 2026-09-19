@@ -60,6 +60,10 @@ NODES: list[ResultRow] = [
     # them, and the reader must drop them by ownership (issue #1982).
     _node("Function", f"{EXTRA}.util.helper", "util.py", 1, 4),
     _node("Function", f"{EXTRA}.app.run", "app.py", 3, 8),
+    _node("Class", f"{EXTRA}.app.Sub", "app.py", 20, 22),
+    _node("Method", f"{EXTRA}.app.Sub.go", "app.py", 21, 22),
+    _node("Module", f"{EXTRA}.main", "main.py", 1, 5),
+    _node("Function", f"{EXTRA}.tests.test_x.test_helper", "tests/test_x.py", 1, 3),
 ]
 # The project list the fixture graph answers; a test narrows it to prove the
 # exclusion is driven by the registry, not by the dotted name alone.
@@ -85,6 +89,9 @@ CALLS: list[
     # From the extending project: a caller of THIS project's helper that is
     # not this project's call site (issue #1982).
     (f"{EXTRA}.app.run", f"{P}.util.helper", 2, 4, 2, 12, 1, []),
+    # ... and as a callee of this project's function, and as a test.
+    (f"{P}.app.main", f"{EXTRA}.app.run", 13, 4, 13, 9, 0, []),
+    (f"{EXTRA}.tests.test_x.test_helper", f"{P}.util.helper", 2, 4, 2, 12, 0, []),
     (f"{P}.tests.test_app.test_main", f"{P}.app.main", 9, 4, 9, 10, 0, []),
     # An edge written without a site (a frontend fact).
     (
@@ -98,11 +105,18 @@ CALLS: list[
         None,
     ),
 ]
-INHERITS = [(f"{P}.app.Child", f"{P}.app.Base", "INHERITS")]
-OVERRIDES = [(f"{P}.app.Child.go", f"{P}.app.Base.go")]
+INHERITS = [
+    (f"{P}.app.Child", f"{P}.app.Base", "INHERITS"),
+    (f"{EXTRA}.app.Sub", f"{P}.app.Base", "INHERITS"),
+]
+OVERRIDES = [
+    (f"{P}.app.Child.go", f"{P}.app.Base.go"),
+    (f"{EXTRA}.app.Sub.go", f"{P}.app.Base.go"),
+]
 IMPORTS = [
     (f"{P}.app", f"{P}.util", 1, 0, 1, 27, "helper", "helper"),
     (f"{P}.tests.test_app", f"{P}.util", 2, 0, 2, 22, "util", "util"),
+    (f"{EXTRA}.main", f"{P}.util", 1, 0, 1, 20, "helper", "helper"),
 ]
 
 
@@ -800,6 +814,18 @@ def test_rows_of_a_project_extending_the_name_are_not_this_projects(
         f"{P}.app.run",
         f"{P}.tests.test_app.setup",
     }
+    callees = graph_query.callees(fake_fetch_all, P, f"{P}.app.main", 1)
+    assert {c["qualified_name"] for c in callees} == {f"{P}.app.run"}
+    implementors = graph_query.implementors(fake_fetch_all, P, f"{P}.app.Base")
+    assert {r["qualified_name"] for r in implementors} == {f"{P}.app.Child"}
+    overrides = graph_query.overrides(fake_fetch_all, P, f"{P}.app.Base.go")
+    assert {r["qualified_name"] for r in overrides} == {f"{P}.app.Child.go"}
+    importers = graph_query.importers(fake_fetch_all, P, f"{P}.util")
+    assert {r["module"] for r in importers} == {f"{P}.app", f"{P}.tests.test_app"}
+    reaching = graph_query.tests_reaching(fake_fetch_all, P, f"{P}.util.helper")
+    names = {r["qualified_name"] for r in reaching}
+    assert not {qn for qn in names if qn.startswith(f"{EXTRA}.")}
+    assert f"{P}.tests.test_app.setup" in names
 
     monkeypatch.setattr(sys.modules[__name__], "PROJECTS", [P])
     resolved = {
