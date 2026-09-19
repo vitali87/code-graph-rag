@@ -176,7 +176,10 @@ def test_only_a_gone_path_escapes_the_mark(
     present.write_text("x = 1\n")
     assert gu._vanished(tmp_path / "missing.py") is True
     link = tmp_path / "dangling.py"
-    link.symlink_to(tmp_path / "nowhere.py")
+    try:
+        link.symlink_to(tmp_path / "nowhere.py")
+    except OSError:  # Windows without symlink privileges: the rest still holds.
+        pytest.skip("symlinks need privileges on this host")
     assert gu._vanished(link) is True
     assert gu._vanished(present) is False
     # `exists()` reading False for a reachable path must not count as gone.
