@@ -842,7 +842,7 @@ class MCPToolsRegistry:
                 project_name=default,
             )
 
-        async def refuse(natural_language_query: str) -> str:
+        def refuse(natural_language_query: str) -> str:
             return str(scope_error)
 
         return Tool(
@@ -869,12 +869,73 @@ class MCPToolsRegistry:
 
         return Tool(scoped, name=tool.name, description=tool.description)
 
+    def _workspace_name_refusal(self, qualified_name: str) -> str | None:
+        """Why a qualified name is refused under a workspace: it belongs to
+        no served project. The agent's source readers take a name, not a
+        project, so the allow-list is applied to the name's project prefix
+        (bot review on PR #1972)."""
+        if self.workspace is None:
+            return None
+        names = self.workspace.project_names()
+        if any(
+            qualified_name == name
+            or qualified_name.startswith(f"{name}{cs.SEPARATOR_DOT}")
+            for name in names
+        ):
+            return None
+        return cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+            name=qualified_name,
+            workspace=self.workspace.name,
+            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    def _workspace_scoped_by_name(self, tool: Tool) -> Tool:
+        """`tool`, taking a qualified name, refusing one outside the
+        workspace; a no-op without a workspace."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(
+            qualified_name: str, *args: object, **kwargs: object
+        ) -> object:
+            if (refusal := self._workspace_name_refusal(qualified_name)) is not None:
+                return refusal
+            return await original(qualified_name, *args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
+    def _workspace_scoped_by_node(self, tool: Tool) -> Tool:
+        """`tool`, taking a node id, refusing a node whose definition is
+        outside the workspace: the id is resolved to its qualified name first
+        (one read, only under a workspace); an id that resolves to nothing
+        is left to the tool, which reports it unavailable."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(node_id: int, *args: object, **kwargs: object) -> object:
+            rows = await asyncio.to_thread(
+                self.ingestor.fetch_all,
+                cq.CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+                {cs.KEY_NODE_ID: node_id},
+            )
+            name = rows[0].get(cs.KEY_QUALIFIED_NAME) if rows else None
+            if isinstance(name, str):
+                if (refusal := self._workspace_name_refusal(name)) is not None:
+                    return refusal
+            return await original(node_id, *args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
             tools = [
                 self._agent_query_tool(),
-                self._code_tool,
+                self._workspace_scoped_by_name(self._code_tool),
                 self._file_reader_tool,
                 self._file_writer_tool,
                 self._file_editor_tool,
@@ -885,7 +946,7 @@ class MCPToolsRegistry:
                 # two routes disagree about a project indexed mid-session.
                 # Under a workspace the project-taking ones are wrapped so
                 # the agent cannot reach outside the allow-list (#1972).
-                self._function_source_tool,
+                self._workspace_scoped_by_node(self._function_source_tool),
                 self._workspace_scoped_tool(self._find_duplicates_tool),
             ]
             if self._semantic_search_tool is not None:

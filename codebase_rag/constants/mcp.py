@@ -180,6 +180,10 @@ MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
 MCP_PROJECT_OUTSIDE_WORKSPACE = (
     "Project {project!r} is not in workspace {workspace!r}. Workspace projects: {known}"
 )
+MCP_NAME_OUTSIDE_WORKSPACE = (
+    "{name!r} belongs to no project of workspace {workspace!r}. Workspace "
+    "projects: {known}"
+)
 MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "Workspace {workspace!r} holds {count} projects and none is rooted at this "
     "server's directory; pass `project` (one of: {known})"

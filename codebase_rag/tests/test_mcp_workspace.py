@@ -210,7 +210,8 @@ async def test_every_project_taking_tool_applies_the_workspace_allow_list(
         workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
     )
     graph = await registry.query_code_graph("q", project="other__9999")
-    assert graph["error"] == outside and graph["results"] == []
+    assert graph["error"] == outside
+    assert graph["results"] == []
     bare = await registry.query_code_graph("q")
     assert bare["error"] == ambiguous
     assert await registry.semantic_search("q", project="other__9999") == outside
@@ -258,6 +259,30 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     dup_tool.name = "find_duplicate_code"
     dup_tool.description = "d"
     registry._find_duplicates_tool = dup_tool
+
+    async def snippet(qualified_name: str) -> str:
+        return f"code:{qualified_name}"
+
+    async def source(node_id: int) -> str:
+        return f"source:{node_id}"
+
+    code_tool = MagicMock()
+    code_tool.function = snippet
+    code_tool.name = "get_code_snippet"
+    code_tool.description = "d"
+    registry._code_tool = code_tool
+    source_tool = MagicMock()
+    source_tool.function = source
+    source_tool.name = "get_function_source_by_id"
+    source_tool.description = "d"
+    registry._function_source_tool = source_tool
+    # Node 7 is defined in a served project, node 8 outside, node 9 nowhere.
+    by_id = {7: f"{BETA}.pkg.f", 8: "other__9999.pkg.g"}
+    registry.ingestor.fetch_all.side_effect = lambda query, params=None: (
+        [{"qualified_name": by_id[params["node_id"]]}]
+        if params and params.get("node_id") in by_id
+        else []
+    )
     with (
         patch("codebase_rag.mcp.tools.create_rag_orchestrator") as build,
         patch("codebase_rag.mcp.tools.create_query_tool") as query_tool,
@@ -276,15 +301,27 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     # A bare call takes the workspace default; an allowed name passes through.
     assert await dup.function() == f"dups:{ALPHA}"
     assert await dup.function(project=BETA) == f"dups:{BETA}"
+    # The source readers take a name or a node id, not a project: the name's
+    # project prefix is what the allow-list is applied to.
+    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+        name="other__9999.pkg.g", workspace="ws", known=f"{ALPHA}, {BETA}"
+    )
+    code = tools["get_code_snippet"]
+    assert await code.function("other__9999.pkg.g") == refused
+    assert await code.function(f"{BETA}.pkg.f") == f"code:{BETA}.pkg.f"
+    by_node = tools["get_function_source_by_id"]
+    assert await by_node.function(7) == "source:7"
+    assert await by_node.function(8) == refused
+    # An unknown id is the tool's to report, not the allow-list's.
+    assert await by_node.function(9) == "source:9"
 
 
 def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> None:
     ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
     registry = _registry(tmp_path, ws, root="elsewhere")
     tool = registry._agent_query_tool()
-    import asyncio
 
-    answer = asyncio.run(tool.function("anything"))
+    answer = tool.function("anything")
     assert answer == cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
         workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
     )
