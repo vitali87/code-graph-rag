@@ -878,14 +878,19 @@ class MCPToolsRegistry:
 
         return Tool(scoped, name=tool.name, description=tool.description)
 
-    def _workspace_name_refusal(self, qualified_name: str) -> str | None:
+    def _workspace_name_refusal(
+        self, qualified_name: str, indexed: list[str] | None = None
+    ) -> str | None:
         """Why a qualified name is refused under a workspace: it belongs to
         no served project. The agent's source readers take a name, not a
         project, so the allow-list is applied to the name's project prefix
-        (bot review on PR #1972)."""
+        (bot review on PR #1972). `indexed` is the graph's project list,
+        read by the caller off the event loop; absent, it is read here."""
         if self.workspace is None:
             return None
         names = self.workspace.project_names()
+        if indexed is None:
+            indexed = self.ingestor.list_projects()
         # The name's project is the LONGEST indexed or served project name
         # it sits under, not the first served one that is a prefix: with
         # `foo` served and `foo.bar` indexed outside the workspace,
@@ -894,7 +899,7 @@ class MCPToolsRegistry:
         owner = max(
             (
                 candidate
-                for candidate in {*names, *self.ingestor.list_projects()}
+                for candidate in {*names, *indexed}
                 if qualified_name == candidate
                 or qualified_name.startswith(f"{candidate}{cs.SEPARATOR_DOT}")
             ),
@@ -920,7 +925,11 @@ class MCPToolsRegistry:
         async def scoped(
             qualified_name: str, *args: object, **kwargs: object
         ) -> object:
-            if (refusal := self._workspace_name_refusal(qualified_name)) is not None:
+            # The project list is a graph read: off the event loop, which the
+            # direct handler holds under the ingestor lock (bot review).
+            indexed = await asyncio.to_thread(self.ingestor.list_projects)
+            refusal = self._workspace_name_refusal(qualified_name, indexed)
+            if refusal is not None:
                 return refusal
             return await original(qualified_name, *args, **kwargs)
 
@@ -944,7 +953,9 @@ class MCPToolsRegistry:
             )
             name = rows[0].get(cs.KEY_QUALIFIED_NAME) if rows else None
             if isinstance(name, str):
-                if (refusal := self._workspace_name_refusal(name)) is not None:
+                indexed = await asyncio.to_thread(self.ingestor.list_projects)
+                refusal = self._workspace_name_refusal(name, indexed)
+                if refusal is not None:
                     return refusal
             return await original(node_id, *args, **kwargs)
 
