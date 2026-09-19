@@ -213,6 +213,18 @@ _JS_FUNCTION_VALUES = frozenset(
     }
 )
 
+_JULIA_DECLS = frozenset(
+    {
+        "function_definition",
+        "macro_definition",
+        "struct_definition",
+        "abstract_definition",
+        "primitive_definition",
+        "module_definition",
+        "assignment",
+    }
+)
+
 _DART_DECLS = frozenset(
     {
         "class_definition",
@@ -304,6 +316,15 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         line_markers=("---",),
         skip_types=_SHEBANGS,
     ),
+    # Julia's module documentation is the file's leading `#=` block comment
+    # (the text `?Module` shows in help); a plain `#` line is an ordinary
+    # comment, like Lua's `--`, so it never qualifies on its own.
+    SupportedLanguage.JULIA: ModuleDocSpec(
+        block_types=frozenset({"block_comment"}),
+        block_markers=("#=",),
+        skip_types=_SHEBANGS,
+        declaration_types=_JULIA_DECLS,
+    ),
     # SQL has no module-documentation convention -- a leading `--` is as
     # likely to be a commented-out statement -- so nothing is extracted.
 }
@@ -347,7 +368,12 @@ def _strip_line(text: str, markers: tuple[str, ...]) -> str:
 
 
 def _clean_block(text: str) -> str:
-    body = _strip_block_close(_BLOCK_OPEN.sub("", text))
+    if text.startswith("#=") and text.endswith("=#"):
+        # Julia's block comment is `#= body =#`: the C-style open/close
+        # stripping would leave its delimiters in the documentation.
+        body = text[2:-2]
+    else:
+        body = _strip_block_close(_BLOCK_OPEN.sub("", text))
     lines = [_BLOCK_LINE_PREFIX.sub("", line) for line in body.splitlines()]
     while lines and not lines[0].strip():
         lines.pop(0)

@@ -18,6 +18,7 @@ Code-Graph-RAG uses Tree-sitter for language-agnostic AST parsing with a unified
 | Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Receiver methods with cross-file binding, structs, interfaces, type declarations, function-local types |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx, .mjs, .cjs | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| Julia | Fully Supported | .jl | ✓ | ✓ | ✓ | - | Modules, struct/abstract/primitive types with single-supertype <: inheritance (the grammar error-recovers a comma supertype list), concise methods, inner constructors, macros (separate @ namespace), arrow functions, using/import, broadcast calls |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
 | PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, interfaces, traits, enums, namespaces, PHP 8 attributes |
 | Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
