@@ -1189,6 +1189,13 @@ class CSharpTypeInferenceEngine:
                 if class_qn := self._containing_class_qn(caller_qn):
                     if ftype := self._field_type(class_qn, field):
                         return self._type_name_to_qn(ftype, module_qn)
+            if raw := safe_decode_text(receiver):
+                if qualified := self._qualified_type_name_to_qn(raw, module_qn):
+                    return qualified
+            return None
+        if receiver.type == cs.TS_CSHARP_ALIAS_QUALIFIED_NAME:
+            if raw := safe_decode_text(receiver):
+                return self._qualified_type_name_to_qn(raw, module_qn)
             return None
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             name = safe_decode_text(receiver)
@@ -1205,6 +1212,32 @@ class CSharpTypeInferenceEngine:
                     return self._type_name_to_qn(ftype, module_qn)
             return self._type_name_to_qn(name, module_qn)
         return None
+
+    def _qualified_type_name_to_qn(
+        self,
+        type_name: str,
+        module_qn: str,
+        generic_arity: int | None = None,
+    ) -> str | None:
+        expanded = type_name.replace("::", cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        if expanded.startswith(global_prefix):
+            expanded = expanded[len(global_prefix) :]
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
+        if import_map and (mapped := import_map.get(first)):
+            expanded = f"{mapped}{separator}{rest}" if separator else mapped
+
+        if self.function_registry.get(expanded) in _TYPE_DECLS:
+            return expanded
+        leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{expanded}"
+        candidates = [
+            qn
+            for qn in self.simple_name_lookup.get(leaf, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS and qn.endswith(suffix)
+        ]
+        return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
 
     def _containing_class_qn(self, caller_qn: str | None) -> str | None:
         if not caller_qn:
@@ -1226,6 +1259,8 @@ class CSharpTypeInferenceEngine:
         # filtering works for every map-sourced reference.
         if generic_arity is None:
             type_name, generic_arity = split_type_ref(type_name)
+        if "::" in type_name:
+            return self._qualified_type_name_to_qn(type_name, module_qn, generic_arity)
         # An already-qualified name that IS a registered type resolves directly,
         # skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:
