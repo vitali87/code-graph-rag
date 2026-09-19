@@ -36,6 +36,8 @@ Release builds and publishing run through GitHub Actions rather than a maintaine
 
 Continuity depends on maintaining authorized access to the repository and publishing services. If release automation becomes unavailable, an authorized maintainer can restore the required access and configuration before resuming releases.
 
+Automated release-tag publishing depends on the [version-bump workflow's](.github/workflows/version-bump.yml) configured credentials. If that automation is unavailable, an authorized maintainer can manually dispatch the publishing workflows for a verified, existing release tag, provided the required publishing access remains available. The [PyPI workflow](.github/workflows/publish.yml) takes a `tag` input; the [Docker](.github/workflows/docker-publish.yml) and [binary](.github/workflows/build-binaries.yml) workflows must be dispatched with the release tag as their ref.
+
 An emergency contact with standby access to the repository and the PyPI project is being designated so that issues, merges, and releases can continue within a week if the lead maintainer becomes unavailable.
 
 If the project becomes unmaintained, the MIT licence permits anyone to fork and continue it.
