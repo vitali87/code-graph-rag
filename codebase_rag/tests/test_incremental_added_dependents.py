@@ -129,6 +129,86 @@ def test_a_module_records_what_it_could_not_resolve_and_clears_it(
     assert module[cs.KEY_UNRESOLVED_REFERENCES] == []
 
 
+def test_an_unresolved_include_is_recorded_as_a_repository_path_suffix(
+    temp_repo: Path,
+) -> None:
+    """`#include "./inc/../inc/shape.h"` waits on `inc/shape.h`, the suffix an
+    added header offers (bot review on PR #1979)."""
+    root = temp_repo / "proj"
+    _materialise(
+        root, {"use.cpp": '#include "./inc/../inc/shape.h"\nint use() { return 0; }\n'}
+    )
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.CPP, force=True)
+    module = store.nodes[(cs.NodeLabel.MODULE.value, "proj.use")]
+    assert module[cs.KEY_UNRESOLVED_REFERENCES] == ["inc/shape.h"]
+
+
+def test_the_root_module_is_a_waiter_too(
+    temp_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A root `__init__.py` is named by the project itself, not under its
+    prefix; it still waits on the file it could not resolve (bot review
+    on PR #1979)."""
+    root = temp_repo / "proj"
+    _materialise(
+        root, {"__init__.py": "from .base import Base\n\nclass D(Base):\n    pass\n"}
+    )
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=True)
+    assert (
+        "Base"
+        in store.nodes[(cs.NodeLabel.MODULE.value, "proj")][
+            cs.KEY_UNRESOLVED_REFERENCES
+        ]
+    )
+    _add_after_cache(root, "base.py", "class Base:\n    pass\n")
+    updater_keys: list[set[str]] = []
+    original = GraphUpdater._process_files
+
+    def spy(self: GraphUpdater, force: bool = False) -> None:
+        original(self, force)
+        updater_keys.append(set(self._reparsed_file_keys))
+
+    monkeypatch.setattr(GraphUpdater, "_process_files", spy)
+    _index(store, root, cs.SupportedLanguage.PYTHON, force=False)
+    assert "__init__.py" in updater_keys[-1]
+
+
+def test_a_modified_file_that_gains_a_definition_reparses_its_waiters(
+    temp_repo: Path,
+) -> None:
+    """A Go caller of a same-package function has no edge into the file
+    that later defines it, so the caller-edge dependents cannot find it:
+    the modified file's GAINED definitions are offered to the waiters
+    (bot review on PR #1979). Compared against a clean index."""
+    before = {
+        "go.mod": GO["go.mod"],
+        "base.go": "package app\n\ntype Base struct{}\n",
+        "user.go": "package app\n\nfunc Use() int {\n\treturn Helper()\n}\n",
+    }
+    gained = "package app\n\ntype Base struct{}\n\nfunc Helper() int { return 1 }\n"
+    after = dict(before, **{"base.go": gained})
+    root = temp_repo / "proj"
+    _materialise(root, before)
+    store = _StatefulIngestor()
+    _index(store, root, cs.SupportedLanguage.GO, force=True)
+    _add_after_cache(root, "base.go", gained)
+    _index(store, root, cs.SupportedLanguage.GO, force=False)
+
+    clean_root = temp_repo / "clean" / "proj"
+    clean_root.parent.mkdir()
+    _materialise(clean_root, after)
+    clean_store = _StatefulIngestor()
+    _index(clean_store, clean_root, cs.SupportedLanguage.GO, force=True)
+
+    def outgoing(snapshot: Snapshot) -> set[tuple[str, ...]]:
+        return {e for e in snapshot[1] if e[1] == "proj.user.Use"}
+
+    assert outgoing(_snapshot(clean_store)), "fixture must give the caller an edge"
+    assert outgoing(_snapshot(store)) == outgoing(_snapshot(clean_store))
+
+
 def test_a_go_module_records_its_unresolved_calls(temp_repo: Path) -> None:
     """Go sees a same-package definition with no import, so the callee's
     name is the only link to the file that will define it."""
@@ -159,9 +239,13 @@ def test_the_batch_path_asks_both_added_file_lookups(
         asked["importers"] = list(keys)
         return importers(self, keys)
 
-    def spy_waiters(self: GraphUpdater, added: list[tuple[str, bytes]]) -> list[str]:
+    def spy_waiters(
+        self: GraphUpdater,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]] | None = None,
+    ) -> list[str]:
         asked["waiters"] = [key for key, _b in added]
-        return waiters(self, added)
+        return waiters(self, added, modified)
 
     monkeypatch.setattr(GraphUpdater, "_unresolved_importer_keys", spy_importers)
     monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy_waiters)
@@ -202,9 +286,13 @@ def test_the_scoped_path_offers_created_files_only(
     asked: list[list[str]] = []
     waiters = GraphUpdater._unresolved_reference_waiters
 
-    def spy(self: GraphUpdater, added: list[tuple[str, bytes]]) -> list[str]:
+    def spy(
+        self: GraphUpdater,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]] | None = None,
+    ) -> list[str]:
         asked.append([key for key, _b in added])
-        return waiters(self, added)
+        return waiters(self, added, modified)
 
     monkeypatch.setattr(GraphUpdater, "_unresolved_reference_waiters", spy)
     (root / "pkg/derived.py").write_text(

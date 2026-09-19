@@ -900,6 +900,7 @@ class _StatefulIngestor:
                 # #1568). Emulated for the same reason as the specifier
                 # lookup below: an unanswered query reads as "no waiters".
                 prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
                 raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
                 raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
                 wanted = set(raw_names) if isinstance(raw_names, list) else set()
@@ -915,7 +916,8 @@ class _StatefulIngestor:
                     path = _text(props.get(cs.KEY_PATH))
                     qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
                     recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
-                    if not path or not (prefix and qn.startswith(prefix)):
+                    in_project = (prefix and qn.startswith(prefix)) or qn == own_name
+                    if not path or not in_project:
                         continue
                     if not isinstance(recorded, list):
                         continue

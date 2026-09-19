@@ -481,6 +481,17 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _include_path_suffix(include_path: str) -> str:
+    """A written include path as the repository path suffix it names:
+    normalised, with any leading `./` and `../` segments dropped."""
+    parts = [
+        part
+        for part in posixpath.normpath(include_path.replace("\\", "/")).split("/")
+        if part not in ("", ".", "..")
+    ]
+    return "/".join(parts)
+
+
 def _dotted_include_path(include_path: str) -> str:
     """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
 
@@ -4393,9 +4404,11 @@ class ImportProcessor:
             return resolved
         # A quoted include matching no repo file is a third-party header; a
         # project-rooted qn would be a phantom. Segmented like the system
-        # branch above, for the same reason (issue #1758). Recorded as
-        # written: the header may be added later (issue #1568).
-        self.note_unresolved(module_qn, include_path)
+        # branch above, for the same reason (issue #1758). Recorded for the
+        # day the header is added (issue #1568), normalised to the repo path
+        # suffix an added file offers: `./include/base.h` and
+        # `../include/base.h` both wait on `include/base.h` (bot review).
+        self.note_unresolved(module_qn, _include_path_suffix(include_path))
         return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:

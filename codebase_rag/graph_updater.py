@@ -2917,19 +2917,25 @@ class GraphUpdater:
         )
 
     def _unresolved_reference_waiters(
-        self, added: list[tuple[str, bytes]]
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]] | None = None,
     ) -> list[str]:
-        """Files whose recorded unresolved references an ADDED file satisfies.
+        """Files whose recorded unresolved references an ADDED file, or a
+        definition a MODIFIED file gained, satisfies.
 
         Offered per added file: its module qn (a dropped `from .base import`
         recorded the guessed qn), its import spellings, every suffix of its
-        path (a quoted include is recorded as written), and the simple names
-        it defines (a base class or a callee is recorded by its written
-        name); a Rust `use` records the whole path, matched under the module
-        qn as a prefix. A failed read degrades to the previous behaviour,
-        never worse (issue #1568).
+        path (a quoted include is recorded as a repository path suffix), and
+        the simple names it defines (a base class or a callee is recorded by
+        its written name); a Rust `use` records the whole path, matched under
+        the module qn as a prefix. A modified file offers only the simple
+        names it defines now and did not before (a Go or Java caller of a
+        same-package function has no edge into the file that gains it; bot
+        review on PR #1979). A failed read degrades to the previous
+        behaviour, never worse (issue #1568).
         """
-        if not added or not isinstance(self.ingestor, QueryProtocol):
+        if not isinstance(self.ingestor, QueryProtocol):
             return []
         names: set[str] = set(self._module_names_for([key for key, _b in added]))
         prefixes: set[str] = set()
@@ -2940,6 +2946,15 @@ class GraphUpdater:
             parts = PurePosixPath(key).parts
             names.update(cs.SEPARATOR_SLASH.join(parts[i:]) for i in range(len(parts)))
             names.update(self._defined_simple_names(key, file_bytes))
+        if modified:
+            known = self._known_simple_names_by_path([key for key, _b in modified])
+            for key, file_bytes in modified:
+                had = known.get(key, set())
+                if "*" in had:
+                    continue
+                names.update(self._defined_simple_names(key, file_bytes) - had)
+        if not names:
+            return []
         try:
             rows = self.ingestor.fetch_all(
                 cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
@@ -2947,6 +2962,9 @@ class GraphUpdater:
                     cs.CYPHER_PARAM_NAMES: sorted(names),
                     cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
                     cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    # The root module (`__init__.py`, `mod.rs`) IS the
+                    # project name, not under its prefix (bot review).
+                    cs.KEY_PROJECT_NAME: self.project_name,
                 },
             )
         except Exception:
@@ -2959,6 +2977,30 @@ class GraphUpdater:
                 if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
             }
         )
+
+    def _known_simple_names_by_path(self, keys: list[str]) -> dict[str, set[str]]:
+        """The simple names of the definitions the graph holds per file, so a
+        modified file's GAINED definitions can be told from the ones it had.
+        A failed read marks every file fully known: nothing extra is offered."""
+        known: dict[str, set[str]] = {}
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.CYPHER_PARAM_PATHS: keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions")
+            return {key: {"*"} for key in keys}
+        for row in rows:
+            qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(path, str):
+                known.setdefault(path, set()).add(
+                    qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
+                )
+        return known
 
     def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
         """The simple names of the functions and classes a file defines, from
@@ -4449,6 +4491,15 @@ class GraphUpdater:
             ]
         )
         added_keys = [key for key, _b in added_entries]
+        modified_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if not is_new
+            ]
+        )
         affected = 0
         for caller_key in sorted(
             {
@@ -4458,7 +4509,7 @@ class GraphUpdater:
                 *siblings,
                 *foreign_definers,
                 *self._unresolved_importer_keys(added_keys),
-                *self._unresolved_reference_waiters(added_entries),
+                *self._unresolved_reference_waiters(added_entries, modified_entries),
             }
         ):
             if caller_key in present:
@@ -5429,7 +5480,12 @@ class GraphUpdater:
                     (key, _read_bytes(path))
                     for key, path in sorted(present.items())
                     if created is not None and key in created
-                ]
+                ],
+                [
+                    (key, _read_bytes(path))
+                    for key, path in sorted(present.items())
+                    if created is None or key not in created
+                ],
             ),
         ):
             caller_path = self.repo_path / caller_key
