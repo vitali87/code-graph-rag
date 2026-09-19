@@ -886,11 +886,22 @@ class MCPToolsRegistry:
         if self.workspace is None:
             return None
         names = self.workspace.project_names()
-        if any(
-            qualified_name == name
-            or qualified_name.startswith(f"{name}{cs.SEPARATOR_DOT}")
-            for name in names
-        ):
+        # The name's project is the LONGEST indexed or served project name
+        # it sits under, not the first served one that is a prefix: with
+        # `foo` served and `foo.bar` indexed outside the workspace,
+        # `foo.bar.pkg.fn` belongs to `foo.bar` (bot review on PR #1972,
+        # the dotted-prefix class of issue #1970).
+        owner = max(
+            (
+                candidate
+                for candidate in {*names, *self.ingestor.list_projects()}
+                if qualified_name == candidate
+                or qualified_name.startswith(f"{candidate}{cs.SEPARATOR_DOT}")
+            ),
+            key=len,
+            default=None,
+        )
+        if owner is not None and owner in names:
             return None
         return cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
             name=qualified_name,

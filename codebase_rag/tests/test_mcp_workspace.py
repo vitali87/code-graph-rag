@@ -354,6 +354,28 @@ async def test_the_direct_handlers_refuse_with_the_real_tools_wrapped_once(
     assert await registry.get_function_source(8) == refused
 
 
+@pytest.mark.anyio
+async def test_a_name_under_a_longer_indexed_project_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Workspace `foo` must not serve `foo.bar.pkg.fn` when `foo.bar` is an
+    indexed project outside it: the name's project is the longest indexed
+    name it sits under, not the first served prefix (bot review on PR
+    #1972). A name under `foo` itself still passes."""
+    (tmp_path / "a").mkdir()
+    ws = _workspace(tmp_path, ("a", "foo"))
+    registry = _registry(tmp_path, ws, root="a")
+    registry.ingestor.list_projects.return_value = ["foo", "foo.bar"]
+    refused = cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+        name="foo.bar.pkg.fn", workspace="ws", known="foo"
+    )
+    assert registry._workspace_name_refusal("foo.bar.pkg.fn") == refused
+    assert registry._workspace_name_refusal("foo.pkg.fn") is None
+    assert registry._workspace_name_refusal("foo") is None
+    snippet = await registry.get_code_snippet("foo.bar.pkg.fn")
+    assert snippet["error_message"] == refused
+
+
 def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> None:
     ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
     registry = _registry(tmp_path, ws, root="elsewhere")
