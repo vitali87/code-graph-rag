@@ -108,6 +108,30 @@ def _holds_only_type_arguments(selector: Node) -> bool:
     )
 
 
+def _skip_type_argument_selectors(node: Node | None) -> Node | None:
+    # `Box<int>.of(1);` in statement position is `Box` + selector(<int>) +
+    # selector(.of) + selector((1)): a selector holding only type arguments
+    # is not a hop (local review).
+    while (
+        node is not None
+        and node.type == cs.TS_DART_SELECTOR
+        and _holds_only_type_arguments(node)
+    ):
+        node = node.prev_named_sibling
+    return node
+
+
+def _finish_at_construction(node: Node, parts_rev: list[str]) -> list[str] | None:
+    # `new Box(1).m()`: the construction node is the chain's base and a call
+    # hop at once, so the resolver types the receiver from the constructed
+    # class (issue #2010).
+    constructed = _construction_name(node)
+    if constructed is None:
+        return None
+    parts_rev.extend((_CALL_HOP, constructed))
+    return list(reversed(parts_rev))
+
+
 def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
     # Backward walk over a selector chain, shared by plain and cascade calls:
     # None means the chain is broken (index selector, arbitrary expression)
@@ -118,27 +142,14 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
     # type or constructor class; without it (cascade path) a call-result
     # receiver stays unresolvable.
     parts_rev: list[str] = []
+    node = _skip_type_argument_selectors(node)
     while node is not None:
         if allow_calls and _selector_has_argument_part(node):
             parts_rev.append(_CALL_HOP)
-            node = node.prev_named_sibling
-            continue
-        if node.type == cs.TS_DART_SELECTOR and _holds_only_type_arguments(node):
-            # `Box<int>.of(1);` in statement position is `Box` +
-            # selector(<int>) + selector(.of) + selector((1)): the type
-            # arguments are not a hop (local review).
-            node = node.prev_named_sibling
+            node = _skip_type_argument_selectors(node.prev_named_sibling)
             continue
         if allow_calls and node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
-            # `new Box(1).m()`: the construction node is the chain's base
-            # and a call hop at once, so the resolver types the receiver
-            # from the constructed class (issue #2010).
-            constructed = _construction_name(node)
-            if constructed is None:
-                return None
-            parts_rev.append(_CALL_HOP)
-            parts_rev.append(constructed)
-            break
+            return _finish_at_construction(node, parts_rev)
         part = _chain_part(node)
         if part is None:
             return None
@@ -147,7 +158,7 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
         parts_rev.append(part)
         if node.type == cs.TS_DART_IDENTIFIER:
             break
-        node = node.prev_named_sibling
+        node = _skip_type_argument_selectors(node.prev_named_sibling)
     return list(reversed(parts_rev))
 
 
