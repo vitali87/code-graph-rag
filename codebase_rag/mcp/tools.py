@@ -65,6 +65,7 @@ from codebase_rag.types_defs import (
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
+from codebase_rag.workspaces import WorkspaceConfig
 
 
 def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
@@ -200,16 +201,24 @@ class MCPToolsRegistry:
     # never named, so the outstanding set cannot enumerate it. This says "the
     # damage is unbounded", and only a completed wipe retires it.
     _incomplete_unbounded: bool = False
+    # The workspace served, if any (issue #1494). A class default so a
+    # registry built without __init__ (the test doubles do) still has it.
+    workspace: WorkspaceConfig | None = None
 
     def __init__(
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
         cypher_gen: CypherGenerator,
+        workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        # The workspace this server serves, if one was loaded (issue #1494):
+        # an allow-list on top of the graph's own project check, never a
+        # substitute for it, and the source root for each of its repos.
+        self.workspace = workspace
         self._ingestor_lock = asyncio.Lock()
         # The updater that last indexed this root, kept warm so reingest()
         # resolves cross-file calls without re-reading the registry from the
@@ -936,6 +945,12 @@ class MCPToolsRegistry:
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 projects = await asyncio.to_thread(self.ingestor.list_projects)
+            # A workspace server lists the workspace's projects that are
+            # indexed: a workspace repo not yet in the graph is not a project
+            # a query can reach, and one outside the workspace is not served.
+            if self.workspace is not None:
+                allowed = set(self.workspace.project_names())
+                projects = [p for p in projects if p in allowed]
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
@@ -2340,6 +2355,25 @@ class MCPToolsRegistry:
         # root derives to.
         try:
             async with self._ingestor_lock:
+                # The workspace allow-list is checked FIRST and narrows only:
+                # a name outside it is refused with the workspace's names,
+                # and a name inside it is still held to the graph's own
+                # check below, so an unindexed workspace repo reads as
+                # unknown rather than as a second, weaker path (issue #1494).
+                if (
+                    project is not None
+                    and self.workspace is not None
+                    and project not in self.workspace.project_names()
+                ):
+                    return {
+                        cs.DICT_KEY_ERROR: cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+                            project=project,
+                            workspace=self.workspace.name,
+                            known=cs.SEPARATOR_COMMA_SPACE.join(
+                                self.workspace.project_names()
+                            ),
+                        )
+                    }
                 if project is not None:
                     known = await asyncio.to_thread(self.ingestor.list_projects)
                     if project not in known:
@@ -2349,6 +2383,18 @@ class MCPToolsRegistry:
                                 known=cs.SEPARATOR_COMMA_SPACE.join(known),
                             )
                         }
+                if project is None and self.workspace is not None:
+                    default = self._workspace_default_project()
+                    if default is None:
+                        names = self.workspace.project_names()
+                        return {
+                            cs.DICT_KEY_ERROR: cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                                workspace=self.workspace.name,
+                                count=len(names),
+                                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+                            )
+                        }
+                    project = default
                 project_name = project or derive_project_name(Path(self.project_root))
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
@@ -2396,14 +2442,37 @@ class MCPToolsRegistry:
             lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
         )
 
+    def _workspace_default_project(self) -> str | None:
+        """The workspace project a request without `project` means.
+
+        The repo rooted at this server's directory, if the workspace has
+        one; else the only project, if it has one; else nothing, and the
+        caller must say which. Never a guess between several.
+        """
+        assert self.workspace is not None
+        root = Path(self.project_root).resolve()
+        for repo in self.workspace.repos:
+            if repo.repo_path() == root:
+                return repo.project_name
+        names = self.workspace.project_names()
+        return names[0] if len(names) == 1 else None
+
     def _source_root_for(self, project_name: str) -> Path | None:
         # Source is read from disk only when the selected project was indexed
         # from this server's repository (its Project node's stored root):
         # another project's definition carries a relative path that may also
         # exist here and would read the wrong file, and a matching name alone
         # does not prove the root, so its span is answered without source.
+        # A workspace names each repo's root, so its projects are answered
+        # from their own checkouts under the same stored-root proof.
+        candidate = Path(self.project_root)
+        if self.workspace is not None:
+            for repo in self.workspace.repos:
+                if repo.project_name == project_name:
+                    candidate = repo.repo_path()
+                    break
         return graph_query.source_root_for(
-            self.ingestor.fetch_all, project_name, Path(self.project_root)
+            self.ingestor.fetch_all, project_name, candidate
         )
 
     async def definition(
@@ -2973,9 +3042,11 @@ def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
     cypher_gen: CypherGenerator,
+    workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(
         project_root=project_root,
         ingestor=ingestor,
         cypher_gen=cypher_gen,
+        workspace=workspace,
     )

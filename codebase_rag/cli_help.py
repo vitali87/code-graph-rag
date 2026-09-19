@@ -380,6 +380,11 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_WORKSPACE = (
+    "Serve the projects of workspace NAME: `list_projects` shows them, a "
+    "`project` argument must name one, and source is read from each repo's "
+    "own root. Also read from the MCP_WORKSPACE environment variable."
+)
 
 HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."
