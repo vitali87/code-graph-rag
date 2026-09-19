@@ -1583,6 +1583,18 @@ def _emit_dead_code(
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
+def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
+    """Endpoint roots off on a graph holding one project: every endpoint
+    reads as uncalled. Stdout carries the JSON payload when that format is
+    chosen (local review P1), so the notice goes to stderr then."""
+    if show_progress:
+        app_context.console.print(
+            style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+        )
+    else:
+        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+
+
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
     help=ch.CMD_DEAD_CODE,
@@ -1658,18 +1670,7 @@ def dead_code(
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
-                    # Stdout carries the JSON payload when that format is
-                    # chosen (local review P1): the notice goes to stderr
-                    # then, so the output stays parseable.
-                    if show_progress:
-                        app_context.console.print(
-                            style(
-                                cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS,
-                                cs.Color.YELLOW,
-                            )
-                        )
-                    else:
-                        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+                    _notice_single_project_endpoint_roots(show_progress)
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)

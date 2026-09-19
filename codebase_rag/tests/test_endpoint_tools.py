@@ -152,7 +152,8 @@ def test_the_reads_are_scoped_by_the_handler_and_count_with_a_count() -> None:
         assert "h.qualified_name STARTS WITH $project_prefix" in query
         assert "EXPOSES" in query
     for query in (cq.CYPHER_GRAPH_ENDPOINTS, cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS):
-        assert "OPTIONAL MATCH" in query and "count(DISTINCT" in query
+        assert "OPTIONAL MATCH" in query
+        assert "count(DISTINCT" in query
     assert "RESOLVES_TO" in cq.CYPHER_GRAPH_ENDPOINT_CALLERS
     assert "RESOLVES_TO" not in cq.CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS
     assert "c.qualified_name STARTS WITH $project_prefix" in (
@@ -220,6 +221,23 @@ def test_a_route_handler_nobody_calls_is_dead_only_with_endpoint_roots_off() -> 
     # Without the links (the collector did not fetch them) nothing changes:
     # the switch cannot report a handler dead on missing evidence.
     assert dead_code_from_graph(nodes, [], f"{P}.", off, None) == set()
+
+
+def test_a_handler_with_a_second_root_decorator_stays_a_root_with_endpoint_roots_off() -> (
+    None
+):
+    """A route handler that is also a CLI command: the route alone no longer
+    roots it, the command still does, whatever the endpoint's callers (bot
+    review on PR #1975). The route-only twin with the same links is dead."""
+    (_key, props) = _handler(HANDLER)
+    props[cs.KEY_DECORATORS] = ["@app.get('/users/{id}')", "@app.command()"]
+    twin = _handler(f"{P}.api.other")
+    nodes = {(_FUNCTION, HANDLER): props, twin[0]: twin[1]}
+    off = default_dead_code_config(include_tests=True, include_classes=False)._replace(
+        endpoint_roots=False
+    )
+    links = {HANDLER: 0, f"{P}.api.other": 0}
+    assert dead_code_from_graph(nodes, [], f"{P}.", off, links) == {f"{P}.api.other"}
 
 
 def test_a_decorated_non_handler_stays_a_root_with_endpoint_roots_off() -> None:

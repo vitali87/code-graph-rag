@@ -624,8 +624,18 @@ def endpoint_callers(
         )
         for row in fetch_all(query, params)
     ]
+    # Every field in the key: a caller that both reads and writes one URL is
+    # two rows, and two handlers can share a caller (bot review on PR #1975).
     return sorted(
-        rows, key=lambda r: (r["qualified_name"], r["url"] or "", r["path"] or "")
+        rows,
+        key=lambda r: (
+            r["qualified_name"],
+            r["url"] or "",
+            r["path"] or "",
+            r["direction"] or "",
+            r["endpoint"],
+            r["handler"],
+        ),
     )
 
 

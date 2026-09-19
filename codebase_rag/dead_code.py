@@ -419,6 +419,23 @@ def _has_root_decorator(props: PropertyDict, root_decorators: frozenset[str]) ->
     return any(_norm_decorator(str(d)) in root_decorators for d in decorators)
 
 
+def _has_non_route_root_decorator(
+    props: PropertyDict, root_decorators: frozenset[str]
+) -> bool:
+    """A root decorator that is not the route itself: with endpoint roots
+    off the route stops rooting its handler, a fixture or CLI command on the
+    same definition does not (bot review on PR #1975)."""
+    from .parsers.endpoints import parse_route_decorator
+
+    decorators = props.get(cs.KEY_DECORATORS)
+    if not isinstance(decorators, list):
+        return False
+    return any(
+        _norm_decorator(str(d)) in root_decorators and not parse_route_decorator(str(d))
+        for d in decorators
+    )
+
+
 def _is_nest_component_class(
     class_qn: str,
     class_decorators_norm: dict[str, frozenset[str]],
@@ -555,13 +572,15 @@ def _is_root(
         # With endpoint roots off, a handler that EXPOSES an endpoint is not
         # rooted by its route decorator; it is live only if an indexed call
         # site reaches the endpoint (issue #1603). Other decorators (a
-        # fixture, a CLI command) keep rooting as before.
+        # fixture, a CLI command) keep rooting as before, on the same
+        # definition too.
         lambda: _has_root_decorator(props, config.root_decorators)
         and (
             config.endpoint_roots
             or endpoint_links is None
             or qn not in endpoint_links
             or endpoint_links[qn] > 0
+            or _has_non_route_root_decorator(props, config.root_decorators)
         ),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's
@@ -929,6 +948,22 @@ def count_structural_tier_symbols(node_rows: list[ResultRow]) -> int:
     )
 
 
+def _endpoint_links(
+    ingestor: GraphQueryClient, params: dict[str, PropertyValue]
+) -> dict[str, int]:
+    """Indexed call sites per handler exposing an endpoint, read only when
+    the endpoint-roots switch is off (issue #1603)."""
+    links: dict[str, int] = {}
+    for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS, params):
+        handler = row.get(cs.KEY_HANDLER)
+        callers = row.get(cs.KEY_CALLERS)
+        if isinstance(handler, str) and handler:
+            links[handler] = links.get(handler, 0) + (
+                callers if isinstance(callers, int) else 0
+            )
+    return links
+
+
 def collect_dead_code(
     ingestor: GraphQueryClient, project_name: str, config: DeadCodeConfig
 ) -> list[ResultRow]:
@@ -964,16 +999,9 @@ def collect_dead_code_with_coverage(
         if _passes_floor(row, config.min_resolution)
     ]
 
-    endpoint_links: dict[str, int] | None = None
-    if not config.endpoint_roots:
-        endpoint_links = {}
-        for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS, params):
-            handler = row.get(cs.KEY_HANDLER)
-            callers = row.get(cs.KEY_CALLERS)
-            if isinstance(handler, str) and handler:
-                endpoint_links[handler] = endpoint_links.get(handler, 0) + (
-                    callers if isinstance(callers, int) else 0
-                )
+    endpoint_links = (
+        None if config.endpoint_roots else _endpoint_links(ingestor, params)
+    )
     dead = dead_code_from_graph(nodes, rels, prefix, config, endpoint_links)
     rows = [row for row in node_rows if _row_qn(row) in dead]
     rows.sort(key=_row_qn)
