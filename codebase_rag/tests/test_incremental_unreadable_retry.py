@@ -163,3 +163,23 @@ def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
     assert ("Function", f"{project}.pkg.b.new_name") in store.nodes
     assert ("Function", f"{project}.pkg.b.old_name") not in store.nodes
     assert _updater(root, store)._is_already_in_sync() is True
+
+
+def test_only_a_gone_path_escapes_the_mark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vanished path and a broken symlink are gone; a file that exists but
+    cannot be reached is not, even when `exists()` says so (bot review on
+    PR #1993): the mark must survive a permission failure on the file or
+    its directory."""
+    present = tmp_path / "present.py"
+    present.write_text("x = 1\n")
+    assert gu._vanished(tmp_path / "missing.py") is True
+    link = tmp_path / "dangling.py"
+    link.symlink_to(tmp_path / "nowhere.py")
+    assert gu._vanished(link) is True
+    assert gu._vanished(present) is False
+    # `exists()` reading False for a reachable path must not count as gone.
+    monkeypatch.setattr(Path, "exists", lambda self: False)
+    assert gu._vanished(present) is False
+    assert gu._vanished(link) is True

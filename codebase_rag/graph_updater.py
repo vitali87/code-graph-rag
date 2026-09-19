@@ -165,6 +165,20 @@ type DirMtimesCache = dict[str, float]
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
 
 
+def _vanished(filepath: Path) -> bool:
+    """Whether an unreadable path is GONE rather than unreachable: the path
+    is absent, or a symlink whose target is. Judged without following the
+    link and without `exists()`, which reads a permission failure on the
+    file or its directory as absence (issue #1983)."""
+    try:
+        os.lstat(filepath)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return filepath.is_symlink() and not filepath.exists()
+
+
 def _hash_file(filepath: Path) -> str:
     data = filepath.read_bytes()
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
@@ -4186,10 +4200,13 @@ class GraphUpdater:
                         continue
                     unreadable_count += 1
                     unreadable_keys.add(file_key)
-                    # Marked for retry only when the file IS there: a broken
-                    # symlink or a vanished path would otherwise refuse the
-                    # fast path on every later run.
-                    if filepath.exists():
+                    # Marked for retry unless the path is GONE (vanished, or
+                    # a broken symlink): those would refuse the fast path on
+                    # every later run. A file that exists but cannot be
+                    # reached (a permission failure on it or its directory)
+                    # is marked; `exists()` alone reads such a file as gone
+                    # (bot review).
+                    if not _vanished(filepath):
                         new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                     continue
                 # A file marked unreadable by the previous run is hashed
@@ -4216,7 +4233,7 @@ class GraphUpdater:
                     continue
                 unreadable_count += 1
                 unreadable_keys.add(file_key)
-                if filepath.exists():
+                if not _vanished(filepath):
                     new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             current_hash, file_bytes = hashed
