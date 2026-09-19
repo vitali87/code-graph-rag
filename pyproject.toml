@@ -90,6 +90,10 @@ codebase_rag = [
     "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
+    # Julia's pip grammar ships no HIGHLIGHTS_QUERY, so its highlights come
+    # only from this fallback file; without it the wheel silently disables
+    # Julia modifier/decorator extraction (issue #1882 review).
+    "queries/highlights/*.scm",
 ]
 
 [project.optional-dependencies]
@@ -127,6 +131,7 @@ treesitter-full = [
     "tree-sitter-c>=0.24.1",
     "tree-sitter-cpp>=0.23.0",
     "tree-sitter-lua>=0.0.19",
+    "tree-sitter-julia>=0.23.1",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-dart>=0.1.0",

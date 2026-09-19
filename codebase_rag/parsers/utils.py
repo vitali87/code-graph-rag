@@ -1621,6 +1621,9 @@ def ingest_exported_function(
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
+    if lang_config.language == cs.SupportedLanguage.JULIA:
+        return False
+
     current = func_node.parent
     if not isinstance(current, Node):
         return False

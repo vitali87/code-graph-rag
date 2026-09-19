@@ -1318,9 +1318,13 @@ class FunctionIngestMixin:
         func_props = self._build_function_props(
             func_node, resolution, module_qn, lang_queries, language
         )
-        is_macro = func_node.type == cs.TS_RS_MACRO_DEFINITION
+        is_macro = func_node.type in (
+            cs.TS_RS_MACRO_DEFINITION,
+            cs.TS_JULIA_MACRO_DEFINITION,
+        )
         if is_macro:
-            # Rust macros live in a separate namespace from functions; Pass-3 gates
+            # Rust and Julia macros live in a separate namespace from
+            # functions (Julia's `@name` vs `name`); Pass-3 gates
             # macro-invocation vs fn-call binding on macro_qns, and the persisted
             # property lets incremental runs rehydrate the set for UNCHANGED files
             # (the is_property pattern).
