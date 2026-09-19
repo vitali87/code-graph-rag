@@ -22,6 +22,13 @@ def _first_named(node: Node | None) -> Node | None:
     return named[0] if named else None
 
 
+def _last_named(node: Node | None) -> Node | None:
+    if node is None:
+        return None
+    named = node.named_children
+    return named[-1] if named else None
+
+
 def _single_line_or_none(text: str | None) -> str | None:
     # Error recovery can make the parser's whole recovery span stand in for a
     # name: on a `:(->)` the grammar re-syncs hundreds of lines downstream and
@@ -245,17 +252,32 @@ def julia_is_signature_head(call_node: Node) -> bool:
 def julia_arrow_assigned_name(node: Node) -> str | None:
     """The binding name of an arrow function, from its enclosing assignment.
 
-    `f = x -> x + 1` -> `f`; `M.f = x -> ...` -> `M.f` (dotted). An arrow
-    whose enclosing assignment binds a call head (a method body returning an
-    arrow) names nothing: it is anonymous, and inventing the method's name
-    would register a phantom twin.
+    `f = x -> x + 1` -> `f`; `M.f = x -> ...` -> `M.f` (dotted). Only a
+    DIRECT binding counts: the arrow must BE the assigned value, behind at
+    most typed/where/paren decoration. `ys = map(x -> x + 1, xs)` names
+    nothing: the arrow is nested in the call, and taking the nearest
+    assignment's name would register the anonymous callback as `module.ys`,
+    a phantom twin (issue #1882 review).
     """
     current = node.parent
     while current is not None and current.type != cs.TS_JULIA_ASSIGNMENT:
         current = current.parent
     if current is None:
         return None
+    value = _last_named(current)
+    # Peel the decoration a bare arrow value may wear; any other container
+    # (a call, a binary expression, ...) is not a transparent wrapper.
+    while value is not None and value.type in (
+        cs.TS_JULIA_TYPED_EXPRESSION,
+        cs.TS_JULIA_WHERE_EXPRESSION,
+        cs.TS_JULIA_PARENTHESIZED_EXPRESSION,
+    ):
+        value = _first_named(value)
+    if value is None or not _same_span(value, node):
+        return None
     lhs = _first_named(current)
+    if lhs is not None and lhs.type == cs.TS_JULIA_TYPED_EXPRESSION:
+        lhs = _first_named(lhs)
     if lhs is None or not lhs.text:
         return None
     if lhs.type in (cs.TS_JULIA_IDENTIFIER, cs.TS_JULIA_FIELD_EXPRESSION):

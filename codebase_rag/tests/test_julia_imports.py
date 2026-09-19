@@ -287,3 +287,52 @@ end
     assert mapping.get("JSON") == "JSON3", mapping
     # Absolute single-segment names stay external as-is.
     assert mapping.get("Dates") == "Dates", mapping
+
+
+def test_relative_import_parent_dir(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """`using ..Sibling` from `nested/a/b.jl` resolves one level UP (to
+    `nested/Sibling`), not to the importer's own directory: the old
+    `lstrip(".")` collapsed every depth to 1 (issue #1882 review)."""
+    project = temp_repo / "julia_reldepth"
+    (project / "nested" / "a").mkdir(parents=True)
+    (project / "nested" / "a" / "b.jl").write_text(
+        "using ..Sibling\n", encoding="utf-8"
+    )
+    (project / "nested" / "Sibling.jl").write_text("x = 1\n", encoding="utf-8")
+    # The decoy at the importer's own depth: what the old code found.
+    (project / "nested" / "a" / "Sibling.jl").write_text("y = 2\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.nested.a.b"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("Sibling") == f"{project.name}.nested.Sibling", mapping
+
+
+def test_excluded_module_not_in_discovery(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A module under an excluded (generated) directory must not enter the
+    Julia discovery indexes: the importer's own exclude/unignore filter now
+    applies there, matching the indexer walk (issue #1882 review)."""
+    project = temp_repo / "julia_excl"
+    project.mkdir()
+    (project / "generated").mkdir()
+    (project / "generated" / "dep.jl").write_text("gen_fn(x) = x\n", encoding="utf-8")
+    (project / "main.jl").write_text("using .generated.dep\n", encoding="utf-8")
+
+    updater = create_and_run_updater(
+        project,
+        mock_ingestor,
+        skip_if_missing=SKIP,
+        exclude_paths=frozenset({"generated"}),
+    )
+
+    index = updater.factory.import_processor._julia_declared or {}
+    assert "generated/dep.jl" not in index, index
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    module_qn = f"{project.name}.main"
+    assert not any(src == module_qn for src, _ in imports), imports

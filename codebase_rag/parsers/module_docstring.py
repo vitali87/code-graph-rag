@@ -316,12 +316,12 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         line_markers=("---",),
         skip_types=_SHEBANGS,
     ),
-    # Julia's module documentation is the file's leading `#=` block comment
-    # (the text `?Module` shows in help); a plain `#` line is an ordinary
-    # comment, like Lua's `--`, so it never qualifies on its own.
+    # Julia has no comment-form module docstring: `?Module` shows the
+    # module's `"""` docstring (a string literal, not a comment), and a
+    # leading `#=` block is an ordinary comment -- typically a license
+    # header, which must not be persisted as Module.docstring (issue #1882
+    # review).
     SupportedLanguage.JULIA: ModuleDocSpec(
-        block_types=frozenset({"block_comment"}),
-        block_markers=("#=",),
         skip_types=_SHEBANGS,
         declaration_types=_JULIA_DECLS,
     ),

@@ -306,3 +306,138 @@ sub(a, b) = a - b
 
     edges = _calls(mock_ingestor)
     assert not any(src == dst for src, dst in edges), edges
+
+
+def test_macro_and_function_same_name(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A macro and a function share ONE name in one module (the @-namespace
+    is the only discriminator). Pinned behavior (issue #1882 review): a bare
+    `f(x)` call binds the FUNCTION and a `@f(x, 2)` invocation binds the
+    MACRO. The old gate dropped the bare call entirely: the resolver
+    returned the macro twin, the namespaces disagreed, and the call
+    vanished."""
+    project = temp_repo / "julia_macro_collision"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+macro f(a, b)
+    return :($(a) * $(b))
+end
+
+function f(x)
+    return x + 1
+end
+
+function user(x)
+    y = f(x)
+    z = @f(x, 2)
+    return y + z
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    macro_qn = f"{module_qn}.f"
+    # The invocation reaches the macro twin (registered first, keeps the
+    # natural qn).
+    assert any(s.endswith(".user") and d == macro_qn for s, d in calls), calls
+    # The bare call reaches the function twin via its duplicate variant.
+    assert any(
+        s.endswith(".user") and d.startswith(f"{macro_qn}@") for s, d in calls
+    ), calls
+
+
+def test_top_level_anonymous_arrow_calls(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`ys = map(x -> helper(x), xs)` at module level: the anonymous arrow
+    gets no caller node, so its calls stay attributed to the MODULE. The old
+    top-level filter excluded the arrow body unconditionally and dropped the
+    helper edge entirely (issue #1882 review)."""
+    project = temp_repo / "julia_anon_arrow"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function helper(x)
+    return x + 1
+end
+
+ys = map(x -> helper(x), xs)
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    assert (module_qn, f"{module_qn}.helper") in calls, calls
+    fn_qns = {d for _, d in calls}
+    assert f"{module_qn}.ys" not in fn_qns, fn_qns
+
+
+def test_nested_function_calls_owned_by_inner(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A call inside a nested function belongs to the nested function only;
+    the outer one must not keep a second copy of it (issue #1882 review:
+    Julia kept the whole nested subtree, unlike Rust's owned-by path)."""
+    project = temp_repo / "julia_nested_fn"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function other()
+    return 1
+end
+
+function outer()
+    function inner()
+        return other()
+    end
+    return inner()
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    # Julia is flat: the nested fn registers as `main.inner`, not nested.
+    assert (f"{module_qn}.inner", f"{module_qn}.other") in calls, calls
+    assert (f"{module_qn}.outer", f"{module_qn}.inner") in calls, calls
+    assert (f"{module_qn}.outer", f"{module_qn}.other") not in calls, calls
+
+
+def test_inner_constructor_calls_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """An inner constructor's body emits a CALLS edge from the registered
+    constructor qn (issue #1882 review: the class pass could not recover
+    Julia's nameless definition node and skipped the body, so the
+    constructor's calls attributed to nothing)."""
+    project = temp_repo / "julia_ctor_calls"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function normalize(v)
+    return v / 2
+end
+
+struct Arr
+    x
+    function Arr(v)
+        new(normalize(v))
+    end
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    assert (f"{module_qn}.Arr.Arr", f"{module_qn}.normalize") in calls, calls
