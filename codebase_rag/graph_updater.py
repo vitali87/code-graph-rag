@@ -2264,17 +2264,29 @@ class GraphUpdater:
         )
 
     def _read_module_qns_by_path(self) -> dict[str, str]:
-        # Scoped to this project: another project's module may record the
-        # same relative path, and keying on the path alone would let it win.
+        # Scoped in the query: the shared graph holds every project, and a
+        # module of another project may record the same relative path.
+        # A bodied Rust inline module (`mod alpha { .. }`) records its
+        # enclosing FILE's path too, so several modules can share one path;
+        # the clean pass owns a definition by the file module, which is the
+        # shortest of those names (the inline ones nest under it), so the
+        # shortest wins here and the requeue agrees with a clean index
+        # (bot review on PR #1967: keyed on the last row returned, an
+        # unrelated edit rehydrated `alpha.make` under `beta`).
         if not isinstance(self.ingestor, QueryProtocol):
             return {}
-        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
         # The same posture as every other read in `_rehydrate_registry_from_graph`
         # (local review): a full build parsed every file and degrades to the
         # bare derivation with a warning; an incremental run would requeue
         # under the wrong owner, so the outage aborts it.
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_PATHS_INTERNAL)
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_QNS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                },
+            )
         except Exception:
             if not self._is_full_build:
                 raise
@@ -2286,11 +2298,10 @@ class GraphUpdater:
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
                 continue
-            if not qn.startswith(prefix) or path.startswith(
-                cs.INLINE_MODULE_PATH_PREFIX
-            ):
+            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
-            found[path] = qn
+            if path not in found or len(qn) < len(found[path]):
+                found[path] = qn
         return found
 
     def _requeue_type_facts(

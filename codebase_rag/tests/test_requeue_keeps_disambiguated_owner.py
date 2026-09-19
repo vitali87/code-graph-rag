@@ -39,6 +39,20 @@ _TS = {
         "declare class Holder { w: Widget; }\n"
     ),
 }
+# Bodied Rust inline modules share their file's path (bot review on PR
+# #1967): a path-keyed owner that kept the LAST row rehydrated `alpha.make`
+# under `beta`, resolving `Widget` to `beta.Widget`. The clean pass owns the
+# definition by the file module, where the two `Widget`s tie and no edge is
+# emitted; the incremental run must agree.
+_RS = {
+    "Cargo.toml": '[package]\nname = "w"\nversion = "0.1.0"\n',
+    "src/other.rs": "pub fn x() {}\n",
+    "src/lib.rs": (
+        "pub mod alpha {\n    pub struct Widget;\n"
+        "    pub fn make() -> Widget { Widget }\n}\n"
+        "pub mod beta {\n    pub struct Widget;\n}\n"
+    ),
+}
 # Two files sharing a stem: the later one in the ascending walk takes the
 # extension suffix, so `settings.py` owns `proj.settings.py` and its
 # parameter's Widget is its own.
@@ -54,6 +68,7 @@ Edge = tuple[str, str, str]
 def _write(repo: Path, files: dict[str, str]) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     for name, src in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text(src)
 
 
@@ -101,6 +116,14 @@ def test_returns_and_field_of_type_keep_the_declarations_own_widget(
     assert _incremental(tmp_path, _TS, "other.ts") == clean
 
 
+def test_inline_modules_sharing_a_file_requeue_under_the_file_module(
+    tmp_path: Path,
+) -> None:
+    clean = _clean(tmp_path, _RS)
+    assert not any(s == "proj.src.lib.alpha.make" for s, _r, _t in clean)
+    assert _incremental(tmp_path, _RS, "src/other.rs") == clean
+
+
 def test_parameter_of_type_keeps_the_suffixed_modules_own_widget(
     tmp_path: Path,
 ) -> None:
@@ -119,7 +142,10 @@ class _ModuleRows:
         self.fail = fail
 
     def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
-        assert query == cs.CYPHER_ALL_MODULE_PATHS_INTERNAL
+        # Scoped in the query, not in Python: the shared graph holds every
+        # project's modules (bot review on PR #1967).
+        assert query == cs.CYPHER_PROJECT_MODULE_QNS
+        assert params == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
         self.reads += 1
         if self.fail:
             raise RuntimeError("transient graph outage")
@@ -136,11 +162,15 @@ def test_the_recorded_owner_map_is_scoped_to_this_project(tmp_path: Path) -> Non
     store = _ModuleRows(
         [
             {cs.KEY_QUALIFIED_NAME: "proj.settings.py", cs.KEY_PATH: "settings.py"},
-            {cs.KEY_QUALIFIED_NAME: "other.settings", cs.KEY_PATH: "settings.py"},
             {
                 cs.KEY_QUALIFIED_NAME: "proj.inline",
                 cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}x",
             },
+            # A bodied Rust inline module shares its file's path: the FILE
+            # module (the shortest name) owns the requeue, whatever the order.
+            {cs.KEY_QUALIFIED_NAME: "proj.src.lib.beta", cs.KEY_PATH: "src/lib.rs"},
+            {cs.KEY_QUALIFIED_NAME: "proj.src.lib", cs.KEY_PATH: "src/lib.rs"},
+            {cs.KEY_QUALIFIED_NAME: "proj.src.lib.alpha", cs.KEY_PATH: "src/lib.rs"},
         ]
     )
     updater = GraphUpdater(
@@ -151,6 +181,7 @@ def test_the_recorded_owner_map_is_scoped_to_this_project(tmp_path: Path) -> Non
     )
     assert updater.project_name == "proj"
     assert updater._recorded_module_qn("settings.py") == "proj.settings.py"
+    assert updater._recorded_module_qn("src/lib.rs") == "proj.src.lib"
     assert updater._recorded_module_qn("unknown.py") == "proj.unknown"
     # Read once per rehydration, not per fact.
     assert store.reads == 1
