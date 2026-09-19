@@ -47,6 +47,7 @@ TS_DART_IDENTIFIER = "identifier"
 # `relational_expression` with the call's parens split off as a
 # `parenthesized_expression` (issue #2015).
 TS_DART_NEW_EXPRESSION = "new_expression"
+TS_DART_CONST_OBJECT_EXPRESSION = "const_object_expression"
 TS_DART_RELATIONAL_EXPRESSION = "relational_expression"
 TS_DART_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_DART_RELATIONAL_OPERATOR = "relational_operator"

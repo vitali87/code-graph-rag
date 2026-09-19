@@ -114,8 +114,10 @@ def _construction_class_name(node: Node) -> str | None:
     # The class a construction-expression receiver builds, for the two shapes
     # that are NOT an identifier + argument_part selector (issue #2015):
     #
-    #   `new X(1).m` / `const X(1).m` -> new_expression, class = its
-    #      first type_identifier (a `type_arguments` child may follow).
+    #   `new X(1).m`   -> new_expression, and `const X(1).m` ->
+    #      const_object_expression: distinct node types, both carrying the
+    #      class as their first type_identifier (a `type_arguments` child
+    #      may follow).
     #   `X<int>(1).m`                 -> relational_expression: the grammar
     #      reads `<`/`>` as comparisons, so the class is the identifier
     #      leading the `X < int` left operand, and the call's parens are a
@@ -124,7 +126,10 @@ def _construction_class_name(node: Node) -> str | None:
     # Returning the bare class name lets the caller emit it as a normal
     # `C` + `()` chain, so the receiver types through the same resolver path
     # the bare `X(1).m` form already uses.
-    if node.type == cs.TS_DART_NEW_EXPRESSION:
+    if node.type in (
+        cs.TS_DART_NEW_EXPRESSION,
+        cs.TS_DART_CONST_OBJECT_EXPRESSION,
+    ):
         for child in node.named_children:
             if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
                 return decode_node_text(child.text)
@@ -287,6 +292,25 @@ def dart_call_name(call_node: Node) -> str | None:
     if not tokens or all(token == _CALL_HOP for token in tokens):
         return None
     return _assemble_chain(tokens)
+
+
+def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
+    """The identifier a read's receiver would construct, when ambiguous.
+
+    `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
+    identically, so the generic-construction reading of a receiver is only a
+    guess (issue #2015). Returns the leading identifier when THIS read took
+    that reading, for the caller to reject when a local or parameter of that
+    name is in scope (then it is a comparison, not a construction). Returns
+    None for every unambiguous shape, including `new X(1).m`.
+    """
+    receiver = selector_node.prev_named_sibling
+    if receiver is None or receiver.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        return None
+    parent = receiver.parent
+    if parent is None or parent.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    return _construction_class_name(parent)
 
 
 def dart_member_read_name(selector_node: Node) -> str | None:
