@@ -22,6 +22,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"
+EXTRA = "proj.extra"
 
 
 def _node(
@@ -54,7 +55,15 @@ NODES: list[ResultRow] = [
     _node("Function", f"{P}.tests.test_app.test_run", "tests/test_app.py", 1, 5),
     _node("Function", f"{P}.tests.test_app.test_main", "tests/test_app.py", 7, 12),
     _node("Function", f"{P}.tests.test_app.setup", "tests/test_app.py", 14, 16),
+    # A SECOND registered project whose name extends this one (`proj.extra`):
+    # its rows start with `proj.` too, so every prefix-scoped query returns
+    # them, and the reader must drop them by ownership (issue #1982).
+    _node("Function", f"{EXTRA}.util.helper", "util.py", 1, 4),
+    _node("Function", f"{EXTRA}.app.run", "app.py", 3, 8),
 ]
+# The project list the fixture graph answers; a test narrows it to prove the
+# exclusion is driven by the registry, not by the dotted name alone.
+PROJECTS: list[str] = [P, EXTRA]
 
 # (from_qn, to_qn, line, col, end_line, end_col, arg_count, kwarg_names)
 CALLS: list[
@@ -73,6 +82,9 @@ CALLS: list[
     (f"{P}.app.run", f"{P}.util.helper", 6, 11, 6, 26, 2, ["b"]),
     (f"{P}.app.main", f"{P}.app.run", 12, 4, 12, 9, 0, []),
     (f"{P}.tests.test_app.test_run", f"{P}.app.run", 3, 4, 3, 9, 0, []),
+    # From the extending project: a caller of THIS project's helper that is
+    # not this project's call site (issue #1982).
+    (f"{EXTRA}.app.run", f"{P}.util.helper", 2, 4, 2, 12, 1, []),
     (f"{P}.tests.test_app.test_main", f"{P}.app.main", 9, 4, 9, 10, 0, []),
     # An edge written without a site (a frontend fact).
     (
@@ -113,6 +125,10 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
     # they return when they do run.
     if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
         return []
+    # The project list is not project-scoped either: the readers use it to
+    # decide which project a prefix-selected row belongs to (issue #1982).
+    if query == cq.CYPHER_LIST_PROJECTS:
+        return [{cs.KEY_NAME: name} for name in PROJECTS]
     prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
     assert prefix == f"{P}.", "every query is project-scoped"
     qn = str(p.get(cs.KEY_QN, ""))
@@ -762,3 +778,35 @@ def test_cli_every_subcommand_is_registered() -> None:
         "importers",
         "tests-reaching",
     }
+
+
+def test_rows_of_a_project_extending_the_name_are_not_this_projects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`proj.extra.util.helper` starts with `proj.`, so every prefix-scoped
+    query returns it for `proj`; the reader drops it because the longest
+    registered project name it sits under is `proj.extra` (issue #1982).
+    With `proj.extra` not registered the same row is `proj`'s, so the
+    exclusion is the registry's, never the dotted name's alone."""
+    assert [
+        s["qualified_name"] for s in graph_query.resolve(fake_fetch_all, P, "helper")
+    ] == [f"{P}.util.helper"]
+    assert (
+        graph_query.definition(fake_fetch_all, P, f"{EXTRA}.util.helper", None)["found"]
+        is False
+    )
+    callers = graph_query.callers(fake_fetch_all, P, f"{P}.util.helper", 1)
+    assert {c["qualified_name"] for c in callers} == {
+        f"{P}.app.run",
+        f"{P}.tests.test_app.setup",
+    }
+
+    monkeypatch.setattr(sys.modules[__name__], "PROJECTS", [P])
+    resolved = {
+        s["qualified_name"] for s in graph_query.resolve(fake_fetch_all, P, "helper")
+    }
+    assert resolved == {f"{P}.util.helper", f"{EXTRA}.util.helper"}
+    assert (
+        graph_query.definition(fake_fetch_all, P, f"{EXTRA}.util.helper", None)["found"]
+        is True
+    )
