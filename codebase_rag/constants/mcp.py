@@ -19,6 +19,12 @@ class MCPToolName(StrEnum):
     OVERRIDES = "overrides"
     IMPORTERS = "importers"
     TESTS_REACHING = "tests_reaching"
+    # Cross-service edges as questions (issue #1603): the endpoints a project
+    # exposes, the call sites in any project that reach one, and the remote
+    # dependencies a project has through the network.
+    ENDPOINTS = "endpoints"
+    ENDPOINT_CALLERS = "endpoint_callers"
+    REMOTE_DEPENDENCIES = "remote_dependencies"
     # Graph-driven edit operations (issue #1532).
     RENAME = "rename"
     QUERY_CODE_GRAPH = "query_code_graph"

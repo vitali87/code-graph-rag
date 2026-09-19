@@ -405,6 +405,13 @@ HELP_DEADCODE_CLASSES = (
 )
 HELP_DEADCODE_FORMAT = "Report format: table or json."
 HELP_DEADCODE_OUTPUT = "Write the report to this file instead of stdout."
+HELP_DEADCODE_ENDPOINT_ROOTS = (
+    "Treat route handlers as reachable by their route decorator alone "
+    "(default). With --no-endpoint-roots, a handler is live only if some "
+    "indexed call site resolves to its endpoint (RESOLVES_TO into it, or a "
+    "direct READS_FROM/WRITES_TO for RPC and dispatch resources), so an "
+    "endpoint nobody calls is reported."
+)
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
     "heuristic < overload < exact < trace_confirmed (dynamic counts as confirmed)."

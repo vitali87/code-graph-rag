@@ -535,6 +535,7 @@ def _is_root(
     rust_test_modules: set[str],
     rust_test_spans: dict[str, list[tuple[int, int]]],
     project_prefix: str,
+    endpoint_links: dict[str, int] | None = None,
 ) -> bool:
     """Whether any name-, path- or decorator-scoped rule makes `qn` a root.
 
@@ -551,7 +552,17 @@ def _is_root(
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
     rules: tuple[Callable[[], bool], ...] = (
-        lambda: _has_root_decorator(props, config.root_decorators),
+        # With endpoint roots off, a handler that EXPOSES an endpoint is not
+        # rooted by its route decorator; it is live only if an indexed call
+        # site reaches the endpoint (issue #1603). Other decorators (a
+        # fixture, a CLI command) keep rooting as before.
+        lambda: _has_root_decorator(props, config.root_decorators)
+        and (
+            config.endpoint_roots
+            or endpoint_links is None
+            or qn not in endpoint_links
+            or endpoint_links[qn] > 0
+        ),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's
         # textwrap.TextWrapper subclass) is invoked by the base's machinery,
@@ -624,7 +635,10 @@ def dead_code_from_graph(
     rels: list[_RelTuple],
     project_prefix: str,
     config: DeadCodeConfig,
+    endpoint_links: dict[str, int] | None = None,
 ) -> set[str]:
+    """`endpoint_links` maps each exposing handler to the number of call
+    sites reaching its endpoint; consulted only with `endpoint_roots` off."""
     labels = {_FUNCTION, _METHOD}
     traversal = {_CALLS, _REFERENCES}
     module_rels = {_CALLS, _REFERENCES}
@@ -753,6 +767,7 @@ def dead_code_from_graph(
             rust_test_modules,
             rust_test_spans,
             project_prefix,
+            endpoint_links,
         ):
             roots.add(qn)
 
@@ -949,7 +964,17 @@ def collect_dead_code_with_coverage(
         if _passes_floor(row, config.min_resolution)
     ]
 
-    dead = dead_code_from_graph(nodes, rels, prefix, config)
+    endpoint_links: dict[str, int] | None = None
+    if not config.endpoint_roots:
+        endpoint_links = {}
+        for row in ingestor.fetch_all(cq.CYPHER_DEAD_CODE_ENDPOINT_LINKS, params):
+            handler = row.get(cs.KEY_HANDLER)
+            callers = row.get(cs.KEY_CALLERS)
+            if isinstance(handler, str) and handler:
+                endpoint_links[handler] = endpoint_links.get(handler, 0) + (
+                    callers if isinstance(callers, int) else 0
+                )
+    dead = dead_code_from_graph(nodes, rels, prefix, config, endpoint_links)
     rows = [row for row in node_rows if _row_qn(row) in dead]
     rows.sort(key=_row_qn)
     return rows, count_structural_tier_symbols(node_rows)

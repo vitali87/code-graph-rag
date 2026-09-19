@@ -68,6 +68,36 @@ class DefinitionRow(SymbolRow):
     found: bool
 
 
+class EndpointRow(TypedDict):
+    endpoint: str
+    kind: str | None
+    label: str
+    handler: str
+    path: str | None
+    callers: int
+
+
+class EndpointCallerRow(TypedDict):
+    label: str
+    qualified_name: str
+    path: str | None
+    url: str | None
+    direction: str | None
+    endpoint: str
+    handler: str
+
+
+class RemoteDependencyRow(TypedDict):
+    label: str
+    qualified_name: str
+    path: str | None
+    url: str | None
+    direction: str | None
+    endpoint: str | None
+    handler: str | None
+    handler_project: str | None
+
+
 class CallSiteRow(TypedDict):
     label: str
     qualified_name: str
@@ -539,3 +569,83 @@ def tests_reaching(
     return ReachIndex.build(fetch_all, project_name, test_patterns).tests_reaching(
         qualified_name
     )
+
+
+# --- cross-service edges (issue #1603) ---------------------------------------
+
+
+def _endpoint_row(row: ResultRow) -> EndpointRow:
+    callers = row.get(cs.KEY_CALLERS)
+    return EndpointRow(
+        endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
+        kind=_opt_str(row.get(cs.KEY_KIND)),
+        label=str(row.get(cs.KEY_LABEL) or ""),
+        handler=str(row.get(cs.KEY_HANDLER) or ""),
+        path=_opt_str(row.get(cs.KEY_PATH)),
+        callers=callers if isinstance(callers, int) else 0,
+    )
+
+
+def _endpoint_caller_row(row: ResultRow) -> EndpointCallerRow:
+    return EndpointCallerRow(
+        label=str(row.get(cs.KEY_LABEL) or ""),
+        qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
+        path=_opt_str(row.get(cs.KEY_PATH)),
+        url=_opt_str(row.get(cs.KEY_URL)),
+        direction=_opt_str(row.get(cs.KEY_DIRECTION)),
+        endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
+        handler=str(row.get(cs.KEY_HANDLER) or ""),
+    )
+
+
+def endpoints(fetch_all: QueryFn, project_name: str) -> list[EndpointRow]:
+    """The endpoints a project exposes, each with its handler and how many
+    call sites in the whole graph reach it. Zero callers on a graph that
+    holds only this project means "none indexed", not "dead"."""
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    return [_endpoint_row(row) for row in fetch_all(cq.CYPHER_GRAPH_ENDPOINTS, params)]
+
+
+def endpoint_callers(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> list[EndpointCallerRow]:
+    """Call sites, in any project, that reach the endpoint `target` names:
+    the handler's qualified name or the endpoint identity (`GET /users/{id}`).
+
+    Through a NETWORK resource that RESOLVES_TO the endpoint, or directly for
+    the RPC and dispatch kinds, which join without RESOLVES_TO.
+    """
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: target}
+    rows = [
+        _endpoint_caller_row(row)
+        for query in (
+            cq.CYPHER_GRAPH_ENDPOINT_CALLERS,
+            cq.CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS,
+        )
+        for row in fetch_all(query, params)
+    ]
+    return sorted(
+        rows, key=lambda r: (r["qualified_name"], r["url"] or "", r["path"] or "")
+    )
+
+
+def remote_dependencies(
+    fetch_all: QueryFn, project_name: str
+) -> list[RemoteDependencyRow]:
+    """Every network access a project makes, with the handler and project it
+    resolves to; an unresolved row (no endpoint) is a dependency the graph
+    cannot place -- a dynamic URL, or a service not indexed."""
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    return [
+        RemoteDependencyRow(
+            label=str(row.get(cs.KEY_LABEL) or ""),
+            qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
+            path=_opt_str(row.get(cs.KEY_PATH)),
+            url=_opt_str(row.get(cs.KEY_URL)),
+            direction=_opt_str(row.get(cs.KEY_DIRECTION)),
+            endpoint=_opt_str(row.get(cs.KEY_ENDPOINT)),
+            handler=_opt_str(row.get(cs.KEY_HANDLER)),
+            handler_project=_opt_str(row.get(cs.KEY_HANDLER_PROJECT)),
+        )
+        for row in fetch_all(cq.CYPHER_GRAPH_REMOTE_DEPENDENCIES, params)
+    ]

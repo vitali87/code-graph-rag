@@ -1458,6 +1458,7 @@ def _dead_code_config(
     entry_points: list[str],
     decorator_roots: list[str],
     min_resolution: cs.EdgeResolution | None = None,
+    endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
     # test_patterns is always set: included tests become roots; excluded, it
     # filters test modules out of module-load roots so test-only code stays dead.
@@ -1471,6 +1472,7 @@ def _dead_code_config(
         entry_points=tuple(entry_points),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
+        endpoint_roots=endpoint_roots,
     )
 
 
@@ -1621,6 +1623,11 @@ def dead_code(
     min_resolution: cs.EdgeResolution | None = typer.Option(
         None, "--min-resolution", help=ch.HELP_DEADCODE_MIN_RESOLUTION
     ),
+    endpoint_roots: bool = typer.Option(
+        True,
+        "--endpoint-roots/--no-endpoint-roots",
+        help=ch.HELP_DEADCODE_ENDPOINT_ROOTS,
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
@@ -1647,8 +1654,13 @@ def dead_code(
                         entry_point,
                         decorator_root,
                         min_resolution,
+                        endpoint_roots,
                     ),
                 )
+                if not endpoint_roots and len(projects) <= 1:
+                    app_context.console.print(
+                        style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+                    )
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
