@@ -137,9 +137,13 @@ recorded by participating repository-read tools in the session.
 [Text matching](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/taint.py)
 does not reliably detect paraphrased, transformed or unrecorded data. It is not
 a general secret scanner or a network-wide egress control. The rule is also
-narrower than "any verbatim quote": a long recording is matched on a verbatim
-window of 24 characters, and a short recording (output that is entirely one
-token) only as a complete token, so a shorter quotation passes.
+not simply "any verbatim quote". A recording is split by its normalised
+length: one of 24 characters or more is matched on any verbatim 24-character
+window, so a shorter quotation from it passes. A recording under that length
+is instead matched only as a COMPLETE value, in either direction, so quoting
+such a recording in full is blocked however short it is. That split is why a
+common short value cannot refuse every later query that happens to contain it
+inside a longer word.
 
 Transport security depends on the endpoints configured rather than on
 enforcement here. Requests use httpx with its default certificate
