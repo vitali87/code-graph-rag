@@ -710,3 +710,4 @@ def test_varargs_element_types_of_every_shape_are_read() -> None:
     assert parameters("void m(String[]... ys) {}") == ["String[]..."]
     assert parameters("void m(int... zs) {}") == ["int..."]
     assert parameters("void m(final @NonNull String... ws) {}") == ["String..."]
+    assert parameters("void m(final /* c */ String... vs) {}") == ["String..."]
