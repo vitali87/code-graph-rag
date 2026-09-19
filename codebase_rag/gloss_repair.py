@@ -332,37 +332,52 @@ def repair_unanchored(
     quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
     report = RepairReport(moved=[], ambiguous=[], lost=[])
     for note in notes:
-        comparable = note.comparable_hash
         project = projects.get(note.qualified_name)
         if project is None:
             _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
             report.lost.append(note.qualified_name)
             continue
-        # Physical rows, not distinct names: a same-name pair is two.
-        rows = candidates.get((project, comparable), []) if comparable else []
-        if not rows and note.anchor is not None and quotes is not None:
-            _repair_by_quote(fetch_all, execute_write, note, project, quotes, report)
-            continue
-        if len(rows) == 1:
-            execute_write(
-                cq.CYPHER_GLOSS_MOVE,
-                {
-                    cs.KEY_QN: note.qualified_name,
-                    cs.KEY_TARGET_HASH: comparable,
-                    cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
-                },
-            )
-            if _moved_to(fetch_all, note.qualified_name, rows[0]):
-                report.moved.append(note.qualified_name)
-        elif rows:
-            _update_anchor_verdict(
-                execute_write, note, cs.GlossAnchorState.AMBIGUOUS, sorted(set(rows))
-            )
-            report.ambiguous.append(note.qualified_name)
-        else:
-            _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
-            report.lost.append(note.qualified_name)
+        _repair_note(
+            fetch_all, execute_write, note, project, candidates, quotes, report
+        )
     return report
+
+
+def _repair_note(
+    fetch_all: QueryFn,
+    execute_write: WriteFn,
+    note: _Unanchored,
+    project: str,
+    candidates: dict[tuple[str, str], list[str]],
+    quotes: _QuoteIndex | None,
+    report: RepairReport,
+) -> None:
+    """Place one note whose project is known: by hash, else by quote, else
+    marked with why not."""
+    comparable = note.comparable_hash
+    # Physical rows, not distinct names: a same-name pair is two.
+    rows = candidates.get((project, comparable), []) if comparable else []
+    if not rows and note.anchor is not None and quotes is not None:
+        _repair_by_quote(fetch_all, execute_write, note, project, quotes, report)
+    elif len(rows) == 1:
+        execute_write(
+            cq.CYPHER_GLOSS_MOVE,
+            {
+                cs.KEY_QN: note.qualified_name,
+                cs.KEY_TARGET_HASH: comparable,
+                cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+            },
+        )
+        if _moved_to(fetch_all, note.qualified_name, rows[0]):
+            report.moved.append(note.qualified_name)
+    elif rows:
+        _update_anchor_verdict(
+            execute_write, note, cs.GlossAnchorState.AMBIGUOUS, sorted(set(rows))
+        )
+        report.ambiguous.append(note.qualified_name)
+    else:
+        _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
+        report.lost.append(note.qualified_name)
 
 
 def _repair_by_quote(

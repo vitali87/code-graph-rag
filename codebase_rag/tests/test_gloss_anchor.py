@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag.gloss_anchor import ParsedSource, parse_source, text_anchor
 from codebase_rag.parser_loader import load_parsers
@@ -150,6 +152,8 @@ def test_a_bare_dart_substitution_is_literal_text() -> None:
     (bot review on PR #1966, second round)."""
     from codebase_rag.parser_loader import load_parsers
 
+    # The base install ships no Dart grammar (`treesitter-full` does).
+    pytest.importorskip("tree_sitter_dart")
     parsers, _ = load_parsers()
 
     def dart(source: str, name: str) -> str:

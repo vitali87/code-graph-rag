@@ -716,7 +716,8 @@ def test_a_renamed_definition_is_found_by_its_body_and_followed() -> None:
     # The neighbours are re-recorded for the new location, not kept.
     recorded = text_anchor(_parsed(_ORIGINAL), "run", 4, 6)
     now = text_anchor(_parsed(_RENAMED_AND_MOVED), "execute", 12, 14)
-    assert recorded is not None and now is not None
+    assert recorded is not None
+    assert now is not None
     assert (now.prefix, now.suffix) != (recorded.prefix, recorded.suffix)
     assert (props[cs.KEY_ANCHOR_PREFIX], props[cs.KEY_ANCHOR_SUFFIX]) == (
         now.prefix,

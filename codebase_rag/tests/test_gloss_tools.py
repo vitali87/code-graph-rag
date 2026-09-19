@@ -1138,7 +1138,8 @@ def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() ->
     # what the write alone produced.
     _other_calls, parse_only = _reader({"app.py": APP_PY})
     parsed = parse_only(P, "app.py")
-    assert parsed is not None and parsed.tree is not None
+    assert parsed is not None
+    assert parsed.tree is not None
     expected = text_anchor(parsed, "run", 3, 8)
     assert expected is not None
     assert stored[cs.KEY_ANCHOR_QUOTE] == expected.quote
@@ -1182,7 +1183,8 @@ def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
     read = own._source_reader_for(P)
     assert read is not None
     parsed = read(P, "app.py")
-    assert parsed is not None and parsed.text == "x = 1\n"
+    assert parsed is not None
+    assert parsed.text == "x = 1\n"
     # The registry fixture loads no grammars, so the parse is absent here;
     # the updater test below covers a real parse.
     assert parsed.tree is None
@@ -1219,10 +1221,12 @@ def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
     )
     (repo / "notes.txt").write_text("plain\n")
     parsed = updater._read_project_source(updater.project_name, "app.py")
-    assert parsed is not None and parsed.text == "x = 1\n"
+    assert parsed is not None
+    assert parsed.text == "x = 1\n"
     assert parsed.tree is not None
     plain = updater._read_project_source(updater.project_name, "notes.txt")
-    assert plain is not None and plain.tree is None
+    assert plain is not None
+    assert plain.tree is None
     assert updater._read_project_source("other", "app.py") is None
     # The planted file above the root exists: None here is the guard.
     assert updater._read_project_source(updater.project_name, "../app.py") is None

@@ -8,6 +8,7 @@ rename or a changed constant, which is why this hash exists beside it.
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -331,9 +332,17 @@ def test_indexed_containers_carry_the_hash_and_a_member_edit_flips_it(
             and cs.KEY_ANCHOR_HASH in props
         }
 
+    # The base install ships no TypeScript grammar: the interface, enum and
+    # type checks run only where `treesitter-full` is installed, the class
+    # check everywhere.
+    typescript = importlib.util.find_spec("tree_sitter_typescript") is not None
+    containers = {"app.Store"}
+    if typescript:
+        containers |= {"kinds.Shape", "kinds.Colour", "kinds.Id"}
     before = hashes("one", "class Store:\n    def get(self):\n        return 1\n")
-    assert {"app.Store", "kinds.Shape", "kinds.Colour", "kinds.Id"} <= set(before)
+    assert containers <= set(before)
     assert all(h.startswith(cs.ANCHOR_HASH_VERSION) for h in before.values())
     after = hashes("two", "class Store:\n    def get(self):\n        return 2\n")
     assert after["app.Store"] != before["app.Store"]
-    assert after["kinds.Shape"] == before["kinds.Shape"]
+    if typescript:
+        assert after["kinds.Shape"] == before["kinds.Shape"]
