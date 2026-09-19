@@ -4152,9 +4152,14 @@ class GraphUpdater:
         cacheless_single_file = (force or not old_hashes) and (
             self._single_file is not None
         )
+        # A parser-changed re-index asks too: the forced set names only what
+        # the cache named, and a file the graph holds but the cache omits
+        # would otherwise read as new and skip delete-before-reingest (bot
+        # review).
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build
+            or reindex_all
             or cacheless_single_file
             or not self._exclusions_match_last_run()
             else frozenset()

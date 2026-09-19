@@ -466,6 +466,38 @@ class TestFingerprintStamping:
         assert functions == [qn]
         assert updater.factory.function_registry.variants(qn) == [qn]
 
+    def test_a_stale_stamp_asks_the_graph_about_a_file_the_cache_omits(
+        self, py_project: Path
+    ) -> None:
+        """A cache that names some files but not one the graph already
+        holds: the forced set cannot name that file, so the run asks the
+        graph, as a full build does, and the file still takes
+        delete-before-reingest (bot review)."""
+        import json
+
+        from evals.cgr_graph import _StatefulIngestor
+
+        store = _StatefulIngestor()
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+        updater = _make_updater(py_project, store)  # type: ignore[arg-type]
+        updater.run()
+        cache_path = py_project / cs.HASH_CACHE_FILENAME
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        del cache["module_b.py"]
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+        updater.run()
+
+        assert updater._is_full_build is False
+        qn = f"{base_module_qn(Path('module_b.py'), py_project.name)}.func_b"
+        functions = sorted(
+            name
+            for label, name in store.nodes
+            if label == cs.NodeLabel.FUNCTION.value and name.startswith(qn)
+        )
+        assert functions == [qn]
+        assert updater.factory.function_registry.variants(qn) == [qn]
+
     def test_an_unchanged_stamp_reparses_nothing(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
