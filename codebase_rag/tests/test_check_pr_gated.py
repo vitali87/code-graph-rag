@@ -529,15 +529,15 @@ def test_a_rerun_context_is_judged_by_its_latest_entry_once(
     }
     stale = {
         **check_run("Extra Gate", "FAILURE"),
-        "completedAt": "2026-09-19T00:00:00Z",
+        "startedAt": "2026-09-19T00:00:00Z",
     }
     cancelled = {
         **check_run("Extra Gate", "CANCELLED"),
-        "completedAt": "2026-09-19T00:01:00Z",
+        "startedAt": "2026-09-19T00:01:00Z",
     }
     fresh = {
         **check_run("Extra Gate", "SUCCESS"),
-        "completedAt": "2026-09-19T00:02:00Z",
+        "startedAt": "2026-09-19T00:02:00Z",
     }
     reasons, _ = _gate_a_green_pr(
         monkeypatch, [*_GREEN, fresh, stale, cancelled], protection=protection
@@ -546,7 +546,7 @@ def test_a_rerun_context_is_judged_by_its_latest_entry_once(
     # The other way round, one reason, not one per stale entry.
     late_failure = {
         **check_run("Extra Gate", "FAILURE"),
-        "completedAt": "2026-09-19T00:03:00Z",
+        "startedAt": "2026-09-19T00:03:00Z",
     }
     reasons, _ = _gate_a_green_pr(
         monkeypatch, [*_GREEN, fresh, late_failure, stale], protection=protection
@@ -569,3 +569,56 @@ def test_the_admin_remedy_is_claimed_only_for_a_classic_requirement(
     assert "(ruleset)" in reasons[0]
     assert "bypass list" in reasons[0]
     assert "would bypass it" not in reasons[0]
+
+
+def test_an_in_progress_rerun_outranks_a_run_that_completed_after_it_began(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recency is when a run STARTED, one event for every entry: an old
+    failure that completed after the rerun began is not the latest run
+    (bot review on PR #1968, second round)."""
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT, "Extra Gate"]},
+        "enforce_admins": {"enabled": False},
+    }
+    old_failure = {
+        **check_run("Extra Gate", "FAILURE"),
+        "startedAt": "2026-09-19T12:00:00Z",
+        "completedAt": "2026-09-19T12:30:00Z",
+    }
+    rerun = {
+        "__typename": "CheckRun",
+        "name": "Extra Gate",
+        "status": "IN_PROGRESS",
+        "conclusion": "",
+        "startedAt": "2026-09-19T12:15:00Z",
+    }
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, [*_GREEN, old_failure, rerun], protection=protection
+    )
+    assert reasons == [
+        "'Extra Gate' (required by classic branch protection) has not concluded"
+    ]
+
+
+def test_a_status_and_a_check_run_sharing_a_name_must_both_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub requires both when a required check and a commit status share
+    a name; collapsing them let a later green check run hide a failing
+    status (bot review on PR #1968, second round)."""
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT, "Extra Gate"]},
+        "enforce_admins": {"enabled": False},
+    }
+    failing_status = _status("Extra Gate", "FAILURE", createdAt="2026-09-19T00:00:00Z")
+    green_run = {
+        **check_run("Extra Gate", "SUCCESS"),
+        "startedAt": "2026-09-19T00:05:00Z",
+    }
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, [*_GREEN, failing_status, green_run], protection=protection
+    )
+    assert reasons == [
+        "'Extra Gate' (required by classic branch protection) concluded FAILURE"
+    ]

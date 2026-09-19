@@ -755,38 +755,41 @@ def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
     return [str(c) for c in contexts] if isinstance(contexts, list) else []
 
 
-def effective_entry(
+def effective_entries(
     rollup: list[dict[str, object]], name: str
-) -> dict[str, object] | None:
-    """The one rollup entry that decides `name`: the most recent.
+) -> list[dict[str, object]]:
+    """The entries that decide `name`: the most recent of each shape.
 
     A rerun leaves the earlier run's entry in the rollup beside the new one,
     and GitHub judges a required context by its latest run. Judging every
     entry kept a stale failure blocking after a green rerun and named it
-    once per stale entry (bot review on PR #1968). Recency is the entry's
-    own timestamp; entries without one keep rollup order, the later winning.
-    """
-    candidates = [
-        (index, entry)
-        for index, entry in enumerate(rollup)
-        if context_name(entry) == name
-    ]
-    if not candidates:
-        return None
+    once per stale entry (bot review on PR #1968). Recency is one lifecycle
+    event for every entry -- when it STARTED (`startedAt`, or `createdAt`
+    for a commit status) -- so an in-progress rerun outranks a run that
+    completed after the rerun began; comparing one entry's completion with
+    another's start picked the stale one (second round). Entries without a
+    timestamp keep rollup order, the later winning.
 
-    def when(item: tuple[int, dict[str, object]]) -> tuple[str, int]:
-        index, entry = item
+    A check run and a commit status may share a name, and GitHub requires
+    BOTH to pass; they are kept apart by `__typename`, one winner each.
+    """
+    latest: dict[str, tuple[tuple[str, int], dict[str, object]]] = {}
+    for index, entry in enumerate(rollup):
+        if context_name(entry) != name:
+            continue
         stamp = next(
             (
                 str(entry[key])
-                for key in ("completedAt", "startedAt", "createdAt")
+                for key in ("startedAt", "createdAt", "completedAt")
                 if isinstance(entry.get(key), str) and entry.get(key)
             ),
             "",
         )
-        return stamp, index
-
-    return max(candidates, key=when)[1]
+        shape = str(entry.get("__typename") or "")
+        key = (stamp, index)
+        if shape not in latest or key > latest[shape][0]:
+            latest[shape] = (key, entry)
+    return [entry for _key, entry in latest.values()]
 
 
 def entry_outcome(entry: dict[str, object]) -> str:
@@ -805,18 +808,25 @@ def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[
     GitHub accepts SUCCESS, SKIPPED and NEUTRAL for a required check, so
     those are satisfied; PENDING and EXPECTED are not terminal.
     """
-    entry = effective_entry(rollup, name)
-    if entry is None:
+    entries = effective_entries(rollup, name)
+    if not entries:
         return [
             f"context '{name}', required by classic branch protection, is absent "
             "at the head"
         ]
-    if not entry_finished(entry):
-        return [f"'{name}' (required by classic branch protection) has not concluded"]
-    outcome = entry_outcome(entry)
-    if outcome in NON_FAILING_CONCLUSIONS:
-        return []
-    return [f"'{name}' (required by classic branch protection) concluded {outcome}"]
+    reasons: list[str] = []
+    for entry in entries:
+        if not entry_finished(entry):
+            reasons.append(
+                f"'{name}' (required by classic branch protection) has not concluded"
+            )
+            continue
+        outcome = entry_outcome(entry)
+        if outcome not in NON_FAILING_CONCLUSIONS:
+            reasons.append(
+                f"'{name}' (required by classic branch protection) concluded {outcome}"
+            )
+    return reasons
 
 
 def approvals(reviews: list[Any]) -> int:
