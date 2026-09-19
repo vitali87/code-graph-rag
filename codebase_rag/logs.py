@@ -983,7 +983,8 @@ PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {
 PARSER_FINGERPRINT_MISMATCH = (
     "A parser input changed since this graph was built: parser code, a grammar "
     "or toolchain version, a frontend mode, or the capture selection. Every "
-    "file of this repository is re-parsed on this run, so what the new inputs "
+    "eligible file of this repository (excluded and ignored ones aside) is "
+    "re-parsed on this run, so what the new inputs "
     "emit is written for files not touched since the last sync too, and the "
     "'.cgr-hash-cache.json', '.cgr-dir-mtimes.json' and "
     "'.cgr-parser-fingerprint' stamps are rewritten when it completes; other "

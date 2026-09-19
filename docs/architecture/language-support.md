@@ -128,8 +128,9 @@ them. A change that only *adds* edges does not need it. Enabling a capture
 group is the common example -- `CGR_CAPTURE=io` on an indexed project: the
 hash cache keys file contents and every file is unchanged, but the capture
 selection is part of the parser fingerprint, so the next `--update-graph`
-sees the mismatch, ignores the cache for that run, re-parses every file of
-this repository once and emits the newly enabled edges, then rewrites the
+sees the mismatch, ignores the cache for that run, re-parses every eligible
+file of this repository once (excluded and ignored files aside) and emits
+the newly enabled edges, then rewrites the
 `.cgr-hash-cache.json`, `.cgr-dir-mtimes.json` and `.cgr-parser-fingerprint`
 stamps; every other project in the shared graph is untouched, and the run
 after parses nothing again (issues #1630 and #1977). The warning it logs says
