@@ -527,3 +527,33 @@ def test_const_construction_receiver_read_is_referenced(tmp_path: Path) -> None:
     }
     rels = _rels(_run(tmp_path, files))
     assert _has(rels, ".app.constGet", REFERENCES, ".Box.height"), rels
+
+
+def test_import_prefixed_construction_receiver_keeps_the_class_hop(
+    tmp_path: Path,
+) -> None:
+    # An import-prefixed construction (`p.Box<int>(1).height`,
+    # `new p.Box(1).height`) must name the member on the CLASS, not on the
+    # prefix (issue #2033). Both shapes put the prefix where the unprefixed
+    # ones put the class: `new p.Box(1)` is type_identifier(p) +
+    # identifier(Box), and the mis-parsed generic's left spine leads with
+    # the prefix identifier and carries `.Box` as a selector.
+    files = {
+        "lib.dart": (
+            "class Box<T> {\n"
+            "  Box(T v);\n"
+            "  int get height => 2;\n"
+            "}\n"
+        ),
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+            "int newGet() { return new p.Box(1).height; }\n"
+            "int bareGet() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # Control: the bare prefixed form already keeps its class hop on main.
+    assert _has(rels, ".app.bareGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.genGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.newGet", REFERENCES, ".Box.height"), rels
