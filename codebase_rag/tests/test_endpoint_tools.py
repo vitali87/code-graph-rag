@@ -228,16 +228,28 @@ def test_a_handler_with_a_second_root_decorator_stays_a_root_with_endpoint_roots
 ):
     """A route handler that is also a CLI command: the route alone no longer
     roots it, the command still does, whatever the endpoint's callers (bot
-    review on PR #1975). The route-only twin with the same links is dead."""
+    review on PR #1975). The route-only twin with the same links is dead, and
+    so is one whose second decorator is no root (`@log_calls`); a dispatch
+    registrar (`@task`) is the route of its own endpoint, not a second root
+    (local review)."""
     (_key, props) = _handler(HANDLER)
     props[cs.KEY_DECORATORS] = ["@app.get('/users/{id}')", "@app.command()"]
     twin = _handler(f"{P}.api.other")
-    nodes = {(_FUNCTION, HANDLER): props, twin[0]: twin[1]}
+    logged = _handler(f"{P}.api.logged")
+    logged[1][cs.KEY_DECORATORS] = ["@app.get('/users/{id}')", "@log_calls"]
+    task = _handler(f"{P}.jobs.nightly")
+    task[1][cs.KEY_DECORATORS] = ["@task"]
+    nodes = {(_FUNCTION, HANDLER): props, twin[0]: twin[1], logged[0]: logged[1]}
+    nodes[task[0]] = task[1]
     off = default_dead_code_config(include_tests=True, include_classes=False)._replace(
         endpoint_roots=False
     )
-    links = {HANDLER: 0, f"{P}.api.other": 0}
-    assert dead_code_from_graph(nodes, [], f"{P}.", off, links) == {f"{P}.api.other"}
+    links = {qn: 0 for _label, qn in nodes}
+    assert dead_code_from_graph(nodes, [], f"{P}.", off, links) == {
+        f"{P}.api.other",
+        f"{P}.api.logged",
+        f"{P}.jobs.nightly",
+    }
 
 
 def test_a_decorated_non_handler_stays_a_root_with_endpoint_roots_off() -> None:

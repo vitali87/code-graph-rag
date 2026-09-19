@@ -424,14 +424,19 @@ def _has_non_route_root_decorator(
 ) -> bool:
     """A root decorator that is not the route itself: with endpoint roots
     off the route stops rooting its handler, a fixture or CLI command on the
-    same definition does not (bot review on PR #1975)."""
+    same definition does not (bot review on PR #1975). A dispatch registrar
+    (`@task`, `@flow`) is the route of a dispatch endpoint, so it is not one
+    either (local review)."""
     from .parsers.endpoints import parse_route_decorator
+    from .parsers.io_access.constants import DISPATCH_REGISTRARS
 
     decorators = props.get(cs.KEY_DECORATORS)
     if not isinstance(decorators, list):
         return False
     return any(
-        _norm_decorator(str(d)) in root_decorators and not parse_route_decorator(str(d))
+        _norm_decorator(str(d)) in root_decorators
+        and _norm_decorator(str(d)) not in DISPATCH_REGISTRARS
+        and not parse_route_decorator(str(d))
         for d in decorators
     )
 

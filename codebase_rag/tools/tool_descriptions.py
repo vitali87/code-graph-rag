@@ -236,8 +236,8 @@ MCP_ENDPOINT_CALLERS = (
     "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
     "Each row names the caller, its file, the URL it accesses and the direction "
     "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
-    "directly and carries no URL. Literal URLs resolve; dynamic ones do not "
-    "and are absent here. " + _MCP_DETERMINISTIC_NOTE
+    "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
+    "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE
 )
 MCP_REMOTE_DEPENDENCIES = (
     "Every network access a project makes, one row per call site and URL, with "
