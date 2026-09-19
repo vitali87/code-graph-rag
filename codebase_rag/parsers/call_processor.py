@@ -7004,6 +7004,8 @@ class CallProcessor:
         # only when no in-scope local/parameter shadows it.
         node_type = node.type
         if node_type == cs.TS_DART_SELECTOR:
+            if self._dart_is_shadowed_construction(node, shadow_spans):
+                return None
             read_name = dart_utils.dart_member_read_name(node)
         elif node_type == cs.TS_DART_CASCADE_SECTION:
             read_name = dart_utils.dart_cascade_read_name(node)
@@ -7014,6 +7016,23 @@ class CallProcessor:
         if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
             return read_name
         return None
+
+    def _dart_is_shadowed_construction(
+        self,
+        node: Node,
+        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
+    ) -> bool:
+        # `X<int>(1).m` is token-for-token identical to the chained
+        # comparison `a < b > (1).m`, so reading the receiver as a
+        # construction is a guess (issue #2015). When a local or parameter
+        # of that name is in scope the operand is that variable, not a type,
+        # so the site is a comparison and must not bind its member: without
+        # this, a local named after a class emits a wrong REFERENCES edge.
+        base = dart_utils.dart_ambiguous_construction_base(node)
+        if base is None:
+            return False
+        pos = node.start_byte
+        return any(lo <= pos < hi for lo, hi in shadow_spans().get(base, ()))
 
     def _dart_unshadowed_name(
         self,
