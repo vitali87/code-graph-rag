@@ -2705,9 +2705,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2746,9 +2749,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2797,7 +2803,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -5669,6 +5677,8 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
