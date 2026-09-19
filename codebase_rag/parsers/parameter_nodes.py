@@ -265,20 +265,7 @@ def _js_ts_slot(
     if node_type == cs.TS_IDENTIFIER:
         slots.add(node, type_text, has_default=has_default)
     elif node_type in _JS_TS_TYPED:
-        pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
-        if pattern is None:
-            slots.skip()
-            return
-        # A `type_annotation` is `: T`; the type is what follows the colon.
-        annotation = node.child_by_field_name(cs.FIELD_TYPE)
-        raw = safe_decode_text(annotation) if annotation is not None else None
-        text = raw.lstrip(cs.CHAR_COLON).strip() if raw else None
-        _js_ts_slot(
-            pattern,
-            slots,
-            text or None,
-            node.child_by_field_name(cs.FIELD_VALUE) is not None,
-        )
+        _js_ts_typed_slot(node, slots)
     elif node_type == cs.TS_ASSIGNMENT_PATTERN:
         left = node.child_by_field_name(cs.TS_FIELD_LEFT)
         if left is not None and left.type == cs.TS_IDENTIFIER:
@@ -289,6 +276,25 @@ def _js_ts_slot(
         slots.add(_first_named(node, cs.TS_IDENTIFIER), type_text, is_variadic=True)
     elif node_type in _JS_TS_UNBOUND_PATTERNS:
         slots.skip()
+
+
+def _js_ts_typed_slot(node: Node, slots: _Slots) -> None:
+    # A TS `required_parameter` / `optional_parameter` wraps the real
+    # pattern; unwrap it with the annotation and default it carries.
+    pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+    if pattern is None:
+        slots.skip()
+        return
+    # A `type_annotation` is `: T`; the type is what follows the colon.
+    annotation = node.child_by_field_name(cs.FIELD_TYPE)
+    raw = safe_decode_text(annotation) if annotation is not None else None
+    text = raw.lstrip(cs.CHAR_COLON).strip() if raw else None
+    _js_ts_slot(
+        pattern,
+        slots,
+        text or None,
+        node.child_by_field_name(cs.FIELD_VALUE) is not None,
+    )
 
 
 # --- C / C++ -----------------------------------------------------------------
@@ -513,7 +519,7 @@ def rust_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     pattern is `self`) are the receiver and take no slot. `&mut d`, `ref e`
     and `mut g` unwrap to their identifier; a tuple or struct pattern and
     `_` bind no single name and keep their position. A closure's list holds
-    bare identifiers beside `parameter` nodes."""
+    bare identifiers and bare patterns beside `parameter` nodes."""
     params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return []
@@ -521,25 +527,29 @@ def rust_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     # `children`, not `named_children`: a closure's `_` is an anonymous token
     # (in a fn it is a `parameter` whose pattern is `_`), and it is a slot.
     for param in params.children:
-        if not param.is_named:
-            if param.type == cs.CHAR_UNDERSCORE:
-                slots.skip()
-            continue
-        if (
-            param.type == cs.TS_RS_SELF_PARAMETER
-            or cs.AST_FP_COMMENT_SUBSTRING in param.type
-        ):
-            continue
-        if param.type == cs.TS_RS_PARAMETER:
-            pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
-            if pattern is not None and pattern.type == cs.TS_RS_SELF:
-                continue
-            slots.add(_rust_binding(pattern), _field_type_text(param))
-        else:
-            # A closure's bare pattern: an identifier, or `(a, b)` / `&x` /
-            # `mut y`, unwrapped the same way a fn parameter's pattern is.
-            slots.add(_rust_binding(param), None)
+        _rust_slot(param, slots)
     return slots.declared
+
+
+def _rust_slot(param: Node, slots: _Slots) -> None:
+    if not param.is_named:
+        if param.type == cs.CHAR_UNDERSCORE:
+            slots.skip()
+        return
+    if (
+        param.type == cs.TS_RS_SELF_PARAMETER
+        or cs.AST_FP_COMMENT_SUBSTRING in param.type
+    ):
+        return
+    if param.type != cs.TS_RS_PARAMETER:
+        # A closure's bare pattern: an identifier, or `(a, b)` / `&x` /
+        # `mut y`, unwrapped the same way a fn parameter's pattern is.
+        slots.add(_rust_binding(param), None)
+        return
+    pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+    if pattern is not None and pattern.type == cs.TS_RS_SELF:
+        return
+    slots.add(_rust_binding(pattern), _field_type_text(param))
 
 
 def _rust_binding(pattern: Node | None) -> Node | None:
