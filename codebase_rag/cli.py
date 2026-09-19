@@ -953,6 +953,9 @@ def mcp_server(
     ),
     host: str = typer.Option(None, help=ch.HELP_MCP_HTTP_HOST),
     port: int = typer.Option(None, help=ch.HELP_MCP_HTTP_PORT),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help=ch.HELP_MCP_WORKSPACE
+    ),
 ) -> None:
     try:
         if transport == cs.MCPTransport.HTTP:
@@ -960,11 +963,13 @@ def mcp_server(
 
             resolved_host = host or settings.MCP_HTTP_HOST
             resolved_port = port or settings.MCP_HTTP_PORT
-            asyncio.run(serve_http(host=resolved_host, port=resolved_port))
+            asyncio.run(
+                serve_http(host=resolved_host, port=resolved_port, workspace=workspace)
+            )
         else:
             from codebase_rag.mcp import serve_stdio
 
-            asyncio.run(serve_stdio())
+            asyncio.run(serve_stdio(workspace=workspace))
     except KeyboardInterrupt:
         app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
     except ValueError as e:
