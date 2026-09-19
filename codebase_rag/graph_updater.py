@@ -3584,6 +3584,9 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # Same ownership, same reason (issue #1629): every C# class has
+            # an entry, not only the generic ones #1769's sweep covers.
+            processor.csharp_class_namespaced.pop(qn, None)
             # The owner record goes with them: it names a file this updater
             # no longer has, and keeping it would re-sweep the same qn on the
             # next deletion of a file that happens to reuse the module qn.

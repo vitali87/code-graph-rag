@@ -324,6 +324,14 @@ _SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_
 _PY_VALUE_WRAPPER_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset(
     {cs.TS_PY_EXPRESSION_LIST, cs.TS_PARENTHESIZED_EXPRESSION}
 )
+# A Java/C# object creation: its call name is the constructed TYPE, so the
+# resolver must not offer a same-named method or function (issue #1629).
+_OBJECT_CREATION_NODE_TYPES = frozenset(
+    {
+        cs.TS_OBJECT_CREATION_EXPRESSION,
+        cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
+    }
+)
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -3732,6 +3740,7 @@ class CallProcessor:
                         class_context,
                         caller_qn,
                         language,
+                        constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
                     )
             elif (
                 language == cs.SupportedLanguage.PYTHON
@@ -3788,6 +3797,10 @@ class CallProcessor:
                     caller_qn,
                     language,
                     call_point=call_node.start_byte,
+                    # A Java/C# `new X(...)` names a type, never a method.
+                    constructing=language
+                    in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
+                    and call_node.type in _OBJECT_CREATION_NODE_TYPES,
                 )
             if callee_info and language == cs.SupportedLanguage.RUST:
                 # Rust macros and functions live in SEPARATE namespaces:

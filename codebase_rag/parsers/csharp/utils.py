@@ -134,6 +134,66 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     return types
 
 
+_CSHARP_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CSHARP_CLASS_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_CSHARP_INTERFACE_DECLARATION,
+        cs.TS_CSHARP_ENUM_DECLARATION,
+    }
+)
+
+
+def _declared_name(node: Node) -> str | None:
+    name_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+    if name_node is None or not name_node.text:
+        return None
+    return safe_decode_text(name_node)
+
+
+def _enclosing_scopes(node: Node) -> tuple[list[str], list[str]]:
+    # (namespace segments, enclosing type names) of `node`, outermost first.
+    # Block namespaces are ancestors and nest; a file-scoped `namespace N;`
+    # is a sibling under the compilation unit, so it is read from there.
+    namespaces: list[str] = []
+    types: list[str] = []
+    current = node.parent
+    while current is not None:
+        if current.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+            if name := _declared_name(current):
+                namespaces.append(name)
+        elif current.type in _CSHARP_TYPE_DECLARATIONS:
+            if name := _declared_name(current):
+                types.append(name)
+        elif current.type == cs.TS_CSHARP_COMPILATION_UNIT:
+            for child in current.children:
+                if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+                    if name := _declared_name(child):
+                        namespaces.append(name)
+                    break
+        current = current.parent
+    namespaces.reverse()
+    types.reverse()
+    return namespaces, types
+
+
+def declared_namespace(node: Node) -> str | None:
+    """The dotted namespace `node` is declared in, or None at the top level."""
+    namespaces, _types = _enclosing_scopes(node)
+    return cs.SEPARATOR_DOT.join(namespaces) if namespaces else None
+
+
+def namespace_qualified_name(type_node: Node) -> str:
+    """`N1.Outer.Widget` for a type declaration: namespace, enclosing types,
+    own name. Read from the declaration rather than the qualified name,
+    because a namespace the module's directory already spells is not in the
+    qn (issue #1629)."""
+    namespaces, types = _enclosing_scopes(type_node)
+    own = _declared_name(type_node)
+    return cs.SEPARATOR_DOT.join([*namespaces, *types, *([own] if own else [])])
+
+
 def extension_receiver_type(method_node: Node) -> str | None:
     # For an extension method, the normalized type of its receiver: the first
     # parameter, whose first modifier is `this` (`static int WordCount(this
@@ -196,18 +256,10 @@ def index_extension_method(
     # The extension's declaring namespace (its class's namespace-qualified name
     # minus the class leaf) so an unqualified `this Widget` can resolve to
     # `<namespace>.Widget` against a qualified call receiver. Empty for a
-    # top-level (namespace-less) class.
-    ns_qualified_class = (
-        class_qn[len(module_qn) + 1 :]
-        if module_qn is not None
-        and class_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-        else class_qn
-    )
-    ext_namespace = (
-        ns_qualified_class.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        if cs.SEPARATOR_DOT in ns_qualified_class
-        else ""
-    )
+    # top-level (namespace-less) class. Read from the declaration: the qn no
+    # longer carries a namespace the directory spells (issue #1629).
+    namespaces, enclosing_types = _enclosing_scopes(method_node)
+    ext_namespace = cs.SEPARATOR_DOT.join([*namespaces, *enclosing_types[:-1]])
     store.setdefault(leaf, []).append(
         (ingested_qn, receiver_type, ext_namespace, receiver_arity)
     )

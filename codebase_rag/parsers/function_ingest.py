@@ -25,6 +25,7 @@ from ..types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
 from .anchor_hash import anchor_hash_props
@@ -600,14 +601,10 @@ class FunctionIngestMixin:
             return None
         warn_if_name_truncated(func_node, func_name, file_path)
 
-        parts = [func_name]
-        current = func_node.parent
-        while current:
-            if current.type in fqn_config.scope_node_types:
-                if scope_name := fqn_config.get_name(current):
-                    parts.append(scope_name)
-            current = current.parent
-        parts.reverse()
+        parts = [
+            *scoped_name_parts(func_node.parent, fqn_config, module_qn, file_path),
+            func_name,
+        ]
 
         # Prefix with the module's resolved (collision-disambiguated) qn rather
         # than recomputing from the path, so same-stem cross-language siblings stay
@@ -1764,23 +1761,17 @@ class FunctionIngestMixin:
             return False
         return is_method_node(func_node, lang_config)
 
-    def _csharp_scope_qn(self, node: Node, module_qn: str) -> str:
+    def _csharp_scope_qn(
+        self, node: Node, module_qn: str, file_path: Path | None
+    ) -> str:
         # Qualified name of a C# scope node (class/namespace) via the same walk the
         # definition FQN pass uses, so a recovered class qn matches the one the
         # class-ingest pass registered. `node` is itself a scope type, so start the
         # walk at it (its own name is the innermost segment).
         fqn_config = LANGUAGE_FQN_SPECS[cs.SupportedLanguage.CSHARP]
-        parts: list[str] = []
-        current: Node | None = node
-        while current is not None:
-            if current.type in fqn_config.scope_node_types and (
-                scope_name := fqn_config.get_name(current)
-            ):
-                parts.append(scope_name)
-            current = current.parent
+        parts = scoped_name_parts(node, fqn_config, module_qn, file_path)
         if not parts:
             return module_qn
-        parts.reverse()
         return module_qn + cs.SEPARATOR_DOT + cs.SEPARATOR_DOT.join(parts)
 
     def _recover_csharp_orphan_method(
@@ -1805,7 +1796,7 @@ class FunctionIngestMixin:
         from .class_ingest.utils import csharp_has_override_modifier
         from .csharp import utils as csharp_utils
 
-        class_qn = self._csharp_scope_qn(class_node, module_qn)
+        class_qn = self._csharp_scope_qn(class_node, module_qn, file_path)
         cs_name, cs_params = csharp_utils.extract_method_signature(func_node)
         method_qualified_name = None
         if cs_name and cs_params:

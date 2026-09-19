@@ -174,6 +174,7 @@ class ClassIngestMixin:
     csharp_generic_methods: set[str]
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
+    csharp_class_namespaced: dict[str, str]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -1098,6 +1099,14 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        if language == cs.SupportedLanguage.CSHARP:
+            # The declared namespace is the type's own property, whether or
+            # not the qn repeats it (issue #1629).
+            if namespace := csharp_utils.declared_namespace(class_node):
+                class_props[cs.KEY_NAMESPACE] = namespace
+            self.csharp_class_namespaced[class_qn] = (
+                csharp_utils.namespace_qualified_name(class_node)
+            )
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
