@@ -314,6 +314,23 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
     ]
 
 
+def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
+    """The indirect and the direct query are each DISTINCT within
+    themselves; a row both return is one caller (bot review on PR #1978)."""
+    from codebase_rag.structural_delta import _remote_callers
+
+    row = {
+        cs.KEY_HANDLER: "svc.h",
+        cs.KEY_ENDPOINT: "GET /x",
+        cs.KEY_LABEL: "Function",
+        cs.KEY_QUALIFIED_NAME: "client.app.call",
+        cs.KEY_PATH: "app.py",
+        cs.KEY_URL: "http://svc/x",
+    }
+    found = _remote_callers(lambda query, params=None: [dict(row)], "svc", ["svc.h"])
+    assert [c["qualified_name"] for c in found["svc.h"]] == ["client.app.call"]
+
+
 def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
