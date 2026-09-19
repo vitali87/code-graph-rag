@@ -677,7 +677,8 @@ CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name STARTS WITH $project_prefix
   AND t.path IS NOT NULL AND t.start_line IS NOT NULL AND t.end_line IS NOT NULL
 RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
-       t.start_line AS start_line, t.end_line AS end_line"""
+       t.start_line AS start_line, t.end_line AS end_line,
+       t.anchor_hash AS anchor_hash"""
 # The quote tier's move: the same shape as `CYPHER_GLOSS_MOVE`, bound by the
 # candidate's qualified name rather than its hash, since the hash is exactly
 # what a rename changed. It re-validates exactly one PHYSICAL node under
@@ -688,9 +689,15 @@ RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
 # change; `moved_from` keeps the move visible beside it. The prefix and
 # suffix are re-recorded for the new location so the next tie-break reads
 # the note's current neighbours; the quote is unchanged by construction.
+# The candidate is re-validated as the index saw it -- same file, same
+# span, same hash (null on both sides for a label without one) -- so a
+# definition another updater replaced between the span read and this write
+# is not bound on the strength of its name alone (bot review, PR #1966).
 CYPHER_GLOSS_MOVE_TO_QN = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+  AND t.path = $path AND t.start_line = $start_line AND t.end_line = $end_line
+  AND coalesce(t.anchor_hash, '') = coalesce($anchor_hash, '')
 WITH g, collect(t) AS targets
 WHERE size(targets) = 1
 WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin

@@ -17,7 +17,7 @@ from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
-from codebase_rag.gloss_anchor import SourceReader
+from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
@@ -2534,16 +2534,17 @@ class MCPToolsRegistry:
         if root is None:
             return None
 
-        def read(project: str, path: str) -> str | None:
+        def read(project: str, path: str) -> ParsedSource | None:
             if project != project_name:
                 return None
             target = (root / path).resolve()
             if root not in (target, *target.parents):
                 return None
             try:
-                return target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+                text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
             except OSError:
                 return None
+            return ParsedSource(text, parse_source(self.parsers, target, text))
 
         return read
 

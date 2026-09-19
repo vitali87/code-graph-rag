@@ -1109,11 +1109,18 @@ APP_PY = (
 
 
 def _reader(files: dict[str, str]) -> tuple[list[tuple[str, str]], Any]:
+    from codebase_rag.gloss_anchor import ParsedSource, parse_source
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
     calls: list[tuple[str, str]] = []
 
-    def read(project: str, path: str) -> str | None:
+    def read(project: str, path: str) -> ParsedSource | None:
         calls.append((project, path))
-        return files.get(path)
+        text = files.get(path)
+        if text is None:
+            return None
+        return ParsedSource(text, parse_source(parsers, Path(path), text))
 
     return calls, read
 
@@ -1126,7 +1133,12 @@ def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() ->
     row = _write(graph, RUN, read_source=read)
     assert not _is_refusal(row)
     stored = graph.glosses[row["qualified_name"]]
-    expected = text_anchor(APP_PY, "run", 3, 8)
+    # Expected from a parse of its own, so the reader's call list stays
+    # what the write alone produced.
+    _other_calls, parse_only = _reader({"app.py": APP_PY})
+    parsed = parse_only(P, "app.py")
+    assert parsed is not None and parsed.tree is not None
+    expected = text_anchor(parsed, "run", 3, 8)
     assert expected is not None
     assert stored[cs.KEY_ANCHOR_QUOTE] == expected.quote
     assert stored[cs.KEY_ANCHOR_PREFIX] == expected.prefix
@@ -1168,7 +1180,11 @@ def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
     own = _registry(FakeGraph(root=str(repo)), repo)
     read = own._source_reader_for(P)
     assert read is not None
-    assert read(P, "app.py") == "x = 1\n"
+    parsed = read(P, "app.py")
+    assert parsed is not None and parsed.text == "x = 1\n"
+    # The registry fixture loads no grammars, so the parse is absent here;
+    # the updater test below covers a real parse.
+    assert parsed.tree is None
     # Another project, a path that escapes the root, a missing file: None.
     assert read("other", "app.py") is None
     assert read(P, "../app.py") is None
@@ -1191,13 +1207,21 @@ def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
     repo.mkdir()
     (tmp_path / "app.py").write_text("SECRET\n")
     (repo / "app.py").write_text("x = 1\n")
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
     updater = GraphUpdater(
         ingestor=_RecordingStore(),  # type: ignore[arg-type]
         repo_path=repo,
-        parsers={},
-        queries={},
+        parsers=parsers,
+        queries=queries,
     )
-    assert updater._read_project_source(updater.project_name, "app.py") == "x = 1\n"
+    (repo / "notes.txt").write_text("plain\n")
+    parsed = updater._read_project_source(updater.project_name, "app.py")
+    assert parsed is not None and parsed.text == "x = 1\n"
+    assert parsed.tree is not None
+    plain = updater._read_project_source(updater.project_name, "notes.txt")
+    assert plain is not None and plain.tree is None
     assert updater._read_project_source("other", "app.py") is None
     # The planted file above the root exists: None here is the guard.
     assert updater._read_project_source(updater.project_name, "../app.py") is None
