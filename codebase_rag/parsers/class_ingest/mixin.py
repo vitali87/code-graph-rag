@@ -1293,7 +1293,16 @@ class ClassIngestMixin:
                     if cs.SEPARATOR_DOT in module_qn
                     else module_qn
                 )
-                key = f"{directory}{cs.SEPARATOR_DOT}{class_qn[len(module_qn) + 1 :]}"
+                # A second same-name part in ONE file registers under a
+                # duplicate-suffixed qn (`Bench@24`); the marker is a
+                # registration artefact, not part of the declared name, so
+                # strip it or the two parts never share a group (issue #2014).
+                suffix = class_qn[len(module_qn) + 1 :]
+                head, sep, tail = suffix.rpartition(cs.DUP_QN_MARKER)
+                # Only a NUMERIC suffix is the marker: a verbatim identifier
+                # (`@event`) also opens with the character (local review).
+                declared = head if sep and tail[:1].isdigit() else suffix
+                key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)
                 self.csharp_partial_groups[class_qn] = group
