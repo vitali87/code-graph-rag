@@ -875,7 +875,7 @@ def test_the_quote_move_is_bound_by_name_and_rewrites_the_context_only() -> None
     assert "subjects = 0" in q
     for field in ("path", "start_line", "end_line"):
         assert f"t.{field} = ${field}" in q
-    assert "coalesce(t.anchor_hash, '') = coalesce($anchor_hash, '')" in q
+    assert "t.anchor_hash IS NOT NULL AND t.anchor_hash = $anchor_hash" in q
     assert "g.anchor_prefix = $anchor_prefix" in q
     assert "g.anchor_suffix = $anchor_suffix" in q
     assert "g.anchor_quote" not in q
@@ -936,3 +936,18 @@ def test_a_file_without_a_grammar_yields_no_candidates() -> None:
     store.files["mod.txt"] = store.files.pop("mod.py")
     report = _run(store, with_source=True)
     assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+
+
+def test_a_candidate_without_a_hash_is_never_bound_by_the_quote_move() -> None:
+    """A class carries no `anchor_hash` yet, so the move cannot re-validate
+    its body at write time; it is left for the next pass, not bound on its
+    name (bot review on PR #1966)."""
+    store = _quoted_store()
+    store.definitions, store.spans = [], []
+    store.define(EXECUTE, None, name="execute", path="mod.py", span=(4, 6))
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert "n1" not in store.attached
+    assert _writes(store, cq.CYPHER_GLOSS_MOVE_TO_QN) == []
+    assert "t.anchor_hash IS NOT NULL" in cq.CYPHER_GLOSS_MOVE_TO_QN
+    assert "coalesce(t.anchor_hash" not in cq.CYPHER_GLOSS_MOVE_TO_QN

@@ -128,3 +128,17 @@ def test_a_span_outside_the_source_is_no_anchor() -> None:
     assert text_anchor(_parsed(SRC), "run", 8, 99) is None
     assert text_anchor(_parsed(SRC), "run", 0, 3) is None
     assert text_anchor(_parsed(""), "run", 1, 1) is None
+
+
+def test_an_identifier_inside_an_interpolation_is_code() -> None:
+    """`f"{run()}"` names the definition in code, not in text: the rename
+    keeps the quote (bot review on PR #1966), while the literal parts around
+    the interpolation stay literal."""
+    src = SRC.replace("return y * 2", 'return f"{run()} run"')
+    before = _anchor(src, "run", 8, 10)
+    renamed = src.replace("def run(v):", "def execute(v):").replace(
+        'f"{run()} run"', 'f"{execute()} run"'
+    )
+    assert _anchor(renamed, "execute", 8, 10).quote == before.quote
+    literal_too = renamed.replace('f"{execute()} run"', 'f"{execute()} execute"')
+    assert _anchor(literal_too, "execute", 8, 10).quote != before.quote

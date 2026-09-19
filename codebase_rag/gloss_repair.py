@@ -377,6 +377,11 @@ def _repair_by_quote(
     rows = _narrow_by_context(
         note.anchor, quotes.candidates(project, note.anchor.quote)
     )
+    if len(rows) == 1 and rows[0].anchor_hash is None:
+        # The move re-validates the candidate by its hash; without one the
+        # body cannot be checked at write time, so the note is left as it is
+        # for the next pass rather than bound on a name (bot review).
+        return
     if len(rows) == 1:
         found = rows[0]
         execute_write(

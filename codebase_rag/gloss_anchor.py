@@ -56,6 +56,10 @@ _MASK = "\x00"
 # literals differently (`string`, `string_literal`, `template_string`,
 # `interpreted_string_literal`, `encapsed_string`, `char_literal`).
 _LITERAL_KINDS = ("string", "char", "template", "heredoc", "encapsed")
+# An expression inside a string (`f"{run()}"`, `${run()}`) is code, not
+# literal text: the walk up from a leaf meets the interpolation node before
+# the string node, and stops there (bot review on PR #1966).
+_INTERPOLATION_KINDS = ("interpolation", "substitution")
 
 
 class TextAnchor(NamedTuple):
@@ -94,6 +98,8 @@ def _kind(leaf: Node, root: Node) -> str:
         kind = current.type
         if cs.AST_FP_COMMENT_SUBSTRING in kind:
             return "comment"
+        if current != leaf and any(k in kind for k in _INTERPOLATION_KINDS):
+            return "code"
         if current != leaf and any(k in kind for k in _LITERAL_KINDS):
             return "literal"
         current = current.parent
