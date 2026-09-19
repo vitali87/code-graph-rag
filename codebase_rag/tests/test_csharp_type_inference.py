@@ -74,6 +74,7 @@ public class Q {
     public void Run() {
         var w = new Z::Widget(1);
         Z::Widget.AliasS();
+        Z.Widget.AliasS();
         global::Zeta.Widget.GlobalS();
         Missing::AliasS();
     }
