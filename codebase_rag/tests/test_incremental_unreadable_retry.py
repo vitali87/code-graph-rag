@@ -72,3 +72,45 @@ def test_a_run_that_reads_every_file_keeps_the_fast_path(tmp_path: Path) -> None
     store = _StatefulIngestor()
     _updater(root, store).run(force=True)
     assert _updater(root, store)._is_already_in_sync() is True
+
+
+def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The common shape: a healthy run wrote the directory stamp, then a
+    file is edited and its read fails on the next sync. Merely withholding
+    the stamp would leave the healthy run's stamp on disk and the fast path
+    would fire on it (local review); the stamp is cleared instead, so the
+    run after walks the tree and parses the file."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "a.py").write_text("def a():\n    return 1\n")
+    (root / "pkg").mkdir()
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "b.py").write_text("def b():\n    return 2\n")
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    assert _updater(root, store)._is_already_in_sync() is True
+
+    cache_mtime = (root / ".cgr-hash-cache.json").stat().st_mtime
+    edited = root / "pkg" / "b.py"
+    edited.write_text("def b():\n    return 3\n")
+    import os
+
+    os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
+    real = gu._hash_file_with_bytes
+    monkeypatch.setattr(
+        gu,
+        "_hash_file_with_bytes",
+        lambda path: None if path.name == "b.py" else real(path),
+    )
+    unreadable_run = _updater(root, store)
+    unreadable_run.run()
+    assert "pkg/b.py" not in unreadable_run._reparsed_file_keys
+    monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
+
+    retry = _updater(root, store)
+    assert retry._is_already_in_sync() is False
+    retry.run()
+    assert retry._reparsed_file_keys == {"pkg/b.py"}
+    assert _updater(root, store)._is_already_in_sync() is True

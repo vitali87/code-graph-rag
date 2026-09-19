@@ -4501,15 +4501,17 @@ class GraphUpdater:
             self._pending_hash_cache = (cache_path, new_hashes)
             # A file this run could not read is absent from the cache, but
             # its directory's mtime is unchanged: the next run's fast path
-            # would report "in sync" and never retry it (issue #1983). With
-            # no directory stamp the next run walks the tree, finds the file
-            # missing from the cache and parses it; the stamp returns once a
-            # run reads every eligible file.
+            # would report "in sync" and never retry it (issue #1983). An
+            # EMPTY directory stamp is published instead (withholding it
+            # would leave an earlier healthy run's stamp on disk, and the
+            # fast path would fire on that; local review): the next run
+            # walks the tree, finds the file missing from the cache and
+            # parses it, and the stamp returns once a run reads every file.
             if unreadable_keys:
                 logger.warning(
                     ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
                 )
-                self._pending_dir_mtimes = None
+                self._pending_dir_mtimes = (dir_mtimes_path, {})
             else:
                 self._pending_dir_mtimes = (
                     dir_mtimes_path,
