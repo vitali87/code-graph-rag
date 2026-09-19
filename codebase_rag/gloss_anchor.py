@@ -58,8 +58,12 @@ _MASK = "\x00"
 _LITERAL_KINDS = ("string", "char", "template", "heredoc", "encapsed")
 # An expression inside a string (`f"{run()}"`, `${run()}`) is code, not
 # literal text: the walk up from a leaf meets the interpolation node before
-# the string node, and stops there (bot review on PR #1966).
+# the string node, and stops there. A BARE substitution (Dart's `"$run"`)
+# has no braces and is the string's own text: it stays literal, so a rename
+# that also changes the interpolated value is a body change (bot review on
+# PR #1966, twice).
 _INTERPOLATION_KINDS = ("interpolation", "substitution")
+_INTERPOLATION_BRACE = b"{"
 
 
 class TextAnchor(NamedTuple):
@@ -72,7 +76,8 @@ def _digest(text: str) -> str:
     return f"{cs.ANCHOR_QUOTE_VERSION}{hashlib.sha256(text.encode(cs.ENCODING_UTF8)).hexdigest()}"
 
 
-def _context(text: str) -> str:
+def _normalised_context(text: str) -> str:
+    """The context lines with whitespace collapsed, for a digest."""
     return " ".join(text.split())
 
 
@@ -91,7 +96,7 @@ def _leaves_in_rows(tree: Tree, first_row: int, last_row: int) -> Iterator[Node]
         stack.extend(reversed(node.children))
 
 
-def _kind(leaf: Node, root: Node) -> str:
+def _leaf_kind(leaf: Node, root: Node) -> str:
     """ "literal", "comment" or "code" for one leaf, from its ancestors."""
     current: Node | None = leaf
     while current is not None and current != root:
@@ -99,7 +104,8 @@ def _kind(leaf: Node, root: Node) -> str:
         if cs.AST_FP_COMMENT_SUBSTRING in kind:
             return "comment"
         if current != leaf and any(k in kind for k in _INTERPOLATION_KINDS):
-            return "code"
+            braced = _INTERPOLATION_BRACE in (current.text or b"")
+            return "code" if braced else "literal"
         if current != leaf and any(k in kind for k in _LITERAL_KINDS):
             return "literal"
         current = current.parent
@@ -111,7 +117,7 @@ def _quote_tokens(
 ) -> list[str]:
     tokens: list[str] = []
     for leaf in _leaves_in_rows(tree, first_row, last_row):
-        kind = _kind(leaf, tree.root_node)
+        kind = _leaf_kind(leaf, tree.root_node)
         if kind == "comment":
             continue
         text = (leaf.text or b"").decode(cs.ENCODING_UTF8, errors="replace")
@@ -137,8 +143,12 @@ def text_anchor(
     after = [line for line in lines[end_line:] if line.strip()]
     return TextAnchor(
         quote=_digest("\x1f".join(tokens)),
-        prefix=_digest(_context("\n".join(before[-cs.ANCHOR_CONTEXT_LINES :]))),
-        suffix=_digest(_context("\n".join(after[: cs.ANCHOR_CONTEXT_LINES]))),
+        prefix=_digest(
+            _normalised_context("\n".join(before[-cs.ANCHOR_CONTEXT_LINES :]))
+        ),
+        suffix=_digest(
+            _normalised_context("\n".join(after[: cs.ANCHOR_CONTEXT_LINES]))
+        ),
     )
 
 
