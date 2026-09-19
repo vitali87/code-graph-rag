@@ -258,8 +258,9 @@ MCP_GLOSSES = (
     "and none is LOST. The quote is recorded only when the note was written "
     "against this server's own checkout. A note on a class or module, or one "
     "written before hashes were recorded, is not graded while attached (there "
-    "is no hash to compare) and follows the same quote tier if its name "
-    "disappears. "
+    "is no hash to compare); if its name disappears, a note on a class follows "
+    "the same quote tier, and a note on a module is LOST (a module has no span "
+    "to quote). "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
