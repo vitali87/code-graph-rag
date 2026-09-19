@@ -204,7 +204,7 @@ def test_a_link_whose_target_cannot_be_reached_is_not_gone(
     real_stat = os.stat
 
     def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
-        if Path(str(path)) == link and not kwargs.get("follow_symlinks", True) is False:
+        if Path(str(path)) == link and kwargs.get("follow_symlinks", True) is not False:
             raise PermissionError(13, "Permission denied", str(path))
         return real_stat(path, *args, **kwargs)
 
