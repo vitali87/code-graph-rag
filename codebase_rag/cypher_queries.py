@@ -766,7 +766,10 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
 CYPHER_DELTA_DEFINITIONS = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT n.qualified_name STARTS WITH longer_prefix)
+  AND n.path IN $paths
 {_DELTA_DEFINITION_FIELDS}"""
 # The callees of the touched files' sites that live elsewhere: their
 # declared parameters decide the arity verdict of each site.
@@ -777,9 +780,13 @@ WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
 CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
 WHERE n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT n.qualified_name STARTS WITH longer_prefix)
 {_DELTA_DEFINITION_FIELDS}"""
 CYPHER_DELTA_SITES = """MATCH (a)-[r:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT a.qualified_name STARTS WITH longer_prefix)
   AND (a.path IN $paths OR b.path IN $paths)
 RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
@@ -788,25 +795,37 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
 # qualified names, with the properties the test classifier reads.
 CYPHER_DELTA_CALLERS_OF = """MATCH (a)-[:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT a.qualified_name STARTS WITH longer_prefix)
 RETURN DISTINCT labels(a)[0] AS label, a.qualified_name AS qualified_name,
        a.name AS name, a.path AS path, a.start_line AS start_line,
        a.end_line AS end_line, a.decorators AS decorators,
        a.is_exported AS is_exported, b.qualified_name AS to_qn"""
 # Rust test classification inputs, fetched only when the walk reaches Rust.
 CYPHER_DELTA_RUST_MODULES = """MATCH (m:Module)
-WHERE m.qualified_name STARTS WITH $project_prefix AND m.path ENDS WITH '.rs'
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT m.qualified_name STARTS WITH longer_prefix)
+  AND m.path ENDS WITH '.rs'
 RETURN labels(m)[0] AS label, m.qualified_name AS qualified_name, m.name AS name,
        m.path AS path, m.decorators AS decorators,
        m.rust_cfg_test_mods AS rust_cfg_test_mods,
        m.rust_ungated_mods AS rust_ungated_mods"""
 CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n:Function|Method)
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT n.qualified_name STARTS WITH longer_prefix)
+  AND n.path IN $paths
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
 CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT m.qualified_name STARTS WITH longer_prefix)
+  AND ALL(longer_prefix IN $longer_project_prefixes
+          WHERE NOT t.qualified_name STARTS WITH longer_prefix)
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)
