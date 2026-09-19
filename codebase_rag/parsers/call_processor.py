@@ -6289,6 +6289,22 @@ class CallProcessor:
                         )
                         self._record_csharp_cross_module_use(module_qn, target_qn)
                     return
+            else:
+                # `recv.Name` is a method group only on a receiver the engine
+                # can type; nothing else about it reaches the simple-name
+                # fallback, which bound an untyped `@override.Value` to a
+                # same-named first-party property (issue #1998).
+                engine = self._resolver.type_inference.csharp_type_inference
+                for target_qn in engine.csharp_member_group_argument(
+                    arg_node, local_var_types or {}, module_qn, caller_qn
+                ):
+                    ensure_rel(
+                        source_spec,
+                        rel_type,
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                    )
+                    self._record_csharp_cross_module_use(module_qn, target_qn)
+                return
         if not (
             resolved := resolve_func(
                 arg_text, module_qn, local_var_types, class_context, caller_qn

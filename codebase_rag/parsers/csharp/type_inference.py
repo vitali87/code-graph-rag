@@ -1369,6 +1369,57 @@ class CSharpTypeInferenceEngine:
         class_qn = self._containing_class_qn(caller_qn)
         if class_qn is None:
             return []
+        return self._method_group_on(class_qn, name)
+
+    def csharp_member_group_argument(
+        self,
+        arg_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> list[str]:
+        """The methods a `recv.Name` argument names as a method group.
+
+        Only on a receiver the engine can type, and only METHODS: a property
+        read is a value, and an untyped receiver (a foreach variable over a
+        BCL collection, a BCL value) names nothing, where the simple-name
+        fallback bound whichever first-party `Name` sat nearest (issue #1998).
+        """
+        if arg_node.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return []
+        receiver = arg_node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        name = safe_decode_text(arg_node.child_by_field_name(cs.FIELD_NAME))
+        if receiver is None or not name:
+            return []
+        name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        if receiver.type == cs.TS_CSHARP_BASE:
+            # `base.Handle`: the method group on the base chain (bot review).
+            own = self._containing_class_qn(caller_qn)
+            return sorted(
+                {
+                    qn
+                    for base in self.class_inheritance.get(own or "", [])
+                    for qn in self._method_group_on(base, name)
+                }
+            )
+        class_qn = self._resolve_receiver_class_qn(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if class_qn is None and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            # `Outer.Inner.Go`, `Lib.Util.Helper`: a dotted PascalCase receiver
+            # is a TYPE written with its enclosing type or namespace, which
+            # the receiver typing does not cover but the type lookup does
+            # (bot review).
+            dotted = safe_decode_text(receiver) or ""
+            if dotted and all(
+                seg[:1].isupper() for seg in dotted.split(cs.SEPARATOR_DOT)
+            ):
+                class_qn = self._type_name_to_qn(dotted, module_qn)
+        if class_qn is None:
+            return []
+        return self._method_group_on(class_qn, name)
+
+    def _method_group_on(self, class_qn: str, name: str) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
         queue = deque(self._partial_roots(class_qn))
