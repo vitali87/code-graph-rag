@@ -97,8 +97,8 @@ def test_it_still_warns_that_clean_deletes_every_project() -> None:
 
 
 def test_it_still_names_the_three_cache_files() -> None:
-    """The remedy is still the right first step for the common case; this is
-    a correction to what it claims, not a removal of the advice."""
+    """The files are still named, now as what the completed run rewrites
+    rather than as a remedy to apply by hand (issue #1977)."""
     for filename in (
         ".cgr-hash-cache.json",
         ".cgr-dir-mtimes.json",
