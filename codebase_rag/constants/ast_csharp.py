@@ -167,6 +167,8 @@ TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 # constructed type comes from the enclosing declaration (issue #773).
 TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION = "implicit_object_creation_expression"
 TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
+# The `base` receiver of a member access (`base.Handle`).
+TS_CSHARP_BASE = "base"
 # A conditional call `recv?.Method(...)`: the invocation's `function` field
 # is a conditional_access_expression whose member_binding_expression child
 # carries the method name.
