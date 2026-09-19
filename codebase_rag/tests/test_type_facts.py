@@ -494,3 +494,25 @@ def test_protobuf_export_carries_the_annotations(tmp_path: Path) -> None:
     (node,) = index.nodes
     assert node.function.return_type == "list[Item]"
     assert list(node.function.param_types) == ["int", ""]
+
+
+def test_java_varargs_type_survives_a_modifier_or_annotation() -> None:
+    """`final String... xs`: the spread's first named child is `modifiers`,
+    which is not the element type (issue #1964). The unmodified form cannot
+    go red on this, so the fixture carries both a modifier and an annotation."""
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.type_facts import extract_type_facts
+
+    parsers, _ = load_parsers()
+    tree = parsers[cs.SupportedLanguage.JAVA].parse(
+        b"class C { void m(final String... xs, @NonNull java.util.List<String>... ys) {} }"
+    )
+
+    def walk(node):  # noqa: ANN001, ANN202
+        yield node
+        for child in node.children:
+            yield from walk(child)
+
+    method = next(n for n in walk(tree.root_node) if n.type == "method_declaration")
+    facts = extract_type_facts(method, cs.SupportedLanguage.JAVA)
+    assert facts.param_types == ["String...", "java.util.List<String>..."]
