@@ -131,11 +131,13 @@ writes, exposes or calls. Its `kind` is one of:
 | ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
 | CONTRACT | A codegen contract operation shared by client stubs and server implementations |
 | RPC | An RPC method a handler exposes; callers join it directly |
-| DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly |
+| DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
 
 `EXPOSES` joins a handler to the ENDPOINT, RPC or DISPATCH resource it
-serves; `RESOLVES_TO` joins a client's NETWORK resource to the ENDPOINT its
-literal URL matches, and a client stub's operation to its CONTRACT.
+serves. `RESOLVES_TO` joins a client's NETWORK resource to the ENDPOINT its
+literal URL matches, a client stub's RPC operation and a server's ENDPOINT
+to the CONTRACT they implement, and a `key/deployment` DISPATCH variant to
+its head key.
 
 ## I/O and Data-Flow Edges
 

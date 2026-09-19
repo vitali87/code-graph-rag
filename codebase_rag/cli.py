@@ -1658,9 +1658,18 @@ def dead_code(
                     ),
                 )
                 if not endpoint_roots and len(projects) <= 1:
-                    app_context.console.print(
-                        style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
-                    )
+                    # Stdout carries the JSON payload when that format is
+                    # chosen (local review P1): the notice goes to stderr
+                    # then, so the output stays parseable.
+                    if show_progress:
+                        app_context.console.print(
+                            style(
+                                cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS,
+                                cs.Color.YELLOW,
+                            )
+                        )
+                    else:
+                        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
