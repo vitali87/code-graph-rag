@@ -90,6 +90,9 @@ codebase_rag = [
     "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
+    # Julia's pip grammar ships no HIGHLIGHTS_QUERY, so its highlights come
+    # only from this fallback file; without it the wheel silently disables
+    # Julia modifier/decorator extraction (issue #1882 review).
     "queries/highlights/*.scm",
 ]
 

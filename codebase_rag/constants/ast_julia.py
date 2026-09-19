@@ -20,6 +20,10 @@ TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION = "parametrized_type_expression"
 # function). `where`/return-type spellings wrap the head in
 # `where_expression`/`typed_expression`.
 TS_JULIA_FUNCTION_DEFINITION = "function_definition"
+# The trailing keyword of a function_definition body. The grammar names no
+# body field (the `function`/`end` keywords are anonymous tokens), so the
+# body span is derived between the signature and the `end` token.
+TS_JULIA_END_KEYWORD = "end"
 TS_JULIA_MACRO_DEFINITION = "macro_definition"
 TS_JULIA_SIGNATURE = "signature"
 TS_JULIA_ARROW_FUNCTION_EXPRESSION = "arrow_function_expression"

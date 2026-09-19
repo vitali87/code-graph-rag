@@ -612,20 +612,46 @@ class DefinitionProcessor(
                 CppTypeInferenceEngine().collect_type_aliases(
                     root_node, self.type_aliases, self._type_alias_conflicts
                 )
-            self._ingest_all_functions(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
-            self._ingest_classes_and_methods(
-                root_node,
-                module_qn,
-                language,
-                queries,
-                combined_captures=combined_captures,
-            )
+            if language == cs.SupportedLanguage.JULIA:
+                # Julia ingests types BEFORE functions (the reverse of every
+                # other language): a struct and a free function may legally
+                # share a name (separate namespaces), and the TYPE is the
+                # primary owner of it -- field types, `Arr{T}` and the
+                # constructor call `Arr(v)` all resolve the natural name to
+                # the type, and the inner constructor scopes on the type's
+                # REAL qn (`module.Arr.Arr`). Functions-first made the struct
+                # take a synthetic `@<line>` qn while calls to `Arr(...)`
+                # bound the shadowing free function, orphaning the
+                # constructor (issue #1882 review).
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+            else:
+                self._ingest_all_functions(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
+                self._ingest_classes_and_methods(
+                    root_node,
+                    module_qn,
+                    language,
+                    queries,
+                    combined_captures=combined_captures,
+                )
             if language == cs.SupportedLanguage.RUST:
                 # The methods above have claimed their names; a body-local item
                 # may now take what is left of the one it shares.
