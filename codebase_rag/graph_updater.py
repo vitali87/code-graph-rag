@@ -3877,7 +3877,14 @@ class GraphUpdater:
                 return False
             if stat.st_mtime <= cache_mtime:
                 continue
-            if _hash_file(Path(file_path_str)) != old_hash:
+            try:
+                current_hash = _hash_file(Path(file_path_str))
+            except OSError:
+                # A cached file that can no longer be read is not "in sync":
+                # the batch pass counts it unreadable and leaves it out of
+                # the cache, where raising here ended the run (issue #1992).
+                return False
+            if current_hash != old_hash:
                 return False
         return True
 
