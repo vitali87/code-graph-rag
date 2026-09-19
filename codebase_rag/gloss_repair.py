@@ -40,7 +40,13 @@ from typing import NamedTuple
 
 from . import constants as cs
 from . import cypher_queries as cq
-from .gloss_anchor import SourceReader, TextAnchor, is_comparable_quote, text_anchor
+from .gloss_anchor import (
+    ParsedSource,
+    SourceReader,
+    TextAnchor,
+    is_comparable_quote,
+    text_anchor,
+)
 from .graph_query import QueryFn
 from .types_defs import PropertyDict, ResultRow
 
@@ -173,6 +179,12 @@ def _candidates_by_hash(
 class _QuoteCandidate(NamedTuple):
     qualified_name: str
     anchor: TextAnchor
+    # What the index saw, re-checked by the move statement: another
+    # updater may have replaced the definition since (bot review, PR #1966).
+    path: str
+    start_line: int
+    end_line: int
+    anchor_hash: str | None
 
 
 class _QuoteIndex:
@@ -200,7 +212,7 @@ class _QuoteIndex:
             cq.CYPHER_DEFINITION_SPANS,
             {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}"},
         )
-        sources: dict[str, str | None] = {}
+        sources: dict[str, ParsedSource | None] = {}
         index: dict[str, list[_QuoteCandidate]] = defaultdict(list)
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -224,7 +236,17 @@ class _QuoteIndex:
                 source, name if isinstance(name, str) else None, start, end
             )
             if anchor is not None:
-                index[anchor.quote].append(_QuoteCandidate(qn, anchor))
+                hash_value = row.get(cs.KEY_ANCHOR_HASH)
+                index[anchor.quote].append(
+                    _QuoteCandidate(
+                        qn,
+                        anchor,
+                        path,
+                        start,
+                        end,
+                        hash_value if isinstance(hash_value, str) else None,
+                    )
+                )
         return index
 
 
@@ -363,6 +385,10 @@ def _repair_by_quote(
                 cs.KEY_QN: note.qualified_name,
                 cs.KEY_TARGET_QN: found.qualified_name,
                 cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PATH: found.path,
+                cs.KEY_START_LINE: found.start_line,
+                cs.KEY_END_LINE: found.end_line,
+                cs.KEY_ANCHOR_HASH: found.anchor_hash,
                 cs.KEY_ANCHOR_PREFIX: found.anchor.prefix,
                 cs.KEY_ANCHOR_SUFFIX: found.anchor.suffix,
             },

@@ -25,6 +25,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
@@ -5847,8 +5848,8 @@ class GraphUpdater:
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
 
-    def _read_project_source(self, project_name: str, path: str) -> str | None:
-        """A file of THIS updater's project, for the gloss quote tier.
+    def _read_project_source(self, project_name: str, path: str) -> ParsedSource | None:
+        """A file of THIS updater's project, parsed, for the gloss quote tier.
 
         Another project's definition carries a relative path that may exist
         under this checkout too and would read the wrong file, so a note
@@ -5862,9 +5863,10 @@ class GraphUpdater:
         if root not in (target, *target.parents):
             return None
         try:
-            return target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+            text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
         except OSError:
             return None
+        return ParsedSource(text, parse_source(self.parsers, target, text))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
