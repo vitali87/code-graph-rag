@@ -684,6 +684,9 @@ def _remote_callers(
     found: dict[str, list[RemoteCaller]] = {}
     if not handlers:
         return found
+    # Each query is DISTINCT within itself; a caller the two shapes both
+    # return is one caller (bot review on PR #1978).
+    seen: set[tuple[str, ...]] = set()
     for query in (
         cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
         cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
@@ -700,7 +703,9 @@ def _remote_callers(
                 url=_text(row.get(cs.KEY_URL)),
                 endpoint=_text(row.get(cs.KEY_ENDPOINT)),
             )
-            if handler:
+            key = (handler, *caller.values())
+            if handler and key not in seen:
+                seen.add(key)
                 found.setdefault(handler, []).append(caller)
     for rows in found.values():
         rows.sort(key=lambda r: (r["qualified_name"], r["url"], r["path"]))
