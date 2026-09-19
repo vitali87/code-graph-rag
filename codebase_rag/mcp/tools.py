@@ -2047,6 +2047,9 @@ class MCPToolsRegistry:
         # `search_embeddings`, which filters in the vector store. Only this
         # handler failed to forward it, so scoping here is plumbing rather
         # than a second filter (issue #1494).
+        project, scope_error = self._workspace_scope(project)
+        if scope_error is not None:
+            return scope_error
         if project is not None:
             known = await asyncio.to_thread(self.ingestor.list_projects)
             if project not in known:
@@ -2087,6 +2090,9 @@ class MCPToolsRegistry:
         and an interleaved read would report groups from one generation with
         coverage from another.
         """
+        project, scope_error = self._workspace_scope(project)
+        if scope_error is not None:
+            return scope_error
         dup_project = project or derive_project_name(Path(self.project_root))
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
@@ -2360,20 +2366,9 @@ class MCPToolsRegistry:
                 # and a name inside it is still held to the graph's own
                 # check below, so an unindexed workspace repo reads as
                 # unknown rather than as a second, weaker path (issue #1494).
-                if (
-                    project is not None
-                    and self.workspace is not None
-                    and project not in self.workspace.project_names()
-                ):
-                    return {
-                        cs.DICT_KEY_ERROR: cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
-                            project=project,
-                            workspace=self.workspace.name,
-                            known=cs.SEPARATOR_COMMA_SPACE.join(
-                                self.workspace.project_names()
-                            ),
-                        )
-                    }
+                project, scope_error = self._workspace_scope(project)
+                if scope_error is not None:
+                    return {cs.DICT_KEY_ERROR: scope_error}
                 if project is not None:
                     known = await asyncio.to_thread(self.ingestor.list_projects)
                     if project not in known:
@@ -2383,18 +2378,6 @@ class MCPToolsRegistry:
                                 known=cs.SEPARATOR_COMMA_SPACE.join(known),
                             )
                         }
-                if project is None and self.workspace is not None:
-                    default = self._workspace_default_project()
-                    if default is None:
-                        names = self.workspace.project_names()
-                        return {
-                            cs.DICT_KEY_ERROR: cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
-                                workspace=self.workspace.name,
-                                count=len(names),
-                                known=cs.SEPARATOR_COMMA_SPACE.join(names),
-                            )
-                        }
-                    project = default
                 project_name = project or derive_project_name(Path(self.project_root))
                 # A read is as wrong as a reingest when the graph is known
                 # partial: a failed run (or a rollback whose re-ingest
@@ -2441,6 +2424,36 @@ class MCPToolsRegistry:
             project,
             lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
         )
+
+    def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
+        """(the project a request means, why it is refused) under a workspace.
+
+        The one decision every project-taking tool applies (issue #1494,
+        local review): a name outside the workspace is refused with the
+        workspace's names; a bare request takes the workspace default or is
+        refused naming the choices. Without a workspace nothing changes. The
+        graph's own unknown-project check still follows in every caller, so
+        an unindexed workspace repo reads as unknown, never as served.
+        """
+        if self.workspace is None:
+            return project, None
+        names = self.workspace.project_names()
+        if project is not None:
+            if project in names:
+                return project, None
+            return None, cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+                project=project,
+                workspace=self.workspace.name,
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
+        default = self._workspace_default_project()
+        if default is None:
+            return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                workspace=self.workspace.name,
+                count=len(names),
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
+        return default, None
 
     def _workspace_default_project(self) -> str | None:
         """The workspace project a request without `project` means.
@@ -2840,8 +2853,17 @@ class MCPToolsRegistry:
     ) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            # Validated against the known projects first: a typo returning
-            # zero rows is indistinguishable from a genuine empty result.
+            # The workspace allow-list and default first (issue #1494), then
+            # the graph's own check: a typo returning zero rows is
+            # indistinguishable from a genuine empty result.
+            project, scope_error = self._workspace_scope(project)
+            if scope_error is not None:
+                return QueryResultDict(
+                    error=scope_error,
+                    query_used=cs.QUERY_NOT_AVAILABLE,
+                    results=[],
+                    summary=scope_error,
+                )
             if project is not None:
                 known = await asyncio.to_thread(self.ingestor.list_projects)
                 if project not in known:

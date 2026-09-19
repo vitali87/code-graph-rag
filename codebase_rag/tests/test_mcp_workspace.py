@@ -190,3 +190,32 @@ def test_the_cli_passes_the_workspace_through_to_both_transports() -> None:
 def test_the_environment_variable_is_named_for_the_launch_config() -> None:
     """An MCP client's launch config has an environment and no flags."""
     assert cs.MCPEnvVar.MCP_WORKSPACE == "MCP_WORKSPACE"
+
+
+@pytest.mark.anyio
+async def test_every_project_taking_tool_applies_the_workspace_allow_list(
+    tmp_path: Path,
+) -> None:
+    """`query_code_graph`, `semantic_search` and `find_duplicate_code` check
+    projects on their own rather than through `_graph_query`; the allow-list
+    and default must reach them too (local review P1)."""
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="elsewhere")
+    registry._semantic_search_tool = MagicMock()
+    registry._find_duplicates_tool = MagicMock()
+    outside = cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+        project="other__9999", workspace="ws", known=f"{ALPHA}, {BETA}"
+    )
+    ambiguous = cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+        workspace="ws", count=2, known=f"{ALPHA}, {BETA}"
+    )
+    graph = await registry.query_code_graph("q", project="other__9999")
+    assert graph["error"] == outside and graph["results"] == []
+    bare = await registry.query_code_graph("q")
+    assert bare["error"] == ambiguous
+    assert await registry.semantic_search("q", project="other__9999") == outside
+    assert await registry.semantic_search("q") == ambiguous
+    assert await registry.find_duplicate_code(project="other__9999") == outside
+    assert await registry.find_duplicate_code() == ambiguous
+    registry._semantic_search_tool.function.assert_not_called()
+    registry._find_duplicates_tool.function.assert_not_called()
