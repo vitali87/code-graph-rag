@@ -407,7 +407,7 @@ class _StatefulIngestor:
         return rows
 
     def _delta_remote_callers_of(
-        self, qns: set[str], *, direct: bool
+        self, prefix: str, qns: set[str], *, direct: bool
     ) -> list[ResultRow]:
         # The remote hop the way the two real queries join it: handler
         # -EXPOSES-> resource, then either NETWORK -RESOLVES_TO-> resource
@@ -448,7 +448,8 @@ class _StatefulIngestor:
                         if inbound[2] not in access:
                             continue
                         caller = self.nodes.get((inbound[0], inbound[1]))
-                        if caller is None:
+                        # A caller in the handler's own project is local.
+                        if caller is None or _str(inbound[1]).startswith(prefix):
                             continue
                         row: ResultRow = {
                             cs.KEY_HANDLER: handler,
@@ -644,6 +645,7 @@ class _StatefulIngestor:
         ):
             raw_qns = params.get(cs.KEY_QNS)
             return self._delta_remote_callers_of(
+                prefix,
                 {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
                 direct=query == cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
             )

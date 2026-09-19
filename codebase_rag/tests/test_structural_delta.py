@@ -232,6 +232,16 @@ def _link_remote_callers(store: _StatefulIngestor) -> None:
     store.ensure_node_batch(
         function, {qn: "client.rpc.hello", cs.KEY_PATH: "rpc.py", cs.KEY_NAME: "hello"}
     )
+    # A caller inside the handler's own project, over HTTP and over RPC: a
+    # local site, not a remote caller (bot review on PR #1978).
+    store.ensure_node_batch(
+        function,
+        {
+            qn: _qn("pkg.local.self_call"),
+            cs.KEY_PATH: "pkg/local.py",
+            cs.KEY_NAME: "self_call",
+        },
+    )
     helper = (function, qn, _qn("pkg.util.helper"))
     rel = cs.RelationshipType
     store.ensure_relationship_batch(helper, rel.EXPOSES.value, (resource, qn, "svc.ep"))
@@ -251,6 +261,12 @@ def _link_remote_callers(store: _StatefulIngestor) -> None:
         rel.WRITES_TO.value,
         (resource, qn, "svc.rpc"),
     )
+    for target in ("client.net", "svc.rpc"):
+        store.ensure_relationship_batch(
+            (function, qn, _qn("pkg.local.self_call")),
+            rel.READS_FROM.value,
+            (resource, qn, target),
+        )
 
 
 def test_signature_change_lists_the_remote_callers_of_its_endpoint(
@@ -260,7 +276,8 @@ def test_signature_change_lists_the_remote_callers_of_its_endpoint(
     that resolves to its endpoint and directly for its RPC resource, in any
     project (issue #1603). No CALLS edge lists them, so `sites` alone says
     the change is contained when it is not. A client that both reads and
-    writes the URL is one caller (local review P2)."""
+    writes the URL is one caller (local review P2); a caller in the
+    handler's own project is not listed (bot review on PR #1978)."""
     root, store, updater = indexed
     _write(
         root,

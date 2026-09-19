@@ -23,26 +23,29 @@ from codebase_rag.parser_loader import load_parsers
 
 def _query_fn(
     edges: list[tuple[str, str]],
-    gaps: list[str],
+    gaps: list[str] | dict[str, list[str]],
     remote: list[tuple[str, str]] | None = None,
     other_edges: dict[str, list[tuple[str, str]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
 ):
     """`remote` rows are (source, target) with the handler's project read
     off its name, as the graph has it; `other_edges` holds the flow edges of
-    every project other than the asked one, keyed by project name; `calls`
-    records every (query, params) issued."""
+    every project other than the asked one, keyed by project name; `gaps`
+    is the asked project's list, or one per project; `calls` records every
+    (query, params) issued."""
 
     def fetch_all(query: str, params=None):
         if calls is not None:
             calls.append((query, params))
+        project = params["project_name"] if params else None
         if query == CYPHER_FLOW_EDGES:
-            project = params["project_name"] if params else None
             if other_edges and project in other_edges:
                 return [{"source": s, "target": t} for s, t in other_edges[project]]
             return [{"source": s, "target": t} for s, t in edges]
         if query == CYPHER_FLOW_COVERAGE_GAPS:
-            return [{"path": p} for p in gaps]
+            if isinstance(gaps, dict):
+                return [{"path": p} for p in gaps.get(project or "", [])]
+            return [{"path": p} for p in gaps] if project == "p" else []
         if query == CYPHER_FLOW_REMOTE_EDGES:
             return [{"source": s, "target": t} for s, t in remote or []]
         raise AssertionError(query)
@@ -115,15 +118,17 @@ def test_an_rpc_resource_continues_into_its_handler_directly() -> None:
 
 
 def test_a_path_inside_one_service_has_no_remote_hops() -> None:
-    """An edge that also exists as an ordinary flow edge is not a hop: only
-    the pairs the remote read supplied count, so a purely local path reports
-    none even when unrelated remote edges exist in the graph."""
+    """A purely local path reports no hops, and reads no other project: an
+    unrelated hop into `q` exists in the graph, and `q`'s edges are loaded
+    only when the walk reaches it (bot review on PR #1978)."""
+    calls: list[tuple[str, dict | None]] = []
     result = flow_reachability_verdict(
         _query_fn(
             [("p.a.src", "p.a.sink")],
             [],
             remote=[("p.other.net", "q.api.handler")],
             other_edges={"q": []},
+            calls=calls,
         ),
         "p",
         "p.a.src",
@@ -131,19 +136,43 @@ def test_a_path_inside_one_service_has_no_remote_hops() -> None:
     )
     assert result.verdict == FLOW_VERDICT_FOUND
     assert result.remote_hops == ()
+    edge_reads = [params for query, params in calls if query == CYPHER_FLOW_EDGES]
+    assert [p["project_name"] for p in edge_reads if p] == ["p"]
 
 
-def test_coverage_gaps_are_read_for_the_asked_project_only() -> None:
-    """Loading another project's flow edges must not widen the coverage
-    question: the gaps read is issued once, for the asked project, and the
-    other project's edges are read with that project's own name."""
+def test_a_service_calling_itself_is_not_a_boundary() -> None:
+    """A NETWORK resource resolving to a handler of the SAME project is
+    followed like any hop, but it is not remote: the project before the
+    resource and the handler's are one (bot review on PR #1978)."""
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net"), ("p.api.handler", "p.db.sink")],
+            [],
+            remote=[("p.client.net", "p.api.handler")],
+        ),
+        "p",
+        "p.a.src",
+        "p.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.path == ("p.a.src", "p.client.net", "p.api.handler", "p.db.sink")
+    assert result.remote_hops == ()
+
+
+def test_coverage_of_every_project_the_walk_entered_counts() -> None:
+    """No path, and the walk entered `q`: `q`'s uncovered module may hold
+    the continuation, so its gaps make the verdict UNKNOWN even when the
+    asked project is fully covered (bot review on PR #1978, P1). Gaps and
+    edges are read for exactly the projects entered, under their own
+    names (never `r`, which no reachable hop leads into), and the asked
+    project's gaps still count."""
     calls: list[tuple[str, dict | None]] = []
     result = flow_reachability_verdict(
         _query_fn(
             [("p.a.src", "p.client.net")],
-            ["p/uncovered.php"],
-            remote=[("p.client.net", "q.api.handler")],
-            other_edges={"q": [("q.api.handler", "q.other")]},
+            {"q": ["q/uncovered.php"]},
+            remote=[("p.client.net", "q.api.handler"), ("p.never", "r.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.other")], "r": []},
             calls=calls,
         ),
         "p",
@@ -151,13 +180,27 @@ def test_coverage_gaps_are_read_for_the_asked_project_only() -> None:
         "q.db.sink",
     )
     assert result.verdict == FLOW_VERDICT_UNKNOWN
-    assert result.gaps == ("p/uncovered.php",)
+    assert result.gaps == ("q/uncovered.php",)
     gap_reads = [
         params for query, params in calls if query == CYPHER_FLOW_COVERAGE_GAPS
     ]
-    assert [p["project_name"] for p in gap_reads if p] == ["p"]
+    assert [p["project_name"] for p in gap_reads if p] == ["p", "q"]
     edge_reads = [params for query, params in calls if query == CYPHER_FLOW_EDGES]
-    assert sorted(p["project_name"] for p in edge_reads if p) == ["p", "q"]
+    assert [p["project_name"] for p in edge_reads if p] == ["p", "q"]
+
+    covered = flow_reachability_verdict(
+        _query_fn(
+            [("p.a.src", "p.client.net")],
+            {"q": [], "p": ["p/uncovered.php"]},
+            remote=[("p.client.net", "q.api.handler")],
+            other_edges={"q": [("q.api.handler", "q.other")]},
+        ),
+        "p",
+        "p.a.src",
+        "q.db.sink",
+    )
+    assert covered.verdict == FLOW_VERDICT_UNKNOWN
+    assert covered.gaps == ("p/uncovered.php",)
 
 
 def test_no_flow_requires_full_coverage() -> None:
