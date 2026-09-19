@@ -89,9 +89,9 @@ and important external-tool paths include:
   telemetry only; no network restriction is applied to restore, MSBuild or the
   analysed project's own source generators. When the toolchain is absent the
   mode degrades to Tree-sitter, and the two cases log differently: an explicit
-  `hybrid`/`roslyn` that cannot run is a WARNING, while an `auto` downgrade is
-  recorded at info level, since falling back is what `auto` promises. Watching
-  only for warnings will therefore miss an `auto` downgrade.
+  `hybrid`/`roslyn` that cannot run is logged at WARNING, while an `auto`
+  downgrade is logged at INFO, since falling back is what `auto` promises.
+  Watching only for WARNING will therefore miss an `auto` downgrade.
 - **Go:** `GO_FRONTEND=auto` enables the Go semantic frontend when its toolchain
   is available. `GO_FRONTEND=treesitter` disables it.
 - **Java:** `JAVA_FRONTEND=heuristic` is the default; `javac` enables compiler
