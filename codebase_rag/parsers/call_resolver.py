@@ -10,6 +10,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from .. import logs as ls
+from ..duplicates import strip_duplicate_qn_suffix
 from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
 from .import_processor import ImportProcessor
@@ -1040,7 +1041,7 @@ class CallResolver:
         # unnecessary for reachability and never fabricates a call to a
         # non-constructor. Only constructors DIRECTLY on the class match (a nested
         # class's constructor has an extra qn segment and is excluded).
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+        simple = strip_duplicate_qn_suffix(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1071,9 +1072,7 @@ class CallResolver:
             if current in seen:
                 continue
             seen.add(current)
-            simple = current.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[
-                0
-            ]
+            simple = strip_duplicate_qn_suffix(current.rsplit(cs.SEPARATOR_DOT, 1)[-1])
             dtor_qn = f"{current}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
             dtor_type = self.function_registry.get(dtor_qn)
             if dtor_type is not None:

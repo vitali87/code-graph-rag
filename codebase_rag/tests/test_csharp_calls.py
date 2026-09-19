@@ -37,6 +37,27 @@ public class Svc {
     assert any(t.endswith("N.Svc.Helper") for t in targets), targets
 
 
+def test_verbatim_identifier_constructor_call_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "VerbatimCtor.cs").write_text(
+        """
+namespace N;
+public class @event {
+    public @event() { }
+}
+public class Use {
+    public void Run() { var value = new @event(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("N.@event.@event") for t in targets), targets
+
+
 def test_static_method_call_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
