@@ -40,6 +40,13 @@ from typing import NamedTuple
 
 from . import constants as cs
 from . import cypher_queries as cq
+from .gloss_anchor import (
+    ParsedSource,
+    SourceReader,
+    TextAnchor,
+    is_comparable_quote,
+    text_anchor,
+)
 from .graph_query import QueryFn
 from .types_defs import PropertyDict, ResultRow
 
@@ -62,6 +69,8 @@ class _Unanchored(NamedTuple):
     candidate_qns: list[str]
     # As recorded on the note; None on a note from before it was recorded.
     project: str | None
+    # The text-quote anchor (stage five); None on a note written without one.
+    anchor: TextAnchor | None
 
     @property
     def comparable_hash(self) -> str | None:
@@ -78,6 +87,16 @@ def _unanchored(row: ResultRow) -> _Unanchored:
     )
     hash_value = row.get(cs.KEY_TARGET_HASH)
     project = row.get(cs.KEY_PROJECT)
+    quote = row.get(cs.KEY_ANCHOR_QUOTE)
+    prefix = row.get(cs.KEY_ANCHOR_PREFIX)
+    suffix = row.get(cs.KEY_ANCHOR_SUFFIX)
+    anchor = (
+        TextAnchor(quote, prefix, suffix)  # type: ignore[arg-type]
+        if is_comparable_quote(quote)
+        and isinstance(prefix, str)
+        and isinstance(suffix, str)
+        else None
+    )
     return _Unanchored(
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
         target_qn=str(row.get(cs.KEY_TARGET_QN, "")),
@@ -85,6 +104,7 @@ def _unanchored(row: ResultRow) -> _Unanchored:
         anchor_state=str(row.get(cs.KEY_ANCHOR_STATE, "")),
         candidate_qns=candidates,
         project=project if isinstance(project, str) and project else None,
+        anchor=anchor,
     )
 
 
@@ -156,6 +176,100 @@ def _candidates_by_hash(
     return found
 
 
+class _QuoteCandidate(NamedTuple):
+    qualified_name: str
+    anchor: TextAnchor
+    # What the index saw, re-checked by the move statement: another
+    # updater may have replaced the definition since (bot review, PR #1966).
+    path: str
+    start_line: int
+    end_line: int
+    anchor_hash: str | None
+
+
+class _QuoteIndex:
+    """Every definition's current text anchor, per project, built on demand.
+
+    One span query and one read per file, per project, per pass -- and only
+    for a project in which a note has reached this tier, so a graph with no
+    quoted LOST notes never reads a file. Keyed on the quote digest; one
+    entry per PHYSICAL row, so a same-name pair is two candidates, the same
+    count the hash tier and the move statement use.
+    """
+
+    def __init__(self, fetch_all: QueryFn, read_source: SourceReader) -> None:
+        self._fetch_all = fetch_all
+        self._read_source = read_source
+        self._by_project: dict[str, dict[str, list[_QuoteCandidate]]] = {}
+
+    def candidates(self, project: str, quote: str) -> list[_QuoteCandidate]:
+        if project not in self._by_project:
+            self._by_project[project] = self._build(project)
+        return self._by_project[project].get(quote, [])
+
+    def _build(self, project: str) -> dict[str, list[_QuoteCandidate]]:
+        rows = self._fetch_all(
+            cq.CYPHER_DEFINITION_SPANS,
+            {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}"},
+        )
+        sources: dict[str, ParsedSource | None] = {}
+        index: dict[str, list[_QuoteCandidate]] = defaultdict(list)
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            start = row.get(cs.KEY_START_LINE)
+            end = row.get(cs.KEY_END_LINE)
+            name = row.get(cs.KEY_NAME)
+            if not (
+                isinstance(qn, str)
+                and isinstance(path, str)
+                and isinstance(start, int)
+                and isinstance(end, int)
+            ):
+                continue
+            if path not in sources:
+                sources[path] = self._read_source(project, path)
+            source = sources[path]
+            if source is None:
+                continue
+            anchor = text_anchor(
+                source, name if isinstance(name, str) else None, start, end
+            )
+            if anchor is not None:
+                hash_value = row.get(cs.KEY_ANCHOR_HASH)
+                index[anchor.quote].append(
+                    _QuoteCandidate(
+                        qn,
+                        anchor,
+                        path,
+                        start,
+                        end,
+                        hash_value if isinstance(hash_value, str) else None,
+                    )
+                )
+        return index
+
+
+def _narrow_by_context(
+    anchor: TextAnchor, rows: list[_QuoteCandidate]
+) -> list[_QuoteCandidate]:
+    """Among identical bodies, the ones with the note's recorded neighbours.
+
+    Only a tie-break: with one body match the context is not consulted (a
+    definition that moved within its file keeps its note), and when the
+    context narrows to nothing the full set stands, so the verdict is
+    AMBIGUOUS with every body match listed rather than LOST.
+    """
+    if len(rows) < 2:
+        return rows
+    narrowed = [
+        row
+        for row in rows
+        if row.anchor.prefix == anchor.prefix and row.anchor.suffix == anchor.suffix
+    ]
+    return narrowed or rows
+
+
 def _update_anchor_verdict(
     execute_write: WriteFn,
     note: _Unanchored,
@@ -180,8 +294,21 @@ def _update_anchor_verdict(
     )
 
 
-def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairReport:
-    """Place every unattached note by content hash, or mark why it cannot be.
+def repair_unanchored(
+    fetch_all: QueryFn,
+    execute_write: WriteFn,
+    read_source: SourceReader | None = None,
+) -> RepairReport:
+    """Place every unattached note by content hash, then by text quote, or
+    mark why it cannot be.
+
+    The quote tier runs for a note the hash tier could not place (no
+    comparable hash, or no definition carrying it) that recorded a quote,
+    and only when `read_source` can supply the project's files: it digests
+    every definition's current text the way the note's was digested at
+    write time, so a renamed definition -- whose hash changed with its name
+    -- is found by its unchanged body. Identical bodies are told apart by
+    the recorded neighbours; several that still tie are AMBIGUOUS.
 
     The move statement re-validates hash, project and exactly-one physical
     target at write time and binds the node it found, so a match that
@@ -202,36 +329,103 @@ def repair_unanchored(fetch_all: QueryFn, execute_write: WriteFn) -> RepairRepor
     )
     projects = _projects_of(fetch_all, notes)
     candidates = _candidates_by_hash(fetch_all, notes, projects)
+    quotes = _QuoteIndex(fetch_all, read_source) if read_source is not None else None
     report = RepairReport(moved=[], ambiguous=[], lost=[])
     for note in notes:
-        comparable = note.comparable_hash
         project = projects.get(note.qualified_name)
-        if comparable is None or project is None:
+        if project is None:
             _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
             report.lost.append(note.qualified_name)
             continue
-        # Physical rows, not distinct names: a same-name pair is two.
-        rows = candidates.get((project, comparable), [])
-        if len(rows) == 1:
-            execute_write(
-                cq.CYPHER_GLOSS_MOVE,
-                {
-                    cs.KEY_QN: note.qualified_name,
-                    cs.KEY_TARGET_HASH: comparable,
-                    cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
-                },
-            )
-            if _moved_to(fetch_all, note.qualified_name, rows[0]):
-                report.moved.append(note.qualified_name)
-        elif rows:
-            _update_anchor_verdict(
-                execute_write, note, cs.GlossAnchorState.AMBIGUOUS, sorted(set(rows))
-            )
-            report.ambiguous.append(note.qualified_name)
-        else:
-            _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
-            report.lost.append(note.qualified_name)
+        _repair_note(
+            fetch_all, execute_write, note, project, candidates, quotes, report
+        )
     return report
+
+
+def _repair_note(
+    fetch_all: QueryFn,
+    execute_write: WriteFn,
+    note: _Unanchored,
+    project: str,
+    candidates: dict[tuple[str, str], list[str]],
+    quotes: _QuoteIndex | None,
+    report: RepairReport,
+) -> None:
+    """Place one note whose project is known: by hash, else by quote, else
+    marked with why not."""
+    comparable = note.comparable_hash
+    # Physical rows, not distinct names: a same-name pair is two.
+    rows = candidates.get((project, comparable), []) if comparable else []
+    if not rows and note.anchor is not None and quotes is not None:
+        _repair_by_quote(fetch_all, execute_write, note, project, quotes, report)
+    elif len(rows) == 1:
+        execute_write(
+            cq.CYPHER_GLOSS_MOVE,
+            {
+                cs.KEY_QN: note.qualified_name,
+                cs.KEY_TARGET_HASH: comparable,
+                cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+            },
+        )
+        if _moved_to(fetch_all, note.qualified_name, rows[0]):
+            report.moved.append(note.qualified_name)
+    elif rows:
+        _update_anchor_verdict(
+            execute_write, note, cs.GlossAnchorState.AMBIGUOUS, sorted(set(rows))
+        )
+        report.ambiguous.append(note.qualified_name)
+    else:
+        _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
+        report.lost.append(note.qualified_name)
+
+
+def _repair_by_quote(
+    fetch_all: QueryFn,
+    execute_write: WriteFn,
+    note: _Unanchored,
+    project: str,
+    quotes: _QuoteIndex,
+    report: RepairReport,
+) -> None:
+    assert note.anchor is not None
+    rows = _narrow_by_context(
+        note.anchor, quotes.candidates(project, note.anchor.quote)
+    )
+    if len(rows) == 1 and rows[0].anchor_hash is None:
+        # The move re-validates the candidate by its hash; without one the
+        # body cannot be checked at write time, so the note is left as it is
+        # for the next pass rather than bound on a name (bot review).
+        return
+    if len(rows) == 1:
+        found = rows[0]
+        execute_write(
+            cq.CYPHER_GLOSS_MOVE_TO_QN,
+            {
+                cs.KEY_QN: note.qualified_name,
+                cs.KEY_TARGET_QN: found.qualified_name,
+                cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}",
+                cs.KEY_PATH: found.path,
+                cs.KEY_START_LINE: found.start_line,
+                cs.KEY_END_LINE: found.end_line,
+                cs.KEY_ANCHOR_HASH: found.anchor_hash,
+                cs.KEY_ANCHOR_PREFIX: found.anchor.prefix,
+                cs.KEY_ANCHOR_SUFFIX: found.anchor.suffix,
+            },
+        )
+        if _moved_to(fetch_all, note.qualified_name, found.qualified_name):
+            report.moved.append(note.qualified_name)
+    elif rows:
+        _update_anchor_verdict(
+            execute_write,
+            note,
+            cs.GlossAnchorState.AMBIGUOUS,
+            sorted({row.qualified_name for row in rows}),
+        )
+        report.ambiguous.append(note.qualified_name)
+    else:
+        _update_anchor_verdict(execute_write, note, cs.GlossAnchorState.LOST, [])
+        report.lost.append(note.qualified_name)
 
 
 def _moved_to(fetch_all: QueryFn, key: str, candidate: str) -> bool:

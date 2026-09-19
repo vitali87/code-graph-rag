@@ -10,10 +10,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
+from codebase_rag.gloss_anchor import (
+    ParsedSource,
+    TextAnchor,
+    parse_source,
+    text_anchor,
+)
 from codebase_rag.gloss_repair import RepairReport, repair_unanchored
+from codebase_rag.parser_loader import load_parsers
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 A = "alpha"
@@ -24,6 +32,11 @@ LEGACY = "clone-skeleton-without-prefix"
 # `note(project=_DERIVED)` records the first segment of the target, which is
 # what a real write records for an undotted project name.
 _DERIVED = "<derived>"
+_PARSERS, _ = load_parsers()
+
+
+def _parsed(text: str, path: str = "mod.py") -> ParsedSource:
+    return ParsedSource(text, parse_source(_PARSERS, Path(path), text))
 
 
 class FakeStore:
@@ -31,6 +44,14 @@ class FakeStore:
         # One entry per PHYSICAL definition node: (qualified_name, anchor_hash).
         # Two entries may share a name (a Function and a Method with one qn).
         self.definitions: list[tuple[str, str | None]] = []
+        # The span of each physical definition, for the quote tier:
+        # (qualified_name, name, path, start_line, end_line, anchor_hash).
+        self.spans: list[tuple[str, str | None, str, int, int, str | None]] = []
+        # path -> file text, served by `read_source`; a missing path is None.
+        self.files: dict[str, str] = {}
+        self.source_reads: list[tuple[str, str]] = []
+        # Runs once, right after the quote tier's span query has answered.
+        self.after_spans: Callable[[], None] | None = None
         # gloss key -> properties, plus the set of attached keys.
         self.glosses: dict[str, PropertyDict] = {}
         # Registered Project nodes, for the legacy-note fallback.
@@ -42,8 +63,25 @@ class FakeStore:
         # updater changing the graph between the pass's read and its write.
         self.after_lookup: Callable[[], None] | None = None
 
-    def define(self, qn: str, anchor_hash: str | None) -> None:
+    def define(
+        self,
+        qn: str,
+        anchor_hash: str | None,
+        *,
+        name: str | None = None,
+        path: str | None = None,
+        span: tuple[int, int] | None = None,
+    ) -> None:
         self.definitions.append((qn, anchor_hash))
+        if path is not None and span is not None:
+            self.spans.append((qn, name, path, span[0], span[1], anchor_hash))
+
+    def read_source(self, project: str, path: str) -> ParsedSource | None:
+        self.source_reads.append((project, path))
+        text = self.files.get(path)
+        if text is None:
+            return None
+        return _parsed(text, path)
 
     def undefine(self, qn: str) -> None:
         self.definitions = [(q, h) for q, h in self.definitions if q != qn]
@@ -58,6 +96,7 @@ class FakeStore:
         candidate_qns: list[str] | None = None,
         moved_from: str | None = None,
         project: str | None = _DERIVED,
+        anchor: TextAnchor | None = None,
     ) -> None:
         if project == _DERIVED:
             project = target_qn.split(".", 1)[0]
@@ -68,6 +107,9 @@ class FakeStore:
             cs.KEY_CANDIDATE_QNS: candidate_qns,
             cs.KEY_MOVED_FROM: moved_from,
             cs.KEY_PROJECT: project,
+            cs.KEY_ANCHOR_QUOTE: anchor.quote if anchor else None,
+            cs.KEY_ANCHOR_PREFIX: anchor.prefix if anchor else None,
+            cs.KEY_ANCHOR_SUFFIX: anchor.suffix if anchor else None,
         }
         if attached:
             self.attached.add(key)
@@ -105,6 +147,25 @@ class FakeStore:
                 self.after_lookup()
                 self.after_lookup = None
             return out
+        if query == cq.CYPHER_DEFINITION_SPANS:
+            assert params is not None
+            prefix = str(params[cs.KEY_PROJECT_PREFIX])
+            spans: list[ResultRow] = [
+                {
+                    cs.KEY_QUALIFIED_NAME: qn,
+                    cs.KEY_NAME: name,
+                    cs.KEY_PATH: path,
+                    cs.KEY_START_LINE: start,
+                    cs.KEY_END_LINE: end,
+                    cs.KEY_ANCHOR_HASH: anchor_hash,
+                }
+                for qn, name, path, start, end, anchor_hash in self.spans
+                if qn.startswith(prefix)
+            ]
+            if self.after_spans is not None:
+                self.after_spans()
+                self.after_spans = None
+            return spans
         if query == cq.CYPHER_GLOSS_READ:
             assert params is not None
             key = str(params[cs.KEY_QN])
@@ -143,6 +204,35 @@ class FakeStore:
             props[cs.KEY_TARGET_QN] = new_qn
             props[cs.KEY_CANDIDATE_QNS] = None
             self.attached.add(key)
+        elif query == cq.CYPHER_GLOSS_MOVE_TO_QN:
+            # Mirrors the statement: exactly one PHYSICAL node under the
+            # name, at the file, span and hash the index saw, and the note
+            # still unattached, or a no-op.
+            prefix = str(params[cs.KEY_PROJECT_PREFIX])
+            target = str(params[cs.KEY_TARGET_QN])
+            targets = [
+                q
+                for q, _n, p, s, e, h in self.spans
+                if q == target
+                and q.startswith(prefix)
+                and p == params[cs.KEY_PATH]
+                and (s, e) == (params[cs.KEY_START_LINE], params[cs.KEY_END_LINE])
+                and (h or "") == (params[cs.KEY_ANCHOR_HASH] or "")
+            ]
+            if len(targets) != 1 or key in self.attached:
+                return
+            origin = props.get(cs.KEY_MOVED_FROM) or props[cs.KEY_TARGET_QN]
+            if origin == target:
+                props[cs.KEY_MOVED_FROM] = None
+                props[cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.EXACT.value
+            else:
+                props[cs.KEY_MOVED_FROM] = origin
+                props[cs.KEY_ANCHOR_STATE] = cs.GlossAnchorState.MOVED.value
+            props[cs.KEY_TARGET_QN] = target
+            props[cs.KEY_CANDIDATE_QNS] = None
+            props[cs.KEY_ANCHOR_PREFIX] = params[cs.KEY_ANCHOR_PREFIX]
+            props[cs.KEY_ANCHOR_SUFFIX] = params[cs.KEY_ANCHOR_SUFFIX]
+            self.attached.add(key)
         elif query == cq.CYPHER_GLOSS_MARK:
             props[cs.KEY_ANCHOR_STATE] = params[cs.KEY_ANCHOR_STATE]
             props[cs.KEY_CANDIDATE_QNS] = params[cs.KEY_CANDIDATE_QNS]
@@ -150,8 +240,12 @@ class FakeStore:
             raise AssertionError(f"unexpected write: {query[:60]}")
 
 
-def _run(store: FakeStore) -> RepairReport:
-    return repair_unanchored(store.fetch_all, store.execute_write)
+def _run(store: FakeStore, *, with_source: bool = False) -> RepairReport:
+    return repair_unanchored(
+        store.fetch_all,
+        store.execute_write,
+        store.read_source if with_source else None,
+    )
 
 
 def _writes(store: FakeStore, query: str) -> list[PropertyDict | None]:
@@ -568,3 +662,293 @@ def test_the_orphan_read_returns_the_same_row_shape_as_the_other_reads() -> None
     assert "g.candidate_qns AS candidate_qns" in q
     assert "collect(m.qualified_name) AS mentions" in q
     assert q.split("RETURN", 1)[1] == cq.CYPHER_GLOSSES_ANNOTATING.split("RETURN", 1)[1]
+
+
+# --- the text-quote tier (stage five) ----------------------------------------
+
+# Three non-blank lines follow `run`, the full context window, so growth
+# below the window does not move the suffix (a fixed window is a tie-breaker,
+# not an anchor: appending code right after a definition changes it).
+_ORIGINAL = (
+    "import os\n\n\ndef run(v):\n    y = helper(v)\n    return y * 2\n\n\n"
+    "def tail():\n    pass\n\n\nclass Other:\n    pass\n"
+)
+_RENAMED = _ORIGINAL.replace("def run(v):", "def execute(v):")
+RUN = f"{A}.mod.run"
+EXECUTE = f"{A}.mod.execute"
+
+
+def _quoted_store(*, source_after: str = _RENAMED) -> FakeStore:
+    """A note written on `run` (hash H, quote of its body); `run` is gone and
+    `execute` now holds the same body under a different hash."""
+    store = FakeStore()
+    anchor = text_anchor(_parsed(_ORIGINAL), "run", 4, 6)
+    assert anchor is not None
+    store.note("n1", RUN, H, anchor=anchor)
+    store.define(EXECUTE, H2, name="execute", path="mod.py", span=(4, 6))
+    store.files["mod.py"] = source_after
+    return store
+
+
+# `run` renamed to `execute` AND moved to the end of the file, so its
+# neighbours differ from the recorded ones; with one body match the context
+# is not consulted, and what the note records afterwards is the new context.
+_RENAMED_AND_MOVED = (
+    "import os\n\n\ndef tail():\n    pass\n\n\nclass Other:\n    pass\n\n\n"
+    "def execute(v):\n    y = helper(v)\n    return y * 2\n"
+)
+
+
+def test_a_renamed_definition_is_found_by_its_body_and_followed() -> None:
+    store = _quoted_store(source_after=_RENAMED_AND_MOVED)
+    store.definitions, store.spans = [], []
+    store.define(EXECUTE, H2, name="execute", path="mod.py", span=(12, 14))
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=["n1"], ambiguous=[], lost=[])
+    props = store.glosses["n1"]
+    assert props[cs.KEY_TARGET_QN] == EXECUTE
+    assert props[cs.KEY_MOVED_FROM] == RUN
+    assert props[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.MOVED.value
+    assert "n1" in store.attached
+    # The hash is NOT re-recorded: the name is part of it, and a rename is
+    # a signature change the grading pass should report as STALE.
+    assert props[cs.KEY_TARGET_HASH] == H
+    # The neighbours are re-recorded for the new location, not kept.
+    recorded = text_anchor(_parsed(_ORIGINAL), "run", 4, 6)
+    now = text_anchor(_parsed(_RENAMED_AND_MOVED), "execute", 12, 14)
+    assert recorded is not None
+    assert now is not None
+    assert (now.prefix, now.suffix) != (recorded.prefix, recorded.suffix)
+    assert (props[cs.KEY_ANCHOR_PREFIX], props[cs.KEY_ANCHOR_SUFFIX]) == (
+        now.prefix,
+        now.suffix,
+    )
+
+
+def test_the_hash_tier_is_tried_first_and_the_quote_never_consulted() -> None:
+    store = _quoted_store()
+    # Another definition still carries the hash: that is a same-name move
+    # the hash tier owns, whatever the bodies say.
+    store.define(f"{A}.other.run", H)
+    report = _run(store, with_source=True)
+    assert report.moved == ["n1"]
+    assert store.glosses["n1"][cs.KEY_TARGET_QN] == f"{A}.other.run"
+    assert store.source_reads == []
+    assert all(q != cq.CYPHER_DEFINITION_SPANS for q, _p in store.reads)
+
+
+def test_identical_bodies_are_told_apart_by_their_neighbours() -> None:
+    # `alpha` has the same body as `run` had, appended at the end of the
+    # file; `execute` has it where `run` was, between `import os` and `tail`.
+    twin = _RENAMED + "\n\ndef alpha(v):\n    y = helper(v)\n    return y * 2\n"
+    store = _quoted_store(source_after=twin)
+    store.define(
+        f"{A}.mod.alpha", "ah1:aaaa", name="alpha", path="mod.py", span=(17, 19)
+    )
+    report = _run(store, with_source=True)
+    assert report.moved == ["n1"]
+    assert store.glosses["n1"][cs.KEY_TARGET_QN] == EXECUTE
+
+
+def test_identical_bodies_and_neighbours_are_ambiguous_and_bind_nothing() -> None:
+    # A second file that is a copy of the first under another name: the same
+    # body AND the same neighbours, so nothing tells the two apart.
+    store = _quoted_store()
+    store.files["twin.py"] = _ORIGINAL.replace("def run(v):", "def again(v):")
+    store.define(
+        f"{A}.mod.again", "ah1:bbbb", name="again", path="twin.py", span=(4, 6)
+    )
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=["n1"], lost=[])
+    props = store.glosses["n1"]
+    assert props[cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.AMBIGUOUS.value
+    assert props[cs.KEY_CANDIDATE_QNS] == [f"{A}.mod.again", EXECUTE]
+    assert props[cs.KEY_TARGET_QN] == RUN
+    assert "n1" not in store.attached
+
+
+def test_identical_bodies_with_new_neighbours_are_ambiguous_not_lost() -> None:
+    """The context is a tie-breaker only: when it narrows the body matches
+    to nothing, every body match stands and is listed."""
+    moved_twice = (
+        _RENAMED_AND_MOVED + "\n\ndef again(v):\n    y = helper(v)\n    return y * 2\n"
+    )
+    store = _quoted_store(source_after=moved_twice)
+    store.definitions, store.spans = [], []
+    store.define(EXECUTE, H2, name="execute", path="mod.py", span=(12, 14))
+    store.define(
+        f"{A}.mod.again", "ah1:bbbb", name="again", path="mod.py", span=(17, 19)
+    )
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=["n1"], lost=[])
+    assert store.glosses["n1"][cs.KEY_CANDIDATE_QNS] == [f"{A}.mod.again", EXECUTE]
+
+
+def test_no_body_match_is_lost() -> None:
+    edited = _RENAMED.replace("return y * 2", "return y * 3")
+    store = _quoted_store(source_after=edited)
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+    assert store.glosses["n1"][cs.KEY_ANCHOR_STATE] == cs.GlossAnchorState.LOST.value
+
+
+def test_without_a_source_reader_the_quote_tier_does_not_run() -> None:
+    store = _quoted_store()
+    report = _run(store)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+    assert all(q != cq.CYPHER_DEFINITION_SPANS for q, _p in store.reads)
+
+
+def test_a_note_without_a_quote_reads_no_file() -> None:
+    store = _quoted_store()
+    store.note("n1", RUN, H)  # re-recorded without an anchor
+    report = _run(store, with_source=True)
+    assert report.lost == ["n1"]
+    assert store.source_reads == []
+    assert all(q != cq.CYPHER_DEFINITION_SPANS for q, _p in store.reads)
+
+
+def test_one_span_query_and_one_read_per_file_per_project() -> None:
+    store = _quoted_store()
+    anchor = text_anchor(_parsed(_ORIGINAL), "run", 4, 6)
+    store.note("n2", f"{A}.mod.other", "ah1:cccc", anchor=anchor)
+    store.define(f"{A}.util.f", "ah1:dddd", name="f", path="util.py", span=(1, 2))
+    store.files["util.py"] = "def f():\n    pass\n"
+    _run(store, with_source=True)
+    assert [q for q, _p in store.reads if q == cq.CYPHER_DEFINITION_SPANS] == [
+        cq.CYPHER_DEFINITION_SPANS
+    ]
+    assert sorted(store.source_reads) == [(A, "mod.py"), (A, "util.py")]
+
+
+def test_the_reader_is_asked_for_the_notes_own_project_only() -> None:
+    store = _quoted_store()
+    # A same-body definition in another project is never a candidate: the
+    # span query is prefixed by the note's project.
+    store.define(f"{B}.mod.execute", H2, name="execute", path="mod.py", span=(4, 6))
+    report = _run(store, with_source=True)
+    assert report.moved == ["n1"]
+    assert store.glosses["n1"][cs.KEY_TARGET_QN] == EXECUTE
+    assert store.source_reads == [(A, "mod.py")]
+
+
+def test_a_file_the_reader_cannot_supply_contributes_no_candidates() -> None:
+    store = _quoted_store()
+    del store.files["mod.py"]
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+
+
+def test_a_same_name_pair_with_one_body_is_ambiguous_not_moved() -> None:
+    store = _quoted_store()
+    store.define(EXECUTE, "ah1:eeee", name="execute", path="mod.py", span=(4, 6))
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=["n1"], lost=[])
+    assert store.glosses["n1"][cs.KEY_CANDIDATE_QNS] == [EXECUTE]
+    assert "n1" not in store.attached
+
+
+def test_a_quote_move_declined_at_write_time_is_neither_moved_nor_marked() -> None:
+    store = _quoted_store()
+    store.after_spans = lambda: store.attached.add("n1")
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert _writes(store, cq.CYPHER_GLOSS_MARK) == []
+    assert store.glosses["n1"][cs.KEY_TARGET_QN] == RUN
+
+
+def test_a_second_pass_after_a_quote_move_writes_nothing() -> None:
+    store = _quoted_store()
+    _run(store, with_source=True)
+    before = len(store.writes)
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert len(store.writes) == before
+
+
+def test_the_quote_move_is_bound_by_name_and_rewrites_the_context_only() -> None:
+    q = cq.CYPHER_GLOSS_MOVE_TO_QN
+    assert "DELETE" not in q.upper()
+    assert "t.qualified_name = $target_qn" in q
+    assert "$target_hash" not in q
+    assert "g.target_hash" not in q
+    assert "size(targets) = 1" in q
+    assert "subjects = 0" in q
+    for field in ("path", "start_line", "end_line"):
+        assert f"t.{field} = ${field}" in q
+    assert "t.anchor_hash IS NOT NULL AND t.anchor_hash = $anchor_hash" in q
+    assert "g.anchor_prefix = $anchor_prefix" in q
+    assert "g.anchor_suffix = $anchor_suffix" in q
+    assert "g.anchor_quote" not in q
+
+
+def test_the_span_query_is_project_scoped_and_returns_what_the_digest_needs() -> None:
+    q = cq.CYPHER_DEFINITION_SPANS
+    assert "STARTS WITH $project_prefix" in q
+    for field in (
+        "qualified_name",
+        "name",
+        "path",
+        "start_line",
+        "end_line",
+        "anchor_hash",
+    ):
+        assert f"AS {field}" in q
+    for field in ("anchor_quote", "anchor_prefix", "anchor_suffix"):
+        assert f"AS {field}" in cq.CYPHER_UNANCHORED_GLOSSES
+
+
+def test_a_rename_with_a_literal_edit_is_not_followed() -> None:
+    """The bot review on PR #1966: `return "run"` renamed AND re-literalled
+    to `"execute"` is a body change, not a rename."""
+    src = _ORIGINAL.replace("return y * 2", 'return "run"')
+    store = _quoted_store(source_after=src)
+    anchor = text_anchor(_parsed(src), "run", 4, 6)
+    assert anchor is not None
+    store.note("n1", RUN, H, anchor=anchor)
+    store.files["mod.py"] = src.replace("def run(v):", "def execute(v):").replace(
+        'return "run"', 'return "execute"'
+    )
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+
+
+def test_a_candidate_replaced_after_the_span_read_is_not_bound() -> None:
+    """The move re-validates file, span and hash as the index saw them
+    (bot review on PR #1966): a definition another updater rewrote since
+    is not bound on its name alone."""
+    store = _quoted_store()
+
+    def rewrite() -> None:
+        store.spans = [
+            (q, n, p, s, e, "ah1:rewritten") if q == EXECUTE else (q, n, p, s, e, h)
+            for q, n, p, s, e, h in store.spans
+        ]
+
+    store.after_spans = rewrite
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert "n1" not in store.attached
+
+
+def test_a_file_without_a_grammar_yields_no_candidates() -> None:
+    store = _quoted_store()
+    store.spans = [(q, n, "mod.txt", s, e, h) for q, n, _p, s, e, h in store.spans]
+    store.files["mod.txt"] = store.files.pop("mod.py")
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=["n1"])
+
+
+def test_a_candidate_without_a_hash_is_never_bound_by_the_quote_move() -> None:
+    """A class carries no `anchor_hash` yet, so the move cannot re-validate
+    its body at write time; it is left for the next pass, not bound on its
+    name (bot review on PR #1966)."""
+    store = _quoted_store()
+    store.definitions, store.spans = [], []
+    store.define(EXECUTE, None, name="execute", path="mod.py", span=(4, 6))
+    report = _run(store, with_source=True)
+    assert report == RepairReport(moved=[], ambiguous=[], lost=[])
+    assert "n1" not in store.attached
+    assert _writes(store, cq.CYPHER_GLOSS_MOVE_TO_QN) == []
+    assert "t.anchor_hash IS NOT NULL" in cq.CYPHER_GLOSS_MOVE_TO_QN
+    assert "coalesce(t.anchor_hash" not in cq.CYPHER_GLOSS_MOVE_TO_QN

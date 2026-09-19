@@ -17,6 +17,7 @@ from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
 from codebase_rag.config import load_ignore_patterns
+from codebase_rag.gloss_anchor import ParsedSource, SourceReader, parse_source
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
@@ -2521,8 +2522,31 @@ class MCPToolsRegistry:
                 mentions,
                 author,
                 self._commit_sha_for(name),
+                self._source_reader_for(name),
             ),
         )
+
+    def _source_reader_for(self, project_name: str) -> SourceReader | None:
+        # The note's text-quote anchor needs the subject's file, read from
+        # disk only under the same rule as `definition`'s source: the
+        # project must have been indexed from this server's checkout.
+        root = self._source_root_for(project_name)
+        if root is None:
+            return None
+
+        def read(project: str, path: str) -> ParsedSource | None:
+            if project != project_name:
+                return None
+            target = (root / path).resolve()
+            if root not in (target, *target.parents):
+                return None
+            try:
+                text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+            except OSError:
+                return None
+            return ParsedSource(text, parse_source(self.parsers, target, text))
+
+        return read
 
     async def glosses(self, target: str, project: str | None = None) -> object:
         return await self._graph_query(

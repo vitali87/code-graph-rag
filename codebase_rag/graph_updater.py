@@ -25,6 +25,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
@@ -5753,7 +5754,11 @@ class GraphUpdater:
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
-            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
+            repair_unanchored(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                self._read_project_source,
+            )
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
@@ -5761,6 +5766,26 @@ class GraphUpdater:
             self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
+
+    def _read_project_source(self, project_name: str, path: str) -> ParsedSource | None:
+        """A file of THIS updater's project, parsed, for the gloss quote tier.
+
+        Another project's definition carries a relative path that may exist
+        under this checkout too and would read the wrong file, so a note
+        about another project gets no source here (the `source_root_for`
+        rule). A path that escapes the root, or cannot be read, is None.
+        """
+        if project_name != self.project_name:
+            return None
+        root = self.repo_path.resolve()
+        target = (root / path).resolve()
+        if root not in (target, *target.parents):
+            return None
+        try:
+            text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+        except OSError:
+            return None
+        return ParsedSource(text, parse_source(self.parsers, target, text))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""
