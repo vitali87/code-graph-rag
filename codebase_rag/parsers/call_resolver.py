@@ -1393,6 +1393,12 @@ class CallResolver:
         ):
             return None
 
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and cs.SEPARATOR_DOUBLE_COLON in call_name
+        ):
+            return self._try_resolve_csharp_qualified_call(call_name, module_qn)
+
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
@@ -2126,6 +2132,7 @@ class CallResolver:
     ) -> tuple[str, str] | None:
         path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         global_prefix = f"global{cs.SEPARATOR_DOT}"
+        is_global = path.startswith(global_prefix)
         if path.startswith(global_prefix):
             path = path[len(global_prefix) :]
         parts = path.split(cs.SEPARATOR_DOT)
@@ -2135,6 +2142,8 @@ class CallResolver:
         type_inference = self.type_inference.csharp_type_inference
         for cut in range(len(parts), 0, -1):
             type_path = cs.SEPARATOR_DOT.join(parts[:cut])
+            if is_global:
+                type_path = f"global{cs.SEPARATOR_DOUBLE_COLON}{type_path}"
             class_qn = type_inference._qualified_type_name_to_qn(type_path, module_qn)
             if class_qn is None:
                 continue

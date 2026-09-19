@@ -68,12 +68,14 @@ public class Widget {
     (csharp_project / "App.cs").write_text(
         """
 using Z = Zeta;
+using Zeta = Other;
 namespace App;
 public class Q {
     public void Run() {
         var w = new Z::Widget(1);
         Z::Widget.AliasS();
         global::Zeta.Widget.GlobalS();
+        Missing::AliasS();
     }
 }
 """,

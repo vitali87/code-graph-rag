@@ -1221,11 +1221,12 @@ class CSharpTypeInferenceEngine:
     ) -> str | None:
         expanded = type_name.replace("::", cs.SEPARATOR_DOT)
         global_prefix = f"global{cs.SEPARATOR_DOT}"
-        if expanded.startswith(global_prefix):
+        is_global = expanded.startswith(global_prefix)
+        if is_global:
             expanded = expanded[len(global_prefix) :]
         import_map = self.import_processor.import_mapping.get(module_qn)
         first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
-        if import_map and (mapped := import_map.get(first)):
+        if not is_global and import_map and (mapped := import_map.get(first)):
             expanded = f"{mapped}{separator}{rest}" if separator else mapped
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
