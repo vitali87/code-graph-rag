@@ -40,6 +40,18 @@ TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR = "conditional_assignable_selector"
 TS_DART_THIS = "this"
 TS_DART_SUPER = "super"
 TS_DART_IDENTIFIER = "identifier"
+# Construction receivers a member chain can hang off. `new X(1).m` and
+# `const X(1).m` both parse as `new_expression` (type_identifier, optional
+# type_arguments, arguments). `X<int>(1).m` has NO construction node: the
+# grammar reads `<` and `>` as comparisons, so it lands as nested
+# `relational_expression` with the call's parens split off as a
+# `parenthesized_expression` (issue #2015).
+TS_DART_NEW_EXPRESSION = "new_expression"
+TS_DART_RELATIONAL_EXPRESSION = "relational_expression"
+TS_DART_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_DART_RELATIONAL_OPERATOR = "relational_operator"
+DART_ANGLE_OPEN = "<"
+DART_ANGLE_CLOSE = ">"
 
 DART_CALL_QUERY = """
 (selector (argument_part)) @call

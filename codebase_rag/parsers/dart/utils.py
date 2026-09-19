@@ -102,6 +102,76 @@ def _selector_has_argument_part(node: Node) -> bool:
     )
 
 
+def _relational_operator_text(node: Node) -> str | None:
+    # The relational operator joining a relational_expression's operands.
+    for child in node.children:
+        if child.type == cs.TS_DART_RELATIONAL_OPERATOR and child.text:
+            return decode_node_text(child.text)
+    return None
+
+
+def _construction_class_name(node: Node) -> str | None:
+    # The class a construction-expression receiver builds, for the two shapes
+    # that are NOT an identifier + argument_part selector (issue #2015):
+    #
+    #   `new X(1).m` / `const X(1).m` -> new_expression, class = its
+    #      first type_identifier (a `type_arguments` child may follow).
+    #   `X<int>(1).m`                 -> relational_expression: the grammar
+    #      reads `<`/`>` as comparisons, so the class is the identifier
+    #      leading the `X < int` left operand, and the call's parens are a
+    #      sibling parenthesized_expression.
+    #
+    # Returning the bare class name lets the caller emit it as a normal
+    # `C` + `()` chain, so the receiver types through the same resolver path
+    # the bare `X(1).m` form already uses.
+    if node.type == cs.TS_DART_NEW_EXPRESSION:
+        for child in node.named_children:
+            if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
+                return decode_node_text(child.text)
+        return None
+    if node.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    # Match the mis-parsed-generic shape: exactly
+    # [relational_expression, relational_operator, parenthesized_expression],
+    # the parens standing in for the call's arguments. `(a < b).hashCode >
+    # lo.height` carries extra selector/identifier children and is excluded.
+    children = node.named_children
+    if [child.type for child in children[:3]] != [
+        cs.TS_DART_RELATIONAL_EXPRESSION,
+        cs.TS_DART_RELATIONAL_OPERATOR,
+        cs.TS_DART_PARENTHESIZED_EXPRESSION,
+    ]:
+        return None
+    # The operators must read `<` then `>`, the order type arguments impose.
+    # This rules out `a > b < (1).x`, but NOT `a < b > (1).x`, which the
+    # grammar makes token-for-token identical to `X<int>(1).x`. That residual
+    # ambiguity is left to the resolver: the name is only emitted as a
+    # receiver, and a leading identifier that is not a known class resolves
+    # to nothing, so a comparison yields no edge rather than a wrong one.
+    if _relational_operator_text(children[0]) != cs.DART_ANGLE_OPEN:
+        return None
+    if _relational_operator_text(node) != cs.DART_ANGLE_CLOSE:
+        return None
+    # The left spine is `X < int`: the class is its leading identifier. Any
+    # other shape (a parenthesized or call left operand) is not a construction.
+    spine = children[0].named_children
+    if not spine or spine[0].type != cs.TS_DART_IDENTIFIER or not spine[0].text:
+        return None
+    return decode_node_text(spine[0].text)
+
+
+def _construction_receiver_class(node: Node) -> str | None:
+    # The class constructed by the receiver hop AT this chain position.
+    # `new X(1).m` reaches the new_expression itself. In the mis-parsed
+    # generic (`X<int>(1).m`) the chain instead bottoms out at the call's
+    # `(1)`, whose PARENT relational_expression carries the class, so a
+    # parenthesized hop defers to that parent.
+    if node.type == cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        parent = node.parent
+        return _construction_class_name(parent) if parent is not None else None
+    return _construction_class_name(node)
+
+
 def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
     # Backward walk over a selector chain, shared by plain and cascade calls:
     # None means the chain is broken (index selector, arbitrary expression)
@@ -117,6 +187,12 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
             parts_rev.append(_CALL_HOP)
             node = node.prev_named_sibling
             continue
+        if allow_calls and (class_name := _construction_receiver_class(node)):
+            # A construction receiver is its own base: the class name plus a
+            # call hop, with nothing further to walk behind it.
+            parts_rev.append(_CALL_HOP)
+            parts_rev.append(class_name)
+            break
         part = _chain_part(node)
         if part is None:
             return None

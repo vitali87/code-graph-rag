@@ -449,3 +449,60 @@ def test_invoked_chain_head_is_not_a_property_read(tmp_path: Path) -> None:
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".Screen.fill", REFERENCES, ".Screen._wonders"), rels
     assert _has(rels, ".Screen.fill", "CALLS", ".Screen._wonders"), rels
+
+
+def test_construction_receiver_getter_read_is_referenced(tmp_path: Path) -> None:
+    # A member read on a construction receiver names the member on the
+    # constructed class, for the `new` and type-argument forms as well as
+    # the bare one (issue #2015). The call pass already types the same
+    # receiver, which is why `Box<int>(1).describe()` binds; the read pass
+    # lost the `new` form to an unhandled new_expression base and the
+    # generic form to a `<`/`>` relational mis-parse.
+    files = {
+        "app.dart": (
+            "class Box<T> {\n"
+            "  Box(T v);\n"
+            "  int get height => 2;\n"
+            "  String describe() => 'b';\n"
+            "}\n"
+            "int bareGet() { return Box(1).height; }\n"
+            "int newGet() { return new Box(1).height; }\n"
+            "int genGet() { return Box<int>(1).height; }\n"
+            "void chained() { Box<int>(1).describe(); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # Control: the bare form and the generic CALL already bind on main.
+    assert _has(rels, ".app.bareGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.chained", "CALLS", ".Box.describe"), rels
+    assert _has(rels, ".app.newGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.genGet", REFERENCES, ".Box.height"), rels
+
+
+def test_real_comparison_is_not_read_as_a_construction(tmp_path: Path) -> None:
+    # The generic-construction shape is a `<`/`>` relational_expression,
+    # which is also how a real comparison parses (issue #2015). A chained
+    # comparison in the OTHER operator order (`Box > b < (1).height`) has
+    # the same three-child shape as `Box<int>(1).height`; only `<` then `>`
+    # can be type arguments, so this must NOT construct a Box. `Box` is used
+    # as the left operand precisely because a fabricated construction would
+    # then resolve and emit the edge the assertion forbids.
+    files = {
+        "app.dart": (
+            "class Box {\n"
+            "  int get height => 2;\n"
+            "  int get width => 3;\n"
+            "}\n"
+            "dynamic flipped(dynamic Box, dynamic b) {\n"
+            "  return Box > b < (1).height;\n"
+            "}\n"
+            "bool nested(int a, int b, Box lo) {\n"
+            "  return (a < b).hashCode > lo.width;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # The genuine receiver read still binds...
+    assert _has(rels, ".app.nested", REFERENCES, ".Box.width"), rels
+    # ...and the flipped-operator comparison invents no construction receiver.
+    assert not _has(rels, ".app.flipped", REFERENCES, ".Box.height"), rels
