@@ -1,13 +1,18 @@
 # A file the run could not read was left out of the hash cache, and the
 # run still published the directory stamps, so the next run's in-sync fast
 # path reported nothing to do and the file was never retried until its
-# directory changed (issue #1983).
+# directory changed (issue #1983). The cache now carries an unreadable mark
+# for it: the in-sync check refuses on the mark, the pass hashes the file
+# whatever its mtime, and a KNOWN file is re-parsed with its old subtree
+# deleted first rather than as a new file.
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -113,4 +118,48 @@ def test_a_file_that_becomes_unreadable_after_a_healthy_run_is_retried(
     assert retry._is_already_in_sync() is False
     retry.run()
     assert retry._reparsed_file_keys == {"pkg/b.py"}
+    assert _updater(root, store)._is_already_in_sync() is True
+
+
+def test_a_symbol_renamed_while_unreadable_leaves_no_stale_entity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A previously cached file that becomes readable again must not be
+    treated as NEW: it would skip the delete-before-reparse and keep the
+    old symbol beside the renamed one (bot review on PR #1993). The cache
+    carries the unreadable mark, so the retry is a known-file re-parse."""
+    import json
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "a.py").write_text("def a():\n    return 1\n")
+    (root / "pkg").mkdir()
+    (root / "pkg" / "__init__.py").write_text("")
+    (root / "pkg" / "b.py").write_text("def old_name():\n    return 2\n")
+    store = _StatefulIngestor()
+    _updater(root, store).run(force=True)
+    project = next(uid for label, uid in store.nodes if label == "Project")
+    assert ("Function", f"{project}.pkg.b.old_name") in store.nodes
+
+    cache_mtime = (root / cs.HASH_CACHE_FILENAME).stat().st_mtime
+    edited = root / "pkg" / "b.py"
+    edited.write_text("def new_name():\n    return 2\n")
+    os.utime(edited, (cache_mtime + 1, cache_mtime + 1))
+    real = gu._hash_file_with_bytes
+    monkeypatch.setattr(
+        gu,
+        "_hash_file_with_bytes",
+        lambda path: None if path.name == "b.py" else real(path),
+    )
+    _updater(root, store).run()
+    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text())
+    assert cache["pkg/b.py"] == cs.HASH_CACHE_UNREADABLE
+    monkeypatch.setattr(gu, "_hash_file_with_bytes", real)
+
+    retry = _updater(root, store)
+    assert retry._is_already_in_sync() is False
+    retry.run()
+    assert retry._reparsed_file_keys == {"pkg/b.py"}
+    assert ("Function", f"{project}.pkg.b.new_name") in store.nodes
+    assert ("Function", f"{project}.pkg.b.old_name") not in store.nodes
     assert _updater(root, store)._is_already_in_sync() is True

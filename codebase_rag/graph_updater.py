@@ -3870,6 +3870,10 @@ class GraphUpdater:
                     return False
 
         for file_key, old_hash in old_hashes.items():
+            if old_hash == cs.HASH_CACHE_UNREADABLE:
+                # A file the last run could not read is retried by the next
+                # real pass, whatever its directory's mtime says (#1983).
+                return False
             file_path_str = f"{repo_str}/{file_key}"
             try:
                 stat = os.stat(file_path_str)
@@ -4182,8 +4186,20 @@ class GraphUpdater:
                         continue
                     unreadable_count += 1
                     unreadable_keys.add(file_key)
+                    # Marked for retry only when the file IS there: a broken
+                    # symlink or a vanished path would otherwise refuse the
+                    # fast path on every later run.
+                    if filepath.exists():
+                        new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                     continue
-                if file_mtime <= cache_mtime:
+                # A file marked unreadable by the previous run is hashed
+                # whatever its mtime: the mark is not a digest, so the
+                # comparison below sees a change and the file is re-parsed
+                # as a KNOWN file, its old subtree deleted first (#1983).
+                if (
+                    file_mtime <= cache_mtime
+                    and old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
+                ):
                     new_hashes[file_key] = old_hashes[file_key]
                     current_file_keys.add(file_key)
                     skipped_count += 1
@@ -4200,6 +4216,8 @@ class GraphUpdater:
                     continue
                 unreadable_count += 1
                 unreadable_keys.add(file_key)
+                if filepath.exists():
+                    new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             current_hash, file_bytes = hashed
             # The hash keys the CHECKED-IN source (cache invalidation follows
@@ -4499,24 +4517,15 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         if self._single_file is None:
             self._pending_hash_cache = (cache_path, new_hashes)
-            # A file this run could not read is absent from the cache, but
-            # its directory's mtime is unchanged: the next run's fast path
-            # would report "in sync" and never retry it (issue #1983). An
-            # EMPTY directory stamp is published instead (withholding it
-            # would leave an earlier healthy run's stamp on disk, and the
-            # fast path would fire on that; local review): the next run
-            # walks the tree, finds the file missing from the cache and
-            # parses it, and the stamp returns once a run reads every file.
+            # A file this run could not read carries the unreadable mark in
+            # the cache: the next run's in-sync check refuses on it and the
+            # pass hashes it whatever its mtime, so it is retried as a KNOWN
+            # file with its old subtree deleted first (issue #1983).
             if unreadable_keys:
                 logger.warning(
                     ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
                 )
-                self._pending_dir_mtimes = (dir_mtimes_path, {})
-            else:
-                self._pending_dir_mtimes = (
-                    dir_mtimes_path,
-                    self._collected_dir_mtimes,
-                )
+            self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         else:
             # Two different remedies, because the run has different standing
             # on each (#1619). It DID hash its one file, so that hash is worth

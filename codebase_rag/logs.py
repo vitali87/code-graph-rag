@@ -1067,8 +1067,8 @@ FILE_UNREADABLE = (
 )
 INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
 INCREMENTAL_UNREADABLE_RETRY = (
-    "{count} unreadable file(s) are left out of the cache and the directory "
-    "stamp is cleared, so the next update walks the tree and retries them"
+    "{count} unreadable file(s) are marked in the cache, so the next update "
+    "retries them whatever their directories' mtimes say"
 )
 
 # Exclude prompt logs
