@@ -4714,13 +4714,13 @@ class ImportProcessor:
         # from the path CHILDREN but keeps them in the import_path's text, so
         # relativity is recovered from the raw text.
         for stmt_node in captures.get(cs.CAPTURE_IMPORT, []):
-            for local_name, dotted, relative in self._julia_import_pairs(stmt_node):
-                target = self._julia_resolve_module_path(dotted, relative, module_qn)
+            for local_name, dotted, depth in self._julia_import_pairs(stmt_node):
+                target = self._julia_resolve_module_path(dotted, depth, module_qn)
                 self.import_mapping[module_qn][local_name] = target
                 self._record_import_site(module_qn, local_name, stmt_node, dotted)
 
     def _julia_import_pairs(self, stmt_node: Node):
-        # Yields (local_name, dotted_target, is_relative) for every binding a
+        # Yields (local_name, dotted_target, depth) for every binding a
         # using/import statement creates in the current scope.
         for child in stmt_node.children:
             t = child.type
@@ -4766,13 +4766,19 @@ class ImportProcessor:
                     yield dotted.split(cs.SEPARATOR_DOT)[-1], dotted, relative
 
     @staticmethod
-    def _julia_path_dotted(node: Node) -> tuple[str, bool]:
+    def _julia_path_dotted(node: Node) -> tuple[str, int]:
+        # (dotted path, depth). depth is the count of leading dots: `Sibling`
+        # -> 0 (project-relative), `.Sibling` / `./Sibling` -> 1 (the current
+        # module), `..Sibling` / `../Sibling` -> 2 (the parent's children),
+        # and so on. `lstrip` used to collapse every depth to 1, so nested
+        # `..` imports searched from the importer's own dir and resolved to
+        # the wrong module (issue #1882 review).
         raw = safe_decode_text(node) or ""
-        relative = raw.startswith(cs.PATH_CURRENT_DIR)
-        dotted = raw.lstrip(cs.PATH_CURRENT_DIR).replace(
-            cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
-        )
-        return dotted, relative
+        depth = 0
+        while depth < len(raw) and raw[depth] == cs.PATH_CURRENT_DIR:
+            depth += 1
+        dotted = raw[depth:].replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        return dotted, depth
 
     def _julia_dir_parts(self, module_qn: str) -> list[str]:
         # The module qn is rooted at the FULL project name, which may itself
@@ -4861,6 +4867,8 @@ class ImportProcessor:
                     except OSError:
                         continue
                     rel = path.relative_to(self.repo_path).as_posix()
+                    if self._julia_candidate_excluded(rel):
+                        continue
                     stack = [tree.root_node]
                     while stack:
                         node = stack.pop()
@@ -4890,12 +4898,16 @@ class ImportProcessor:
             return best
         return None
 
-    def _julia_find_by_path(self, dotted: str, relative: bool, module_qn: str):
+    def _julia_find_by_path(self, dotted: str, depth: int, module_qn: str):
         segs = dotted.split(cs.SEPARATOR_DOT)
         if not segs or not segs[0]:
             return None
-        if relative:
-            bases = (self._julia_dir_parts(module_qn),)
+        if depth > 0:
+            # `.S` resolves from the importer's own dir; each further `..`
+            # climbs one level (issue #1882 review).
+            dir_parts = self._julia_dir_parts(module_qn)
+            climb = depth - 1
+            bases = (dir_parts[: max(0, len(dir_parts) - climb)],)
         else:
             bases = ((), ("src",))
         candidates: set[str] = set()
@@ -4905,8 +4917,25 @@ class ImportProcessor:
                 variants.append(segs[:-1] + [segs[-1].lower()])
             for variant in variants:
                 candidates.add("/".join(list(base) + variant) + cs.EXT_JL)
-        found = sorted(c for c in candidates if (self.repo_path / c).is_file())
+        found = sorted(
+            c
+            for c in candidates
+            if (self.repo_path / c).is_file() and not self._julia_candidate_excluded(c)
+        )
         return found[0] if found else None
+
+    def _julia_candidate_excluded(self, rel_file: str) -> bool:
+        # The same exclude/unignore predicate the indexer walks with, so an
+        # excluded generated module cannot win import resolution (issue
+        # #1882 review: excluded candidates had no graph Module node, so the
+        # IMPORTS edge was dropped instead of hitting an indexed alternative).
+        parts = rel_file.split(cs.SEPARATOR_SLASH)
+        return should_skip_rel_file(
+            rel_file,
+            tuple(parts[:-1]),
+            exclude_paths=self.exclude_paths,
+            unignore_paths=self.unignore_paths,
+        )
 
     def _julia_find_by_name(self, name: str, module_qn: str | None = None):
         if not name:
@@ -4938,6 +4967,8 @@ class ImportProcessor:
                 if not path.is_file():
                     continue
                 rel = path.relative_to(self.repo_path).as_posix()
+                if self._julia_candidate_excluded(rel):
+                    continue
                 stem = path.stem
                 for key in dict.fromkeys((stem, stem.lower(), _julia_snake_case(stem))):
                     index.setdefault(key, set()).add(rel)
@@ -4947,7 +4978,7 @@ class ImportProcessor:
         return index
 
     def _julia_resolve_module_path(
-        self, dotted: str, relative: bool, module_qn: str
+        self, dotted: str, depth: int, module_qn: str
     ) -> str:
         # Module qns are rooted at the FULL project name (a dotted repo dir
         # like `Symbolics.jl` keeps both segments); deriving the root from
@@ -4956,8 +4987,8 @@ class ImportProcessor:
         # real module (`Symbolics.jl.src.arrays`) and every internal IMPORTS
         # edge became a phantom ExternalModule.
         project_root = self.project_name
-        rel_file = self._julia_find_by_path(dotted, relative, module_qn)
-        if rel_file is None and (relative or cs.SEPARATOR_DOT in dotted):
+        rel_file = self._julia_find_by_path(dotted, depth, module_qn)
+        if rel_file is None and (depth > 0 or cs.SEPARATOR_DOT in dotted):
             rel_file = self._julia_find_by_name(
                 dotted.split(cs.SEPARATOR_DOT)[-1], module_qn
             )
@@ -4973,8 +5004,14 @@ class ImportProcessor:
                 cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT
             )
             return f"{project_root}{cs.SEPARATOR_DOT}{rel_module}"
-        if relative:
-            parts = self._julia_dir_parts(module_qn) + dotted.split(cs.SEPARATOR_DOT)
+        if depth > 0:
+            # No file matched: build the qn the relative path points at,
+            # climbing the importer's dir tree by the path's depth (the same
+            # arithmetic _julia_find_by_path used for its search base).
+            dir_parts = self._julia_dir_parts(module_qn)
+            climb = depth - 1
+            base = dir_parts[: max(0, len(dir_parts) - climb)]
+            parts = base + dotted.split(cs.SEPARATOR_DOT)
             return f"{project_root}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(parts)}"
         return dotted  # external (stdlib / package)
 

@@ -310,7 +310,9 @@ def test_closure_head_named_after_type(
 ) -> None:
     """`(D::Differential)(x) = ...` is a method on type `Differential`:
     the closure head is named after the type it closes over, not the
-    receiver variable or the raw head text."""
+    receiver variable or the raw head text. The TYPE owns the natural qn
+    (types ingest before functions), so the closure method takes the
+    duplicate variant (issue #1882 review)."""
     (julia_project / "main.jl").write_text(
         """
 struct Differential
@@ -323,7 +325,12 @@ end
     run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
 
     fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
-    assert any(qn.endswith(".Differential") for qn in fn_qns), fn_qns
+    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    module_qn = f"{julia_project.name}.main"
+    assert f"{module_qn}.Differential" in class_qns, class_qns
+    assert any(
+        qn.startswith(f"{module_qn}.Differential{cs.DUP_QN_MARKER}") for qn in fn_qns
+    ), fn_qns
     assert not any("(" in qn or "::" in qn for qn in fn_qns), fn_qns
 
 
@@ -350,9 +357,12 @@ def test_function_class_name_collision(
     julia_project: Path, mock_ingestor: MagicMock
 ) -> None:
     """A top-level function and a struct may share a name in one module
-    (Julia's namespaces are separate). Pinned behavior: the function keeps
-    the natural qn, the class takes the `@<line>` duplicate variant, and
-    the inner constructor still scopes on the PLAIN type name."""
+    (Julia's namespaces are separate). Pinned behavior: the TYPE owns the
+    natural qn (field types, `Arr{T}` and the `Arr(v)` constructor call all
+    resolve it to the type, and the inner constructor scopes on the type's
+    real qn); the free function takes the `@<line>` duplicate variant.
+    The reverse (functions first) orphaned the constructor: `Arr(...)`
+    calls bound the shadowing free function (issue #1882 review)."""
     (julia_project / "main.jl").write_text(
         """
 struct Arr
@@ -373,9 +383,15 @@ end
     fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
     class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
     module_qn = f"{julia_project.name}.main"
-    assert f"{module_qn}.Arr" in fn_qns, fn_qns
-    assert any(qn.startswith(f"{module_qn}.Arr@") for qn in class_qns), class_qns
+    assert f"{module_qn}.Arr" in class_qns, class_qns
+    assert not any(
+        qn.startswith(f"{module_qn}.Arr{cs.DUP_QN_MARKER}") for qn in class_qns
+    ), class_qns
     assert f"{module_qn}.Arr.Arr" in fn_qns, fn_qns
+    assert any(qn.startswith(f"{module_qn}.Arr{cs.DUP_QN_MARKER}") for qn in fn_qns), (
+        fn_qns
+    )
+    assert f"{module_qn}.Arr" not in fn_qns, fn_qns
 
 
 def _first_of_type(root: "Node", node_type: str) -> "Node | None":
@@ -471,3 +487,106 @@ outer_fn(x) = x
     assert any(qn.endswith(".Inner.inner_fn") for qn in qns), qns
     assert any(qn.endswith(".Inner.inner_explicit") for qn in qns), qns
     assert any(qn.endswith(".outer_fn") and ".Inner." not in qn for qn in qns), qns
+
+
+def test_primitive_type_inherits(julia_project: Path, mock_ingestor: MagicMock) -> None:
+    """`primitive type MyFloat <: Signed 32 end` declares a `<:` base like
+    struct/abstract: it gets the INHERITS edge (issue #1882 review: the
+    extractor skipped the node type)."""
+    (julia_project / "main.jl").write_text(
+        """
+struct Signed
+end
+
+primitive type MyFloat <: Signed 32 end
+""",
+        encoding="utf-8",
+    )
+    run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
+
+    class_qns = get_node_names(mock_ingestor, NodeType.CLASS)
+    assert any(qn.endswith(".MyFloat") for qn in class_qns), class_qns
+    inherits = {
+        (c.args[0][2].split(".")[-1], c.args[2][2].split(".")[-1])
+        for c in get_relationships(mock_ingestor, "INHERITS")
+    }
+    assert ("MyFloat", "Signed") in inherits, inherits
+
+
+def test_arrow_in_call_not_registered_as_function(
+    julia_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`ys = map(x -> x + 1, xs)` registers NO function: the arrow is an
+    argument of the call, not a direct binding, and naming the callback
+    `ys` would mint a phantom twin (issue #1882 review)."""
+    (julia_project / "main.jl").write_text(
+        "ys = map(x -> x + 1, xs)\n",
+        encoding="utf-8",
+    )
+    run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
+
+    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    assert not any(qn.endswith(".ys") for qn in fn_qns), fn_qns
+
+
+def test_arrow_assigned_name_direct_binding_only(julia_parser: "Parser") -> None:
+    """Unit: only the assignment whose VALUE is the arrow names it — behind
+    at most typed/where/paren decoration; a call value names nothing."""
+
+    def first_arrow(code: bytes):
+        def find(node: "Node") -> "Node | None":
+            if node.type == "arrow_function_expression":
+                return node
+            for child in node.children:
+                if (hit := find(child)) is not None:
+                    return hit
+            return None
+
+        arrow = find(julia_parser.parse(code).root_node)
+        assert arrow is not None
+        return arrow
+
+    assert (
+        julia_utils.julia_arrow_assigned_name(first_arrow(b"f = x -> x + 1\n")) == "f"
+    )
+    assert (
+        julia_utils.julia_arrow_assigned_name(
+            first_arrow(b"f::Function = x -> x + 1\n")
+        )
+        == "f"
+    )
+    assert (
+        julia_utils.julia_arrow_assigned_name(first_arrow(b"f = (x -> x + 1)\n")) == "f"
+    )
+    assert (
+        julia_utils.julia_arrow_assigned_name(first_arrow(b"M.f = x -> x\n")) == "M.f"
+    )
+    assert (
+        julia_utils.julia_arrow_assigned_name(
+            first_arrow(b"ys = map(x -> x + 1, xs)\n")
+        )
+        is None
+    )
+    assert (
+        julia_utils.julia_arrow_assigned_name(first_arrow(b"g = f(x -> x)\n")) is None
+    )
+
+
+def test_module_docstring_not_from_block_comment(
+    julia_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """A leading `#=` block is an ordinary comment (license headers and the
+    like): Julia's Module.docstring comes from a docstring literal, not
+    from comments (issue #1882 review)."""
+    (julia_project / "main.jl").write_text(
+        """#=
+MIT License header text.
+=#
+x = 1
+""",
+        encoding="utf-8",
+    )
+    run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
+
+    props = _props_for(mock_ingestor, NodeType.MODULE, ".main")
+    assert props.get("docstring") in (None, ""), props
