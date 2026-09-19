@@ -102,6 +102,36 @@ def _selector_has_argument_part(node: Node) -> bool:
     )
 
 
+def _holds_only_type_arguments(selector: Node) -> bool:
+    return bool(selector.named_children) and all(
+        child.type == cs.TS_DART_TYPE_ARGUMENTS for child in selector.named_children
+    )
+
+
+def _skip_type_argument_selectors(node: Node | None) -> Node | None:
+    # `Box<int>.of(1);` in statement position is `Box` + selector(<int>) +
+    # selector(.of) + selector((1)): a selector holding only type arguments
+    # is not a hop (local review).
+    while (
+        node is not None
+        and node.type == cs.TS_DART_SELECTOR
+        and _holds_only_type_arguments(node)
+    ):
+        node = node.prev_named_sibling
+    return node
+
+
+def _finish_at_construction(node: Node, parts_rev: list[str]) -> list[str] | None:
+    # `new Box(1).m()`: the construction node is the chain's base and a call
+    # hop at once, so the resolver types the receiver from the constructed
+    # class (issue #2010).
+    constructed = _construction_name(node)
+    if constructed is None:
+        return None
+    parts_rev.extend((_CALL_HOP, constructed))
+    return list(reversed(parts_rev))
+
+
 def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
     # Backward walk over a selector chain, shared by plain and cascade calls:
     # None means the chain is broken (index selector, arbitrary expression)
@@ -112,11 +142,14 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
     # type or constructor class; without it (cascade path) a call-result
     # receiver stays unresolvable.
     parts_rev: list[str] = []
+    node = _skip_type_argument_selectors(node)
     while node is not None:
         if allow_calls and _selector_has_argument_part(node):
             parts_rev.append(_CALL_HOP)
-            node = node.prev_named_sibling
+            node = _skip_type_argument_selectors(node.prev_named_sibling)
             continue
+        if allow_calls and node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
+            return _finish_at_construction(node, parts_rev)
         part = _chain_part(node)
         if part is None:
             return None
@@ -125,7 +158,7 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
         parts_rev.append(part)
         if node.type == cs.TS_DART_IDENTIFIER:
             break
-        node = node.prev_named_sibling
+        node = _skip_type_argument_selectors(node.prev_named_sibling)
     return list(reversed(parts_rev))
 
 
@@ -207,10 +240,80 @@ def dart_call_name(call_node: Node) -> str | None:
     """
     if call_node.type == cs.TS_DART_CASCADE_SECTION:
         return _cascade_call_name(call_node)
+    if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
+        return _construction_name(call_node)
+    if call_node.type == cs.TS_DART_RELATIONAL_EXPRESSION:
+        return _generic_call_name(call_node)
     tokens = _walk_chain(call_node.prev_named_sibling, allow_calls=True)
     if not tokens or all(token == _CALL_HOP for token in tokens):
         return None
     return _assemble_chain(tokens)
+
+
+def _construction_name(node: Node) -> str | None:
+    # `new X(...)`, `const X(...)`, `X<T>.named(...)`: the type_identifier,
+    # then the named-constructor identifier when there is one; type and
+    # value arguments are skipped. `new p.X(...)` on an import prefix parses
+    # the same way (type_identifier `p`, identifier `X`) and reads back as
+    # `p.X`, the name the bare `p.X(...)` chain yields.
+    parts = [
+        decode_node_text(child.text)
+        for child in node.named_children
+        if child.type in (cs.TS_DART_TYPE_IDENTIFIER, cs.TS_DART_IDENTIFIER)
+        and child.text is not None
+    ]
+    return cs.SEPARATOR_DOT.join(parts) or None
+
+
+def _generic_call_name(node: Node) -> str | None:
+    # `Box<int>(1)` parsed as relational_expression(relational_expression(
+    # chain < T), >, parenthesized_expression): the callee is the chain
+    # before the inner `<`. Any other operator pair is a real comparison.
+    inner = node.named_children[0] if node.named_children else None
+    if inner is None or inner.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    outer_ops = _relational_operators(node)
+    inner_ops = _relational_operators(inner)
+    if len(outer_ops) != 1 or len(inner_ops) != 1:
+        return None
+    if (
+        _operator_text(outer_ops[0]) != cs.CHAR_ANGLE_CLOSE
+        or _operator_text(inner_ops[0]) != cs.CHAR_ANGLE_OPEN
+        or generic_call_argument(node) is None
+    ):
+        return None
+    tokens = _walk_chain(inner_ops[0].prev_named_sibling)
+    if not tokens:
+        return None
+    return _assemble_chain(tokens)
+
+
+def _relational_operators(node: Node) -> list[Node]:
+    return [
+        child
+        for child in node.named_children
+        if child.type == cs.TS_DART_RELATIONAL_OPERATOR
+    ]
+
+
+def _operator_text(node: Node) -> str | None:
+    # Not `parsers.utils.safe_decode_text`: that module imports this one
+    # through `anchor_hash`, so the import would be circular.
+    return decode_node_text(node.text) if node.text is not None else None
+
+
+def generic_call_argument(node: Node) -> Node | None:
+    # The one argument of `X<T>(arg)` parsed as a chained comparison: the
+    # parenthesised operand right after the outer `>`. A member read on the
+    # result (`Box<int>(1).width`) nests its selector INSIDE the same node,
+    # after the operand, so the last child is not the anchor (local review).
+    ops = _relational_operators(node)
+    if len(ops) != 1:
+        return None
+    arg = ops[0].next_named_sibling
+    if arg is None or arg.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        return None
+    return arg
 
 
 def dart_member_read_name(selector_node: Node) -> str | None:

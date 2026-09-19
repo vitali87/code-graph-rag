@@ -40,10 +40,39 @@ TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR = "conditional_assignable_selector"
 TS_DART_THIS = "this"
 TS_DART_SUPER = "super"
 TS_DART_IDENTIFIER = "identifier"
+# Constructions the grammar DOES give a node: `new X(...)` and `const X(...)`
+# hold a type_identifier, optional type_arguments, an `identifier` for a
+# named constructor and `arguments`; `X<T>.named(...)` is a
+# constructor_invocation with the same children. A bare `X(...)` or
+# `X<T, U>(...)` stays a selector chain (issue #2010).
+TS_DART_NEW_EXPRESSION = "new_expression"
+TS_DART_CONST_OBJECT_EXPRESSION = "const_object_expression"
+TS_DART_CONSTRUCTOR_INVOCATION = "constructor_invocation"
+DART_CONSTRUCTION_NODE_TYPES = frozenset(
+    {
+        TS_DART_NEW_EXPRESSION,
+        TS_DART_CONST_OBJECT_EXPRESSION,
+        TS_DART_CONSTRUCTOR_INVOCATION,
+    }
+)
+# A bare call with ONE simple type argument (`Box<int>(1)`) is parsed as a
+# chained comparison: relational_expression(relational_expression(X < T),
+# >, parenthesized_expression). Dart forbids chaining relational operators,
+# so that shape can only be a generic invocation (issue #2010).
+TS_DART_RELATIONAL_EXPRESSION = "relational_expression"
+TS_DART_RELATIONAL_OPERATOR = "relational_operator"
+TS_DART_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 
 DART_CALL_QUERY = """
 (selector (argument_part)) @call
 (cascade_section (argument_part)) @call
+(new_expression) @call
+(const_object_expression) @call
+(constructor_invocation) @call
+(relational_expression
+  (relational_expression)
+  (relational_operator)
+  (parenthesized_expression)) @call
 """
 
 # Declaration shapes for receiver typing: a class field is
