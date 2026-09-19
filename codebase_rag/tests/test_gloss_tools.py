@@ -51,7 +51,7 @@ def _node(
 NODES: list[ResultRow] = [
     _node("Module", f"{P}.app", "app.py", 1, 20),
     _node("Function", RUN, "app.py", 3, 8, anchor_hash="fp-run"),
-    _node("Class", STORE, "app.py", 10, 18),
+    _node("Class", STORE, "app.py", 10, 18, anchor_hash="fp-store"),
     _node("Method", STORE_GET, "app.py", 11, 13, anchor_hash="fp-store-get"),
     _node("Module", f"{P}.util", "util.py", 1, 10),
     _node("Function", UTIL_GET, "util.py", 1, 4),
@@ -444,8 +444,9 @@ def test_a_repeat_write_keeps_the_original_author_and_time() -> None:
 
 
 def test_a_target_without_a_fingerprint_stores_no_hash() -> None:
+    # `util.get` is the fixture definition indexed without a hash.
     graph = FakeGraph()
-    row = _write(graph, STORE)
+    row = _write(graph, UTIL_GET)
     assert row["target_hash"] is None
     assert cs.KEY_TARGET_HASH not in graph.glosses[row["qualified_name"]]
 
@@ -1243,3 +1244,12 @@ def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
     repair.assert_called_once_with(
         store.fetch_all, store.execute_write, updater._read_project_source
     )
+
+
+def test_a_class_note_records_the_class_hash() -> None:
+    """Containers carry `anchor_hash` now (issue #1808), so a note on a class
+    is graded and repaired like one on a function."""
+    graph = FakeGraph()
+    row = _write(graph, STORE)
+    assert not _is_refusal(row)
+    assert graph.glosses[row["qualified_name"]][cs.KEY_TARGET_HASH] == "fp-store"
