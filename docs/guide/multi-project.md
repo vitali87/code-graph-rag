@@ -85,6 +85,16 @@ Matching uses the URL path only: dynamic (non-literal) URLs and requests
 whose paths match no known template stay unlinked. FastAPI and Flask style
 route decorators are recognized.
 
+Two analyses follow the link across the boundary. `flow_verdict` continues
+a `FLOWS_TO` walk from a client's network resource into the handler it
+resolves to (and from an RPC or dispatch resource into its handler), loads
+that handler's project's own flow edges, and reports the pairs where the
+path crossed a service as `remote_hops`; coverage gaps stay the asked
+project's, since the verdict is asked of it. The structural delta after a
+write lists, on a signature change, the `remote_callers`: call sites in any
+project reaching the changed handler's endpoint, which no `CALLS` edge
+would ever name.
+
 ## Housekeeping
 
 ```bash

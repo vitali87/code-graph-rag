@@ -343,6 +343,59 @@ class _StatefulIngestor:
                 self._delta_callers_into(prefix, (label, qn), seen, rows)
         return rows
 
+    def _delta_remote_callers_of(
+        self, qns: set[str], *, direct: bool
+    ) -> list[ResultRow]:
+        # The remote hop the way the two real queries join it: handler
+        # -EXPOSES-> resource, then either NETWORK -RESOLVES_TO-> resource
+        # with the NETWORK's READS_FROM/WRITES_TO callers, or the resource's
+        # own callers (RPC / dispatch). Not scoped by caller project.
+        rows: list[ResultRow] = []
+        access = {
+            cs.RelationshipType.READS_FROM.value,
+            cs.RelationshipType.WRITES_TO.value,
+        }
+        for (label, uid), _props in list(self.nodes.items()):
+            handler = _str(uid)
+            if handler not in qns:
+                continue
+            for edge in self._out.get((label, uid), ()):
+                if edge[2] != cs.RelationshipType.EXPOSES.value:
+                    continue
+                resource = (edge[3], edge[4])
+                endpoint = _str(self.nodes.get(resource, {}).get(cs.KEY_NAME))
+                sources: list[tuple[_NodeId, str]] = []
+                if direct:
+                    sources.append((resource, endpoint))
+                else:
+                    for inbound in self._in.get(resource, ()):
+                        if inbound[2] == cs.RelationshipType.RESOLVES_TO.value:
+                            network = (inbound[0], inbound[1])
+                            sources.append(
+                                (
+                                    network,
+                                    _str(self.nodes.get(network, {}).get(cs.KEY_NAME)),
+                                )
+                            )
+                for node, url in sources:
+                    for inbound in self._in.get(node, ()):
+                        if inbound[2] not in access:
+                            continue
+                        caller = self.nodes.get((inbound[0], inbound[1]))
+                        if caller is None:
+                            continue
+                        rows.append(
+                            {
+                                cs.KEY_HANDLER: handler,
+                                cs.KEY_ENDPOINT: endpoint,
+                                cs.KEY_LABEL: inbound[0],
+                                cs.KEY_QUALIFIED_NAME: _str(inbound[1]),
+                                cs.KEY_PATH: _str(caller.get(cs.KEY_PATH)),
+                                cs.KEY_URL: url,
+                            }
+                        )
+        return rows
+
     def _delta_callers_into(
         self,
         prefix: str,
@@ -517,6 +570,15 @@ class _StatefulIngestor:
                 prefix,
                 {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
             )
+        if query in (
+            cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
+            cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+        ):
+            raw_qns = params.get(cs.KEY_QNS)
+            return self._delta_remote_callers_of(
+                {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
+                direct=query == cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+            )
         if query == cq.CYPHER_DELTA_RUST_MODULES:
             return [
                 self._delta_node_row(label, props)
@@ -585,6 +647,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
                 | cq.CYPHER_DELTA_CALLERS_OF
+                | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
+                | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
                 | cq.CYPHER_DELTA_RUST_MODULES
                 | cq.CYPHER_DELTA_RUST_TEST_FNS
                 | cq.CYPHER_DUPLICATE_FINGERPRINTS

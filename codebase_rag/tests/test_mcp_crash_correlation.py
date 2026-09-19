@@ -14,7 +14,11 @@ from codebase_rag.crash_correlation import (
     CYPHER_CRASH_POSITIONAL_PARAMS,
 )
 from codebase_rag.cypher_queries import CYPHER_TRACE_CALLABLES
-from codebase_rag.flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES
+from codebase_rag.flow_verdict import (
+    CYPHER_FLOW_COVERAGE_GAPS,
+    CYPHER_FLOW_EDGES,
+    CYPHER_FLOW_REMOTE_EDGES,
+)
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.utils.path_utils import derive_project_name
 
@@ -26,7 +30,11 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
     return str(request.param)
 
 
-def _registry(tmp_path: Path) -> MCPToolsRegistry:
+def _registry(
+    tmp_path: Path, remote: list[tuple[str, str]] | None = None
+) -> MCPToolsRegistry:
+    """`remote` rows are (source, target) hops inside this project, so the
+    verdict needs no other project's edges."""
     project = derive_project_name(tmp_path)
     module = f"{project}.app.service"
 
@@ -50,8 +58,13 @@ def _registry(tmp_path: Path) -> MCPToolsRegistry:
             ]
         if query == CYPHER_CRASH_CALLS:
             return [{"from_qn": f"{module}.dispatch", "to_qn": f"{module}.handle"}]
+        if query == CYPHER_FLOW_EDGES and remote:
+            return [{"source": f"{module}.dispatch", "target": f"{module}.net"}]
+        if query == CYPHER_FLOW_REMOTE_EDGES and remote:
+            return [{"source": s, "target": t, "project": project} for s, t in remote]
         if query in (
             CYPHER_FLOW_EDGES,
+            CYPHER_FLOW_REMOTE_EDGES,
             CYPHER_FLOW_COVERAGE_GAPS,
             CYPHER_CRASH_POSITIONAL_PARAMS,
         ):
@@ -86,6 +99,22 @@ async def test_tools_are_registered_with_the_traceback_parameter(tmp_path):
         assert cs.MCPParamName.TRACEBACK_TEXT in tool.input_schema["properties"]
         assert tool.input_schema["required"] == [cs.MCPParamName.TRACEBACK_TEXT]
         assert tool.returns_json is True
+
+
+async def test_flow_verdict_returns_the_remote_hops(tmp_path):
+    """The hop where a path crosses a service boundary reaches the caller
+    (issue #1603); a field the handler does not map across is one the
+    verdict computed for nobody."""
+    project = derive_project_name(tmp_path)
+    module = f"{project}.app.service"
+    registry = _registry(tmp_path, remote=[(f"{module}.net", f"{module}.handle")])
+    result = await registry.flow_verdict(
+        source_qualified_name=f"{module}.dispatch",
+        sink_qualified_name=f"{module}.handle",
+    )
+    assert result["verdict"] == "FOUND"
+    assert result["path"] == [f"{module}.dispatch", f"{module}.net", f"{module}.handle"]
+    assert result["remote_hops"] == [[f"{module}.net", f"{module}.handle"]]
 
 
 async def test_explain_traceback_returns_resolved_frames(tmp_path):

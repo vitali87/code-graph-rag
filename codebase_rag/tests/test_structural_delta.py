@@ -208,6 +208,111 @@ def test_signature_change_lists_every_site_with_a_verdict(
     assert site["declared_count"] == 2
 
 
+def _link_remote_callers(store: _StatefulIngestor) -> None:
+    """A handler in this project exposes an endpoint and an RPC resource;
+    another project's client reaches the endpoint through a NETWORK resource
+    and the RPC directly. Edges added the way the extractors emit them."""
+    resource = cs.NodeLabel.RESOURCE.value
+    function = cs.NodeLabel.FUNCTION.value
+    qn = cs.KEY_QUALIFIED_NAME
+    store.ensure_node_batch(
+        resource,
+        {qn: "svc.ep", cs.KEY_NAME: "GET /helper", cs.KEY_KIND: "ENDPOINT"},
+    )
+    store.ensure_node_batch(
+        resource, {qn: "svc.rpc", cs.KEY_NAME: "Greeter", cs.KEY_KIND: "RPC"}
+    )
+    store.ensure_node_batch(
+        resource,
+        {qn: "client.net", cs.KEY_NAME: "http://svc/helper", cs.KEY_KIND: "NETWORK"},
+    )
+    store.ensure_node_batch(
+        function, {qn: "client.app.call", cs.KEY_PATH: "app.py", cs.KEY_NAME: "call"}
+    )
+    store.ensure_node_batch(
+        function, {qn: "client.rpc.hello", cs.KEY_PATH: "rpc.py", cs.KEY_NAME: "hello"}
+    )
+    helper = (function, qn, _qn("pkg.util.helper"))
+    rel = cs.RelationshipType
+    store.ensure_relationship_batch(helper, rel.EXPOSES.value, (resource, qn, "svc.ep"))
+    store.ensure_relationship_batch(
+        helper, rel.EXPOSES.value, (resource, qn, "svc.rpc")
+    )
+    store.ensure_relationship_batch(
+        (resource, qn, "client.net"), rel.RESOLVES_TO.value, (resource, qn, "svc.ep")
+    )
+    store.ensure_relationship_batch(
+        (function, qn, "client.app.call"),
+        rel.READS_FROM.value,
+        (resource, qn, "client.net"),
+    )
+    store.ensure_relationship_batch(
+        (function, qn, "client.rpc.hello"),
+        rel.WRITES_TO.value,
+        (resource, qn, "svc.rpc"),
+    )
+
+
+def test_signature_change_lists_the_remote_callers_of_its_endpoint(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A changed handler's remote call sites, through the NETWORK resource
+    that resolves to its endpoint and directly for its RPC resource, in any
+    project (issue #1603). No CALLS edge lists them, so `sites` alone says
+    the change is contained when it is not."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+
+    def apply() -> None:
+        # Re-ingesting the file rebuilds the handler, and the route
+        # extractor would re-emit its EXPOSES edges with it; the fixture
+        # has no route decorator, so the edges are laid after the rebuild.
+        updater.reingest(["pkg/util.py"], deleted=[])
+        _link_remote_callers(store)
+
+    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert [s["path"] for s in change["sites"]] == ["pkg/app.py"]
+    assert change["remote_callers"] == [
+        {
+            "qualified_name": "client.app.call",
+            "label": cs.NodeLabel.FUNCTION.value,
+            "path": "app.py",
+            "url": "http://svc/helper",
+            "endpoint": "GET /helper",
+        },
+        {
+            "qualified_name": "client.rpc.hello",
+            "label": cs.NodeLabel.FUNCTION.value,
+            "path": "rpc.py",
+            "url": "Greeter",
+            "endpoint": "Greeter",
+        },
+    ]
+
+
+def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """The control: the same change on a definition that exposes nothing
+    reports an empty list, not a missing key."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+    delta = _observe(root, store, updater, ["pkg/util.py"])
+
+    (change,) = delta["signature_changes"]
+    assert change["remote_callers"] == []
+
+
 def test_variadic_callee_is_never_too_many(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:

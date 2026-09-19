@@ -40,6 +40,21 @@ ORDER BY path
 """
 
 
+# The remote hop (issue #1603): a client's NETWORK resource resolves to the
+# ENDPOINT a handler exposes, and an RPC or dispatch resource is exposed by
+# its handler directly, so a flow that reaches the resource continues into
+# the handler -- in whatever project it lives. Graph-wide by design: the edge
+# exists to cross projects. `project` is the handler's, so its own FLOWS_TO
+# edges can be loaded before the walk.
+CYPHER_FLOW_REMOTE_EDGES = f"""MATCH (n:{cs.NodeLabel.RESOURCE.value} {{kind: 'NETWORK'}})-[:{cs.RelationshipType.RESOLVES_TO.value}]->(e:{cs.NodeLabel.RESOURCE.value})<-[:{cs.RelationshipType.EXPOSES.value}]-(h)
+RETURN n.qualified_name AS source, h.qualified_name AS target, e.project AS project
+UNION
+MATCH (e:{cs.NodeLabel.RESOURCE.value})<-[:{cs.RelationshipType.EXPOSES.value}]-(h)
+WHERE e.kind IN ['RPC', 'DISPATCH']
+RETURN e.qualified_name AS source, h.qualified_name AS target, e.project AS project
+"""
+
+
 class QueryFn(Protocol):
     def __call__(
         self, query: str, params: PropertyDict | None = None
@@ -60,6 +75,10 @@ class FlowVerdict(NamedTuple):
     verdict: str
     path: tuple[str, ...]
     gaps: tuple[str, ...]
+    # The (from, to) pairs on the path that cross a service boundary: a
+    # resource in one project continuing into a handler, usually of another
+    # (issue #1603). Empty for a path inside one service.
+    remote_hops: tuple[tuple[str, str], ...] = ()
 
 
 def flow_reachability_verdict(
@@ -73,15 +92,41 @@ def flow_reachability_verdict(
         cs.KEY_PROJECT_PREFIX: prefix,
         cs.KEY_PROJECT_NAME: project_name,
     }
-    rows = fetch_all(CYPHER_FLOW_EDGES, params)
     edges: dict[str, list[str]] = {}
-    for row in rows:
+    _add_edges(edges, fetch_all(CYPHER_FLOW_EDGES, params))
+    # Remote hops, then the handler projects' own flow edges, so a path can
+    # continue on the other side of the boundary (issue #1603). Coverage
+    # gaps stay this project's: the verdict is asked of it.
+    remote: set[tuple[str, str]] = set()
+    remote_rows = fetch_all(CYPHER_FLOW_REMOTE_EDGES, None)
+    for row in remote_rows:
         source, target = row.get("source"), row.get("target")
         if isinstance(source, str) and isinstance(target, str):
             edges.setdefault(source, []).append(target)
+            remote.add((source, target))
+    for other in sorted(
+        {
+            str(row["project"])
+            for row in remote_rows
+            if isinstance(row.get("project"), str) and row["project"] != project_name
+        }
+    ):
+        _add_edges(
+            edges,
+            fetch_all(
+                CYPHER_FLOW_EDGES,
+                {
+                    cs.KEY_PROJECT_PREFIX: f"{other}{cs.SEPARATOR_DOT}",
+                    cs.KEY_PROJECT_NAME: other,
+                },
+            ),
+        )
 
     if path := _bfs_path(edges, source_qn, sink_qn):
-        return FlowVerdict(FLOW_VERDICT_FOUND, tuple(path), ())
+        hops = tuple(
+            (a, b) for a, b in zip(path, path[1:], strict=False) if (a, b) in remote
+        )
+        return FlowVerdict(FLOW_VERDICT_FOUND, tuple(path), (), hops)
 
     gap_rows = fetch_all(CYPHER_FLOW_COVERAGE_GAPS, params)
     gaps = tuple(
@@ -92,6 +137,13 @@ def flow_reachability_verdict(
     if gaps:
         return FlowVerdict(FLOW_VERDICT_UNKNOWN, (), gaps)
     return FlowVerdict(FLOW_VERDICT_NO_FLOW, (), ())
+
+
+def _add_edges(edges: dict[str, list[str]], rows: list[ResultRow]) -> None:
+    for row in rows:
+        source, target = row.get("source"), row.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+            edges.setdefault(source, []).append(target)
 
 
 def _bfs_path(

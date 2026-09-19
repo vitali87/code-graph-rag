@@ -871,6 +871,8 @@ class MCPToolsRegistry:
             "verdict": result.verdict,
             "path": list(result.path),
             "gaps": list(result.gaps),
+            # Where the path crosses a service boundary (issue #1603).
+            "remote_hops": [list(hop) for hop in result.remote_hops],
         }
 
     async def explain_traceback(self, traceback_text: str) -> dict:
