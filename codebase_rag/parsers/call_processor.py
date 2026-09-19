@@ -4155,10 +4155,20 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
+                    # Every class variant INSTANTIATES above, so every one
+                    # takes its constructors too: `Box@8` for `class Box<T>`
+                    # declares `Box@8.Box(T)`, which is not a variant of the
+                    # natural twin's `Box.Box` (issue #2007).
+                    # The same class-typed gate INSTANTIATES applies above: a
+                    # variant of another kind (a colliding function, a merged
+                    # namespace) has no constructor to redirect to.
                     ctor_edges = [
                         (ctor_type, variant)
+                        for class_variant in class_variants
+                        if resolver.function_registry.get(class_variant)
+                        in (None, NodeType.CLASS)
                         for ctor_type, ctor_qn in sorted(
-                            resolver.java_constructor_targets(callee_qn)
+                            resolver.java_constructor_targets(class_variant)
                         )
                         for variant in resolver.function_registry.variants(ctor_qn)
                     ]
