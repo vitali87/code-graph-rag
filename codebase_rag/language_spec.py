@@ -215,7 +215,7 @@ _CSHARP_NAMESPACE_SCOPES = frozenset(
 )
 
 
-def _module_directory_qn(module_qn: str, file_path: Path | None) -> str:
+def module_directory_qn(module_qn: str, file_path: Path | None) -> str:
     # The module qn minus the file's own segment. The stem may carry dots
     # (`Foo.TResult.cs`), so it is removed by name rather than at the last
     # dot, and a same-stem sibling of another language gives the module a
@@ -258,7 +258,7 @@ def _csharp_fold_scopes(
     if not run:
         return names
     namespace = cs.SEPARATOR_DOT.join(names[:run])
-    directory = _module_directory_qn(module_qn, file_path)
+    directory = module_directory_qn(module_qn, file_path)
     if directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
         return names[run:]
     return names

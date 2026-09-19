@@ -341,3 +341,79 @@ class TestWrittenNamespaceQualifiedNames:
         classes = _qns(store, cs.NodeLabel.CLASS.value)
         assert "proj.src.Foo.cs.Foo.Bar" in classes, classes
         assert "proj.src.Foo.Baz.Baz" in classes, classes
+
+    def test_the_declared_form_is_looked_up_for_csharp_references_only(
+        self, tmp_path: Path
+    ) -> None:
+        """A Python base `Zeta.BaseC` that resolves to nothing must not bind
+        the C# type declared under `namespace Zeta` (bot review)."""
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/Zeta/Base.cs": "namespace Zeta;\n\npublic class BaseC { }\n",
+                "py/q.py": "class Q(Zeta.BaseC):\n    pass\n",
+            },
+        )
+        inherits = {
+            (str(source), str(target))
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == "INHERITS"
+        }
+        assert not any(
+            source == "proj.py.q.Q" and target.startswith("proj.src")
+            for source, target in inherits
+        ), sorted(inherits)
+
+    def test_two_projects_declaring_one_name_stay_unresolved(
+        self, tmp_path: Path
+    ) -> None:
+        """`N.Widget` declared under `src/N` and under `lib/N` (both folded,
+        so neither qn ends with `N.Widget`) are two types; a base list
+        naming `N.Widget` from a third place binds neither rather than one
+        at random (bot review). Twins that KEEP the namespace in their qn
+        are matched by the ordinary suffix tier, whose first-match pick is
+        pre-existing and not covered here."""
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/N/W.cs": "namespace N;\n\npublic class Widget { }\n",
+                "lib/N/W.cs": "namespace N;\n\npublic class Widget { }\n",
+                "src/C/Q.cs": "namespace C;\n\npublic class Q : N.Widget { }\n",
+            },
+        )
+        inherits = {
+            (str(source), str(target))
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == "INHERITS"
+        }
+        # The unresolved base keeps its external parent (`N.Widget`), as any
+        # unresolved base does; neither first-party twin is bound.
+        assert not any(
+            source == "proj.src.C.Q.Q" and target.startswith("proj.")
+            for source, target in inherits
+        ), sorted(inherits)
+
+    def test_a_partial_part_with_a_dotted_stem_joins_its_group(
+        self, tmp_path: Path
+    ) -> None:
+        """`Widget.cs` and `Widget.Designer.cs` are one partial type; a base
+        list naming `N.Widget` binds a part rather than refusing them as
+        two projects (bot review)."""
+        part = "namespace N;\n\npublic partial class Widget { }\n"
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/N/Widget.cs": part,
+                "src/N/Widget.Designer.cs": part,
+                "src/C/Q.cs": "namespace C;\n\npublic class Q : N.Widget { }\n",
+            },
+        )
+        inherits = {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == "INHERITS" and str(source) == "proj.src.C.Q.Q"
+        }
+        assert inherits & {
+            "proj.src.N.Widget.Widget",
+            "proj.src.N.Widget.Designer.Widget",
+        }, sorted(inherits)

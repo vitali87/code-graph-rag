@@ -12,7 +12,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs
 from ...config import settings
-from ...language_spec import LanguageSpec
+from ...language_spec import LanguageSpec, module_directory_qn
 from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -864,7 +864,7 @@ class ClassIngestMixin:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
-        resolved = self._resolve_class_name(raw_name, entry.module_qn)
+        resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
             resolved is not None
             # A simple-name sweep can land on the child itself; a
@@ -1297,12 +1297,13 @@ class ClassIngestMixin:
             # boundaries. Parts in different directories of one project fall
             # back to generic resolution (safe under-merge) rather than risk a
             # cross-project wrong edge.
+            # The directory comes from the file's own segment by name: a part
+            # with a dotted stem (`Widget.Designer.cs`) split from its sibling
+            # under a last-dot rule, and once base resolution refused any
+            # ambiguity that is not one partial group, the split lost the
+            # `: N.Widget` edge (bot review on #1999).
             if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-                directory = (
-                    module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                    if cs.SEPARATOR_DOT in module_qn
-                    else module_qn
-                )
+                directory = module_directory_qn(module_qn, file_path) or module_qn
                 key = f"{directory}{cs.SEPARATOR_DOT}{class_qn[len(module_qn) + 1 :]}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)
@@ -2038,19 +2039,25 @@ class ClassIngestMixin:
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, qn),
                     )
 
-    def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
+    def _resolve_class_name(
+        self,
+        class_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str | None:
         resolved = resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
-        if resolved is not None:
+        if resolved is not None or language != cs.SupportedLanguage.CSHARP:
             return resolved
         # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to
         # match the tail of the class qn; a namespace the directory spells is
-        # no longer in it, so the declared form is looked up instead. Several
-        # carriers are the parts of one partial type, any of which spans the
-        # group (issue #1629).
-        carriers = self.csharp_namespaced_qns.get(class_name)
-        return min(carriers) if carriers else None
+        # no longer in it, so the declared form is looked up instead, for a
+        # C# reference only: a Python `Zeta.BaseC` is not this index's
+        # business (issue #1629, bot review).
+        return csharp_utils.unique_carrier(
+            self.csharp_namespaced_qns.get(class_name), self.csharp_partial_groups
+        )
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:
         return pe.extract_cpp_base_class_name(parent_text)

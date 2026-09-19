@@ -194,6 +194,28 @@ def namespace_qualified_name(type_node: Node) -> str:
     return cs.SEPARATOR_DOT.join([*namespaces, *types, *([own] if own else [])])
 
 
+def unique_carrier(
+    carriers: set[str] | None, partial_groups: dict[str, list[str]]
+) -> str | None:
+    """The one class a declared name (`N.Widget`) names, or None.
+
+    Several carriers are either the parts of ONE partial type, any of which
+    spans the group, or two independent projects that each declare the name
+    in their own directory; the latter must not be merged across assembly
+    boundaries, so it is left unresolved like every other ambiguity here
+    (bot review on #1999).
+    """
+    if not carriers:
+        return None
+    if len(carriers) == 1:
+        return next(iter(carriers))
+    ordered = sorted(carriers)
+    group = partial_groups.get(ordered[0])
+    if group is not None and all(partial_groups.get(qn) is group for qn in ordered):
+        return ordered[0]
+    return None
+
+
 def extension_receiver_type(method_node: Node) -> str | None:
     # For an extension method, the normalized type of its receiver: the first
     # parameter, whose first modifier is `this` (`static int WordCount(this
