@@ -349,8 +349,11 @@ class _StatefulIngestor:
         # The remote hop the way the two real queries join it: handler
         # -EXPOSES-> resource, then either NETWORK -RESOLVES_TO-> resource
         # with the NETWORK's READS_FROM/WRITES_TO callers, or the resource's
-        # own callers (RPC / dispatch). Not scoped by caller project.
+        # own callers (RPC / dispatch). Not scoped by caller project. The
+        # queries RETURN DISTINCT: a caller that reads and writes one
+        # resource is one row here too.
         rows: list[ResultRow] = []
+        seen: set[tuple[str, ...]] = set()
         access = {
             cs.RelationshipType.READS_FROM.value,
             cs.RelationshipType.WRITES_TO.value,
@@ -384,16 +387,18 @@ class _StatefulIngestor:
                         caller = self.nodes.get((inbound[0], inbound[1]))
                         if caller is None:
                             continue
-                        rows.append(
-                            {
-                                cs.KEY_HANDLER: handler,
-                                cs.KEY_ENDPOINT: endpoint,
-                                cs.KEY_LABEL: inbound[0],
-                                cs.KEY_QUALIFIED_NAME: _str(inbound[1]),
-                                cs.KEY_PATH: _str(caller.get(cs.KEY_PATH)),
-                                cs.KEY_URL: url,
-                            }
-                        )
+                        row: ResultRow = {
+                            cs.KEY_HANDLER: handler,
+                            cs.KEY_ENDPOINT: endpoint,
+                            cs.KEY_LABEL: inbound[0],
+                            cs.KEY_QUALIFIED_NAME: _str(inbound[1]),
+                            cs.KEY_PATH: _str(caller.get(cs.KEY_PATH)),
+                            cs.KEY_URL: url,
+                        }
+                        key = tuple(str(row[k]) for k in sorted(row))
+                        if key not in seen:
+                            seen.add(key)
+                            rows.append(row)
         return rows
 
     def _delta_callers_into(

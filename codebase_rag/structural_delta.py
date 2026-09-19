@@ -690,16 +690,15 @@ def _remote_callers(
     ):
         for row in fetch_all(query, {cs.KEY_QNS: handlers}):
             handler = _text(row.get(cs.KEY_HANDLER))
+            caller = RemoteCaller(
+                qualified_name=_text(row.get(cs.KEY_QUALIFIED_NAME)),
+                label=_text(row.get(cs.KEY_LABEL)),
+                path=_text(row.get(cs.KEY_PATH)),
+                url=_text(row.get(cs.KEY_URL)),
+                endpoint=_text(row.get(cs.KEY_ENDPOINT)),
+            )
             if handler:
-                found.setdefault(handler, []).append(
-                    RemoteCaller(
-                        qualified_name=_text(row.get(cs.KEY_QUALIFIED_NAME)),
-                        label=_text(row.get(cs.KEY_LABEL)),
-                        path=_text(row.get(cs.KEY_PATH)),
-                        url=_text(row.get(cs.KEY_URL)),
-                        endpoint=_text(row.get(cs.KEY_ENDPOINT)),
-                    )
-                )
+                found.setdefault(handler, []).append(caller)
     for rows in found.values():
         rows.sort(key=lambda r: (r["qualified_name"], r["url"], r["path"]))
     return found
