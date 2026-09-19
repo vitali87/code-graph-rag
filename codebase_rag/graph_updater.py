@@ -831,6 +831,9 @@ class GraphUpdater:
         # such a run re-resolves all edges itself, so graph reads may degrade
         # on failure; an incremental run's correctness depends on them.
         self._is_full_build = False
+        # path -> module qualified name as the graph records it, read once
+        # per rehydration for the requeues (issue #1935).
+        self._module_qns_by_path: dict[str, str] | None = None
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -2242,6 +2245,65 @@ class GraphUpdater:
             logger.info("Anchored {} artefacts to contract operations", anchored)
             self.ingestor.flush_all()
 
+    def _recorded_module_qn(self, path: str) -> str:
+        """The module qualified name the graph records for `path`.
+
+        A requeued type fact must carry the owner the clean pass gave it.
+        `base_module_qn` runs BEFORE disambiguation, so it cannot reproduce
+        a suffixed name (`proj.lib.d.ts` beside `proj.lib`, `proj.settings.py`
+        beside `proj.settings`): the fact would then resolve its annotation
+        through the BARE module's scope and gain an edge to the other file's
+        type, an edge a clean index never has (issue #1935). The graph knows
+        the answer; it is read once per rehydration, and the derivation is
+        only the fallback for a path the graph does not hold.
+        """
+        if self._module_qns_by_path is None:
+            self._module_qns_by_path = self._read_module_qns_by_path()
+        return self._module_qns_by_path.get(path) or base_module_qn(
+            Path(path), self.project_name
+        )
+
+    def _read_module_qns_by_path(self) -> dict[str, str]:
+        # Scoped in the query: the shared graph holds every project, and a
+        # module of another project may record the same relative path.
+        # A bodied Rust inline module (`mod alpha { .. }`) records its
+        # enclosing FILE's path too, so several modules can share one path;
+        # the clean pass owns a definition by the file module, which is the
+        # shortest of those names (the inline ones nest under it), so the
+        # shortest wins here and the requeue agrees with a clean index
+        # (bot review on PR #1967: keyed on the last row returned, an
+        # unrelated edit rehydrated `alpha.make` under `beta`).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return {}
+        # The same posture as every other read in `_rehydrate_registry_from_graph`
+        # (local review): a full build parsed every file and degrades to the
+        # bare derivation with a warning; an incremental run would requeue
+        # under the wrong owner, so the outage aborts it.
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_QNS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                },
+            )
+        except Exception:
+            if not self._is_full_build:
+                raise
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return {}
+        found: dict[str, str] = {}
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                continue
+            if path not in found or len(qn) < len(found[path]):
+                found[path] = qn
+        return found
+
     def _requeue_type_facts(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
     ) -> None:
@@ -2255,7 +2317,7 @@ class GraphUpdater:
             PendingTypeFact(
                 node_type.value,
                 qn,
-                base_module_qn(Path(path), self.project_name),
+                self._recorded_module_qn(path),
                 return_type if isinstance(return_type, str) else None,
                 [str(p) for p in param_types]
                 if isinstance(param_types, list)
@@ -2306,7 +2368,7 @@ class GraphUpdater:
                 continue
             pending.append(
                 PendingParameterType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                    qn, self._recorded_module_qn(path), type_name, path
                 )
             )
 
@@ -2337,9 +2399,7 @@ class GraphUpdater:
             if path in self._reparsed_file_keys:
                 continue
             pending.append(
-                PendingFieldType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name, path
-                )
+                PendingFieldType(qn, self._recorded_module_qn(path), type_name, path)
             )
 
     def _rehydrate_registry_from_graph(self) -> None:
@@ -2351,6 +2411,9 @@ class GraphUpdater:
         # INSTANTIATES into any unchanged file (issue #532, outbound half).
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        # Read afresh each run: a module may have gained or lost its suffix
+        # since the last one, and the requeues below all consult this.
+        self._module_qns_by_path = None
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
