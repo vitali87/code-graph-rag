@@ -290,7 +290,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Update NEWS.md and regenerate README
+      - name: Update NEWS.md
+        id: update_news
         if: steps.decide.outputs.release == 'true'
         continue-on-error: true
         run: |
@@ -319,10 +320,29 @@ jobs:
             echo "- **NEWS.md:** FAILED, $news_out" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "$news_out"
-          if ! git diff --quiet NEWS.md; then
-            if ! (uv sync --frozen && uv run --frozen python scripts/generate_readme.py); then
-              git checkout -- NEWS.md README.md
-            fi
+          # The README re-render is its OWN step below, without
+          # continue-on-error: here a generator failure was the condition of
+          # the recovery block, the checkout succeeded, the step exited 0 and
+          # the release shipped stale generated docs (issue #1971). Only the
+          # news derivation is tolerated; the render must not be.
+          if git diff --quiet NEWS.md; then
+            echo "news_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "news_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate README from the updated NEWS.md
+        if: steps.decide.outputs.release == 'true' && steps.update_news.outputs.news_changed == 'true'
+        run: |
+          # A NEWS.md change without the README re-render would drift from the
+          # generate-README pre-commit hook, so revert both if the render
+          # fails -- and then FAIL: the generator exits 1 when a generated
+          # section reaches no marker (#1969), and that safeguard has to stop
+          # the release rather than be swallowed (issue #1971).
+          if ! (uv sync --frozen && uv run --frozen python scripts/generate_readme.py); then
+            git checkout -- NEWS.md README.md
+            echo "- **README:** re-render FAILED; NEWS.md and README.md restored, release stopped" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
       - name: Update pyproject.toml
