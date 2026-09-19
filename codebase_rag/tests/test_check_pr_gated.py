@@ -162,7 +162,13 @@ def test_a_name_is_reported_once_however_many_entries_carry_it() -> None:
 
 
 def _gate_a_green_pr(
-    monkeypatch: pytest.MonkeyPatch, rollup: list[dict[str, object]]
+    monkeypatch: pytest.MonkeyPatch,
+    rollup: list[dict[str, object]],
+    *,
+    rules: list[dict[str, object]] | None = None,
+    protection: dict[str, object] | None = None,
+    reviews: list[dict[str, object]] | None = None,
+    repo: dict[str, object] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Run `check()` over a PR that is gated on every other axis.
 
@@ -182,14 +188,20 @@ def _gate_a_green_pr(
                 "author": {"login": "greptile-apps[bot]"},
             }
         ],
-        "reviews": [],
+        "reviews": reviews or [],
     }
+    ruleset = rules if rules is not None else [{"type": "required_status_checks"}]
 
     def fake_gh(*args: str) -> str:
         if args[:2] == ("pr", "view"):
             return json.dumps(view)
         if args[0] == "api" and args[1].startswith("repos/") and "/rules/" in args[1]:
-            return json.dumps([{"type": "required_status_checks"}])
+            return json.dumps(ruleset)
+        if args[0] == "api" and args[1].endswith("/protection"):
+            # A repo with no classic layer 404s, which reads as "".
+            return json.dumps(protection) if protection is not None else ""
+        if args[0] == "api" and args[1] == f"repos/{check_pr_gated.REPO}":
+            return json.dumps(repo if repo is not None else {"allow_auto_merge": False})
         if args[0] == "api" and "/actions/runs/" in args[1]:
             return json.dumps({"pull_requests": [{"number": 1930}]})
         return ""
@@ -265,3 +277,158 @@ def test_a_caveat_prints_above_the_gated_verdict(
     out = capsys.readouterr().out
     assert out.index("Analyze (csharp)") < out.index("gated (")
     assert "see caveat(s) above" in out
+
+
+# --- the classic branch-protection layer (issue #1957) -----------------------
+
+_GREEN = [check_run(REQUIRED_CONTEXT, "SUCCESS")]
+_CLASSIC_ONE_APPROVAL: dict[str, object] = {
+    "required_pull_request_reviews": {"required_approving_review_count": 1},
+    "enforce_admins": {"enabled": False},
+    "required_status_checks": None,
+}
+_RULESET_ZERO: list[dict[str, object]] = [
+    {"type": "required_status_checks"},
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 0}},
+]
+
+
+def _review(login: str, state: str) -> dict[str, object]:
+    return {"author": {"login": login}, "state": state}
+
+
+def test_no_classic_layer_adds_no_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    reasons, caveats = _gate_a_green_pr(monkeypatch, _GREEN, protection=None)
+    assert reasons == [] and caveats == []
+
+
+def test_a_classic_approval_requirement_the_pr_does_not_meet_is_a_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The measured case: ruleset 0, classic 1, zero approvals, every check
+    green -- `gh pr merge` refuses with 'base branch policy prohibits'."""
+    reasons, caveats = _gate_a_green_pr(
+        monkeypatch, _GREEN, rules=_RULESET_ZERO, protection=_CLASSIC_ONE_APPROVAL
+    )
+    assert len(reasons) == 1
+    reason = reasons[0]
+    assert "requires 1 approving review(s) (classic branch protection)" in reason
+    assert "has 0" in reason
+    assert "base branch policy prohibits the merge" in reason
+    # The remedies are read from the repo, not asserted from a general message.
+    assert "auto-merge is disabled" in reason
+    assert "`--admin` would bypass" in reason
+    # The disagreement between the layers is itself reported.
+    assert len(caveats) == 1
+    assert "disagree on approvals (0 vs 1)" in caveats[0]
+
+
+def test_an_approving_review_satisfies_the_classic_requirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasons, _caveats = _gate_a_green_pr(
+        monkeypatch,
+        _GREEN,
+        rules=_RULESET_ZERO,
+        protection=_CLASSIC_ONE_APPROVAL,
+        reviews=[_review("reviewer", "APPROVED")],
+    )
+    assert reasons == []
+
+
+def test_layers_that_agree_produce_no_disagreement_caveat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rules: list[dict[str, object]] = [
+        {"type": "required_status_checks"},
+        {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+    ]
+    _reasons, caveats = _gate_a_green_pr(
+        monkeypatch,
+        _GREEN,
+        rules=rules,
+        protection=_CLASSIC_ONE_APPROVAL,
+        reviews=[_review("reviewer", "APPROVED")],
+    )
+    assert caveats == []
+
+
+def test_enforced_for_admins_names_no_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    protection: dict[str, object] = {
+        **_CLASSIC_ONE_APPROVAL,
+        "enforce_admins": {"enabled": True},
+    }
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, protection=protection)
+    assert "enforced for administrators too" in reasons[0]
+    assert "--admin" not in reasons[0]
+
+
+def test_auto_merge_enabled_is_named_as_the_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch,
+        _GREEN,
+        protection=_CLASSIC_ONE_APPROVAL,
+        repo={"allow_auto_merge": True},
+    )
+    assert "auto-merge is enabled" in reasons[0]
+
+
+def test_classic_status_checks_count_as_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ruleset requires checks, but the classic layer does: something IS
+    enforced, so the 'nothing is enforced' reason must not fire."""
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT]},
+        "enforce_admins": {"enabled": False},
+    }
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, rules=[], protection=protection)
+    assert reasons == []
+
+
+def test_a_classic_required_context_absent_at_the_head_is_a_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protection: dict[str, object] = {
+        "required_status_checks": {"contexts": [REQUIRED_CONTEXT, "Extra Gate"]},
+        "enforce_admins": {"enabled": False},
+    }
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, protection=protection)
+    assert reasons == [
+        "context 'Extra Gate', required by classic branch protection, is absent "
+        "at the head"
+    ]
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch,
+        [*_GREEN, check_run("Extra Gate", "FAILURE")],
+        protection=protection,
+    )
+    assert reasons == [
+        "'Extra Gate' (required by classic branch protection) concluded FAILURE"
+    ]
+
+
+def test_approvals_count_each_reviewers_latest_verdict() -> None:
+    # Counting FIRST verdicts would give 2 (a, b); counting any approval
+    # ever, 3. Only the latest verdict per reviewer gives 1.
+    reviews = [
+        _review("a", "APPROVED"),
+        _review("a", "COMMENTED"),  # a comment changes nothing
+        _review("b", "APPROVED"),
+        _review("b", "CHANGES_REQUESTED"),  # withdrawn
+        _review("c", "CHANGES_REQUESTED"),
+        _review("coderabbitai[bot]", "APPROVED"),  # never counts
+    ]
+    assert check_pr_gated.approvals(reviews) == 1
+    # Granted after changes were requested: the latest verdict wins.
+    assert check_pr_gated.approvals([*reviews, _review("c", "APPROVED")]) == 2
+
+
+def test_ruleset_and_classic_counts_are_read_from_their_own_shapes() -> None:
+    assert check_pr_gated.ruleset_review_count(_RULESET_ZERO) == 0
+    assert check_pr_gated.ruleset_review_count([{"type": "deletion"}]) is None
+    assert check_pr_gated.classic_review_count(_CLASSIC_ONE_APPROVAL) == 1
+    assert check_pr_gated.classic_review_count({}) is None
+    assert check_pr_gated.classic_required_contexts(_CLASSIC_ONE_APPROVAL) == []

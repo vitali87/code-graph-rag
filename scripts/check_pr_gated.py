@@ -667,6 +667,142 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
     return [run for run in runs if str(run.get("path", "")) == CI_WORKFLOW_PATH]
 
 
+# --- the classic branch-protection layer (issue #1957) -----------------------
+#
+# `rules/branches/<base>` returns RULESETS only. GitHub enforces classic branch
+# protection as a second, independent layer, and `gh pr merge` is refused by
+# whichever is stricter. Measured on this repo: the ruleset required 0
+# approvals, the classic layer 1, and three fully green PRs (#1946, #1947,
+# #1953) reported "gated" here and were then refused with "the base branch
+# policy prohibits the merge". The endpoint 404s on a repo with no classic
+# layer, which `_gh_stdout_or_empty` returns as "", so absence reads as "no
+# classic layer", never as an error.
+
+
+def classic_protection(base: str) -> dict[str, Any]:
+    """The classic branch-protection layer on `base`, or {} when there is none."""
+    return _json_dict(
+        _gh_stdout_or_empty("api", f"repos/{REPO}/branches/{base}/protection")
+    )
+
+
+def ruleset_review_count(rules: list[Any]) -> int | None:
+    """The approvals a `pull_request` ruleset rule requires; None without one."""
+    counts = [
+        int(count)
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("type") == "pull_request"
+        for count in [
+            (rule.get("parameters") or {}).get("required_approving_review_count")
+        ]
+        if isinstance(count, int)
+    ]
+    return max(counts) if counts else None
+
+
+def classic_review_count(protection: dict[str, Any]) -> int | None:
+    """The approvals classic protection requires; None when it requires none."""
+    reviews = protection.get("required_pull_request_reviews")
+    if not isinstance(reviews, dict):
+        return None
+    count = reviews.get("required_approving_review_count")
+    return count if isinstance(count, int) else None
+
+
+def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
+    checks = protection.get("required_status_checks")
+    if not isinstance(checks, dict):
+        return []
+    contexts = checks.get("contexts")
+    return [str(c) for c in contexts] if isinstance(contexts, list) else []
+
+
+def approvals(reviews: list[Any]) -> int:
+    """Distinct reviewers whose LATEST verdict is an approval.
+
+    GitHub counts a reviewer's most recent non-comment review: an approval
+    followed by "changes requested" is no longer an approval, and a
+    comment-only review changes nothing. Bot accounts never satisfy a
+    branch-policy approval requirement.
+    """
+    latest: dict[str, str] = {}
+    for review in reviews:
+        if not isinstance(review, dict):
+            continue
+        state = str(review.get("state", "")).upper()
+        if state in ("", "COMMENTED", "PENDING"):
+            continue
+        author = _author_login(review)
+        if author.endswith("[bot]"):
+            continue
+        latest[author] = state
+    return sum(1 for state in latest.values() if state == "APPROVED")
+
+
+def merge_remedies() -> str:
+    """Which routes past a refused merge exist on this repo, from its settings."""
+    repo = _json_dict(_gh_stdout_or_empty("api", f"repos/{REPO}"))
+    auto_merge = repo.get("allow_auto_merge")
+    if auto_merge is True:
+        return "auto-merge is enabled, so `--auto` will merge once the policy is met"
+    if auto_merge is False:
+        return "auto-merge is disabled on the repo, so `--auto` cannot help"
+    return "the repo's auto-merge setting could not be read"
+
+
+def approval_findings(
+    pr: str,
+    base: str,
+    rules: list[Any],
+    protection: dict[str, Any],
+    reviews: list[Any],
+) -> tuple[list[str], list[str]]:
+    """Reasons and caveats from the approval requirement of BOTH layers."""
+    reasons: list[str] = []
+    caveats: list[str] = []
+    from_ruleset = ruleset_review_count(rules)
+    from_classic = classic_review_count(protection)
+    if (
+        from_ruleset is not None
+        and from_classic is not None
+        and from_ruleset != from_classic
+    ):
+        caveats.append(
+            f"the ruleset and classic branch protection on '{base}' disagree on "
+            f"approvals ({from_ruleset} vs {from_classic}); the higher one binds, "
+            "and PRs that merged before the stricter layer was enabled are no "
+            "guide to what merges now"
+        )
+    required = max(
+        (n for n in (from_ruleset, from_classic) if n is not None), default=0
+    )
+    have = approvals(reviews)
+    if have >= required:
+        return reasons, caveats
+    sources = [
+        name
+        for name, count in (
+            ("classic branch protection", from_classic),
+            ("ruleset", from_ruleset),
+        )
+        if count == required
+    ]
+    admins = protection.get("enforce_admins")
+    enforced = isinstance(admins, dict) and admins.get("enabled") is True
+    reasons.append(
+        f"base '{base}' requires {required} approving review(s) "
+        f"({' and '.join(sources)}) and #{pr} has {have}, so `gh pr merge` is "
+        "refused with 'the base branch policy prohibits the merge'; "
+        f"{merge_remedies()}; "
+        + (
+            "the rule is enforced for administrators too"
+            if enforced
+            else "`--admin` would bypass it, which is a decision, not a fix"
+        )
+    )
+    return reasons, caveats
+
+
 def check(pr: str) -> tuple[list[str], list[str]]:
     """Reasons `pr` is not verifiably gated, and caveats on the evidence.
 
@@ -701,10 +837,14 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         _gh_stdout_or_empty("api", f"repos/{REPO}/rules/branches/{base}")
     )
     rule_types = {r.get("type") for r in rules if isinstance(r, dict)}
-    if "required_status_checks" not in rule_types:
+    # Both enforcement layers (issue #1957): rulesets AND classic protection.
+    protection = classic_protection(base)
+    classic_contexts = classic_required_contexts(protection)
+    if "required_status_checks" not in rule_types and not classic_contexts:
         reasons.append(
-            f"base '{base}' is covered by no ruleset requiring status checks, "
-            "so nothing is enforced on this PR regardless of its check list"
+            f"base '{base}' is covered by no ruleset and no classic branch "
+            "protection requiring status checks, so nothing is enforced on "
+            "this PR regardless of its check list"
         )
 
     at_head = ci_runs_at_head(head)
@@ -799,6 +939,31 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                     f"'{REQUIRED_CONTEXT}' concluded {entry.get('conclusion')}"
                 )
 
+    # Contexts the CLASSIC layer requires are enforced exactly like the
+    # ruleset's, and a PR missing one is refused the same way.
+    for name in classic_contexts:
+        if name == REQUIRED_CONTEXT:
+            continue
+        if required_contexts_present(rollup, [name]):
+            reasons.append(
+                f"context '{name}', required by classic branch protection, is "
+                "absent at the head"
+            )
+            continue
+        for entry in rollup:
+            if context_name(entry) != name:
+                continue
+            if not is_concluded(entry):
+                reasons.append(
+                    f"'{name}' (required by classic branch protection) has not "
+                    "concluded"
+                )
+            elif str(entry.get("conclusion", "")).upper() != "SUCCESS":
+                reasons.append(
+                    f"'{name}' (required by classic branch protection) concluded "
+                    f"{entry.get('conclusion')}"
+                )
+
     absent_jobs = missing_aggregated_jobs(rollup)
     if absent_jobs:
         reasons.append(
@@ -827,6 +992,16 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         caveats.extend(review_execution_caveats(real_reviews))
 
     caveats.extend(unrequired_failure_caveat(rollup))
+
+    # The approval requirement of both layers, counted against the reviews
+    # actually on the PR (issue #1957): the refusal it predicts is the one
+    # `gh pr merge` prints without naming the layer.
+    review_list = [r for r in view.get("reviews", []) if isinstance(r, dict)]
+    approval_reasons, approval_caveats = approval_findings(
+        pr, base, rules, protection, review_list
+    )
+    reasons.extend(approval_reasons)
+    caveats.extend(approval_caveats)
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
