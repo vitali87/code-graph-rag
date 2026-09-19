@@ -5174,7 +5174,7 @@ class CallProcessor:
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or registry.get(class_qn) != NodeType.CLASS:
             return
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
         is_ctor = leaf == simple
         is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         if not is_ctor and not is_dtor:
