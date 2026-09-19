@@ -5472,9 +5472,8 @@ class GraphUpdater:
         for caller_key in (
             *self._affected_caller_keys(keys),
             *self._unresolved_importer_keys(sorted(present)),
-            # Only files this call CREATED can satisfy a recorded name; a
-            # modified file's definitions were already there to resolve
-            # against (local review).
+            # Created files offer everything; modified files offer only the
+            # definitions they gained (bot review on PR #1979).
             *self._unresolved_reference_waiters(
                 [
                     (key, _read_bytes(path))
