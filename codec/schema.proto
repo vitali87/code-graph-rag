@@ -472,6 +472,8 @@ message GraphCodeIndex {
     int32 end_line = 5;
     repeated string decorators = 6;
     bool is_exported = 7;
+    // The namespace a C# type is declared in (issue #1629).
+    string namespace = 8;
   }
 
   message Interface {
@@ -481,6 +483,7 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string absolute_path = 4;
+    string namespace = 5;
   }
 
   message Enum {
@@ -490,6 +493,7 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string absolute_path = 4;
+    string namespace = 5;
   }
 
   message Type {

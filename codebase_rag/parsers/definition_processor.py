@@ -177,6 +177,15 @@ class DefinitionProcessor(
         # `proj.Core.Util`. No prefix rule on the qn can recover the
         # declarer, so the prune reads this map (#1769).
         self.csharp_class_owner_module: dict[str, str] = {}
+        # {class qn: namespace-qualified name (`N1.Outer.Widget`)} for every
+        # C# type, read from the declaration at ingest: the qn leaves out a
+        # namespace the module's directory already spells (issue #1629), so
+        # the `this`-receiver matcher cannot recover the form from it.
+        self.csharp_class_namespaced: dict[str, str] = {}
+        # The reverse: {namespace-qualified name: class qns carrying it}, so
+        # a written `Zeta.BaseC` in a base list still finds the class whose
+        # qn no longer ends with those segments (bot review on #1629).
+        self.csharp_namespaced_qns: dict[str, set[str]] = {}
         # {method qn: (normalized return type, its written generic arity)}
         # for chained-receiver typing; separate from the cross-language
         # method_return_types because the arity is C#-specific.

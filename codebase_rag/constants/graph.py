@@ -580,6 +580,10 @@ KEY_POSITIONAL_PARAMS = "positional_params"
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
+# The namespace a C# type is declared in, kept apart from the qualified
+# name because the qn leaves out a namespace the module's directory already
+# spells (issue #1629).
+KEY_NAMESPACE = "namespace"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.

@@ -9,6 +9,7 @@ from loguru import logger
 from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
+from .utils.path_utils import module_stem
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -205,6 +206,64 @@ def _cpp_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
+_CSHARP_NAMESPACE_SCOPES = frozenset(
+    {
+        cs.TS_CSHARP_COMPILATION_UNIT,
+        cs.TS_CSHARP_NAMESPACE_DECLARATION,
+        cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION,
+    }
+)
+
+
+def module_directory_qn(module_qn: str, file_path: Path | None) -> str:
+    # The module qn minus the file's own segment. The stem may carry dots
+    # (`Foo.TResult.cs`), so it is removed by name rather than at the last
+    # dot, and a same-stem sibling of another language gives the module a
+    # `<stem>.<ext>` segment instead (`proj.src.Foo.cs`). A module whose
+    # own segment is neither has no known directory, and nothing folds
+    # (bot review); without a path the last segment is the only guess.
+    if file_path is not None:
+        stem = module_stem(file_path.name)
+        for own in (stem, f"{stem}{cs.SEPARATOR_DOT}{file_path.suffix.lstrip('.')}"):
+            suffix = f"{cs.SEPARATOR_DOT}{own}"
+            if module_qn.endswith(suffix):
+                return module_qn[: -len(suffix)]
+        return ""
+    if cs.SEPARATOR_DOT in module_qn:
+        return module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+    return ""
+
+
+def _csharp_fold_scopes(
+    parts: list[tuple[str, str]], module_qn: str, file_path: Path | None
+) -> list[str]:
+    """Drop the namespace run the module's directory already spells.
+
+    The leading namespace scopes (a file-scoped `namespace N;` arrives as
+    the compilation unit's name, see `_csharp_get_name`) join to one dotted
+    run. When the module's directory qn ends with that run, as in
+    `src/Serilog/Capturing/PropertyBinder.cs` under `namespace
+    Serilog.Capturing`, the run says nothing the path does not and is left
+    out of the qualified name. Otherwise it is kept whole: it is what tells
+    two same-named types in one file apart, and what a reader searching by
+    the natural name expects to find (issue #1629). The declared namespace
+    is recorded on the type node either way.
+    """
+    names = [name for _node_type, name in parts]
+    run = 0
+    for node_type, _name in parts:
+        if node_type not in _CSHARP_NAMESPACE_SCOPES:
+            break
+        run += 1
+    if not run:
+        return names
+    namespace = cs.SEPARATOR_DOT.join(names[:run])
+    directory = module_directory_qn(module_qn, file_path)
+    if directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
+        return names[run:]
+    return names
+
+
 def _csharp_get_name(node: Node) -> str | None:
     # A file-scoped `namespace N;` is a SIBLING of the declarations it
     # governs, not their ancestor, so it never appears in a type's ancestor
@@ -334,6 +393,7 @@ CSHARP_FQN_SPEC = FQNSpec(
     function_node_types=frozenset(cs.FQN_CSHARP_FUNCTION_TYPES),
     get_name=_csharp_get_name,
     file_to_module_parts=_generic_file_to_module,
+    fold_scopes=_csharp_fold_scopes,
 )
 
 DART_FQN_SPEC = FQNSpec(
