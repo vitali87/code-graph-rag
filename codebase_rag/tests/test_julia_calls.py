@@ -441,3 +441,183 @@ end
     calls = _calls(mock_ingestor)
     module_qn = f"{project.name}.main"
     assert (f"{module_qn}.Arr.Arr", f"{module_qn}.normalize") in calls, calls
+
+
+def test_nested_arrow_calls_owned_by_inner(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A NAMED arrow's body owns its calls: the arrow has exactly two named
+    children (parameter, body; `->` is anonymous), so the body-span guard
+    must accept the two-child shape, or the enclosing function double-owns
+    the call (issue #1882 review: the `>= 3` guard never matched)."""
+    project = temp_repo / "julia_nested_arrow"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function helper(x)
+    return x + 1
+end
+
+function outer(x)
+    f = y -> helper(y)
+    return f(x)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    hits = _calls_to(mock_ingestor, ".helper")
+    srcs = {src for src, _ in hits}
+    assert any(src.endswith(".f") for src in srcs), hits
+    assert not any(src.endswith(".outer") for src in srcs), hits
+
+
+def test_nested_concise_method_calls_owned_by_inner(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A concise method's body (the right side of `f(x) = ...`) owns its
+    calls: the assignment's named children are [call head, `=`, body], so
+    the span guard must take the right side, or the enclosing function
+    double-owns the call (issue #1882 review)."""
+    project = temp_repo / "julia_nested_concise"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function helper(x)
+    return x + 1
+end
+
+function outer(x)
+    g(y) = helper(y)
+    return g(x)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    hits = _calls_to(mock_ingestor, ".helper")
+    srcs = {src for src, _ in hits}
+    assert any(src.endswith(".g") for src in srcs), hits
+    assert not any(src.endswith(".outer") for src in srcs), hits
+
+
+def test_macro_invocation_does_not_fan_out_to_function(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A macro invocation binds ONLY the macro: the duplicate bucket of a
+    same-named macro/function pair fans the generic edge out onto both
+    twins, so the final target list must be filtered by the macro registry
+    (issue #1882 review: the gate validated only the first candidate)."""
+    project = temp_repo / "julia_macro_fanout"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+macro f(x)
+    return x
+end
+
+function f(x)
+    return x + 1
+end
+
+function user_macro(x)
+    @f(x)
+    return x
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    src = f"{module_qn}.user_macro"
+    targets = {dst for (s, dst) in calls if s == src}
+    # Exactly one twin: the macro (the function is registered first in the
+    # query order only if it precedes the macro; assert on the count and on
+    # the absence of the @-suffixed free-function variant in BOTH
+    # directions' over-emission).
+    assert len(targets) == 1, calls
+    assert not any(
+        t.endswith(f".f@{line}") for t in targets for line in range(1, 30)
+    ), calls
+
+
+def test_struct_constructor_call_edge(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`Point(v)` construction runs the inner same-name constructor: with
+    the type owning the natural qn, the class branch must redirect a CALLS
+    edge to `mod.Point.Point` (not only INSTANTIATES), like Java/C#
+    (issue #1882 review: the constructor was left edge-free)."""
+    project = temp_repo / "julia_ctor_edge"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+struct Point
+    x::Float64
+    function Point(v)
+        new(v)
+    end
+end
+
+function make(v)
+    return Point(v)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    assert (f"{module_qn}.make", f"{module_qn}.Point.Point") in calls, calls
+    inst = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+    }
+    assert (f"{module_qn}.make", f"{module_qn}.Point") in inst, inst
+
+
+def test_shadowing_function_wins_constructor_call(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """Julia call syntax dispatches in the FUNCTION namespace: with a free
+    function shadowing the type's name, `Arr(x)` calls the function twin,
+    so the CALLS edge goes to it, not the inner constructor (issue #1882
+    review)."""
+    project = temp_repo / "julia_shadow_call"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+struct Arr
+    x::Float64
+    function Arr(v)
+        new(v)
+    end
+end
+
+function Arr(x)
+    return x + 1
+end
+
+function make(x)
+    return Arr(x)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = _calls(mock_ingestor)
+    module_qn = f"{project.name}.main"
+    src = f"{module_qn}.make"
+    targets = {
+        dst
+        for (s, dst) in calls
+        if s == src and (dst.endswith(".Arr") or ".Arr@" in dst)
+    }
+    assert any(".Arr@" in dst for dst in targets), calls
+    assert not any(dst.endswith(".Arr.Arr") for dst in targets), calls

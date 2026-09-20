@@ -590,3 +590,39 @@ x = 1
 
     props = _props_for(mock_ingestor, NodeType.MODULE, ".main")
     assert props.get("docstring") in (None, ""), props
+
+
+def test_anonymous_long_form_function_names_nothing(
+    julia_project: Path, mock_ingestor: MagicMock
+) -> None:
+    """`function (x) ... end` is anonymous: the argument-list signature must
+    not name a function after its first parameter (issue #1882 review: the
+    head reduction produced a phantom function named `x`)."""
+    (julia_project / "main.jl").write_text(
+        """
+function (x)
+    return x + 1
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(julia_project, mock_ingestor, skip_if_missing=SKIP)
+
+    fn_qns = get_node_names(mock_ingestor, NodeType.FUNCTION)
+    assert not any(qn.endswith(".x") for qn in fn_qns), fn_qns
+
+
+def test_argument_list_signature_names_nothing(julia_parser: "Parser") -> None:
+    """Unit: `julia_function_head_name` returns None for an anonymous
+    long-form function (argument-list signature), not the first parameter."""
+
+    def head(code: bytes) -> "Node":
+        return julia_parser.parse(code).root_node.named_children[0]
+
+    assert julia_utils.julia_function_head_name(head(b"function (x) x end\n")) is None
+    assert (
+        julia_utils.julia_function_head_name(head(b"function (x, y) x + y end\n"))
+        is None
+    )
+    # A named definition still names itself.
+    assert julia_utils.julia_function_head_name(head(b"function f(x) x end\n")) == "f"

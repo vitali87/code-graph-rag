@@ -38,6 +38,7 @@ TS_JULIA_TYPED_EXPRESSION = "typed_expression"
 TS_JULIA_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_JULIA_UNARY_TYPED_EXPRESSION = "unary_typed_expression"
 TS_JULIA_INTERPOLATION_EXPRESSION = "interpolation_expression"
+TS_JULIA_ARGUMENT_LIST = "argument_list"
 
 # Call sites. `call_expression` has NO `function` field: the callee is the
 # first named child. `macrocall_expression` (`@name args`) is the macro
