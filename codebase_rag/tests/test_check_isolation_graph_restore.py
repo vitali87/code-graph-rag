@@ -20,6 +20,8 @@ from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
 from evals.cgr_graph import _StatefulIngestor
 
+pytest_plugins = ("check_isolation_helpers",)
+
 # --- the graph after the check ------------------------------------------------
 
 

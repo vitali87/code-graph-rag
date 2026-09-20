@@ -13,6 +13,8 @@ from check_isolation_helpers import (
 from codebase_rag import constants as cs
 from evals.cgr_graph import _StatefulIngestor
 
+pytest_plugins = ("check_isolation_helpers",)
+
 # --- the report ---------------------------------------------------------------
 
 
