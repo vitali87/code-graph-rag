@@ -12,6 +12,7 @@ from check_isolation_helpers import (
     _state,
     _updater,
     _write,
+    indexed,
 )
 
 from codebase_rag import constants as cs
