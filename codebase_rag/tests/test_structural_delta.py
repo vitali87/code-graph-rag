@@ -704,6 +704,57 @@ def test_check_keeps_excluded_files_out_of_the_graph(
     assert all("generated_src" not in p for p in delta["reparsed"])
 
 
+def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
+    temp_repo: Path,
+) -> None:
+    import subprocess
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_check import CheckError, indexed_scope, run_check
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    project_name = derive_project_name(root)
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=project_name,
+        project_named=False,
+    ).run(force=True)
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def assist(a):"),
+    )
+
+    run_check(
+        root,
+        "HEAD",
+        project_name,
+        store,
+        parsers,
+        queries,
+        project_named=False,
+    )
+
+    assert indexed_scope(root, project_name) == (None, None)
+    with pytest.raises(CheckError):
+        indexed_scope(root, "explicit-project", explicit=True)
+
+
 def test_check_works_when_the_project_is_below_the_git_toplevel(
     temp_repo: Path,
 ) -> None:

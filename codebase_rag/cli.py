@@ -1153,6 +1153,7 @@ def check_command(
                 queries,
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
+                project_named=project is not None,
             )
         except CheckError as error:
             typer.echo(str(error), err=True)
