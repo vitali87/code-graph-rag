@@ -125,6 +125,11 @@ _NOT_GRAPH_READERS = frozenset(
         # result to the postcondition contract, so refusing up front on a
         # partial graph would block the operation that repairs it.
         cs.MCPToolName.CHANGE_SIGNATURE,
+        # An EDIT like RENAME and CHANGE_SIGNATURE above: it runs its own
+        # re-ingest behind the incomplete-run marker and holds the result to
+        # the postcondition contract, so refusing up front on a partial graph
+        # would block the operation that repairs it (issue #1534).
+        cs.MCPToolName.MOVE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -492,6 +497,7 @@ class MCPToolsRegistry:
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
             cs.MCPToolName.CHANGE_SIGNATURE: self._change_signature_tool(),
+            cs.MCPToolName.MOVE: self._move_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
                 name=cs.MCPToolName.QUERY_CODE_GRAPH,
                 description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
@@ -2662,10 +2668,89 @@ class MCPToolsRegistry:
             payload[cs.KEY_VERDICT] = report.verdict._asdict()
         return payload
 
+    def _move_tool(self) -> ToolMetadata:
+        def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:
+            return MCPInputSchemaProperty(type=kind, description=description)
+
+        return ToolMetadata(
+            name=cs.MCPToolName.MOVE,
+            description=td.MCP_TOOLS[cs.MCPToolName.MOVE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_QUALIFIED_NAME
+                    ),
+                    cs.MCPParamName.TARGET_MODULE: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_TARGET_MODULE
+                    ),
+                    cs.MCPParamName.KEEP_ALIAS: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_KEEP_ALIAS
+                    ),
+                    cs.MCPParamName.DRY_RUN: prop(
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                    ),
+                    cs.MCPParamName.PROJECT: prop(
+                        cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.QUALIFIED_NAME,
+                    cs.MCPParamName.TARGET_MODULE,
+                ],
+            ),
+            handler=self.move,
+            returns_json=True,
+        )
+
+    async def move(
+        self,
+        qualified_name: str,
+        target_module: str,
+        keep_alias: bool = False,
+        dry_run: bool = False,
+        project: str | None = None,
+    ) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.MOVE,
+            project,
+            lambda name: self._run_move(
+                name, qualified_name, target_module, keep_alias, dry_run
+            ),
+        )
+
+    def _run_move(
+        self,
+        project_name: str,
+        qualified_name: str,
+        target_module: str,
+        keep_alias: bool,
+        dry_run: bool,
+    ) -> object:
+        from codebase_rag.editing.move import MoveRefused, move
+
+        try:
+            report = move(
+                Path(self.project_root),
+                self.ingestor.fetch_all,
+                project_name,
+                qualified_name,
+                target_module,
+                keep_alias=keep_alias,
+                dry_run=dry_run,
+                reingest=self._reingest_for_contract(project_name),
+            )
+        except MoveRefused as refused:
+            return {cs.DICT_KEY_ERROR: str(refused), cs.KEY_CYCLE: list(refused.cycle)}
+        payload = dict(report._asdict())
+        if report.verdict is not None:
+            payload[cs.KEY_VERDICT] = report.verdict._asdict()
+        return payload
+
     def _reingest_for_contract(
         self, project_name: str
     ) -> Callable[[list[str]], ReingestReport] | None:
-        """The re-ingest an edit's postcondition contract measures against.
+        """The live updater's re-ingest for an edit's postcondition contract.
 
         Delegates to `_guarded_rename_reingest`, which returns None for a
         project with no graph to measure (issue #1531) and wraps the callback
