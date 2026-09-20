@@ -451,6 +451,7 @@ class CallResolver:
             module_qn,
             class_context,
             local_var_types,
+            language,
         )
 
     def _receiver_is_untyped_shadow(
@@ -513,6 +514,7 @@ class CallResolver:
         module_qn: str,
         class_context: str | None = None,
         local_var_types: dict[str, str] | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         """Drop a CLASS answer for `value.Name()` -- a value never constructs.
 
@@ -548,6 +550,11 @@ class CallResolver:
         # key inside the receiver expression (`xs[1:2].Error()`), and exempting
         # on it let the defect straight through.
         if cs.SEPARATOR_DOUBLE_COLON in receiver:
+            return result
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and self._try_resolve_csharp_qualified_call(call_name, module_qn)
+        ):
             return result
         if self._receiver_names_a_type_or_module(
             receiver, module_qn, result[1], class_context, local_var_types
@@ -1393,11 +1400,13 @@ class CallResolver:
         ):
             return None
 
-        if (
-            language == cs.SupportedLanguage.CSHARP
-            and cs.SEPARATOR_DOUBLE_COLON in call_name
+        if language == cs.SupportedLanguage.CSHARP and (
+            cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
         ):
-            return self._try_resolve_csharp_qualified_call(call_name, module_qn)
+            if result := self._try_resolve_csharp_qualified_call(call_name, module_qn):
+                return result
+            if cs.SEPARATOR_DOUBLE_COLON in call_name:
+                return None
 
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language

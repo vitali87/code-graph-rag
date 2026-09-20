@@ -49,6 +49,7 @@ namespace Zeta;
 public class Widget {
     public Widget(int n) {}
     public static void AliasS() {}
+    public static void DottedS() {}
     public static void GlobalS() {}
 }
 """,
@@ -71,12 +72,20 @@ using Z = Zeta;
 using Zeta = Other;
 namespace App;
 public class Q {
-    public void Run() {
+    public void RunAlias() {
         var w = new Z::Widget(1);
         Z::Widget.AliasS();
-        Z.Widget.AliasS();
+    }
+    public void RunDotted() {
+        var w = new Z.Widget(2);
+        Z.Widget.DottedS();
+    }
+    public void RunGlobal() {
+        var w = new global::Zeta.Widget(3);
         global::Zeta.Widget.GlobalS();
-        Missing::AliasS();
+    }
+    public void RunMissing() {
+        Missing::NeverBoundS();
     }
 }
 """,
@@ -85,15 +94,46 @@ public class Q {
     run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
 
     instantiates = {
-        c.args[2][2] for c in get_relationships(mock_ingestor, "INSTANTIATES")
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
-    calls = _call_targets(mock_ingestor)
-    assert any(t.endswith("Zeta.Widget") for t in instantiates), instantiates
-    assert any(t.endswith("Zeta.Widget.AliasS") for t in calls), calls
-    assert any(t.endswith("Zeta.Widget.GlobalS") for t in calls), calls
-    assert not any(t.endswith("Other.Widget") for t in instantiates), instantiates
-    assert not any(t.endswith("Other.Widget.AliasS") for t in calls), calls
-    assert not any(t.endswith("Other.Widget.GlobalS") for t in calls), calls
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("Q.RunAlias") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunDotted") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunGlobal") and target.endswith("Zeta.Widget")
+        for source, target in instantiates
+    ), instantiates
+    assert any(
+        source.endswith("Q.RunAlias") and target.endswith("Zeta.Widget.AliasS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunDotted") and target.endswith("Zeta.Widget.DottedS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunGlobal") and target.endswith("Zeta.Widget.GlobalS")
+        for source, target in calls
+    ), calls
+    assert not any(target.endswith("Other.Widget") for _, target in instantiates), (
+        instantiates
+    )
+    assert not any(
+        target.endswith("Other.Widget.AliasS")
+        or target.endswith("Other.Widget.DottedS")
+        or target.endswith("Other.Widget.GlobalS")
+        for _, target in calls
+    ), calls
+    assert not any(target.endswith("NeverBoundS") for _, target in calls), calls
 
 
 def test_parameter_typed_receiver_resolves(
