@@ -7,6 +7,7 @@ import pytest
 from check_isolation_helpers import (
     PROJECT,
     _edit,
+    indexed,
 )
 
 from codebase_rag import constants as cs
