@@ -573,3 +573,22 @@ def test_an_import_alias_does_not_displace_another_import(tmp_path: Path) -> Non
     imports = {b for a, r, b in rels if r == "IMPORTS" and a.endswith(".app")}
     assert any(q.endswith(".helper") for q in imports), imports
     assert any(q.endswith(".other") for q in imports), imports
+
+
+def test_a_shadowed_prefix_is_not_read_as_a_construction(tmp_path: Path) -> None:
+    # The shadow check that stops a comparison being read as a construction
+    # (issue #2015) keys on the BARE binder, but an import-prefixed base is
+    # dotted (`p.Box`, issue #2033). A parameter named `p` must still make
+    # `p.Box < b > (1).height` a comparison; looking the dotted name up in
+    # the shadow spans would never match and the wrong edge would return.
+    files = {
+        "lib.dart": "class Box {\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "dynamic cmp(dynamic p, dynamic b) {\n"
+            "  return p.Box < b > (1).height;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.cmp", REFERENCES, ".Box.height"), rels

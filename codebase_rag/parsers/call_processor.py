@@ -7031,8 +7031,14 @@ class CallProcessor:
         base = dart_utils.dart_ambiguous_construction_base(node)
         if base is None:
             return False
+        # An import-prefixed base is dotted (`p.Box`, issue #2033) while the
+        # shadow spans are keyed by the bare binder, so check the LEADING
+        # segment: a local named `p` shadows the prefix and makes
+        # `p.Box < b > (1).x` a comparison, exactly as a local `Box` does for
+        # the unprefixed form.
+        binder = base.split(cs.SEPARATOR_DOT, 1)[0]
         pos = node.start_byte
-        return any(lo <= pos < hi for lo, hi in shadow_spans().get(base, ()))
+        return any(lo <= pos < hi for lo, hi in shadow_spans().get(binder, ()))
 
     def _dart_unshadowed_name(
         self,
