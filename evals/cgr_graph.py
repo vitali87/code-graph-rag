@@ -73,9 +73,16 @@ _DEFINES_RELS = frozenset(
 # What CYPHER_DELETE_MODULE walks: the definitions plus what hangs off them
 # by ownership. Kept separate from _DEFINES_RELS, which the definition
 # queries use and which must not see a Parameter as a definition.
+#
+# This is a hand-maintained copy of a list that lives in the query, so it
+# drifts silently -- it had already lost CONTAINS_SECTION, and a re-parsed
+# document kept every Section here while production deleted them (#1938).
+# `TestTheModuleSubtreeWalkMirrorsTheDeleteQuery` derives the expected set
+# from CYPHER_DELETE_MODULE itself and fails if the two diverge again.
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.CONTAINS_SECTION.value,
     cs.RelationshipType.DEFINES_CONSTANT.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.

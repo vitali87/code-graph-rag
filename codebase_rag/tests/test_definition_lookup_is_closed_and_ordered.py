@@ -30,7 +30,15 @@ from codebase_rag.cypher_queries import (
     CYPHER_GLOSS_TARGET,
     CYPHER_GRAPH_DEFINITION,
 )
+from codebase_rag.schema_parse import parsed_node_schemas
 from codebase_rag.tools.code_retrieval import CodeRetriever
+
+# The scalar type names the schema grammar uses, as `schema_parse` reports
+# them in `PropertySpec.type_name`. Spelled here rather than imported because
+# `schema_parse` keeps its vocabulary private, and a test naming the literal
+# is what catches a rename of the declared type itself.
+_SCHEMA_TYPE_STRING = "string"
+_SCHEMA_TYPE_INT = "int"
 
 # Every lookup that resolves one qualified name to a single definition row.
 _DEFINITION_LOOKUPS = {
@@ -173,3 +181,72 @@ def test_a_span_bearing_label_reaches_the_snippet_lookup(label: cs.NodeLabel) ->
     assert label in cs.SNIPPET_NODE_LABELS, label
     assert label not in cs.DEFINITION_NODE_LABELS, label
     assert label.value in _matched_labels(CYPHER_FIND_BY_QUALIFIED_NAME), label
+
+
+def test_the_allowlist_equals_the_schema_labels_that_declare_a_span() -> None:
+    """The allowlist is derived from the SCHEMA, not from itself.
+
+    Every other test in this file takes its cases from
+    SNIPPET_NODE_LABELS or its two halves, so each one proves the constant
+    is consistent with the query and none can fail when the CONSTANT is
+    wrong. Add a span-bearing label to the schema and forget
+    SPAN_BEARING_NODE_LABELS, and they all stay green while
+    find_code_snippet reports missing-location for that label -- issue
+    #1925's own symptom, on a new label (issue #1950).
+
+    `NODE_SCHEMAS` is the independent source: it is what the graph is
+    actually built to, and it is maintained for its own reasons. Read
+    through `parsed_node_schemas()` rather than by substring, because a
+    substring test matches any property CONTAINING the key -- and
+    `name_start_line` is already in this schema's vocabulary (Function and
+    Method declare it), so a label carrying only `name_start_line` and
+    `name_end_line`, with no real span, would otherwise be demanded in the
+    allowlist. Equality
+    rather than a subset, so it fails in both directions -- a label that
+    gains a span and is not admitted, and a label kept in the allowlist
+    after losing one.
+
+    The predicate is start_line AND end_line AND path, which is what the
+    caller actually requires: `find_code_snippet` rejects a row unless
+    the path is a non-empty string AND both line numbers are ints with
+    end >= start (code_retrieval.py). Checking the lines alone would
+    demand a label be admitted that retrieval could not serve, so the
+    predicate names the whole contract (Greptile on #1951). `Field` and `Parameter` declare
+    `start_line: int?` and no end_line at all, and that is precisely why
+    #1925 excluded them: a Field row winning a definition lookup was
+    rejected by the caller's own validation for having no end. So the
+    two labels this file exists to keep out are kept out BY the predicate
+    rather than by an exception list, and a start_line-only predicate
+    would readmit them.
+
+    The predicate pairs each name with its declared TYPE, because the
+    grammar accepts every scalar and a name alone cannot tell
+    `end_line: int?` from `end_line: string?` -- retype one and a
+    name-only predicate stays green while retrieval's int check rejects
+    every row for that label (CodeRabbit on #1951).
+
+    It deliberately does NOT require the declarations to be mandatory.
+    Eight of the twelve admitted labels declare their span as optional
+    (`start_line: int?`), including every definition label, because a
+    span is absent for a synthesised node rather than never present --
+    `find_code_snippet` validates the VALUE on the row it got, which is
+    a runtime question the declaration does not answer. Requiring
+    `optional is False` here would demand the allowlist shrink to the
+    four labels that happen to declare a mandatory span, which is not
+    the eligibility contract.
+    """
+    readable = {
+        (cs.KEY_PATH, _SCHEMA_TYPE_STRING),
+        (cs.KEY_START_LINE, _SCHEMA_TYPE_INT),
+        (cs.KEY_END_LINE, _SCHEMA_TYPE_INT),
+    }
+    declared = {
+        label
+        for label, specs in parsed_node_schemas().items()
+        if readable <= {(spec.name, spec.type_name) for spec in specs}
+    }
+    assert declared == cs.SNIPPET_NODE_LABELS, (
+        "SNIPPET_NODE_LABELS has drifted from the schema. "
+        f"span-bearing but not admitted: {sorted(x.value for x in declared - cs.SNIPPET_NODE_LABELS)}; "
+        f"admitted without a declared span: {sorted(x.value for x in cs.SNIPPET_NODE_LABELS - declared)}"
+    )
