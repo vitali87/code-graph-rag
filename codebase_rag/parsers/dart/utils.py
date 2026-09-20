@@ -621,6 +621,30 @@ def _binding_scope_span(decl: Node, root: Node) -> tuple[int, int] | None:
     return None
 
 
+def _pattern_bound_names(node: Node) -> list[str]:
+    """`var (alpha, beta) = rhs` binds every identifier inside the *_pattern
+    subtree; the RHS expression binds nothing.
+
+    Mirrors `call_processor._dart_pattern_bound_names`. Omitting it left a
+    pattern binding invisible to the shadow check while the older
+    `local_var_types` guard could not see it either (it has no inferable
+    type), so `var (p, q) = (1, 2)` reproduced the very defect the span
+    guard exists to stop.
+    """
+    names: list[str] = []
+    stack = [
+        child
+        for child in node.named_children
+        if child.type.endswith(cs.DART_PATTERN_NODE_SUFFIX)
+    ]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_DART_IDENTIFIER and current.text:
+            names.append(decode_node_text(current.text))
+        stack.extend(current.named_children)
+    return names
+
+
 def _bound_names(node: Node) -> list[str]:
     """The name(s) a parameter or local declaration binds.
 
@@ -636,6 +660,8 @@ def _bound_names(node: Node) -> list[str]:
             and child.text
             and (name := decode_node_text(child.text))
         ]
+    if node.type == cs.TS_DART_PATTERN_VARIABLE_DECLARATION:
+        return _pattern_bound_names(node)
     if node.type in _LOCAL_DECLARATION_TYPES or node.type == cs.TS_DART_FOR_LOOP_PARTS:
         declared = next(
             (c for c in node.named_children if c.type == cs.TS_DART_IDENTIFIER),

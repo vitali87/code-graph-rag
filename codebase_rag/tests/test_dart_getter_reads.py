@@ -670,6 +670,67 @@ def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> Non
     assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
 
 
+def test_a_pattern_binding_shadowing_an_import_prefix_is_not_folded(
+    tmp_path: Path,
+) -> None:
+    # `var (p, q) = (1, 2)` binds `p` as surely as `var p = 1` does, and
+    # carries no inferable type either, so neither the span guard nor the
+    # older local_var_types guard sees it unless the span walk descends into
+    # the pattern subtree. It did not, so this shape reproduced the exact
+    # false CALLS/INSTANTIATES/REFERENCES edges the guard exists to stop
+    # (local review P1 on the first cut of this fix).
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int pat() { var (p, q) = (1, 2); return p.Box(1).height; }\n"
+            "int clean() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.pat", REFERENCES, ".Box.height"), rels
+    # Control: the same prefix in a function with no pattern still folds.
+    assert _has(rels, ".app.clean", REFERENCES, ".Box.height"), rels
+    # NOT asserted: the CALLS/INSTANTIATES pair. Measured at this commit's
+    # parent, `p.Box(1)` under ANY shadow shape -- including the typed
+    # parameter the older guard does catch for reads -- still emits
+    # `CALLS lib.Box.Box` and `INSTANTIATES lib.Box`, because the call path
+    # resolves through `_try_resolve_via_import` rather than the chain fold
+    # this guard sits in. Pre-existing and shape-independent, so it is a
+    # separate defect, not part of this fix.
+
+
+def test_a_parameter_shadow_does_not_reach_past_its_own_body(
+    tmp_path: Path,
+) -> None:
+    # A parameter lives in the SIGNATURE, a sibling of the body, so walking
+    # up for a block ancestor finds none. Falling through to the file root
+    # made one function's parameter shadow the whole module -- measured, it
+    # swallowed an unrelated read 45 bytes later.
+    #
+    # The binder must be the PARAMETER itself -- a `var p = ...` local has a
+    # block ancestor and never reaches the signature branch, so a fixture
+    # using one tests nothing here (measured: it stays green with the rule
+    # deleted).
+    #
+    # It must also be UNANNOTATED. A typed parameter is caught upstream by
+    # local_var_types, which hides any difference; `int first(p)` is not,
+    # so the span path is the only thing suppressing it. With the rule
+    # removed a parameter records NO span at all and `first` leaks
+    # REFERENCES to Box.height.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int first(p) { return p.Box(1).height; }\n"
+            "int second() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.first", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.second", REFERENCES, ".Box.height"), rels
+
+
 def test_an_untyped_local_shadowing_an_import_prefix_is_not_folded(
     tmp_path: Path,
 ) -> None:
