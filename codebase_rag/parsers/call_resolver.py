@@ -3337,7 +3337,9 @@ class CallResolver:
                 language,
                 call_point,
             )
-        elif (folded := self._fold_import_prefix_hop(parts, module_qn)) is not None:
+        elif (
+            folded := self._fold_import_prefix_hop(parts, module_qn, local_var_types)
+        ) is not None:
             # `p.Box(1).height` under `import '...' as p;`: the base names an
             # IMPORT, not a local, so the local lookup below would end the
             # chain before the construction hop is seen (issue #2033). Fold
@@ -3358,7 +3360,10 @@ class CallResolver:
         return current_type
 
     def _fold_import_prefix_hop(
-        self, parts: list[str], module_qn: str
+        self,
+        parts: list[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, list[str]] | None:
         # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
         # collapses to that class: the prefix carries no type of its own, and
@@ -3371,6 +3376,25 @@ class CallResolver:
         prefix, hop = parts[0], parts[1]
         if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
             return None
+        # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
+        # the CLASS itself and the hop is its named constructor, so the
+        # receiver's type is the base (issue #2033). Checked before the
+        # import map, since a class in this module is not an import.
+        if not (local_var_types and prefix in local_var_types):
+            own = self._resolve_class_qn_from_type(
+                prefix,
+                self.import_processor.import_mapping.get(module_qn, {}),
+                module_qn,
+            )
+            if own and self.function_registry.get(own) in _CONSTRUCTIBLE_NODE_TYPES:
+                return prefix, parts[1:]
+        # A local or parameter of that name SHADOWS the import prefix, so the
+        # base is that variable and the chain is not a prefixed construction
+        # at all. Without this a `dynamic p` parameter still resolved
+        # `p.Box(1).height` through `import ... as p`, emitting an edge where
+        # the resolver had emitted none.
+        if local_var_types and prefix in local_var_types:
+            return None
         import_map = self.import_processor.import_mapping.get(module_qn, {})
         target = import_map.get(prefix)
         if not target:
@@ -3378,6 +3402,20 @@ class CallResolver:
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
         if not name:
             return None
+        # `p.Box.named()` reaches here as prefix `p` and hop `Box.named`: the
+        # parser cannot tell a named CONSTRUCTOR from a class, because both
+        # are a trailing identifier (issue #2033). The import map can: if the
+        # full dotted name is not a definition but its head is, the tail is a
+        # constructor and the receiver's type is the head.
+        if cs.SEPARATOR_DOT in name:
+            head = name.split(cs.SEPARATOR_DOT, 1)[0]
+            full_qn = f"{target}{cs.SEPARATOR_DOT}{name}"
+            head_qn = f"{target}{cs.SEPARATOR_DOT}{head}"
+            if (
+                self.function_registry.get(full_qn) is None
+                and self.function_registry.get(head_qn) is not None
+            ):
+                name = head
         # The hop must be a CONSTRUCTION, so the imported module must define
         # that name as a CLASS. Accepting any registry entry bound a
         # `mod.factory()` whose factory is a FUNCTION to a same-named class in

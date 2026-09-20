@@ -611,3 +611,59 @@ def test_a_prefixed_factory_function_types_the_chain_by_its_return(
     rels = _rels(_run(tmp_path, files))
     assert _has(rels, ".app.f", "CALLS", ".lib.make"), rels
     assert _has(rels, ".app.f", REFERENCES, ".Thing.v"), rels
+
+
+def test_a_named_constructor_is_not_part_of_the_receiver_type(
+    tmp_path: Path,
+) -> None:
+    # `new Box.named(1)` constructs a Box, so the read binds Box.height. The
+    # grammar separates the shapes by node type -- an import prefix is a
+    # type_identifier, a named constructor an identifier -- and joining both
+    # made the receiver type `Box.named`, which resolves to nothing
+    # (issue #2033). The prefixed form keeps its prefix.
+    files = {
+        "lib.dart": (
+            "class Box {\n"
+            "  Box(int v);\n"
+            "  Box.named(int v);\n"
+            "  int get height => 2;\n"
+            "}\n"
+        ),
+        "app.dart": (
+            "import 'lib.dart';\n"
+            "import 'lib.dart' as p;\n"
+            "int named() { return new Box.named(1).height; }\n"
+            "int constNamed() { return const Box.named(1).height; }\n"
+            "int prefixedNamed() { return new p.Box.named(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.named", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.constNamed", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.prefixedNamed", REFERENCES, ".Box.height"), rels
+
+
+def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> None:
+    # A parameter named after the import prefix SHADOWS it, so
+    # `p.Box(1).height` reads a member of that parameter, not of the imported
+    # class, and must emit no edge (issue #2033). Folding unconditionally
+    # resolved it through `import ... as p` and invented an edge where the
+    # resolver had emitted none.
+    #
+    # Known gap, deliberately not asserted: an untyped Dart local (`var p =
+    # 1`) never reaches local_var_types -- measured empty at the fold -- so
+    # the resolver cannot see it shadowing the prefix. Closing that needs the
+    # call processor's shadow spans threaded into resolution.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int shadowed(dynamic p) { return p.Box(1).height; }\n"
+            "int unshadowed() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.shadowed", REFERENCES, ".Box.height"), rels
+    # Control: the unshadowed prefix still resolves, so the guard is not
+    # simply switching the fold off.
+    assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
