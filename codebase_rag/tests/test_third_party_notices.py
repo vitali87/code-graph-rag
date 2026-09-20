@@ -148,6 +148,24 @@ class TestLicenseDiscovery:
         assert notices._license_expression(dist) == "BSD License"
         assert notices._license_texts(dist) == ("BSD text",)
 
+    def test_includes_undeclared_notice_with_declared_license(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "notice",
+            ["License-Expression: Apache-2.0", "License-File: LICENSE"],
+            {
+                "licenses/LICENSE": "Apache text",
+                "licenses/NOTICE": "Required attribution",
+            },
+        )
+
+        assert notices._license_texts(dist) == (
+            "Apache text",
+            "Required attribution",
+        )
+
     def test_multiline_license_field_is_body_not_summary(
         self, notices: ModuleType, tmp_path: Path
     ) -> None:

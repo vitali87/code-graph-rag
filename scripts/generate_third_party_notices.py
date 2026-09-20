@@ -167,16 +167,16 @@ def _license_paths(dist: Distribution) -> list[str]:
             if candidate in installed:
                 found.append(candidate)
                 break
-    if found:
-        return found
 
-    # Pre-PEP 639 wheels may ship a licence file without declaring it.
-    return sorted(
+    # A distribution may declare LICENSE while leaving a separate NOTICE
+    # undeclared. Scan conventional names even when declared paths resolved.
+    conventional = sorted(
         path
         for path in installed
         if path.startswith(f"{dist_info}/")
         and any(hint in Path(path).name.upper() for hint in LICENSE_FILE_HINTS)
     )
+    return found + [path for path in conventional if path not in found]
 
 
 def _license_texts(dist: Distribution) -> tuple[str, ...]:
