@@ -188,6 +188,7 @@ class ProcessorFactory:
                 csharp_method_return_types=self.definition_processor.csharp_method_return_types,
                 function_locations=self.definition_processor.function_locations,
                 dart_extends_type_args=self.definition_processor.dart_extends_type_args,
+                dart_constructor_qns=self.definition_processor.dart_constructor_qns,
             )
         return self._type_inference
 

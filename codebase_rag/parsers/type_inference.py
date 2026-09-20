@@ -78,6 +78,7 @@ class TypeInferenceEngine:
         "_cpp_type_inference",
         "_dart_type_inference",
         "dart_extends_type_args",
+        "dart_constructor_qns",
     )
 
     def __init__(
@@ -118,6 +119,7 @@ class TypeInferenceEngine:
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
+        dart_constructor_qns: set[str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -254,6 +256,11 @@ class TypeInferenceEngine:
         # receiver fallback (#875).
         self.dart_extends_type_args = (
             dart_extends_type_args if dart_extends_type_args is not None else {}
+        )
+        # Constructor qns, read by the call pass to record a named
+        # constructor call as a construction (#2012).
+        self.dart_constructor_qns = (
+            dart_constructor_qns if dart_constructor_qns is not None else set()
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
@@ -701,6 +708,10 @@ class TypeInferenceEngine:
         for qn in qns:
             self.method_return_types.pop(qn, None)
             self.csharp_method_return_types.pop(qn, None)
+        # A Dart constructor's qn is written by the same ingest step as its
+        # return type, so it leaves with it; a stale one would keep stamping
+        # INSTANTIATES on a call that now reaches a static factory (#2012).
+        self.dart_constructor_qns.difference_update(qns)
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
