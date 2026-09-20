@@ -120,6 +120,11 @@ _NOT_GRAPH_READERS = frozenset(
         cs.MCPToolName.UPDATE_REPOSITORY,
         cs.MCPToolName.REINGEST,
         cs.MCPToolName.RENAME,
+        # Same shape as RENAME: a graph-driven EDIT, not a reader. It runs
+        # its own re-ingest behind the incomplete-run marker and holds the
+        # result to the postcondition contract, so refusing up front on a
+        # partial graph would block the operation that repairs it.
+        cs.MCPToolName.CHANGE_SIGNATURE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
