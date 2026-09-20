@@ -4626,7 +4626,14 @@ class ImportProcessor:
                 # PREFIX is a key too (issue #2033). Both keys are kept: the
                 # file-derived one still serves an unprefixed import of the
                 # same file elsewhere in the module.
-                if prefix := dart_import_prefix(import_node):
+                # An alias must not clobber a key another import already
+                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+                # would otherwise drop the first import entirely, since the
+                # file-derived key and the alias collide. The prefix is the
+                # name the source uses for THIS import, so it is only added
+                # where it is free.
+                prefix = dart_import_prefix(import_node)
+                if prefix and prefix not in self.import_mapping[module_qn]:
                     self.import_mapping[module_qn][prefix] = full_name
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:

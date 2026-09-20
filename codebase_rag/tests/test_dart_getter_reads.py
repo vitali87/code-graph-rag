@@ -552,3 +552,24 @@ def test_import_prefixed_construction_receiver_keeps_the_class_hop(
     assert _has(rels, ".app.bareGet", REFERENCES, ".Box.height"), rels
     assert _has(rels, ".app.genGet", REFERENCES, ".Box.height"), rels
     assert _has(rels, ".app.newGet", REFERENCES, ".Box.height"), rels
+
+
+def test_an_import_alias_does_not_displace_another_import(tmp_path: Path) -> None:
+    # Registering the `as` prefix (issue #2033) must not overwrite a key an
+    # earlier import already owns. `import 'helper.dart';` keys on the file
+    # name, and `import 'other.dart' as helper;` claims the same string, so
+    # writing the alias unconditionally dropped the FIRST import entirely:
+    # both IMPORTS edges pointed at other.dart and helper.dart was lost.
+    files = {
+        "helper.dart": "class H {\n  int get v => 1;\n}\n",
+        "other.dart": "class O {\n  int get v => 2;\n}\n",
+        "app.dart": (
+            "import 'helper.dart';\n"
+            "import 'other.dart' as helper;\n"
+            "int f() { return H().v; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    imports = {b for a, r, b in rels if r == "IMPORTS" and a.endswith(".app")}
+    assert any(q.endswith(".helper") for q in imports), imports
+    assert any(q.endswith(".other") for q in imports), imports
