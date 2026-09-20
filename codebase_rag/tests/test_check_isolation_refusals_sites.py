@@ -7,7 +7,6 @@ import pytest
 from check_isolation_helpers import (
     PROJECT,
     _edit,
-    indexed,
 )
 
 from codebase_rag import constants as cs
@@ -18,6 +17,8 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import CheckError, _FileSnapshot, run_check
 from evals.cgr_graph import _StatefulIngestor
+
+pytest_plugins = ("check_isolation_helpers",)
 
 # --- refusals -----------------------------------------------------------------
 
