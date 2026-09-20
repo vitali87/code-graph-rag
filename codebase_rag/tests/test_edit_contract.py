@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.editing import (
     Expectation,
     change_signature_expectation,
@@ -23,6 +24,7 @@ from codebase_rag.editing.transaction import load_history
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import StructuralDelta
+from codebase_rag.types_defs import PropertyDict, ResultRow
 from evals.cgr_graph import _StatefulIngestor
 
 # --- synthetic deltas --------------------------------------------------------------
@@ -563,6 +565,52 @@ def test_real_rename_passes_its_contract_and_lists_affected_tests(
         cs.NodeLabel.FUNCTION.value,
         f"{PROJECT}.pkg.util.helper",
     ) not in store.nodes
+
+
+def test_real_rename_passes_longer_project_prefixes_to_contract_query(
+    temp_repo: Path,
+) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    store, updater = _real_project(root, FIXTURE)
+
+    nested_root = temp_repo / "nested"
+    nested_root.mkdir()
+    parsers, queries = load_parsers()
+    nested_updater = GraphUpdater(
+        ingestor=store,
+        repo_path=nested_root,
+        parsers=parsers,
+        queries=queries,
+        project_name=f"{PROJECT}.extra",
+    )
+    for rel, text in FIXTURE.items():
+        _write(nested_root, rel, text)
+    nested_updater.run(force=True)
+
+    observed: list[PropertyDict] = []
+
+    def fetch_all(query: str, params: PropertyDict | None) -> list[ResultRow]:
+        if query == cq.CYPHER_DELTA_DEFINITIONS and params is not None:
+            observed.append(params)
+        return store.fetch_all(query, params)
+
+    report = rename(
+        root,
+        fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        "assist",
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert report.verdict is not None
+    assert report.verdict.ok, report.verdict
+    assert any(
+        params.get(cs.KEY_LONGER_PROJECT_PREFIXES) == [f"{PROJECT}.extra."]
+        for params in observed
+    )
 
 
 def test_real_rename_is_undone_when_the_contract_fails(
