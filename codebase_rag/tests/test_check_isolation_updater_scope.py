@@ -6,6 +6,7 @@ from check_isolation_helpers import (
     FIXTURE,
     PROJECT,
     _write,
+    indexed,
 )
 
 from codebase_rag.graph_updater import GraphUpdater
