@@ -518,3 +518,79 @@ def test_selected_macro_import_alias(temp_repo: Path, mock_ingestor: MagicMock) 
     module_qn = f"{project.name}.main"
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
     assert mapping.get("f") == f"{project.name}.M", mapping
+
+
+def test_same_nested_package_import(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """A relative import between two files of the SAME nested package
+    (their own Project.toml) is a normal sibling import: the
+    nested-package guard must reject only targets in ANOTHER nested
+    package (issue #1882 review: the guard rejected every target below
+    a nested boundary and dropped the edge)."""
+    project = temp_repo / "julia_samenested"
+    dep = project / "dep"
+    dep.mkdir(parents=True)
+    (project / "Project.toml").write_text('name = "Root"\n', encoding="utf-8")
+    (dep / "Project.toml").write_text('name = "Dep"\n', encoding="utf-8")
+    (dep / "Bar.jl").write_text("module Bar\nv = 1\nend\n", encoding="utf-8")
+    (dep / "foo.jl").write_text("using .Bar\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    prefix = f"{project.name}."
+    assert any(
+        src == f"{prefix}dep.foo" and dst == f"{prefix}dep.Bar" for src, dst in imports
+    ), imports
+
+
+def test_selected_macro_import_at_alias(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using .M: @view as @v` — the alias side itself is a macro name:
+    strip the `@` from the local name, matching julia_call_name's
+    reduction of the `@v` invocation (issue #1882 review: the alias
+    kept its `@` and could never resolve)."""
+    project = temp_repo / "julia_at_alias"
+    project.mkdir()
+    (project / "M.jl").write_text(
+        "macro view(x)\n    return x\nend\n", encoding="utf-8"
+    )
+    (project / "main.jl").write_text("using .M: @view as @v\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("v") == f"{project.name}.M", mapping
+
+
+def test_absolute_external_path_not_captured(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using ExternalPkg.Models` must not be rewritten to a local
+    `ExternalPkg/Models.jl` that happens to sit at the same path: the
+    exact-path lookup is a first-party link only (issue #1882 review:
+    it ran for every absolute import)."""
+    project = temp_repo / "julia_abs_ext"
+    ext = project / "ExternalPkg"
+    ext.mkdir(parents=True)
+    (project / "Project.toml").write_text('name = "MyProj"\n', encoding="utf-8")
+    (ext / "Models.jl").write_text("module Models\nm = 1\nend\n", encoding="utf-8")
+    (project / "main.jl").write_text("using ExternalPkg.Models\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("Models") == "ExternalPkg.Models", mapping
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    prefix = f"{project.name}."
+    assert not any(
+        src == module_qn and dst.startswith(prefix) for src, dst in imports
+    ), imports

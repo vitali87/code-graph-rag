@@ -621,3 +621,107 @@ end
     }
     assert any(".Arr@" in dst for dst in targets), calls
     assert not any(dst.endswith(".Arr.Arr") for dst in targets), calls
+
+
+def test_nested_typed_concise_method_calls_owned_by_inner(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A typed concise method `g(y)::Int = helper(y)` nested in a function
+    is an attributable caller of its own: the body-span pass must
+    recognize the typed/where-wrapped head, or the enclosing function
+    double-owns the call (issue #1882 review: only a bare call_expression
+    head was accepted)."""
+    project = temp_repo / "julia_typed_nested"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+function helper(x)
+    return x + 1
+end
+
+function outer(x)
+    g(y)::Int = helper(y)
+    return g(x)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    hits = _calls_to(mock_ingestor, ".helper")
+    srcs = {src for src, _ in hits}
+    assert any(src.endswith(".g") for src in srcs), hits
+    assert not any(src.endswith(".outer") for src in srcs), hits
+
+
+def test_shadowing_function_call_no_instantiates(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """With a free function shadowing the type's name, `Point()` dispatches
+    to the function (the FUNCTION namespace wins): the class branch must
+    not ALSO emit INSTANTIATES for the same call (issue #1882 review)."""
+    project = temp_repo / "julia_shadow_inst"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+struct Point
+    x::Int
+end
+
+Point() = Point(0)
+
+function user()
+    return Point()
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    src = f"{module_qn}.user"
+    calls = _calls(mock_ingestor)
+    assert any(s == src and ".Point@" in dst for s, dst in calls), calls
+    inst = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "INSTANTIATES")
+    }
+    assert (src, f"{module_qn}.Point") not in inst, inst
+
+
+def test_plain_call_not_linked_to_same_name_macro(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A plain `Point(...)` call must not reach a same-named macro: the
+    class branch's duplicate bucket contains both twins, and the
+    constructor redirection must filter the macro twin out (issue #1882
+    review: macros are stored as NodeType.FUNCTION)."""
+    project = temp_repo / "julia_macro_ctor"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+struct Point
+    x::Int
+    function Point(x)
+        new(x)
+    end
+end
+
+macro Point()
+    return :nothing
+end
+
+function user()
+    return Point(1)
+end
+""",
+        encoding="utf-8",
+    )
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    src = f"{module_qn}.user"
+    calls = _calls(mock_ingestor)
+    targets = {dst for s, dst in calls if s == src}
+    assert f"{module_qn}.Point.Point" in targets, calls
+    assert not any(".Point@" in dst for dst in targets), calls
