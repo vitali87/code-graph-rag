@@ -650,10 +650,15 @@ def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> Non
     # resolved it through `import ... as p` and invented an edge where the
     # resolver had emitted none.
     #
-    # Known gap, deliberately not asserted: an untyped Dart local (`var p =
-    # 1`) never reaches local_var_types -- measured empty at the fold -- so
-    # the resolver cannot see it shadowing the prefix. Closing that needs the
-    # call processor's shadow spans threaded into resolution.
+    # Known gap, not asserted here: an untyped Dart local (`var p = 1`)
+    # never reaches local_var_types, so this guard does not fire for it and
+    # the fold still resolves through the import. The name IS available --
+    # _dart_declared_names binds it syntactically -- so closing this means
+    # threading the call processor's shadow spans into resolution, not new
+    # analysis.
+    #
+    # Separately, the bare `p.Box.named(1).height` spelling (no `new`) has
+    # never resolved on any branch; filed as #2084.
     files = {
         "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
         "app.dart": (

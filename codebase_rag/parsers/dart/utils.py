@@ -132,53 +132,66 @@ def _construction_class_name(node: Node) -> str | None:
         cs.TS_DART_NEW_EXPRESSION,
         cs.TS_DART_CONST_OBJECT_EXPRESSION,
     ):
-        # Node type alone cannot split these, because the trailing
-        # `identifier` means different things:
-        #   `new X(1)`           -> type_identifier(X)
-        #   `new p.X(1)`         -> type_identifier(p) + identifier(X)
-        #   `new X.named(1)`     -> type_identifier(X) + identifier(named)
-        #   `new p.X.named(1)`   -> type_identifier(p, X) + identifier(named)
-        # The rule is POSITIONAL: every type_identifier belongs to the type
-        # (an import prefix is kept so the resolver can fold it against the
-        # import map, issue #2033), and a trailing identifier is the CLASS
-        # only when no type_identifier has named it yet -- otherwise it is a
-        # named constructor, which is not part of the receiver's type and
-        # made the read resolve against `X.named` rather than `X`.
-        # Keep every type_identifier, then the trailing identifier, and let
-        # the CALLER drop a named constructor. The node types cannot settle
-        # it here: after one type_identifier the trailing identifier is the
-        # CLASS in `new p.X(1)` (prefix + class) and the CONSTRUCTOR in
-        # `new X.named(1)` (class + constructor), identically shaped. The
-        # resolver holds the import map and the registry, so it can tell a
-        # prefix from a class; this function cannot (issue #2033).
-        #
-        # A dotted name must therefore resolve as a whole OR fall back to its
-        # head: `X.named` is not a definition while `X` is, which is exactly
-        # how the caller recognises a named constructor.
-        type_names: list[str] = []
-        trailing: str | None = None
-        for child in node.named_children:
-            if not child.text:
-                continue
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER:
-                type_names.append(decode_node_text(child.text))
-            elif child.type == cs.TS_DART_IDENTIFIER:
-                trailing = decode_node_text(child.text)
-                break
-            elif type_names:
-                break
-        if not type_names:
-            return trailing
-        # Two type_identifiers already name prefix AND class (`new p.X.named`),
-        # so a trailing identifier is the named constructor and is dropped.
-        # With exactly one, the trailing identifier is the CLASS and the
-        # type_identifier was the prefix (`new p.X(1)`); with none it is a
-        # named constructor on a bare class (`new X.named(1)`), which main
-        # dropped by returning the first type_identifier and which must keep
-        # being dropped or the read resolves against `X.named`.
-        if len(type_names) == 1 and trailing is not None:
-            return f"{type_names[0]}{cs.SEPARATOR_DOT}{trailing}"
-        return cs.SEPARATOR_DOT.join(type_names)
+        return _explicit_construction_name(node)
+    return _mis_parsed_generic_name(node)
+
+
+def _explicit_construction_name(node: Node) -> str | None:
+    """`new X(1)` / `const X(1)`: the class, keeping an import prefix and
+    dropping a named constructor."""
+    # Node type alone cannot split these, because the trailing
+    # `identifier` means different things:
+    #   `new X(1)`           -> type_identifier(X)
+    #   `new p.X(1)`         -> type_identifier(p) + identifier(X)
+    #   `new X.named(1)`     -> type_identifier(X) + identifier(named)
+    #   `new p.X.named(1)`   -> type_identifier(p, X) + identifier(named)
+    # The rule is POSITIONAL: every type_identifier belongs to the type
+    # (an import prefix is kept so the resolver can fold it against the
+    # import map, issue #2033), and a trailing identifier is the CLASS
+    # only when no type_identifier has named it yet -- otherwise it is a
+    # named constructor, which is not part of the receiver's type and
+    # made the read resolve against `X.named` rather than `X`.
+    # Keep every type_identifier, then the trailing identifier, and let
+    # the CALLER drop a named constructor. The node types cannot settle
+    # it here: after one type_identifier the trailing identifier is the
+    # CLASS in `new p.X(1)` (prefix + class) and the CONSTRUCTOR in
+    # `new X.named(1)` (class + constructor), identically shaped. The
+    # resolver holds the import map and the registry, so it can tell a
+    # prefix from a class; this function cannot (issue #2033).
+    #
+    # A dotted name must therefore resolve as a whole OR fall back to its
+    # head: `X.named` is not a definition while `X` is, which is exactly
+    # how the caller recognises a named constructor.
+    type_names: list[str] = []
+    trailing: str | None = None
+    for child in node.named_children:
+        if not child.text:
+            continue
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
+            type_names.append(decode_node_text(child.text))
+        elif child.type == cs.TS_DART_IDENTIFIER:
+            trailing = decode_node_text(child.text)
+            break
+        elif type_names:
+            break
+    if not type_names:
+        return trailing
+    # Two type_identifiers already name prefix AND class (`new p.X.named`),
+    # so a trailing identifier is the named constructor and is dropped.
+    # With exactly one, the trailing identifier is the CLASS and the
+    # type_identifier was the prefix (`new p.X(1)`); with none it is a
+    # named constructor on a bare class (`new X.named(1)`), which main
+    # dropped by returning the first type_identifier and which must keep
+    # being dropped or the read resolves against `X.named`.
+    if len(type_names) == 1 and trailing is not None:
+        return f"{type_names[0]}{cs.SEPARATOR_DOT}{trailing}"
+    return cs.SEPARATOR_DOT.join(type_names)
+    return None
+
+
+def _mis_parsed_generic_name(node: Node) -> str | None:
+    """`X<int>(1)`: the grammar reads the angle brackets as comparisons, so
+    the class leads the left operand of a `<` ... `>` relational pair."""
     if node.type != cs.TS_DART_RELATIONAL_EXPRESSION:
         return None
     # Match the mis-parsed-generic shape: exactly

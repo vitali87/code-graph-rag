@@ -3359,6 +3359,22 @@ class CallResolver:
             )
         return current_type
 
+    def _drop_named_constructor(self, name: str, target: str) -> str:
+        """`Box.named` -> `Box` when the dotted name is not a definition but
+        its head is: the tail is a named constructor, not part of the type
+        (issue #2033). Any other name is returned unchanged."""
+        if cs.SEPARATOR_DOT not in name:
+            return name
+        head = name.split(cs.SEPARATOR_DOT, 1)[0]
+        full_qn = f"{target}{cs.SEPARATOR_DOT}{name}"
+        head_qn = f"{target}{cs.SEPARATOR_DOT}{head}"
+        if (
+            self.function_registry.get(full_qn) is None
+            and self.function_registry.get(head_qn) is not None
+        ):
+            return head
+        return name
+
     def _fold_import_prefix_hop(
         self,
         parts: list[str],
@@ -3407,15 +3423,7 @@ class CallResolver:
         # are a trailing identifier (issue #2033). The import map can: if the
         # full dotted name is not a definition but its head is, the tail is a
         # constructor and the receiver's type is the head.
-        if cs.SEPARATOR_DOT in name:
-            head = name.split(cs.SEPARATOR_DOT, 1)[0]
-            full_qn = f"{target}{cs.SEPARATOR_DOT}{name}"
-            head_qn = f"{target}{cs.SEPARATOR_DOT}{head}"
-            if (
-                self.function_registry.get(full_qn) is None
-                and self.function_registry.get(head_qn) is not None
-            ):
-                name = head
+        name = self._drop_named_constructor(name, target)
         # The hop must be a CONSTRUCTION, so the imported module must define
         # that name as a CLASS. Accepting any registry entry bound a
         # `mod.factory()` whose factory is a FUNCTION to a same-named class in
