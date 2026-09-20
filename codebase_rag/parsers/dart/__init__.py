@@ -1,4 +1,5 @@
 from .utils import (
+    dart_binding_spans,
     dart_body_node,
     dart_call_name,
     dart_definition_end_byte,
@@ -12,6 +13,7 @@ from .utils import (
 )
 
 __all__ = [
+    "dart_binding_spans",
     "dart_body_node",
     "dart_call_name",
     "dart_definition_end_byte",

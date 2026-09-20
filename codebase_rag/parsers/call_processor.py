@@ -6913,6 +6913,7 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     seen,
+                    node.start_byte,
                 )
             stack.extend(node.children)
 
@@ -6990,6 +6991,7 @@ class CallProcessor:
                     local_var_types,
                     class_ctx,
                     seen,
+                    node.start_byte,
                 )
             stack.extend(node.children)
 
@@ -7063,6 +7065,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         seen: set[str],
+        call_point: int | None = None,
     ) -> None:
         if read_name in seen:
             return
@@ -7078,7 +7081,12 @@ class CallProcessor:
                 res_qn = candidate
         if res_qn is None:
             resolved = self._resolver.resolve_function_call(
-                read_name, module_qn, local_var_types, class_context, caller_qn
+                read_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                call_point=call_point,
             )
             if not resolved:
                 return

@@ -650,12 +650,8 @@ def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> Non
     # resolved it through `import ... as p` and invented an edge where the
     # resolver had emitted none.
     #
-    # Known gap, not asserted here: an untyped Dart local (`var p = 1`)
-    # never reaches local_var_types, so this guard does not fire for it and
-    # the fold still resolves through the import. The name IS available --
-    # _dart_declared_names binds it syntactically -- so closing this means
-    # threading the call processor's shadow spans into resolution, not new
-    # analysis.
+    # The untyped case is covered by
+    # test_an_untyped_local_shadowing_an_import_prefix_is_not_folded below.
     #
     # Separately, the bare `p.Box.named(1).height` spelling (no `new`) has
     # never resolved on any branch; filed as #2084.
@@ -671,4 +667,39 @@ def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> Non
     assert not _has(rels, ".app.shadowed", REFERENCES, ".Box.height"), rels
     # Control: the unshadowed prefix still resolves, so the guard is not
     # simply switching the fold off.
+    assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
+
+
+def test_an_untyped_local_shadowing_an_import_prefix_is_not_folded(
+    tmp_path: Path,
+) -> None:
+    # `var p = 1` shadows the prefix exactly as a typed parameter does, but
+    # it carries no inferable type, so it never reaches `local_var_types` --
+    # instrumented and measured empty at the fold. Checking the type map
+    # therefore cannot see this shadow at all, and the fold resolved
+    # `p.Box(1).height` through `import ... as p`, inventing REFERENCES and
+    # CALLS edges to the imported class (issue #2033, Greptile P1 on #2040).
+    #
+    # The binding is syntactic, so the import processor records the span the
+    # name is bound in and the fold checks the call site against it. No type
+    # inference is involved on either side.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int untyped() { var p = 1; return p.Box(1).height; }\n"
+            "int scoped() {\n"
+            "  { var p = 1; }\n"
+            "  return p.Box(1).height;\n"
+            "}\n"
+            "int unshadowed() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.untyped", REFERENCES, ".Box.height"), rels
+    # The shadow is SCOPED: a binding in an inner block does not reach a read
+    # after that block, so `scoped` still folds. Without this the guard could
+    # pass by suppressing the fold for the whole module.
+    assert _has(rels, ".app.scoped", REFERENCES, ".Box.height"), rels
+    # Control: an unshadowed prefix in the same file still resolves.
     assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels

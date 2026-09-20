@@ -3338,7 +3338,9 @@ class CallResolver:
                 call_point,
             )
         elif (
-            folded := self._fold_import_prefix_hop(parts, module_qn, local_var_types)
+            folded := self._fold_import_prefix_hop(
+                parts, module_qn, local_var_types, call_point
+            )
         ) is not None:
             # `p.Box(1).height` under `import '...' as p;`: the base names an
             # IMPORT, not a local, so the local lookup below would end the
@@ -3375,11 +3377,47 @@ class CallResolver:
             return head
         return name
 
+    def _names_own_constructible(self, name: str, module_qn: str) -> bool:
+        """Does `name` resolve, from this module, to something constructible?
+
+        `new X.named(1).m` splits to base `X` + hop `named()`, so the base is
+        the CLASS and the hop its named constructor (issue #2033). Asked
+        before the import map, since a class in this module is not an import.
+        """
+        own = self._resolve_class_qn_from_type(
+            name,
+            self.import_processor.import_mapping.get(module_qn, {}),
+            module_qn,
+        )
+        return bool(own) and self.function_registry.get(own) in (
+            _CONSTRUCTIBLE_NODE_TYPES
+        )
+
+    def _dart_prefix_is_shadowed(
+        self, prefix: str, module_qn: str, call_point: int | None
+    ) -> bool:
+        """Does a local or parameter named `prefix` bind it at this site?
+
+        The resolver's `local_var_types` only holds names it could infer a
+        TYPE for, so `var p = 1` is absent from it and an inferred-type check
+        cannot see the shadow. The import processor records the syntactic
+        binding spans instead, which are independent of inference.
+
+        A site with no recorded position cannot be placed against a span, so
+        it is treated as unshadowed: flow and taint passes resolve without a
+        position, and losing the fold there would drop real edges.
+        """
+        if call_point is None:
+            return False
+        spans = self.import_processor.dart_prefix_shadows.get(module_qn, {})
+        return any(lo <= call_point < hi for lo, hi in spans.get(prefix, ()))
+
     def _fold_import_prefix_hop(
         self,
         parts: list[str],
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
+        call_point: int | None = None,
     ) -> tuple[str, list[str]] | None:
         # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
         # collapses to that class: the prefix carries no type of its own, and
@@ -3392,18 +3430,18 @@ class CallResolver:
         prefix, hop = parts[0], parts[1]
         if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
             return None
+        # A binding of that name at this site shadows the import, whether or
+        # not a type could be inferred for it (issue #2033).
+        if self._dart_prefix_is_shadowed(prefix, module_qn, call_point):
+            return None
         # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
         # the CLASS itself and the hop is its named constructor, so the
         # receiver's type is the base (issue #2033). Checked before the
         # import map, since a class in this module is not an import.
-        if not (local_var_types and prefix in local_var_types):
-            own = self._resolve_class_qn_from_type(
-                prefix,
-                self.import_processor.import_mapping.get(module_qn, {}),
-                module_qn,
-            )
-            if own and self.function_registry.get(own) in _CONSTRUCTIBLE_NODE_TYPES:
-                return prefix, parts[1:]
+        if not (
+            local_var_types and prefix in local_var_types
+        ) and self._names_own_constructible(prefix, module_qn):
+            return prefix, parts[1:]
         # A local or parameter of that name SHADOWS the import prefix, so the
         # base is that variable and the chain is not a prefixed construction
         # at all. Without this a `dynamic p` parameter still resolved

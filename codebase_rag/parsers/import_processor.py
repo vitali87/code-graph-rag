@@ -26,6 +26,7 @@ from ..types_defs import (
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
+    dart_binding_spans,
     dart_extract_uri,
     dart_import_prefix,
     dart_local_name,
@@ -604,6 +605,7 @@ class ImportProcessor:
         "rust_fn_scope_mod_imports",
         "rust_block_items",
         "rust_block_item_qns",
+        "dart_prefix_shadows",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -744,6 +746,9 @@ class ImportProcessor:
         # from reaching them from outside their block (issue #1061).
         self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
         self.rust_block_item_qns: set[str] = set()
+        # Dart: {module qn: {import prefix: [byte spans where a local or
+        # parameter of that name shadows it]}} (issue #2033).
+        self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -1129,7 +1134,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
-                    self._parse_dart_imports(captures, module_qn)
+                    self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
                 case _:
@@ -4606,12 +4611,15 @@ class ImportProcessor:
                 node_type=import_node.type,
             )
 
-    def _parse_dart_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_dart_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
         # Dart import/export/part directives carry a URI string. `dart:` and
         # `package:` targets are external (kept verbatim); relative paths and part
         # files resolve to a project-internal module qn. A `part of my.library;`
         # directive names a dotted library, not a file, so it has no URI and is
         # skipped.
+        prefixes: set[str] = set()
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             uri = dart_extract_uri(import_node)
             if not uri:
@@ -4635,6 +4643,17 @@ class ImportProcessor:
                 prefix = dart_import_prefix(import_node)
                 if prefix and prefix not in self.import_mapping[module_qn]:
                     self.import_mapping[module_qn][prefix] = full_name
+                if prefix:
+                    prefixes.add(prefix)
+        # A local or parameter of the same name SHADOWS the prefix inside its
+        # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
+        # local_var_types, so the type map cannot answer this. The binding is
+        # syntactic, so record its span here and let the fold check the call
+        # site against it (issue #2033).
+        if root_node is not None and prefixes:
+            self.dart_prefix_shadows[module_qn] = dart_binding_spans(
+                root_node, frozenset(prefixes)
+            )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
