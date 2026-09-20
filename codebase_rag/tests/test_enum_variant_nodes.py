@@ -125,6 +125,30 @@ def test_every_variant_becomes_a_node_in_declaration_order(
             assert "value" not in props, props
     edges = _owner_edges(indexed, enum_name)
     assert {tgt.rsplit(".", 1)[-1] for _s, tgt in edges} == set(names), edges
+    # The EDGE carries its own index. Asserting only the node's left this
+    # unchecked: setting the edge property to a constant kept every test
+    # green (local review P2).
+    for src, tgt in edges:
+        edge = (cs.NodeLabel.ENUM.value, src, REL, LABEL, tgt)
+        assert indexed.edge_props[edge][cs.KEY_INDEX] == names.index(
+            tgt.rsplit(".", 1)[-1]
+        ), (edge, indexed.edge_props[edge])
+
+
+def test_a_variant_is_positioned_at_its_name_not_its_node(
+    indexed: _StatefulIngestor,
+) -> None:
+    # `start_col` is the column of the NAME, which for an attributed C#
+    # member is not the column of the node: `[Obsolete] Red = 1` starts the
+    # node at the attribute. Asserting only `start_line >= 1` left the
+    # distinction untested -- reading node.start_point instead kept every
+    # test green (local review P2).
+    #
+    # Suit.php's `case Hearts = 'H';` is the check here: the variant node
+    # starts at `case` (col 4) and the name at `Hearts` (col 9).
+    hearts = _variants(indexed, "Suit")["Hearts"]
+    assert hearts[cs.KEY_START_COL] == 9, hearts
+    assert hearts[cs.KEY_START_LINE] == 3, hearts
 
 
 def test_a_variant_carries_its_doc_comment(indexed: _StatefulIngestor) -> None:
@@ -189,3 +213,55 @@ def test_the_emitter_itself_declines_when_the_relationship_is_off() -> None:
     )
     assert written == 0
     assert recorder.calls == [], recorder.calls
+
+
+def test_a_reparse_takes_stale_variants_with_their_owner(tmp_path: Path) -> None:
+    """Remove a variant and re-index: nothing of the old one survives.
+
+    `CYPHER_DELETE_MODULE` walks what the module DEFINES, and an EnumVariant
+    hangs off its Enum by HAS_VARIANT, so the relation has to be inside that
+    walk or a removed variant is left with no owner. The eval double keeps a
+    hand-maintained copy of the same walk (`_MODULE_SUBTREE_RELS`), which is
+    what actually drifted here: the query gained HAS_VARIANT and the double
+    did not, so this test reddens on the double while production was right.
+
+    Mirrors `test_a_reparse_takes_stale_parameters_with_their_owner`; the
+    absence of this test is why the drift reached the branch at all.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir(parents=True)
+    (repo / "shape.rs").write_text(
+        "pub enum Shape {\n    Circle,\n    Gone,\n}\n", encoding="utf-8"
+    )
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    store = _StatefulIngestor()
+
+    def _run() -> None:
+        GraphUpdater(
+            ingestor=store,  # type: ignore[arg-type]
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            capture=resolve_capture(["+enum_variants"]),
+        ).run(force=True)
+
+    _run()
+    assert set(_variants(store, "Shape")) == {"Circle", "Gone"}
+
+    (repo / "shape.rs").write_text(
+        "pub enum Shape {\n    Circle,\n}\n", encoding="utf-8"
+    )
+    _run()
+
+    names = set(_variants(store, "Shape"))
+    owned = {
+        str(tgt).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        for (_sl, src, rel, _tl, tgt) in store.edges
+        if rel == REL and str(src).endswith(".Shape")
+    }
+    assert names == {"Circle"}, names
+    # Every surviving variant still has its owner edge: an orphan is exactly
+    # what the missing walk entry produces.
+    assert names == owned, names ^ owned
