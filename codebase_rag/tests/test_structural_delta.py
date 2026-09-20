@@ -752,6 +752,8 @@ def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
 
     assert indexed_scope(root, project_name) == (None, None)
     with pytest.raises(CheckError):
+        indexed_scope(root, project_name, explicit=True)
+    with pytest.raises(CheckError):
         indexed_scope(root, "explicit-project", explicit=True)
 
 

@@ -192,7 +192,7 @@ def run_check(
     queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
-    project_named: bool = False,
+    project_named: bool | None = None,
 ) -> StructuralDelta:
     """Re-ingest what changed since `base` and return the structural delta.
 
