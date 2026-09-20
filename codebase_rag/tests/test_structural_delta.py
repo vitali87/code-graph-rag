@@ -651,14 +651,16 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         project_name="project_a",
     ).run(force=True)
     assert indexed_scope(root, "project_a", explicit=True) == (None, None)
-    run_check(
-        root,
-        "HEAD",
-        "project_a",
-        store,
-        parsers,
-        queries,
-        project_named=True,
+    assert not has_findings(
+        run_check(
+            root,
+            "HEAD",
+            "project_a",
+            store,
+            parsers,
+            queries,
+            project_named=True,
+        )
     )
 
     second = GraphUpdater(
@@ -668,17 +670,19 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         queries=queries,
         project_name="project_b",
     )
-    second.run()
+    second.run(force=True)
     assert second.skipped_because_in_sync is False
     assert indexed_scope(root, "project_b", explicit=True) == (None, None)
-    run_check(
-        root,
-        "HEAD",
-        "project_b",
-        store,
-        parsers,
-        queries,
-        project_named=True,
+    assert not has_findings(
+        run_check(
+            root,
+            "HEAD",
+            "project_b",
+            store,
+            parsers,
+            queries,
+            project_named=True,
+        )
     )
 
     third = GraphUpdater(
