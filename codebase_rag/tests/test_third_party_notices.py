@@ -170,15 +170,76 @@ class TestLicenseDiscovery:
 
         assert notices._license_expression(dist) == notices.UNKNOWN_LICENSE
         assert notices._license_texts(dist) == ()
+        assert notices._notice(dist).texts == ()
+
+
+class TestTemplateFallback:
+    def test_spdx_text_with_holder_when_wheel_ships_no_file(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "textless",
+            ["License-Expression: MIT", "Author-email: Jane Doe <jane@example.org>"],
+            {},
+        )
+
+        (text,) = notices._notice(dist).texts
+
+        assert text.startswith(notices.TEMPLATE_NOTE.format(spdx="MIT"))
+        assert "Copyright (c) Jane Doe" in text
+        assert text.count("Copyright (c)") == 1, "template already carries the prefix"
+        assert "<year>" not in text and "<copyright holders>" not in text
+        assert "Permission is hereby granted, free of charge" in text
+
+    def test_classifier_alias_reaches_the_template(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "classified",
+            [
+                "Classifier: License :: OSI Approved :: Apache Software License",
+                "Author: ACME Corp",
+            ],
+            {},
+        )
+
+        (text,) = notices._notice(dist).texts
+
+        # Apache-2.0 carries no holder placeholder, so the line is prepended.
+        assert text.splitlines()[2] == "Copyright (c) ACME Corp"
+        assert "Apache License" in text and "Version 2.0" in text
+
+    def test_shipped_file_wins_over_the_template(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "shipped",
+            ["License-Expression: MIT", "License-File: LICENSE"],
+            {"licenses/LICENSE": "the real MIT text"},
+        )
+
+        assert notices._notice(dist).texts == ("the real MIT text",)
+
+    def test_holder_falls_back_to_the_package_name(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(tmp_path, "anon", ["License-Expression: ISC"], {})
+
+        assert notices._copyright_holder(dist) == "anon"
+
+    def test_every_alias_has_a_template_file(self, notices: ModuleType) -> None:
+        for spdx in set(notices.SPDX_ALIASES.values()):
+            assert (notices.LICENSE_TEXTS_DIR / f"{spdx}.txt").is_file(), spdx
 
 
 class TestRender:
-    def test_every_package_has_an_entry_and_missing_text_is_flagged(
-        self, notices: ModuleType
-    ) -> None:
+    def test_entries_are_sorted_case_insensitively(self, notices: ModuleType) -> None:
         listed = [
             notices.Notice("zeta", "2.0", "MIT", ("MIT text",)),
-            notices.Notice("Alpha", "1.0", "Apache-2.0", ()),
+            notices.Notice("Alpha", "1.0", "Apache-2.0", ("Apache text",)),
         ]
 
         rendered = notices.render(listed)
@@ -186,7 +247,6 @@ class TestRender:
         assert rendered.index("Alpha 1.0") < rendered.index("zeta 2.0")
         assert "License: Apache-2.0" in rendered
         assert "MIT text" in rendered
-        assert notices.MISSING_LICENSE_TEXT in rendered
         assert "2 packages." in rendered
 
     def test_main_writes_the_real_closure(
@@ -200,6 +260,22 @@ class TestRender:
         assert "THIRD-PARTY SOFTWARE NOTICES" in text
         assert all(f"\n{name} " in text for name in RUNTIME_DISTRIBUTIONS)
         assert not any(f"\n{name} " in text for name in DEV_ONLY_DISTRIBUTIONS)
+
+    def test_main_refuses_to_write_an_incomplete_notice(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        bare = _fake_dist(tmp_path, "bare", ["License-Expression: LicenseRef-X"], {})
+        monkeypatch.setattr(notices, "runtime_closure", lambda: {"bare": bare})
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output)]) == 1
+
+        assert not output.exists()
+        assert "bare" in capsys.readouterr().err
 
 
 class TestWorkflowStep:

@@ -20,10 +20,12 @@ reachable from the project's own requirements and so is never listed.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
+from email.utils import parseaddr
 from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from pathlib import Path
 
@@ -46,9 +48,43 @@ METADATA_CLASSIFIER = "Classifier"
 LICENSE_CLASSIFIER_PREFIX = "License :: "
 LICENSE_CLASSIFIER_OSI_PREFIX = "License :: OSI Approved :: "
 UNKNOWN_LICENSE = "UNKNOWN"
-MISSING_LICENSE_TEXT = (
-    "(no licence file is shipped in this distribution's metadata; see the "
-    "project's homepage for its licence terms)"
+
+# Some wheels declare a licence but ship no licence file (loguru, logfire-api,
+# fastmcp-slim, ...). For those the canonical SPDX text is reproduced with
+# the package's copyright holder filled in; a package whose licence has no
+# template here stops generation rather than shipping an incomplete notice.
+LICENSE_TEXTS_DIR = Path(__file__).resolve().parent / "license_texts"
+LICENSE_TEXT_SUFFIX = ".txt"
+SPDX_ALIASES: dict[str, str] = {
+    "mit": "MIT",
+    "mit license": "MIT",
+    "apache-2.0": "Apache-2.0",
+    "apache 2.0": "Apache-2.0",
+    "apache2": "Apache-2.0",
+    "apache license 2.0": "Apache-2.0",
+    "apache license, version 2.0": "Apache-2.0",
+    "apache software license": "Apache-2.0",
+    "bsd-2-clause": "BSD-2-Clause",
+    "bsd-3-clause": "BSD-3-Clause",
+    "3-clause bsd license": "BSD-3-Clause",
+    "isc": "ISC",
+    "isc license": "ISC",
+    "isc license (iscl)": "ISC",
+}
+TEMPLATE_HOLDER_PATTERN = re.compile(r"<year>\s*<(?:copyright holders|owner)>")
+TEMPLATE_NOTE = (
+    "(This distribution ships no licence file; the canonical {spdx} text is "
+    "reproduced from the SPDX License List.)"
+)
+COPYRIGHT_LINE = "Copyright (c) {holder}"
+METADATA_AUTHOR = "Author"
+METADATA_AUTHOR_EMAIL = "Author-email"
+METADATA_MAINTAINER = "Maintainer"
+METADATA_MAINTAINER_EMAIL = "Maintainer-email"
+METADATA_NAME = "Name"
+
+MISSING_TEXT_ERROR = (
+    "{count} package(s) ship no licence text and have no SPDX template: {names}"
 )
 
 HEADER = """\
@@ -158,6 +194,45 @@ def _license_texts(dist: Distribution) -> tuple[str, ...]:
     return ()
 
 
+def _copyright_holder(dist: Distribution) -> str:
+    metadata = dist.metadata
+    for field in (METADATA_AUTHOR, METADATA_MAINTAINER):
+        value = metadata.get(field)
+        if value and value.strip():
+            return value.strip()
+    # PEP 621 folds the name into the address: `Jane Doe <jane@example.org>`.
+    for field in (METADATA_AUTHOR_EMAIL, METADATA_MAINTAINER_EMAIL):
+        value = metadata.get(field)
+        if value:
+            name, address = parseaddr(value)
+            if name.strip():
+                return name.strip()
+            if address.strip():
+                return address.strip()
+    return metadata[METADATA_NAME]
+
+
+def _spdx_id(expression: str) -> str | None:
+    return SPDX_ALIASES.get(expression.strip().lower())
+
+
+def _template_text(dist: Distribution, expression: str) -> str | None:
+    """Canonical SPDX text for `expression` with the holder filled in, if templated."""
+    spdx = _spdx_id(expression)
+    if spdx is None:
+        return None
+    template_path = LICENSE_TEXTS_DIR / f"{spdx}{LICENSE_TEXT_SUFFIX}"
+    if not template_path.is_file():
+        return None
+
+    holder = _copyright_holder(dist)
+    template = template_path.read_text(encoding=ENCODING).strip()
+    body, substituted = TEMPLATE_HOLDER_PATTERN.subn(holder, template, count=1)
+    if not substituted:
+        body = f"{COPYRIGHT_LINE.format(holder=holder)}\n\n{body}"
+    return f"{TEMPLATE_NOTE.format(spdx=spdx)}\n\n{body}"
+
+
 def _active_requirements(
     dist: Distribution, extras: frozenset[str]
 ) -> list[Requirement]:
@@ -215,30 +290,36 @@ def runtime_closure(
     return seen
 
 
+def _notice(dist: Distribution) -> Notice:
+    expression = _license_expression(dist)
+    texts = _license_texts(dist)
+    if not texts:
+        template = _template_text(dist, expression)
+        if template is not None:
+            texts = (template,)
+    return Notice(
+        name=dist.metadata[METADATA_NAME],
+        version=dist.version,
+        license=expression,
+        texts=texts,
+    )
+
+
 def collect_notices(dists: Iterable[Distribution]) -> list[Notice]:
-    return [
-        Notice(
-            name=dist.metadata["Name"],
-            version=dist.version,
-            license=_license_expression(dist),
-            texts=_license_texts(dist),
-        )
-        for dist in dists
-    ]
+    return [_notice(dist) for dist in dists]
 
 
 def render(notices: list[Notice], root: str = ROOT_DISTRIBUTION) -> str:
     root_version = distribution(root).version
     parts = [HEADER.format(root=root, version=root_version, count=len(notices))]
     for notice in sorted(notices, key=lambda n: n.name.lower()):
-        text = "\n\n".join(notice.texts) if notice.texts else MISSING_LICENSE_TEXT
         parts.append(
             ENTRY.format(
                 separator=SEPARATOR,
                 name=notice.name,
                 version=notice.version,
                 license=notice.license,
-                text=text,
+                text="\n\n".join(notice.texts),
             )
         )
     return "\n".join(parts)
@@ -255,15 +336,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     notices = collect_notices(runtime_closure().values())
-    args.output.write_text(render(notices), encoding=ENCODING)
 
-    missing = [n.name for n in notices if not n.texts]
-    print(f"wrote {args.output} ({len(notices)} packages)")  # noqa: T201
+    # A notice without its licence text does not satisfy the licence it is
+    # meant to satisfy, so refuse to produce the file rather than ship it.
+    missing = sorted(n.name for n in notices if not n.texts)
     if missing:
         print(  # noqa: T201
-            f"{len(missing)} package(s) ship no licence text: {', '.join(missing)}",
+            MISSING_TEXT_ERROR.format(count=len(missing), names=", ".join(missing)),
             file=sys.stderr,
         )
+        return 1
+
+    args.output.write_text(render(notices), encoding=ENCODING)
+    print(f"wrote {args.output} ({len(notices)} packages)")  # noqa: T201
     return 0
 
 
