@@ -139,3 +139,53 @@ def test_java_enum_body_members_are_not_variants(indexed: _StatefulIngestor) -> 
     assert "Colour" not in _variants(indexed, "Colour")
     assert "X" not in _variants(indexed, "Colour")
     assert list(_variants(indexed, "Inner")) == ["X"]
+
+
+def test_the_emitter_itself_declines_when_the_relationship_is_off() -> None:
+    # The default-index test above passes even with the early return in
+    # `emit_declared_variants` deleted, because `filtering.py` drops the
+    # nodes and edges independently. That makes it blind to the in-function
+    # gate, so assert the gate directly: a disabled HAS_VARIANT must make the
+    # emitter return 0 without asking the ingestor to write anything.
+    from codebase_rag.parsers.enum_variants import (
+        declared_variants,
+        emit_declared_variants,
+    )
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def rel_enabled(self, _rel: cs.RelationshipType) -> bool:
+            return False
+
+        def ensure_node_batch(self, *a: object, **k: object) -> None:
+            self.calls.append("node")
+
+        def ensure_relationship_batch(self, *a: object, **k: object) -> None:
+            self.calls.append("rel")
+
+    parsers, _queries = load_parsers()
+    if cs.SupportedLanguage.RUST not in parsers:
+        pytest.skip("rust parser not available")
+    tree = parsers[cs.SupportedLanguage.RUST].parse(
+        b"pub enum Shape { Circle, Fixed = 3 }\n"
+    )
+    enum_node = next(
+        n for n in tree.root_node.named_children if n.type == cs.TS_RS_ENUM_ITEM
+    )
+    # A real enum with real variants: the ONLY reason to emit nothing is the
+    # gate. Proven by the control below, which finds two variants.
+    assert len(declared_variants(enum_node, cs.SupportedLanguage.RUST)) == 2
+
+    recorder = _Recorder()
+    written = emit_declared_variants(
+        recorder,  # type: ignore[arg-type]
+        cs.NodeLabel.ENUM,
+        "proj.shape.Shape",
+        enum_node,
+        cs.SupportedLanguage.RUST,
+        {},
+    )
+    assert written == 0
+    assert recorder.calls == [], recorder.calls
