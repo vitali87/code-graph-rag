@@ -622,10 +622,24 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
 ) -> None:
     """A repository cache must not make a sibling project look indexed."""
     from codebase_rag.graph_updater import _load_exclusion_state
+    from codebase_rag.structural_check import indexed_scope, run_check
 
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(
+        root,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "-m",
+        "b",
+    )
     parsers, queries = load_parsers()
     store = _StatefulIngestor()
 
@@ -636,6 +650,16 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         queries=queries,
         project_name="project_a",
     ).run(force=True)
+    assert indexed_scope(root, "project_a", explicit=True) == (None, None)
+    run_check(
+        root,
+        "HEAD",
+        "project_a",
+        store,
+        parsers,
+        queries,
+        project_named=True,
+    )
 
     second = GraphUpdater(
         ingestor=store,
@@ -644,7 +668,18 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         queries=queries,
         project_name="project_b",
     )
-    second.run(force=True)
+    second.run()
+    assert second.skipped_because_in_sync is False
+    assert indexed_scope(root, "project_b", explicit=True) == (None, None)
+    run_check(
+        root,
+        "HEAD",
+        "project_b",
+        store,
+        parsers,
+        queries,
+        project_named=True,
+    )
 
     third = GraphUpdater(
         ingestor=store,
@@ -658,6 +693,10 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
     assert third.skipped_because_in_sync is False
     assert any(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_a.")
+        for properties in store.nodes.values()
+    )
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
         for properties in store.nodes.values()
     )
     assert _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME) == {

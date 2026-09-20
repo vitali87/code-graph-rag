@@ -4057,8 +4057,16 @@ class GraphUpdater:
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
         cache_is_dead = self._cache_discarded_in_memory
+        # A repository cache can contain hashes from another project (or from
+        # a run whose exclusion stamp is missing). Reusing those hashes would
+        # skip every unchanged file even though this project has not been
+        # parsed into the graph. Treat the cache as cacheless until this
+        # project's scope is known to match.
+        scope_matches = force or self._exclusions_match_last_run()
         old_hashes = (
-            _load_hash_cache(cache_path) if not (force or cache_is_dead) else {}
+            _load_hash_cache(cache_path)
+            if not (force or cache_is_dead or not scope_matches)
+            else {}
         )
         # Snapshot for the single-file merge, read from DISK and independently
         # of `force`. Two distinct reasons it cannot reuse `old_hashes`:
