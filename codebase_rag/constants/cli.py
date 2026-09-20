@@ -604,6 +604,15 @@ RENAME_ROLLBACK_UNMEASURED = (
 RENAME_CONTRACT_UNMEASURED = (
     "Rename applied, but its postcondition could not be measured: {error}"
 )
+# context slice (issue #1536).
+CONTEXT_WHY_TARGET = "target"
+CONTEXT_WHY_CALLER = "direct caller: the call line"
+CONTEXT_WHY_CALLEE = "direct callee: its signature"
+CONTEXT_WHY_RETURNS = "type it returns"
+CONTEXT_WHY_ACCEPTS = "type it accepts"
+CONTEXT_WHY_TEST = "test reaching it at depth {depth} through {through}"
+CONTEXT_WHY_DOC = "documentation section whose file links to it"
+CONTEXT_UNRESOLVED = "Nothing in the graph matches {target}"
 # change_signature (issue #1533).
 SIGNATURE_BAD_SPEC = (
     "Not a parameter spec: {spec!r} (expected name[:annotation][=default][@source])"
