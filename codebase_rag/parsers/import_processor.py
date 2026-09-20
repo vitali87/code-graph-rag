@@ -1605,14 +1605,24 @@ class ImportProcessor:
                 # last segment and externalise the bare project name (an
                 # orphan ExternalModule and a dropped edge).
                 candidate = entry.full_name
+                importer_pkg = self._julia_nested_pkg_root(
+                    known_module_paths.get(entry.module_qn, "")
+                )
                 target = None
                 while True:
                     target = self._verify_internal_import_target(
                         candidate, known_module_paths, module_aliases, entry.language
                     )
-                    if target is not None and self._julia_rel_in_nested_package(
-                        known_module_paths.get(target, "")
-                    ):
+                    target_pkg = (
+                        self._julia_nested_pkg_root(known_module_paths.get(target, ""))
+                        if target is not None
+                        else None
+                    )
+                    if target_pkg is not None and target_pkg != importer_pkg:
+                        # A target in ANOTHER nested package is unreachable
+                        # from here (its modules are not part of this
+                        # package); one in the SAME nested package is a
+                        # normal sibling import (issue #1882 review).
                         target = None
                     if target is not None:
                         break
@@ -4777,6 +4787,12 @@ class ImportProcessor:
                             else None
                         )
                         local = safe_decode_text(alias)
+                        if alias is not None and alias.type == (
+                            cs.TS_JULIA_MACRO_IDENTIFIER
+                        ):
+                            # `using .M: @foo as @bar`: strip the `@` like
+                            # julia_call_name does for the invocation.
+                            local = (local or "").lstrip("@")
                     elif name_node.type == cs.TS_JULIA_IDENTIFIER:
                         local = safe_decode_text(name_node)
                     elif name_node.type == cs.TS_JULIA_MACRO_IDENTIFIER:
@@ -4799,6 +4815,10 @@ class ImportProcessor:
                 else:
                     dotted, relative = self._julia_path_dotted(named[0])
                 local = safe_decode_text(named[-1])
+                if named[-1].type == cs.TS_JULIA_MACRO_IDENTIFIER:
+                    # `import Base: @view as @v`: the alias side may itself
+                    # be a macro name; strip the `@` to match julia_call_name.
+                    local = (local or "").lstrip("@")
                 if local:
                     yield local, dotted, relative
             elif t in (
@@ -4893,22 +4913,23 @@ class ImportProcessor:
                 return True
         return False
 
-    def _julia_rel_in_nested_package(self, path: str) -> bool:
-        # Path twin of _julia_in_nested_package; accepts repo-relative and
-        # absolute paths.
+    def _julia_nested_pkg_root(self, path: str) -> str | None:
+        # The nearest enclosing directory with its own Project.toml (the
+        # nested package root), or None if the path is in the main package.
+        # Accepts repo-relative and absolute paths.
         if not path:
-            return False
+            return None
         p = Path(path)
         if p.is_absolute():
             try:
                 p = p.relative_to(self.repo_path)
             except ValueError:
-                return False
+                return None
         parts = p.as_posix().split(cs.SEPARATOR_SLASH)
         for i in range(1, len(parts)):
             if (self.repo_path.joinpath(*parts[:i]) / "Project.toml").is_file():
-                return True
-        return False
+                return cs.SEPARATOR_SLASH.join(parts[:i])
+        return None
 
     def _julia_declared_modules(self) -> dict[str, set[str]]:
         """Declared module name -> the files that declare it.
@@ -5063,7 +5084,15 @@ class ImportProcessor:
         self_ref = cs.SEPARATOR_DOT in dotted and self._julia_current_package_prefix(
             dotted
         )
-        rel_file = self._julia_find_by_path(dotted, depth, module_qn)
+        # The exact-path lookup is a first-party link only: an absolute
+        # dotted import names an external package unless it starts with
+        # this project's own name, so a repo file that happens to sit at
+        # the same path must not capture it (issue #1882 review).
+        rel_file = (
+            self._julia_find_by_path(dotted, depth, module_qn)
+            if depth > 0 or self_ref
+            else None
+        )
         if rel_file is None and not over_climb and (depth > 0 or self_ref):
             rel_file = self._julia_find_by_name(
                 dotted.split(cs.SEPARATOR_DOT)[-1], module_qn

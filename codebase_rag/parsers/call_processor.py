@@ -2710,9 +2710,10 @@ class CallProcessor:
         if (
             func_node.type == cs.TS_JULIA_ASSIGNMENT
             and func_node.named_children
-            and func_node.named_children[0].type == cs.TS_JULIA_CALL_EXPRESSION
+            and julia_utils.julia_function_head_name(func_node) is not None
         ):
-            # A concise method `f(x) = ...`: the right side is the body.
+            # A concise method `f(x) = ...` (also `f(x)::Int`,
+            # `f(x) where T`): the right side is the body.
             body = func_node.named_children[-1]
             return body.start_byte, body.end_byte
         return None
@@ -4374,6 +4375,20 @@ class CallProcessor:
                 # it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
                 # the only edge.
                 class_variants = resolver.function_registry.variants(callee_qn)
+                # Julia: call syntax dispatches in the FUNCTION namespace,
+                # so a same-named free function (a shadowing function or an
+                # outer constructor) wins over the type — the call does not
+                # instantiate the type — and a same-named macro is not a
+                # call target for a plain call (issue #1882 review).
+                julia_fn_variants: list[tuple[NodeType, str]] = []
+                if language == cs.SupportedLanguage.JULIA:
+                    julia_fn_variants = [
+                        (node_type, variant)
+                        for variant in class_variants
+                        if (node_type := resolver.function_registry.get(variant))
+                        in (NodeType.FUNCTION, NodeType.METHOD)
+                        and variant not in self.macro_qns
+                    ]
                 self._resolution = (
                     cs.EdgeResolution.OVERLOAD
                     if len(class_variants) > 1
@@ -4388,6 +4403,9 @@ class CallProcessor:
                     variant_type = resolver.function_registry.get(class_variant)
                     if variant_type is not None and variant_type != NodeType.CLASS:
                         continue
+                    if julia_fn_variants:
+                        # A shadowing function owns the call: no instantiation.
+                        continue
                     ensure_rel(
                         caller_spec,
                         cs.RelationshipType.INSTANTIATES,
@@ -4397,12 +4415,7 @@ class CallProcessor:
                     # Call syntax dispatches in the FUNCTION namespace: a
                     # shadowing free function wins, else the inner same-name
                     # constructor (like Java/C#).
-                    fn_variants = [
-                        (node_type, variant)
-                        for variant in resolver.function_registry.variants(callee_qn)
-                        if (node_type := resolver.function_registry.get(variant))
-                        in (NodeType.FUNCTION, NodeType.METHOD)
-                    ]
+                    fn_variants = julia_fn_variants
                     if len(fn_variants) > 1:
                         self._resolution = cs.EdgeResolution.OVERLOAD
                     if fn_variants:
