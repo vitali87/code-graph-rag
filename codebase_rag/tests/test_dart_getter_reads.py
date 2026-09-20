@@ -592,3 +592,22 @@ def test_a_shadowed_prefix_is_not_read_as_a_construction(tmp_path: Path) -> None
     }
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".app.cmp", REFERENCES, ".Box.height"), rels
+
+
+def test_a_prefixed_factory_function_types_the_chain_by_its_return(
+    tmp_path: Path,
+) -> None:
+    # A hop after an import prefix need not be a constructor: `p.make()` is a
+    # FUNCTION, so the fold types the chain from its recorded return type
+    # instead of treating `make` as a class (issue #2033). This is the
+    # positive case for that branch -- the factory guard test asserts only an
+    # absence, which a fold-nothing implementation would also satisfy.
+    files = {
+        "lib.dart": (
+            "class Thing {\n  int get v => 1;\n}\n\nThing make() { return Thing(); }\n"
+        ),
+        "app.dart": ("import 'lib.dart' as p;\nint f() { return p.make().v; }\n"),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.f", "CALLS", ".lib.make"), rels
+    assert _has(rels, ".app.f", REFERENCES, ".Thing.v"), rels

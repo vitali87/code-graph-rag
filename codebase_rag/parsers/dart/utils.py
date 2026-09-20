@@ -329,10 +329,13 @@ def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
 
     `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
     identically, so the generic-construction reading of a receiver is only a
-    guess (issue #2015). Returns the leading identifier when THIS read took
-    that reading, for the caller to reject when a local or parameter of that
-    name is in scope (then it is a comparison, not a construction). Returns
-    None for every unambiguous shape, including `new X(1).m`.
+    guess (issue #2015). Returns the name that reading would construct when
+    THIS read took it, for the caller to reject when a local or parameter
+    shadows it (then it is a comparison, not a construction). Returns None
+    for every unambiguous shape, including `new X(1).m`.
+
+    The name is DOTTED under an import prefix (`p.Box`, issue #2033), so a
+    caller matching it against bare binders must take the leading segment.
     """
     receiver = selector_node.prev_named_sibling
     if receiver is None or receiver.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
@@ -449,8 +452,10 @@ def dart_import_prefix(import_node: Node) -> str | None:
     `import 'lib.dart' as p;` binds every name from that library under `p`,
     so a member reached through it (`p.Box`) resolves only if the PREFIX is
     registered as an import key; the file-derived key `lib` never appears in
-    the source. The grammar puts the prefix in an `identifier` child of the
-    `import_specification`, for the plain and the `deferred as` forms alike
+    the source. The prefix is the `import_specification`'s own `identifier`
+    child, which is where the grammar puts it for `as` and `deferred as`
+    alike; a `show`/`hide` name is nested inside a `combinator` node instead,
+    so scanning only DIRECT children cannot mistake one for a prefix
     (issue #2033).
     """
     # The capture is the whole `import_or_export`, so the specification sits
