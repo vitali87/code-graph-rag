@@ -173,7 +173,8 @@ def test_heuristic_site_is_listed_as_unmapped(
         and e[2] == "CALLS"
         and e[4] == _qn("pkg.util.helper")
     )
-    store.edge_props[edge][cs.KEY_RESOLUTION] = cs.EdgeResolution.HEURISTIC.value
+    for site in store.sites_of(edge):
+        site[cs.KEY_RESOLUTION] = cs.EdgeResolution.HEURISTIC.value
     report = change_signature(
         root,
         store.fetch_all,
