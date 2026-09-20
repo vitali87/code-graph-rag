@@ -136,6 +136,24 @@ def _construction_class_name(node: Node) -> str | None:
     return _mis_parsed_generic_name(node)
 
 
+def _construction_name_parts(node: Node) -> tuple[list[str], str | None]:
+    """The leading `type_identifier`s of a construction expression, and the
+    trailing `identifier` if one follows them."""
+    type_names: list[str] = []
+    trailing: str | None = None
+    for child in node.named_children:
+        if not child.text:
+            continue
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
+            type_names.append(decode_node_text(child.text))
+        elif child.type == cs.TS_DART_IDENTIFIER:
+            trailing = decode_node_text(child.text)
+            break
+        elif type_names:
+            break
+    return type_names, trailing
+
+
 def _explicit_construction_name(node: Node) -> str | None:
     """`new X(1)` / `const X(1)`: the class, keeping an import prefix and
     dropping a named constructor."""
@@ -162,18 +180,7 @@ def _explicit_construction_name(node: Node) -> str | None:
     # A dotted name must therefore resolve as a whole OR fall back to its
     # head: `X.named` is not a definition while `X` is, which is exactly
     # how the caller recognises a named constructor.
-    type_names: list[str] = []
-    trailing: str | None = None
-    for child in node.named_children:
-        if not child.text:
-            continue
-        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
-            type_names.append(decode_node_text(child.text))
-        elif child.type == cs.TS_DART_IDENTIFIER:
-            trailing = decode_node_text(child.text)
-            break
-        elif type_names:
-            break
+    type_names, trailing = _construction_name_parts(node)
     if not type_names:
         return trailing
     # Two type_identifiers already name prefix AND class (`new p.X.named`),
@@ -186,7 +193,6 @@ def _explicit_construction_name(node: Node) -> str | None:
     if len(type_names) == 1 and trailing is not None:
         return f"{type_names[0]}{cs.SEPARATOR_DOT}{trailing}"
     return cs.SEPARATOR_DOT.join(type_names)
-    return None
 
 
 def _mis_parsed_generic_name(node: Node) -> str | None:
