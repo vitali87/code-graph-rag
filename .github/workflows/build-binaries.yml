@@ -12,6 +12,7 @@ on:
     paths:
       - ".github/workflows/build-binaries.yml"
       - "build_binary.py"
+      - "scripts/generate_third_party_notices.py"
       - "main.py"
       - "codebase_rag/constants/build.py"
       - "**.spec"
@@ -91,6 +92,16 @@ jobs:
 
       - name: Build binary
         run: uv run python build_binary.py
+
+      # The one-file binary bundles every runtime dependency without the
+      # wheels' licence files, so each binary ships a sidecar reproducing
+      # them. The name shares the binary's prefix so the artifact, release
+      # and signing globs below pick it up unchanged.
+      - name: Generate third-party notices
+        shell: bash
+        run: |
+          uv run python scripts/generate_third_party_notices.py \
+            --output "dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}.THIRD_PARTY_NOTICES.txt"
 
       - name: Test binary
         shell: bash
