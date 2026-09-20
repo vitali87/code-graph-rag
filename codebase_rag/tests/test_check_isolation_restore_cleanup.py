@@ -8,7 +8,6 @@ from check_isolation_helpers import (
     _check,
     _edit,
     _state,
-    indexed,
 )
 
 from codebase_rag import constants as cs
@@ -16,6 +15,8 @@ from codebase_rag import cypher_queries as cq
 from codebase_rag.check_isolation import IsolationGuard
 from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
+
+pytest_plugins = ("check_isolation_helpers",)
 
 # --- what the restore must not commit -----------------------------------------
 
