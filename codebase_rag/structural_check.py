@@ -9,24 +9,32 @@ CI or pre-commit gate.
 The check measures the graph against the working tree, and the re-ingest
 brings the graph up to the tree, so a second run on an unchanged tree
 reports nothing: the delta was already applied. Rebuild the graph at the
-base (or index at the base before editing) to measure the same edit again.
-The CLI holds no lock against a concurrently running MCP server; like every
-other command that writes the graph, run it when no other writer is active.
+base (or index at the base before editing) to measure the same edit again,
+or run the check isolated (`--isolated`, issue #1718): the subgraph the
+re-ingest replaces is captured inside its prologue and put back once the
+delta is computed, the hash cache with it, so the graph reads as it did
+before and the same edit measures the same way every time. The CLI holds
+no lock against a concurrently running MCP server; like every other
+command that writes the graph, run it when no other writer is active.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import cast
 
 from tree_sitter import Parser
 
 from . import constants as cs
+from .capture import CaptureSelection, default_capture
+from .check_isolation import GraphStore, IsolationGuard
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state
 from .structural_delta import StructuralDelta, normalise_paths, observe
-from .types_defs import LanguageQueries
+from .types_defs import LanguageQueries, ReingestReport
 from .utils.path_utils import derive_project_name
 
 _GIT_DELETED = "D"
@@ -183,6 +191,98 @@ def indexed_scope(
     return cgrignore.exclude or None, cgrignore.unignore or None
 
 
+class _FileSnapshot:
+    """A file's bytes and timestamps, to be put back after the check.
+
+    The re-ingest records the files it re-parsed in the hash cache, which
+    would make a later full run skip them and keep the base graph for files
+    the working tree changed. The cache's mtime is also a judgement about
+    every file NOT in it (`_reingest_update_hashes`), so it goes back too.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._content: bytes | None = None
+        self._times: tuple[int, int] | None = None
+        # Absent and unreadable are different states and must not share one
+        # representation: treating a permission error as absence made the
+        # restore DELETE a cache it could not read (Greptile, #1718). Only a
+        # confirmed absence licenses the unlink.
+        self._absent = False
+        self._readable = False
+        try:
+            self._content = path.read_bytes()
+            stat = path.stat()
+            self._times = (stat.st_atime_ns, stat.st_mtime_ns)
+            self._readable = True
+        except FileNotFoundError:
+            self._absent = True
+        except OSError:
+            # Unreadable: leave whatever is there alone.
+            pass
+
+    def put_back(self) -> None:
+        if self._absent:
+            self._path.unlink(missing_ok=True)
+            return
+        if not self._readable or self._content is None or self._times is None:
+            return
+        self._path.write_bytes(self._content)
+        os.utime(self._path, ns=self._times)
+
+
+_UNRESTORABLE_RELS = (
+    cs.RelationshipType.RESOLVES_TO,
+    cs.RelationshipType.FLOWS_TO,
+)
+
+
+def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
+    """Refuse an isolated run whose capture holds links it cannot restore.
+
+    The guard restores by walking out from the re-parsed modules, and a
+    `Resource` is not on that walk: it is only ever the far end of an edge.
+    The endpoint pass then deletes every network `RESOLVES_TO` edge in the
+    graph and rebuilds them from the edited tree, and a Resource-to-Resource
+    `FLOWS_TO` chain touches no scoped node at all, so neither can be put
+    back from the capture. Losing them silently is worse than not offering
+    the mode, so this refuses instead (greptile-local, #1718).
+    """
+    enabled = [rel for rel in _UNRESTORABLE_RELS if capture.rel_enabled(rel)]
+    if enabled:
+        raise CheckError(
+            cs.CHECK_ISOLATED_WITH_IO.format(
+                groups=", ".join(rel.value for rel in enabled)
+            )
+        )
+
+
+def _measure_then_restore(
+    updater: GraphUpdater,
+    ingestor: object,
+    project_name: str,
+    repo_root: Path,
+    apply: Callable[[Callable[[], None]], ReingestReport],
+    measure: Callable[[Callable[[], ReingestReport]], StructuralDelta],
+) -> StructuralDelta:
+    """Measure through `apply`, then put the graph and the hash cache back.
+
+    The guard captures inside the re-ingest's write hook, so a run that
+    aborts in its prologue captured nothing and restores nothing; one that
+    fails after its first write is rolled back from the capture before the
+    error propagates.
+    """
+    guard = IsolationGuard(cast(GraphStore, ingestor), project_name, repo_root)
+    cache = _FileSnapshot(repo_root / cs.HASH_CACHE_FILENAME)
+    try:
+        return measure(lambda: apply(lambda: guard.capture(updater.reingest_scope)))
+    finally:
+        try:
+            guard.restore()
+        finally:
+            cache.put_back()
+
+
 def run_check(
     repo_root: Path,
     base: str,
@@ -192,12 +292,15 @@ def run_check(
     queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    isolated: bool = False,
+    capture: CaptureSelection | None = None,
 ) -> StructuralDelta:
     """Re-ingest what changed since `base` and return the structural delta.
 
     `exclude_paths` and `unignore_paths` are the project's indexing scope
     (the `.cgrignore` file plus any CLI excludes): a changed file outside
-    that scope must not enter the graph through the check.
+    that scope must not enter the graph through the check. With `isolated`
+    the re-ingest is measured and then undone (see `check_isolation`).
     """
     changed, deleted = changed_since(repo_root, base)
     changed = normalise_paths(changed, repo_root)
@@ -210,12 +313,27 @@ def run_check(
         project_name=project_name,
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
+        # The selection isolated mode validated must be the one the run
+        # uses; without it the updater falls back to the configured default,
+        # which can enable the IO links `_refuse_unrestorable_capture` just
+        # refused (Greptile, #1718).
+        capture=capture,
     )
     fetch_all = getattr(ingestor, "fetch_all")
-    return observe(
-        fetch_all,
+
+    def measure(apply: Callable[[], ReingestReport]) -> StructuralDelta:
+        return observe(
+            fetch_all, project_name, [*changed, *deleted], apply, repo_root=repo_root
+        )
+
+    if not isolated:
+        return measure(lambda: updater.reingest(changed, deleted=deleted))
+    _refuse_unrestorable_capture(capture or default_capture())
+    return _measure_then_restore(
+        updater,
+        ingestor,
         project_name,
-        [*changed, *deleted],
-        lambda: updater.reingest(changed, deleted=deleted),
-        repo_root=repo_root,
+        repo_root,
+        lambda hook: updater.reingest(changed, deleted=deleted, before_write=hook),
+        measure,
     )
