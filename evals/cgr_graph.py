@@ -70,6 +70,20 @@ _DEFINES_RELS = frozenset(
         cs.RelationshipType.DEFINES_METHOD.value,
     }
 )
+# What CYPHER_DELETE_MODULE walks: the definitions plus what hangs off them
+# by ownership. Kept separate from _DEFINES_RELS, which the definition
+# queries use and which must not see a Parameter as a definition.
+#
+# This is a hand-maintained copy of a list that lives in the query, so it
+# drifts silently -- it had already lost CONTAINS_SECTION, and a re-parsed
+# document kept every Section here while production deleted them (#1938).
+# `TestTheModuleSubtreeWalkMirrorsTheDeleteQuery` derives the expected set
+# from CYPHER_DELETE_MODULE itself and fails if the two diverge again.
+_MODULE_SUBTREE_RELS = _DEFINES_RELS | {
+    cs.RelationshipType.HAS_PARAMETER.value,
+    cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.CONTAINS_SECTION.value,
+}
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
 _CSHARP_TYPE_LABELS = frozenset(
     {
@@ -90,7 +104,17 @@ _GO_TYPE_LABELS = _CSHARP_TYPE_LABELS | {
 # and its caller already treats an empty result as "no functions to embed" and
 # returns -- verified at graph_updater's embeddings pass, not assumed. An
 # emulation would invite the double into work it cannot represent.
-_NOT_MODELLED: frozenset[str] = frozenset({cs.CYPHER_QUERY_EMBEDDINGS})
+#
+# `CYPHER_UNANCHORED_GLOSSES` opens the gloss repair pass at the end of every
+# sync (issue #1808, stage four). The double holds no Gloss nodes -- its
+# `execute_write` ignores the gloss statements, and a gloss's edges are
+# restored rather than re-derived -- so "no unattached notes" is the true
+# answer here, not a silent default. The hash lookup that follows is issued
+# only for notes this read returned, so it is deliberately NOT listed: if a
+# test ever reaches it, the double is missing a real case.
+_NOT_MODELLED: frozenset[str] = frozenset(
+    {cs.CYPHER_QUERY_EMBEDDINGS, cq.CYPHER_UNANCHORED_GLOSSES}
+)
 _MODULE_QN_LABELS = frozenset(
     {
         _MODULE_LABEL,
@@ -119,6 +143,9 @@ _INBOUND_DEPENDENT_RELS = frozenset(
         cs.RelationshipType.OVERRIDES.value,
         cs.RelationshipType.RETURNS.value,
         cs.RelationshipType.ACCEPTS.value,
+        # A gloss's edges are restored, never re-derived (issue #1808).
+        cs.RelationshipType.ANNOTATES.value,
+        cs.RelationshipType.MENTIONS.value,
     }
 )
 # The dependency relations CYPHER_AFFECTED_CALLER_PATHS walks: a file holding
@@ -662,11 +689,14 @@ class _StatefulIngestor:
                     callers.add(caller_path)
                 return [{cs.KEY_CALLER_PATH: path} for path in sorted(callers)]
             case cs.CYPHER_ALL_DEFINITION_QNS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 defs: list[ResultRow] = []
                 for (label, uid), props in self.nodes.items():
                     if label not in _DEFINITION_LABELS:
                         continue
                     qn = props.get(cs.KEY_QUALIFIED_NAME, uid)
+                    if not _str(qn).startswith(prefix):
+                        continue
                     row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(qn),
                         cs.KEY_LABEL: label,
@@ -686,11 +716,46 @@ class _StatefulIngestor:
                     }
                     defs.append(row)
                 return defs
+            case cs.CYPHER_PROJECT_PARAMETER_TYPES:
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.PARAMETER.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
+            case cs.CYPHER_PROJECT_FIELD_TYPES:
+                # The Field counterpart (issue #1805), read by the incremental
+                # requeue for the same reason as the Parameter query above.
+                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                return [
+                    {
+                        cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
+                        cs.KEY_TYPE_NAME: _text(props[cs.KEY_TYPE_NAME]),
+                        cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                    }
+                    for (label, _uid), props in self.nodes.items()
+                    if label == cs.NodeLabel.FIELD.value
+                    and cs.KEY_TYPE_NAME in props
+                    and (_text(props.get(cs.KEY_QUALIFIED_NAME)) or "").startswith(
+                        prefix
+                    )
+                ]
             case cs.CYPHER_ALL_INHERITS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 inherits: list[tuple[str, int, ResultRow]] = []
                 for edge in self.edges:
                     _from_label, from_val, rel_type, _to_label, to_val = edge
-                    if rel_type != _INHERITS_REL:
+                    if rel_type != _INHERITS_REL or not _str(from_val).startswith(
+                        prefix
+                    ):
                         continue
                     raw_index = self.edge_props.get(edge, {}).get(cs.KEY_BASE_INDEX)
                     index = raw_index if isinstance(raw_index, int) else None
@@ -708,9 +773,12 @@ class _StatefulIngestor:
                 inherits.sort(key=lambda item: (item[0], item[1]))
                 return [row for _child, _index, row in inherits]
             case cs.CYPHER_ALL_MODULE_QNS:
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 module_rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
-                    if label not in _MODULE_QN_LABELS:
+                    if label not in _MODULE_QN_LABELS or not _str(
+                        props.get(cs.KEY_QUALIFIED_NAME)
+                    ).startswith(prefix):
                         continue
                     module_row: ResultRow = {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -1053,7 +1121,7 @@ class _StatefulIngestor:
                 continue
             doomed.add(node)
             for _fl, _fv, rel_type, to_label, to_val in self._out.get(node, ()):
-                if rel_type in _DEFINES_RELS:
+                if rel_type in _MODULE_SUBTREE_RELS:
                     child = (to_label, to_val)
                     if child not in doomed:
                         frontier.append(child)

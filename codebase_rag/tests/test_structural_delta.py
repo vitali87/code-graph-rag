@@ -1066,15 +1066,15 @@ def test_an_undeclared_empty_class_rename_is_a_removal_plus_an_addition(
 def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
-    # The three tests above each rename ONE empty class, so both uniqueness
-    # counts are 1 and the old guard never fired. With two empty classes in
-    # the same file renamed together each sees two matches AND two peers, so
-    # the guard refused before `declared` was consulted: a pairing the
-    # operation explicitly declared was dropped, and the contract saw two
-    # removals plus two additions instead of two renames.
-    #
-    # NOT issue #1836, which is a nested container that is never declared at
-    # all; see the expected-failure test at the end of this file.
+    # Issue #1836, fixed in #1880 -- this is the regression guard for it.
+    # The three tests above each rename ONE empty class, so the candidate
+    # sets are unique and a uniqueness precondition never fires. Renaming two
+    # empty classes in the same file is the case that broke: each candidate
+    # then has a peer, so a guard that ranks uniqueness ahead of `declared`
+    # drops a pairing the operation explicitly named, and the contract sees
+    # two removals plus two additions instead of two renames -- rolling back
+    # a correct edit. Verified sensitive: reinstating that precondition on
+    # main reddens this test and the one below, and no other.
     root, store, updater = indexed
     _write(root, "pkg/empty.py", "class Alpha:\n    pass\n\n\nclass Beta:\n    pass\n")
     _observe(root, store, updater, ["pkg/empty.py"])
@@ -1110,7 +1110,7 @@ def test_two_declared_empty_class_renames_in_one_file_are_both_reported(
 def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
-    # The known-positive for the fix above: admitting a declared pair past
+    # The known-positive for the test above: admitting a declared pair past
     # the uniqueness guard must NOT admit an undeclared one alongside it.
     # Only Alpha->Gamma is declared, so Beta and Delta stay a removal plus an
     # addition even though both sit in the same ambiguous group.
@@ -1138,42 +1138,51 @@ def test_an_undeclared_pair_is_still_refused_when_two_are_renamed(
     assert _qn("pkg.empty.Delta") in delta["symbols"]["added"]
 
 
-@pytest.mark.xfail(
-    reason="issue #1836: a nested container is never DECLARED. rename.py builds "
-    "`pairs` from `report.hierarchy`, and `_hierarchy` walks only `overrides` "
-    "edges, so no descendant of a renamed symbol is named. Admitting declared "
-    "pairs past the uniqueness gate does not reach this; the fix is to widen "
-    "what is declared, which the issue says should be decided not assumed.",
-    strict=True,
-)
-def test_a_nested_empty_container_is_paired_when_its_parent_is_renamed(
+def test_two_declared_nested_class_renames_are_both_reported(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
-    # The test issue #1836 asks for. `declared` carries ONLY the outer pair,
-    # which is what the real caller produces; the nested `Inner` must still be
-    # reported as renamed rather than as a removal plus an addition, because
-    # the operation did rename it and the contract rolls back on an
-    # unexpected symbol-set change.
+    # The nested shape, which is what issue #1836 actually describes. The
+    # test above renames two MODULE-LEVEL empty classes, so a regression
+    # specific to nested qualified names would pass it (CodeRabbit on
+    # #1945). Here both renamed classes sit inside a stable enclosing
+    # class, so their qualified names carry the enclosing scope.
     root, store, updater = indexed
     _write(
         root,
-        "pkg/nest.py",
-        "class Outer:\n    class Inner:\n        pass\n",
+        "pkg/empty.py",
+        "class Outer:\n    class Alpha:\n        pass\n\n"
+        "    class Beta:\n        pass\n",
     )
-    _observe(root, store, updater, ["pkg/nest.py"])
+    _observe(root, store, updater, ["pkg/empty.py"])
 
     _write(
         root,
-        "pkg/nest.py",
-        "class Renamed:\n    class Inner:\n        pass\n",
+        "pkg/empty.py",
+        "class Outer:\n    class Gamma:\n        pass\n\n"
+        "    class Delta:\n        pass\n",
     )
     delta = _observe(
         root,
         store,
         updater,
-        ["pkg/nest.py"],
-        declared_renames=frozenset({(_qn("pkg.nest.Outer"), _qn("pkg.nest.Renamed"))}),
+        ["pkg/empty.py"],
+        declared_renames=frozenset(
+            {
+                (_qn("pkg.empty.Outer.Alpha"), _qn("pkg.empty.Outer.Gamma")),
+                (_qn("pkg.empty.Outer.Beta"), _qn("pkg.empty.Outer.Delta")),
+            }
+        ),
     )
 
-    assert delta["symbols"]["added"] == []
-    assert delta["symbols"]["removed"] == []
+    assert sorted(delta["symbols"]["renamed"], key=lambda r: r["old"]) == [
+        {
+            "old": _qn("pkg.empty.Outer.Alpha"),
+            "new": _qn("pkg.empty.Outer.Gamma"),
+            "path": "pkg/empty.py",
+        },
+        {
+            "old": _qn("pkg.empty.Outer.Beta"),
+            "new": _qn("pkg.empty.Outer.Delta"),
+            "path": "pkg/empty.py",
+        },
+    ]

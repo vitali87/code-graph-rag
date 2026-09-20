@@ -4,6 +4,12 @@
 CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
+# Markdown decoration an LLM wraps around a query. Kept beside the other
+# CYPHER_* values rather than shared with cli.MARKDOWN_FENCE, so the guard
+# table does not depend on the CLI's constants.
+CYPHER_FENCE = "```"
+CYPHER_BOLD = "**"
+CYPHER_COLON = ":"
 CYPHER_MATCH_KEYWORD = "MATCH"
 # A scoped query must return something a project filter can judge. Matched
 # against the UPPERCASED query, so these are upper case.

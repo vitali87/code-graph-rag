@@ -27,6 +27,7 @@ from ..types_defs import (
 )
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
+from .anchor_hash import anchor_hash_props
 from .ast_fingerprint import fingerprint_props
 from .cpp import utils as cpp_utils
 from .dart import dart_definition_end_point, dart_return_type_name
@@ -34,6 +35,7 @@ from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
+from .parameter_nodes import PendingParameterType, emit_declared_parameters
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -249,6 +251,7 @@ class FunctionIngestMixin:
     java_anon_overrides: list[tuple[str, str, str, str]]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
     _handler: LanguageHandler
     _deferred_cpp_methods: list[_DeferredMethod]
     _deferred_go_methods: list[_DeferredGoMethod]
@@ -276,7 +279,9 @@ class FunctionIngestMixin:
     csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     def _ingest_all_functions(
         self,
@@ -788,7 +793,9 @@ class FunctionIngestMixin:
                 cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
                 cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
                 cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                cs.KEY_DOCSTRING: self._get_docstring(func_node),
+                cs.KEY_DOCSTRING: self._get_docstring(
+                    func_node, cs.SupportedLanguage.CPP
+                ),
             }
             if file_path is not None and self.repo_path is not None:
                 props[cs.KEY_PATH] = cached_relative_path(
@@ -798,6 +805,7 @@ class FunctionIngestMixin:
             # Computed here, not at flush: the tree (and this node) is gone by
             # the time deferred methods are written out.
             props.update(fingerprint_props(func_node))
+            props.update(anchor_hash_props(func_node, decorators))
             if not hasattr(self, "_deferred_cpp_methods"):
                 self._deferred_cpp_methods = []
             self._deferred_cpp_methods.append(
@@ -1178,6 +1186,7 @@ class FunctionIngestMixin:
                 defer_containment=self._deferred_parent_links,
                 module_qn=entry.module_qn,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             if method_qn is not None:
                 self._register_go_name_alias(
@@ -1320,12 +1329,25 @@ class FunctionIngestMixin:
             ls.FUNC_FOUND.format(name=resolution.name, qn=resolution.qualified_name)
         )
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, func_props)
+        func_path = func_props.get(cs.KEY_PATH)
         queue_type_facts(
             self.pending_type_facts,
             cs.NodeLabel.FUNCTION,
             resolution.qualified_name,
             module_qn,
             extract_type_facts(func_node, language),
+            func_path if isinstance(func_path, str) else None,
+        )
+        emit_declared_parameters(
+            self.ingestor,
+            self.pending_parameter_types,
+            cs.NodeLabel.FUNCTION,
+            resolution.qualified_name,
+            module_qn,
+            func_node,
+            language,
+            func_props,
+            has_receiver=False,
         )
         # Deferred: emission happens after Pass 2 so router mount prefixes
         # (possibly declared in other modules) can resolve (issue #877).
@@ -1440,7 +1462,7 @@ class FunctionIngestMixin:
         resolution: FunctionResolution,
         module_qn: str,
         lang_queries: LanguageQueries,
-        language: cs.SupportedLanguage | None = None,
+        language: cs.SupportedLanguage,
     ) -> PropertyDict:
         file_path = self.module_qn_to_file_path.get(module_qn)
         modifiers, decorators = extract_modifiers_and_decorators(
@@ -1459,7 +1481,7 @@ class FunctionIngestMixin:
             # function_body; extend the end over that body so the snippet covers the
             # whole function (no-op for every other language).
             cs.KEY_END_LINE: dart_definition_end_point(func_node)[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(func_node),
+            cs.KEY_DOCSTRING: self._get_docstring(func_node, language),
             cs.KEY_IS_EXPORTED: resolution.is_exported,
         }
         if file_path is not None:
@@ -1476,6 +1498,7 @@ class FunctionIngestMixin:
             )
         props.update(type_facts_props(extract_type_facts(func_node, language)))
         props.update(fingerprint_props(func_node))
+        props.update(anchor_hash_props(func_node, decorators))
         return props
 
     def _create_function_relationships(
@@ -1808,6 +1831,7 @@ class FunctionIngestMixin:
             defer_containment=self._deferred_parent_links,
             module_qn=module_qn,
             type_fact_sink=self.pending_type_facts,
+            parameter_type_sink=self.pending_parameter_types,
         )
         if ingested_qn is None:
             return False

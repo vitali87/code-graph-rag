@@ -91,6 +91,7 @@ def _apply_memory_limit(
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
+        "_node_flush_lock",
         "_executor",
         "_host",
         "_port",
@@ -140,6 +141,7 @@ class MemgraphIngestor:
         self.batch_size = batch_size
         self._use_merge = use_merge
         self._conn_lock = threading.Lock()
+        self._node_flush_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
         self.conn: ConnectionProtocol | None = None
         self.node_buffer: list[tuple[str, dict[str, PropertyValue]]] = []
@@ -534,20 +536,26 @@ class MemgraphIngestor:
             conn.close()
 
     def flush_nodes(self) -> None:
+        with self._node_flush_lock:
+            self._flush_nodes()
+
+    def _flush_nodes(self) -> None:
         if not self.node_buffer:
             return
 
         buffer_size = len(self.node_buffer)
+        buffered_nodes = self.node_buffer[:buffer_size]
         nodes_by_label: defaultdict[str, list[dict[str, PropertyValue]]] = defaultdict(
             list
         )
-        for label, props in self.node_buffer:
+        for label, props in buffered_nodes:
             nodes_by_label[label].append(props)
 
         flushed_total = 0
         skipped_total = 0
 
         first_error: Exception | None = None
+        failed_labels: set[str] = set()
 
         if self._executor and len(nodes_by_label) > 1:
             logger.info(
@@ -569,6 +577,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
+                    failed_labels.add(label)
                     logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
@@ -579,6 +588,7 @@ class MemgraphIngestor:
                     flushed_total += flushed
                     skipped_total += skipped
                 except Exception as e:
+                    failed_labels.add(label)
                     logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
                     if first_error is None:
                         first_error = e
@@ -588,7 +598,9 @@ class MemgraphIngestor:
         )
         if skipped_total:
             logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
-        self.node_buffer.clear()
+        self.node_buffer[:buffer_size] = [
+            node for node in buffered_nodes if node[0] in failed_labels
+        ]
 
         if first_error is not None:
             raise first_error

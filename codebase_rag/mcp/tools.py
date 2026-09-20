@@ -12,7 +12,7 @@ from rich.console import Console
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
-from codebase_rag import graph_query
+from codebase_rag import gloss, graph_query
 from codebase_rag import logs as lg
 from codebase_rag import structural_delta as sd
 from codebase_rag import tool_errors as te
@@ -24,6 +24,7 @@ from codebase_rag.services import QueryProtocol
 from codebase_rag.services.gloss_cleanup import prune_orphaned_glosses
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.services.provenance import head_commit
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.ast_grep_service import AstGrepService
 from codebase_rag.tools.code_retrieval import (
@@ -143,6 +144,12 @@ _READS_THE_GRAPH = frozenset(
         cs.MCPToolName.OVERRIDES,
         cs.MCPToolName.IMPORTERS,
         cs.MCPToolName.TESTS_REACHING,
+        # `annotate` writes, but it READS first: the subject is resolved
+        # against the graph, and on a partial graph a missing sibling makes
+        # an ambiguous name look unique, so the note lands on the wrong
+        # definition with no refusal. Guarded like the readers (#1808).
+        cs.MCPToolName.ANNOTATE,
+        cs.MCPToolName.GLOSSES,
     }
 )
 
@@ -447,6 +454,24 @@ class MCPToolsRegistry:
                 {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.overrides,
+            ),
+            cs.MCPToolName.ANNOTATE: self._graph_tool(
+                cs.MCPToolName.ANNOTATE,
+                {
+                    cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET,
+                    cs.MCPParamName.BODY: td.MCP_PARAM_GLOSS_BODY,
+                    cs.MCPParamName.KIND: td.MCP_PARAM_GLOSS_KIND,
+                    cs.MCPParamName.MENTIONS: td.MCP_PARAM_GLOSS_MENTIONS,
+                    cs.MCPParamName.AUTHOR: td.MCP_PARAM_GLOSS_AUTHOR,
+                },
+                [cs.MCPParamName.TARGET, cs.MCPParamName.BODY, cs.MCPParamName.KIND],
+                self.annotate,
+            ),
+            cs.MCPToolName.GLOSSES: self._graph_tool(
+                cs.MCPToolName.GLOSSES,
+                {cs.MCPParamName.TARGET: td.MCP_PARAM_TARGET},
+                [cs.MCPParamName.TARGET],
+                self.glosses,
             ),
             cs.MCPToolName.IMPORTERS: self._graph_tool(
                 cs.MCPToolName.IMPORTERS,
@@ -967,7 +992,7 @@ class MCPToolsRegistry:
         # (issue #1828; caught in review of #1856). Exactly the rule the
         # incomplete-run marker follows two lines below.
         if isinstance(self.ingestor, QueryProtocol):
-            prune_orphaned_glosses(self.ingestor)
+            prune_orphaned_glosses(self.ingestor, project_name)
         # Invariant (b). The marker sits on its own node so `delete_project`
         # cannot reach it -- which is what lets it survive an index's
         # delete-then-rebuild -- so a deliberate delete must remove it. The
@@ -2462,6 +2487,49 @@ class MCPToolsRegistry:
         )
 
     # --- graph-driven edit operations (issue #1532) ------------------------------
+
+    # --- agent-authored notes (issue #1808) -----------------------------------
+
+    def _commit_sha_for(self, project_name: str) -> str | None:
+        # Recorded only when the graph project was indexed from this server's
+        # checkout: another project's HEAD is not this repository's HEAD, and
+        # a note stamped with the wrong commit is worse than one without.
+        root = self._source_root_for(project_name)
+        return head_commit(root) if root is not None else None
+
+    async def annotate(
+        self,
+        target: str,
+        body: str,
+        kind: str,
+        mentions: str | None = None,
+        author: str | None = None,
+        project: str | None = None,
+    ) -> object:
+        # Runs under the ingestor lock like every graph read, so the write
+        # cannot interleave with an index or reingest deleting its subject.
+        return await self._graph_query(
+            cs.MCPToolName.ANNOTATE,
+            project,
+            lambda name: gloss.write_gloss(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                name,
+                target,
+                body,
+                kind,
+                mentions,
+                author,
+                self._commit_sha_for(name),
+            ),
+        )
+
+    async def glosses(self, target: str, project: str | None = None) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.GLOSSES,
+            project,
+            lambda name: gloss.glosses_for(self.ingestor.fetch_all, name, target),
+        )
 
     def _rename_tool(self) -> ToolMetadata:
         def prop(kind: cs.MCPSchemaType, description: str) -> MCPInputSchemaProperty:

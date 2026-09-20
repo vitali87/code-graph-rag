@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -33,13 +35,13 @@ def _node(node_id, frame, children=(), hit_count=0):
     }
 
 
-def _profile(tmp_path):
+def _profile(tmp_path, dependency_directory="node_modules"):
     """(root)->(main toplevel)->runAll->[handle->greet, forEach->callback]."""
     # Build file URLs with as_uri() so a Windows drive path yields a valid
     # `file:///C:/...` URI (drive kept out of the authority) on any platform.
     main = (tmp_path / "main.js").as_uri()
     registry = (tmp_path / "src" / "registry.js").as_uri()
-    vendored = (tmp_path / "node_modules" / "lib" / "index.js").as_uri()
+    vendored = (tmp_path / dependency_directory / "lib" / "index.js").as_uri()
     return {
         "nodes": [
             _node(1, _frame("(root)", "", 0), children=[2]),
@@ -119,6 +121,37 @@ def test_vendored_and_internal_frames_never_appear(tmp_path):
         assert "node_modules" not in record.callee.path
         assert not record.caller.path.startswith("node:")
         assert not record.callee.path.startswith("node:")
+
+
+@pytest.mark.parametrize(
+    ("directory", "excluded_on_posix"),
+    [
+        ("node_modules", True),
+        ("NODE_MODULES", False),
+        ("Node_Modules", False),
+        ("site-packages", True),
+        ("SITE-PACKAGES", False),
+        (".venv", True),
+        (".VENV", False),
+    ],
+)
+def test_dependency_directory_case_follows_platform(
+    tmp_path: Path, directory: str, excluded_on_posix: bool
+) -> None:
+    count = _convert_raw(tmp_path, _profile(tmp_path, directory))
+    _header, records = read_trace_file(tmp_path / "out.jsonl")
+    edges = {(record.caller.qualname, record.callee.qualname) for record in records}
+    expected = {
+        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        ("runAll", "handle"),
+        ("handle", "greet"),
+        ("runAll", "callback"),
+    }
+    if os.name != "nt" and not excluded_on_posix:
+        expected.add(("runAll", "vendored"))
+
+    assert edges == expected
+    assert count == len(expected)
 
 
 def test_workload_label_lands_on_every_record(tmp_path):
@@ -244,3 +277,186 @@ def test_non_int_child_entry_is_rejected_not_dropped(tmp_path):
     profile = {"nodes": [{"id": 1, "callFrame": _frame("a", "", 0), "children": ["x"]}]}
     with pytest.raises(ValueError):
         _convert_raw(tmp_path, profile)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("file://nas/share/my%20repo/main.js", "//nas/share/my repo/main.js"),
+        (
+            "file://nas/share/%E4%BD%A0%E5%A5%BD%20repo/main.js",
+            "//nas/share/你好 repo/main.js",
+        ),
+        ("file:////nas/share/my%20repo/main.js", "//nas/share/my repo/main.js"),
+        ("file://localhost/C:/repo/main.js", "C:/repo/main.js"),
+        ("file://LOCALHOST/repo/main.js", "/repo/main.js"),
+    ],
+)
+def test_file_url_authority_preserves_network_and_local_paths(
+    url: str, expected: str
+) -> None:
+    from codebase_rag.trace.cpuprofile import _url_to_path
+
+    assert _url_to_path(url) == expected
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize("dependency_directory", ["node_modules", "NODE_MODULES"])
+@pytest.mark.parametrize(
+    "profile_root",
+    [
+        "//nas/cgr-profile-tests/my repo 项目",
+        "//NAS/cgr-profile-tests/my repo 项目",
+        "//nas/CGR-PROFILE-TESTS/my repo 项目",
+        "//nas/cgr-profile-tests/MY REPO 项目",
+    ],
+)
+def test_unc_repository_keeps_profile_edges(
+    tmp_path: Path, profile_root: str, dependency_directory: str
+) -> None:
+    repo_root = Path("//nas/cgr-profile-tests/my repo 项目")
+    profile_path = tmp_path / "unc.cpuprofile"
+    profile_path.write_text(
+        json.dumps(_profile(Path(profile_root), dependency_directory)), encoding="utf-8"
+    )
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    header, records = read_trace_file(output)
+    edges = {
+        (record.caller.qualname, record.callee.qualname): record for record in records
+    }
+
+    assert count == 4
+    assert set(edges) == {
+        (cs.TRACE_QUALNAME_MODULE, "runAll"),
+        ("runAll", "handle"),
+        ("handle", "greet"),
+        ("runAll", "callback"),
+    }
+    assert header.repo_root == str(repo_root)
+    dispatch = edges[("handle", "greet")]
+    assert (
+        dispatch.caller.path == (Path(profile_root) / "src" / "registry.js").as_posix()
+    )
+    assert dispatch.callee.path == dispatch.caller.path
+    assert (dispatch.caller.line, dispatch.callee.line, dispatch.count) == (7, 11, 7)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize(
+    "profile_root",
+    [
+        "//other-nas/cgr-profile-tests/my repo 项目",
+        "//nas/other-share/my repo 项目",
+        "//nas/cgr-profile-tests/my repo 项目-sibling",
+    ],
+)
+def test_other_unc_repositories_stay_excluded(
+    tmp_path: Path, profile_root: str
+) -> None:
+    profile_path = tmp_path / "unc.cpuprofile"
+    profile_path.write_text(json.dumps(_profile(Path(profile_root))), encoding="utf-8")
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(
+        profile_path, Path("//nas/cgr-profile-tests/my repo 项目"), output
+    )
+    _header, records = read_trace_file(output)
+
+    assert count == 0
+    assert list(records) == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="UNC repository paths require Windows")
+@pytest.mark.parametrize(
+    "source_directory", ["src", "node_modules", "NODE_MODULES", "Node_Modules"]
+)
+def test_unc_remapped_paths_keep_case_and_scope(
+    tmp_path: Path, source_directory: str
+) -> None:
+    repo_root = Path("//nas/cgr-profile-tests/my repo 项目")
+    source_path = (
+        Path("//NAS/cgr-profile-tests/my repo 项目") / source_directory / "MixedCase.ts"
+    )
+    generated = tmp_path / "bundle.js"
+    generated.write_text("//# sourceMappingURL=bundle.js.map\n", encoding="utf-8")
+    generated.with_suffix(".js.map").write_text(
+        json.dumps(
+            {
+                "version": 3,
+                "sources": [source_path.as_posix()],
+                "names": [],
+                "mappings": "AAAA;AAKA",
+            }
+        ),
+        encoding="utf-8",
+    )
+    profile_path = tmp_path / "remapped.cpuprofile"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    _node(1, _frame("caller", generated.as_uri(), 0), children=[2]),
+                    _node(2, _frame("callee", generated.as_uri(), 1), hit_count=7),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    _header, records = read_trace_file(output)
+    edges = list(records)
+
+    if source_directory != "src":
+        assert count == 0
+        assert edges == []
+    else:
+        assert count == len(edges) == 1
+        dispatch = edges[0]
+        assert (dispatch.caller.qualname, dispatch.callee.qualname) == (
+            "caller",
+            "callee",
+        )
+        assert dispatch.caller.path == dispatch.callee.path == source_path.as_posix()
+        assert (dispatch.caller.line, dispatch.callee.line, dispatch.count) == (1, 6, 7)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX repository paths are case-sensitive")
+def test_case_distinct_posix_repository_stays_excluded(tmp_path: Path) -> None:
+    repo_root = tmp_path / "project"
+    repo_root.mkdir()
+    profile_path = tmp_path / "case-distinct.cpuprofile"
+    profile_path.write_text(
+        json.dumps(_profile(tmp_path / "PROJECT")), encoding="utf-8"
+    )
+    output = tmp_path / "trace.jsonl"
+
+    count = convert_cpuprofile(profile_path, repo_root, output)
+    _header, records = read_trace_file(output)
+
+    assert count == 0
+    assert list(records) == []
+
+
+def test_http_frames_stay_outside_the_project(tmp_path: Path) -> None:
+    local_url = (tmp_path / "main.js").as_uri()
+    profile = {
+        "nodes": [
+            _node(1, _frame("caller", local_url, 1), children=[2]),
+            _node(
+                2,
+                _frame("remote", "https://example.invalid/main.js", 1),
+                children=[3],
+            ),
+            _node(3, _frame("callee", local_url, 5), hit_count=3),
+        ]
+    }
+
+    assert _convert_raw(tmp_path, profile) == 1
+    _header, records = read_trace_file(tmp_path / "out.jsonl")
+    assert [(record.caller.qualname, record.callee.qualname) for record in records] == [
+        ("caller", "callee")
+    ]

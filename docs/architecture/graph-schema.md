@@ -16,8 +16,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
 | Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
+| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
+| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Enum | same as Interface |
 | Type | same as Interface, but `path` and `absolute_path` are optional |
@@ -167,6 +167,40 @@ reason, even when they do carry the marker:
 - **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
   marker in JavaScript, TypeScript or TSX; `/**` is.
 
+## Definition Documentation
+
+`Class`, `Function`, `Method`, `Interface`, `Enum`, `Type` and `Union` carry
+the documentation of that one definition in the same optional `docstring`
+property. Python's is the string literal that opens the body; every other
+language's is the doc comment immediately above the declaration -- or above
+the statement that wraps it: an `export`, a Go `type`, a `const f = () =>`
+assignment, a `module.exports.f = function` assignment. A comment that trails
+the previous line (`int a; ///< the a field`) is that line's remark, never the
+next declaration's documentation.
+
+The markers are the ones in the module table with one exception: Rust
+documents a definition with the **outer** forms, `///` and `/**`, while `//!`
+and `/*!` describe the enclosing module and are never attached to an item. Go
+has no marker at either level, so `//` directly above a declaration is its doc.
+
+Whether a comment belongs to the file or to the declaration beneath it is one
+decision, made once, from the blank line: a doc comment touching a declaration
+is that declaration's, a detached one is the file's. So `/** Class docs */`
+directly above `class C {}` lands on the `Class` node and not on the `Module`,
+and the same comment separated by a blank line does the reverse. Rust is the one
+language where a detached `///` belongs to neither -- it documents nothing, and
+`rustc` warns on it.
+
+An attribute between the comment and its declaration does not detach it
+(`/// doc` / `#[derive(Debug)]` / `struct S`). In the other languages an
+annotation is part of the declaration node itself, so the comment is already
+adjacent and no skipping is needed.
+
+The exclusions are the module table's -- separator rules, directives, ordinary
+comments without the marker -- for the same reason: an `// ordinary note`
+recorded as a function's documentation is a wrong answer that reads like a
+right one.
+
 ## Nested Definitions
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
@@ -192,7 +226,7 @@ Language notes:
 - **Rust**: macros and functions live in separate namespaces, so a macro invocation (`write!`) never binds a same-named `fn` and a function call never binds a same-named macro. `#[macro_export]` sets `is_exported` (macros take no `pub`).
 - **C/C++** (macro semantics, shared by the libclang-backed modes): compiler builtins, system-header macros, and empty-bodied object-like macros (include guards, feature flags) are not nodes. A macro use inside a function body emits `CALLS` from that function; a use outside any function attributes to the `Module`. A macro whose definition body references another macro emits a macro-to-macro `CALLS` edge, since nested expansions are never reported as individual uses.
 - **C/C++ hybrid mode** (the default: `CPP_FRONTEND=hybrid`; `libclang` forces the pure libclang frontend and `treesitter` disables libclang entirely; the libclang bindings ship in the `cpp` extra, `pip install "code-graph-rag[cpp]"`): tree-sitter remains the backbone (every file gets its tree-sitter definitions and calls; nothing is skipped) and libclang layers on only macro `Function` nodes and `#include` `IMPORTS` edges, whose qualified names are identical between the two schemes. Macro uses are attributed to the tightest enclosing tree-sitter definition span after the definition pass, so macro `CALLS` edges join the qualified-name scheme the rest of the graph uses.
-- **C# hybrid mode** (the default: `CSHARP_FRONTEND=auto` runs it wherever `dotnet` is on PATH, falling back to pure tree-sitter otherwise; `hybrid`/`roslyn` force it, `treesitter` disables it): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site.
+- **C# hybrid mode** (opt-in: the default is `CSHARP_FRONTEND=treesitter`; selecting `auto` uses hybrid mode when `dotnet` is on PATH, while `hybrid`/`roslyn` explicitly request Roslyn-backed analysis; unavailable toolchains fall back to tree-sitter): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site. See the [security model](security.md#repository-parsing-and-toolchains) before enabling toolchain-backed analysis on untrusted repositories.
 
 ## Language-Specific AST Mappings
 

@@ -40,6 +40,19 @@ TS_DART_CONDITIONAL_ASSIGNABLE_SELECTOR = "conditional_assignable_selector"
 TS_DART_THIS = "this"
 TS_DART_SUPER = "super"
 TS_DART_IDENTIFIER = "identifier"
+# Construction receivers a member chain can hang off. `new X(1).m` and
+# `const X(1).m` both parse as `new_expression` (type_identifier, optional
+# type_arguments, arguments). `X<int>(1).m` has NO construction node: the
+# grammar reads `<` and `>` as comparisons, so it lands as nested
+# `relational_expression` with the call's parens split off as a
+# `parenthesized_expression` (issue #2015).
+TS_DART_NEW_EXPRESSION = "new_expression"
+TS_DART_CONST_OBJECT_EXPRESSION = "const_object_expression"
+TS_DART_RELATIONAL_EXPRESSION = "relational_expression"
+TS_DART_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+TS_DART_RELATIONAL_OPERATOR = "relational_operator"
+DART_ANGLE_OPEN = "<"
+DART_ANGLE_CLOSE = ">"
 
 DART_CALL_QUERY = """
 (selector (argument_part)) @call
@@ -81,6 +94,11 @@ DART_NESTED_SCOPE_NODE_TYPES = frozenset(
     }
 )
 TS_DART_INITIALIZED_IDENTIFIER_LIST = "initialized_identifier_list"
+TS_DART_STATIC_FINAL_DECLARATION_LIST = "static_final_declaration_list"
+TS_DART_STATIC_FINAL_DECLARATION = "static_final_declaration"
+TS_DART_CONST_BUILTIN = "const_builtin"
+TS_DART_FINAL_BUILTIN = "final_builtin"
+TS_DART_LATE = "late"
 TS_DART_INITIALIZED_IDENTIFIER = "initialized_identifier"
 TS_DART_INITIALIZED_VARIABLE_DEFINITION = "initialized_variable_definition"
 TS_DART_FORMAL_PARAMETER = "formal_parameter"
