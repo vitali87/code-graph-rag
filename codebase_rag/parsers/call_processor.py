@@ -3960,6 +3960,35 @@ class CallProcessor:
                 self._record_csharp_cross_module_use(module_qn, callee_qn)
 
             if (
+                language == cs.SupportedLanguage.DART
+                and callee_type != class_label
+                and callee_qn in resolver.type_inference.dart_constructor_qns
+            ):
+                # A named constructor (`Box.of(1)`) resolves to its own METHOD,
+                # never to the class, so the class branch below never records
+                # the construction: INSTANTIATES the owning class here and let
+                # the method path keep the CALLS edge (issue #2012).
+                owner_qn = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                owner_variants = [
+                    variant
+                    for variant in resolver.function_registry.variants(owner_qn)
+                    if resolver.function_registry.get(variant) == NodeType.CLASS
+                ]
+                # Twin classes take the same stamp the class branch gives a
+                # two-candidate construction (local review).
+                self._resolution = (
+                    cs.EdgeResolution.OVERLOAD
+                    if len(owner_variants) > 1
+                    else resolver.last_resolution
+                )
+                for class_variant in owner_variants:
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.INSTANTIATES,
+                        (class_label, qn_key, class_variant),
+                    )
+
+            if (
                 language == cs.SupportedLanguage.CPP
                 and call_node.type == cs.TS_NEW_EXPRESSION
                 and callee_type != class_label
