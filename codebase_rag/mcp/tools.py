@@ -130,6 +130,12 @@ _NOT_GRAPH_READERS = frozenset(
         # the postcondition contract, so refusing up front on a partial graph
         # would block the operation that repairs it (issue #1534).
         cs.MCPToolName.MOVE,
+        # EDITs like the three above: each runs its own re-ingest behind the
+        # incomplete-run marker and holds the result to the postcondition
+        # contract, so refusing up front on a partial graph would block the
+        # operation that repairs it (issue #1535).
+        cs.MCPToolName.EXTRACT,
+        cs.MCPToolName.INLINE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
