@@ -12,7 +12,6 @@ from check_isolation_helpers import (
     _state,
     _updater,
     _write,
-    indexed,
 )
 
 from codebase_rag import constants as cs
@@ -20,6 +19,8 @@ from codebase_rag.capture import resolve_capture
 from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
 from evals.cgr_graph import _StatefulIngestor
+
+pytest_plugins = ("check_isolation_helpers",)
 
 # --- the graph after the check ------------------------------------------------
 
