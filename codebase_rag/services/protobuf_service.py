@@ -32,6 +32,9 @@ LABEL_TO_ONEOF_FIELD: dict[cs.NodeLabel, str] = {
     cs.NodeLabel.PATTERN: cs.ONEOF_PATTERN,
     cs.NodeLabel.CODE_SMELL: cs.ONEOF_CODE_SMELL,
     cs.NodeLabel.SECURITY_ISSUE: cs.ONEOF_SECURITY_ISSUE,
+    cs.NodeLabel.GLOSS: cs.ONEOF_GLOSS,
+    cs.NodeLabel.PARAMETER: cs.ONEOF_PARAMETER,
+    cs.NodeLabel.FIELD: cs.ONEOF_FIELD,
 }
 
 ONEOF_FIELD_TO_LABEL: dict[str, cs.NodeLabel] = {
@@ -66,7 +69,11 @@ class ProtobufFileIngestor:
         repo_path: str | None = None,
     ):
         self.output_dir = Path(output_path)
-        self._nodes: dict[str, pb.Node] = {}
+        # Keyed by (label, id): a Field and a Method may share `<owner>.<name>`,
+        # and the read side (graph_diff._node_key) identifies a node by payload
+        # kind plus identity, so the writer must too or one of the pair is lost
+        # (local review of #1899). Sorted output stays deterministic.
+        self._nodes: dict[tuple[str, str], pb.Node] = {}
         self._relationships: dict[_RelKey, pb.Relationship] = {}
         self.split_index = split_index
         # File/Folder identities are ABSOLUTE paths in the live graph (the
@@ -118,14 +125,12 @@ class ProtobufFileIngestor:
         # `MERGE ... SET n += props`: a later batch may carry properties
         # the first did not (the Rust cfg(test) declaration record lands
         # after the module's own node, issue #1010). Each provided key
-        # replaces the stored value wholesale, lists included. SAME label
-        # only: qn strings collide across labels (Rust `mod run` and
-        # `fn run`), and writing through the other oneof field would
-        # switch the payload and clear the stored node, so a cross-label
-        # ensure keeps the first writer, as before the merge existed.
-        if (existing := self._nodes.get(node_id)) is not None:
-            if existing.WhichOneof(cs.PROTOBUF_PAYLOAD_ONEOF) != payload_field_name:
-                return
+        # replaces the stored value wholesale, lists included. The slot is
+        # per LABEL, so a same-named node of another label (Rust `mod run`
+        # and `fn run`; a Field and a Method) has its own record rather than
+        # being dropped as a cross-label writer.
+        node_key = (node_label, node_id)
+        if (existing := self._nodes.get(node_key)) is not None:
             payload_message = getattr(existing, payload_field_name)
         else:
             if label in _MSG_CLASS_CACHE:
@@ -138,7 +143,7 @@ class ProtobufFileIngestor:
                 return
             node = pb.Node()
             payload_message = getattr(node, payload_field_name)
-            self._nodes[node_id] = node
+            self._nodes[node_key] = node
 
         for key, value in properties.items():
             if hasattr(payload_message, key):
@@ -215,10 +220,10 @@ class ProtobufFileIngestor:
         self._relationships[unique_key] = rel
 
     def _sorted_nodes(self) -> list[pb.Node]:
-        # Canonical order (issue #1138): node ids are unique within the map, so
-        # the id alone is a total order; insertion order (parse order) must
-        # never leak into the artifact bytes.
-        return [node for _id, node in sorted(self._nodes.items())]
+        # Canonical order (issue #1138): the map is keyed on (label, id), a
+        # total order even where two labels share an id; insertion order
+        # (parse order) must never leak into the artifact bytes.
+        return [node for _key, node in sorted(self._nodes.items())]
 
     def _sorted_relationships(self) -> list[pb.Relationship]:
         # The map key IS (source_id, type, target_id): a deterministic total

@@ -278,33 +278,45 @@ class PubspecYamlParser(DependencyParser):
         # (spec = "").
         dependencies: list[Dependency] = []
         try:
-            in_deps = False
-            entry_indent: int | None = None
+            scanner = _PubspecScanner()
             with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 for raw in f:
-                    line = raw.rstrip()
-                    if not line or line.lstrip().startswith(cs.PUBSPEC_COMMENT_PREFIX):
-                        continue
-                    indent = len(line) - len(line.lstrip())
-                    stripped = line.strip()
-                    if indent == 0:
-                        key = stripped.split(cs.PUBSPEC_KEY_SEP, 1)[0]
-                        in_deps = key in cs.PUBSPEC_DEP_KEYS
-                        entry_indent = None
-                        continue
-                    if not in_deps or cs.PUBSPEC_KEY_SEP not in stripped:
-                        continue
-                    if entry_indent is None:
-                        entry_indent = indent
-                    if indent != entry_indent:
-                        continue
-                    name, _, spec = stripped.partition(cs.PUBSPEC_KEY_SEP)
-                    name = name.strip()
-                    if name:
-                        dependencies.append(Dependency(name, spec.strip()))
+                    if (dependency := scanner.feed(raw.rstrip())) is not None:
+                        dependencies.append(dependency)
         except Exception as e:
             logger.error(ls.DEP_PARSE_ERROR_PUBSPEC.format(path=file_path, error=e))
         return dependencies
+
+
+class _PubspecScanner:
+    """The line-by-line state of `PubspecYamlParser.parse`: which top-level
+    block the scan is in, and the indent its entries use."""
+
+    __slots__ = ("entry_indent", "in_deps")
+
+    def __init__(self) -> None:
+        self.in_deps = False
+        self.entry_indent: int | None = None
+
+    def feed(self, line: str) -> Dependency | None:
+        if not line or line.lstrip().startswith(cs.PUBSPEC_COMMENT_PREFIX):
+            return None
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 0:
+            key = stripped.split(cs.PUBSPEC_KEY_SEP, 1)[0]
+            self.in_deps = key in cs.PUBSPEC_DEP_KEYS
+            self.entry_indent = None
+            return None
+        if not self.in_deps or cs.PUBSPEC_KEY_SEP not in stripped:
+            return None
+        if self.entry_indent is None:
+            self.entry_indent = indent
+        if indent != self.entry_indent:
+            return None
+        name, _, spec = stripped.partition(cs.PUBSPEC_KEY_SEP)
+        name = name.strip()
+        return Dependency(name, spec.strip()) if name else None
 
 
 def parse_dependencies(file_path: Path) -> list[Dependency]:

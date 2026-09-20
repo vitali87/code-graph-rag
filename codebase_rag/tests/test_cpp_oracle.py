@@ -122,16 +122,14 @@ def test_cgr_matches_libclang_oracle_on_cpp_structure(
     ):
         aggregate = _aggregate(result.rows)
         assert aggregate is not None, (label, result.rows, result.diff)
-        assert aggregate["precision"] == 1.0 and aggregate["recall"] == 1.0, (
-            label,
-            aggregate,
-            result.diff,
-        )
+        assert aggregate["precision"] == 1.0, (label, aggregate, result.diff)
+        assert aggregate["recall"] == 1.0, (label, aggregate, result.diff)
     # Guard the sample is non-trivial (class + struct + 4 methods + function).
     node_aggregate = _aggregate(
         score_node_kinds(cgr, oracle, ec.CPP_SCORED_NODE_KINDS).rows
     )
-    assert node_aggregate is not None and node_aggregate["tp"] >= 7, node_aggregate
+    assert node_aggregate is not None, node_aggregate
+    assert node_aggregate["tp"] >= 7, node_aggregate
 
 
 INHERIT_H = """\
@@ -180,10 +178,8 @@ def test_libclang_oracle_emits_inherits_edges(tmp_path: Path) -> None:
     aggregate = _aggregate(result.rows)
     assert aggregate is not None, (result.rows, result.diff)
     assert aggregate["tp"] >= 1, (aggregate, result.diff)
-    assert aggregate["precision"] == 1.0 and aggregate["recall"] == 1.0, (
-        aggregate,
-        result.diff,
-    )
+    assert aggregate["precision"] == 1.0, (aggregate, result.diff)
+    assert aggregate["recall"] == 1.0, (aggregate, result.diff)
 
 
 def test_restrict_to_files_scopes_graph_to_universe() -> None:

@@ -167,10 +167,16 @@ def test_cpp_non_conflicting_inner_block_local_is_recorded() -> None:
 def test_cpp_multi_declarator_declaration_maps_all_names() -> None:
     node = _first_function_node("void f() { Zeta a, b; Foo* p, q; }")
     var_types = CppTypeInferenceEngine().build_local_variable_type_map(node, "m")
-    assert var_types.get("a") == "Zeta" and var_types.get("b") == "Zeta", (
+    assert var_types.get("a") == "Zeta", (
         f"both a and b should map to Zeta, got {var_types}"
     )
-    assert var_types.get("p") == "Foo" and var_types.get("q") == "Foo", (
+    assert var_types.get("b") == "Zeta", (
+        f"both a and b should map to Zeta, got {var_types}"
+    )
+    assert var_types.get("p") == "Foo", (
+        f"both p and q should map to Foo, got {var_types}"
+    )
+    assert var_types.get("q") == "Foo", (
         f"both p and q should map to Foo, got {var_types}"
     )
 

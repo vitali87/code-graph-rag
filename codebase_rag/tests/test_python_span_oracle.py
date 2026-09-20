@@ -63,8 +63,6 @@ def test_cgr_matches_ast_oracle_on_python_node_spans(tmp_path: Path) -> None:
     assert span_rows, [r["category"] for r in result.rows]
     aggregate = span_rows.get(ec.AGGREGATE_LABEL)
     assert aggregate is not None, span_rows
-    assert aggregate["precision"] == 1.0 and aggregate["recall"] == 1.0, (
-        aggregate,
-        result.diff,
-    )
+    assert aggregate["precision"] == 1.0, (aggregate, result.diff)
+    assert aggregate["recall"] == 1.0, (aggregate, result.diff)
     assert aggregate["tp"] >= 5, aggregate

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,14 +13,12 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _temp_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Generator[Path, None, None]:
+def _temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from codebase_rag.config import settings
 
     home = tmp_path / "cgr-home"
     monkeypatch.setattr(settings, "CGR_HOME", home)
-    yield home
+    return home
 
 
 class TestRecordSync:

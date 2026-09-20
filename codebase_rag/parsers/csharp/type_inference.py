@@ -62,6 +62,25 @@ def _arity(leaf: str) -> int:
     return count
 
 
+class _Sentinel:
+    """Distinct from every real result, including None."""
+
+    __slots__ = ()
+
+
+# A miss, as distinct from a cached None: None is a legitimate answer
+# ("unresolved"), and caching it is most of the win on a chain whose links
+# do not resolve.
+_MISSING = _Sentinel()
+# Set while a node's own resolution is on the stack; see the docstring on
+# resolve_csharp_method_call.
+_IN_PROGRESS = _Sentinel()
+
+# What the memo stores: a resolved (label, qn), an unresolved None, or the
+# in-progress marker.
+type _MemoEntry = tuple[str, str] | None | _Sentinel
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -85,6 +104,7 @@ class CSharpTypeInferenceEngine:
         "method_return_types",
         "function_locations",
         "_rel_to_module",
+        "_call_memo",
     )
 
     def __init__(
@@ -111,6 +131,22 @@ class CSharpTypeInferenceEngine:
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
     ):
+        # Memo for `resolve_csharp_method_call` (issue #1800). A chained
+        # invocation types its receiver by resolving it, and THREE branches do
+        # that independently for the same receiver node (the class-qn path,
+        # the type-name path and the arity path), so an n-link fluent chain
+        # re-resolved its whole prefix 3^(n/2)-ish times: measured 58 calls at
+        # 4 links rising to 3,587,219 at 14, and a real Aspire file wedged
+        # Pass 3 at 100% CPU for over half an hour. Memoising the entry point
+        # collapses all three branches at once and makes the walk linear.
+        #
+        # Keyed by byte span rather than `id(node)`: CPython recycles ids of
+        # freed objects, and this repo has already been bitten by that (see
+        # `reset_resolution_caches`, "wildcard entries keyed by dict id, which
+        # recycles"). A span is unique within a file, and `module_qn` scopes it
+        # to one; `caller_qn` is included because the same node resolves
+        # differently per enclosing method (`this`, locals, imports).
+        self._call_memo: dict[tuple[str, str | None, int, int], _MemoEntry] = {}
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.repo_path = repo_path
@@ -280,6 +316,36 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        """Memoising front for `_resolve_csharp_method_call` (issue #1800).
+
+        Wrapping the entry point rather than editing the three recursive
+        branches means every path in and every path back out shares one memo,
+        including future callers.
+
+        `_IN_PROGRESS` doubles as a cycle guard. A chain cannot be cyclic in
+        valid C#, but a malformed or recovered parse tree can present one, and
+        without this the recursion would not terminate. Returning None for a
+        re-entered node degrades that site to an unresolved call, which is what
+        the issue asks a pathological input to do instead of hanging.
+        """
+        key = (module_qn, caller_qn, call_node.start_byte, call_node.end_byte)
+        cached = self._call_memo.get(key, _MISSING)
+        if cached is not _MISSING:
+            return None if cached is _IN_PROGRESS else cached  # type: ignore[return-value]
+        self._call_memo[key] = _IN_PROGRESS
+        result = self._resolve_csharp_method_call(
+            call_node, local_var_types, module_qn, caller_qn
+        )
+        self._call_memo[key] = result
+        return result
+
+    def _resolve_csharp_method_call(
+        self,
+        call_node: Node,
+        local_var_types: dict[str, str] | None,
+        module_qn: str,
+        caller_qn: str | None = None,
+    ) -> tuple[str, str] | None:
         # A Roslyn call fact for this exact site wins over every heuristic: it
         # is the compiler's own overload resolution (argument types, not arity)
         # and covers receivers no syntax walk can type (chained returns) plus
@@ -291,13 +357,7 @@ class CSharpTypeInferenceEngine:
         if func is None:
             return None
         if func.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
-            # A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup:
-            # an in-scope local function first (it shadows same-name method
-            # overloads), then an arity-matched member of the enclosing
-            # type. A miss falls to the generic simple-name path.
-            if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
-                return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
-            return None
+            return self._resolve_non_member_call(func, call_node, module_qn, caller_qn)
         method_name = safe_decode_text(func.child_by_field_name(cs.FIELD_NAME))
         receiver = func.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
         if not method_name or receiver is None:
@@ -313,20 +373,7 @@ class CSharpTypeInferenceEngine:
         # Polly's hide-object-members regions) and the call must emit nothing;
         # the trie fallback was self-looping it onto the caller's own override.
         if receiver.type == cs.TS_CSHARP_BASE_EXPRESSION:
-            if class_qn := self._containing_class_qn(caller_qn):
-                seen: set[str] = set()
-                for root in self._partial_roots(class_qn):
-                    for base_qn in self.class_inheritance.get(root, []):
-                        if hit := self._find_method_by_arity(
-                            base_qn, method_name, arg_count, seen
-                        ):
-                            return cs.NodeLabel.METHOD.value, hit
-                seen = set()
-                for root in self._partial_roots(class_qn):
-                    for base_qn in self.class_inheritance.get(root, []):
-                        if hit := self._find_method_by_name(base_qn, method_name, seen):
-                            return cs.NodeLabel.METHOD.value, hit
-            return CSHARP_EXTERNAL_TARGET
+            return self._resolve_base_call(method_name, arg_count, caller_qn)
 
         receiver_class_qn = self._resolve_receiver_class_qn(
             receiver, local_var_types or {}, module_qn, caller_qn
@@ -336,17 +383,15 @@ class CSharpTypeInferenceEngine:
         # name-only fallback. Trying the name-only fallback before extensions
         # would bind `c.Foo(1)` to a lone `C.Foo()` and never reach the
         # arity-correct `static Foo(this C, int)` extension.
-        if receiver_class_qn is not None:
-            if arity_hit := self._find_arity_across_parts(
+        if receiver_class_qn is not None and (
+            arity_hit := self._find_arity_across_parts(
                 receiver_class_qn, method_name, arg_count
-            ):
-                # A delegate-typed PROPERTY registers as a METHOD node with
-                # a bare (arity-0) qn, so a 0-arg invoke slips through the
-                # ARITY path too: `entry.Callback()` is Delegate.Invoke,
-                # not a call to the property node.
-                if self.function_registry.is_property(arity_hit):
-                    return CSHARP_EXTERNAL_TARGET
-                return cs.NodeLabel.METHOD.value, arity_hit
+            )
+        ):
+            # A delegate-typed PROPERTY registers as a METHOD node with a bare
+            # (arity-0) qn, so a 0-arg invoke slips through the ARITY path too:
+            # `entry.Callback()` is Delegate.Invoke, not a call to the property.
+            return self._method_or_property_target(arity_hit)
         # An extension method (`static M(this T x, ...)` on an unrelated static
         # class) whose `this` receiver type matches the call's receiver; the
         # only path that binds `x.M()` to a method not in x's hierarchy.
@@ -359,26 +404,108 @@ class CSharpTypeInferenceEngine:
             arg_count,
         ):
             return cs.NodeLabel.METHOD.value, ext
-        if receiver_class_qn is not None:
-            if name_hit := self._find_name_across_parts(receiver_class_qn, method_name):
-                # A delegate-typed PROPERTY invoked with call syntax
-                # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a
-                # method call; binding the property as a METHOD fabricates
-                # an edge. Its reachability comes from the read pass.
-                if self.function_registry.is_property(name_hit):
-                    return CSHARP_EXTERNAL_TARGET
-                return cs.NodeLabel.METHOD.value, name_hit
-        # An object-virtual miss on a TYPED receiver (`severity.ToString()`
-        # on an enum, `options.GetType()`) resolves to System.Object/Enum;
-        # falling to the trie lands on whatever unrelated
-        # hide-object-members override exists (Polly's PolicyBuilder).
+        if receiver_class_qn is not None and (
+            name_hit := self._find_name_across_parts(receiver_class_qn, method_name)
+        ):
+            # A delegate-typed PROPERTY invoked with call syntax
+            # (`options.ShouldHandle(args)`) is Delegate.Invoke, not a method
+            # call; binding the property as a METHOD fabricates an edge. Its
+            # reachability comes from the read pass.
+            return self._method_or_property_target(name_hit)
+        return self._external_or_unresolved(
+            receiver,
+            method_name,
+            receiver_class_qn,
+            local_var_types or {},
+            caller_qn,
+        )
+
+    def _external_or_unresolved(
+        self,
+        receiver: Node,
+        method_name: str,
+        receiver_class_qn: str | None,
+        local_var_types: dict[str, str],
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        """The last word: an external target, or nothing.
+
+        An object-virtual miss on a TYPED receiver (`severity.ToString()` on an
+        enum, `options.GetType()`) resolves to System.Object/Enum; falling to
+        the trie instead lands on whatever unrelated hide-object-members
+        override exists (Polly's PolicyBuilder). An UNTYPED receiver is
+        external when `_externally_targeted` says so; otherwise the call is
+        simply unresolved.
+        """
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return CSHARP_EXTERNAL_TARGET
         if receiver_class_qn is None and self._externally_targeted(
-            receiver, method_name, local_var_types or {}, caller_qn
+            receiver, method_name, local_var_types, caller_qn
         ):
             return CSHARP_EXTERNAL_TARGET
         return None
+
+    def _resolve_non_member_call(
+        self,
+        func: Node,
+        call_node: Node,
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        """Resolve a call whose callee is not a member access.
+
+        A bare `Foo(...)`/`Foo<T>(...)` follows C# simple-name lookup: an
+        in-scope local function first (it shadows same-name method overloads),
+        then an arity-matched member of the enclosing type. A miss falls to the
+        generic simple-name path. Anything else (an invoked expression, say) is
+        not resolvable here.
+        """
+        if func.type in (cs.TS_CSHARP_IDENTIFIER, cs.TS_CSHARP_GENERIC_NAME):
+            return self._resolve_bare_call(func, call_node, module_qn, caller_qn)
+        return None
+
+    def _method_or_property_target(self, hit: str) -> tuple[str, str]:
+        """A resolved qn as a call target, or external when it is a property.
+
+        Both the arity and the name lookup end this way, so the property check
+        lives here once rather than twice in the caller.
+        """
+        if self.function_registry.is_property(hit):
+            return CSHARP_EXTERNAL_TARGET
+        return cs.NodeLabel.METHOD.value, hit
+
+    def _resolve_base_call(
+        self, method_name: str, arg_count: int, caller_qn: str | None
+    ) -> tuple[str, str] | None:
+        """Resolve `base.X()` against the BASE chain only.
+
+        Split out of `_resolve_csharp_method_call` to keep that function under
+        the cognitive-complexity limit; the two nested walks below are its
+        densest part and are self-contained.
+
+        A first-party base's member wins when one exists; otherwise the base is
+        external (`object.Equals` in Polly's hide-object-members regions) and
+        the call must emit nothing, because the trie fallback was self-looping
+        it onto the caller's own override. Arity-exact matches are tried across
+        every partial part first, then name-only, mirroring the order the
+        instance path uses.
+        """
+        class_qn = self._containing_class_qn(caller_qn)
+        if class_qn is None:
+            return CSHARP_EXTERNAL_TARGET
+        seen: set[str] = set()
+        for root in self._partial_roots(class_qn):
+            for base_qn in self.class_inheritance.get(root, []):
+                if hit := self._find_method_by_arity(
+                    base_qn, method_name, arg_count, seen
+                ):
+                    return cs.NodeLabel.METHOD.value, hit
+        seen = set()
+        for root in self._partial_roots(class_qn):
+            for base_qn in self.class_inheritance.get(root, []):
+                if hit := self._find_method_by_name(base_qn, method_name, seen):
+                    return cs.NodeLabel.METHOD.value, hit
+        return CSHARP_EXTERNAL_TARGET
 
     def _externally_targeted(
         self,

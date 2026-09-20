@@ -121,7 +121,7 @@ def _opt_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _symbol(row: ResultRow) -> SymbolRow:
+def _symbol_row(row: ResultRow) -> SymbolRow:
     return SymbolRow(
         label=str(row.get(cs.KEY_LABEL, "")),
         qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME, "")),
@@ -133,6 +133,20 @@ def _symbol(row: ResultRow) -> SymbolRow:
 
 def _symbol_key(row: SymbolRow) -> tuple[str, str]:
     return (row["qualified_name"], row["path"] or "")
+
+
+def parse_location(target: str) -> tuple[str, int] | None:
+    """`(path, line)` when `target` is a `path:line` location, else None.
+
+    One parser for every tool that accepts a resolve target, so "is this a
+    location" is answered the same way by `resolve` and by anything that
+    decides differently for a location (a gloss anchors to the innermost
+    definition spanning a line, and refuses an ambiguous NAME).
+    """
+    path, sep, line_text = target.rpartition(cs.CHAR_COLON)
+    if sep and line_text.isdigit() and path:
+        return path, int(line_text)
+    return None
 
 
 # --- resolve ------------------------------------------------------------------
@@ -147,17 +161,18 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     returns the innermost definitions spanning that line.
     """
     prefix = _prefix(project_name)
-    path, sep, line_text = target.rpartition(cs.CHAR_COLON)
-    if sep and line_text.isdigit() and path:
+    location = parse_location(target)
+    if location is not None:
+        path, line = location
         rows = fetch_all(
             cq.CYPHER_GRAPH_RESOLVE_LOCATION,
             {
                 cs.KEY_PROJECT_PREFIX: prefix,
                 cs.KEY_PATH: path,
-                cs.KEY_LINE: int(line_text),
+                cs.KEY_LINE: line,
             },
         )
-        symbols = [_symbol(r) for r in rows]
+        symbols = [_symbol_row(r) for r in rows]
         # Innermost first: the tightest span is what the line "is in".
         symbols.sort(
             key=lambda s: (
@@ -175,7 +190,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
             cs.KEY_QN: target,
         },
     )
-    symbols = [_symbol(r) for r in rows]
+    symbols = [_symbol_row(r) for r in rows]
     exact = [s for s in symbols if s["qualified_name"] == target]
     suffix = [
         s
@@ -191,6 +206,30 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
 
 
 # --- definition ---------------------------------------------------------------
+
+
+def source_root_for(
+    fetch_all: QueryFn, project_name: str, repo_root: Path
+) -> Path | None:
+    """`repo_root` when the graph project was indexed from it, else None.
+
+    A definition of another project carries a relative path that may also
+    exist under `repo_root`; reading it there would return the wrong file. A
+    matching project name is not enough either: the Project node's stored
+    root path must be this repository.
+    """
+    rows = fetch_all(
+        cq.CYPHER_PROJECT_ROOT_PATH,
+        {
+            cs.KEY_PROJECT_NAME: project_name,
+            cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        },
+    )
+    stored = _opt_str(rows[0].get(cs.KEY_ROOT_PATH)) if rows else None
+    if not stored:
+        return None
+    local = repo_root.resolve()
+    return local if Path(stored).resolve() == local else None
 
 
 def definition(
@@ -218,7 +257,7 @@ def definition(
             found=False,
         )
     row = rows[0]
-    symbol = _symbol(row)
+    symbol = _symbol_row(row)
     source: str | None = None
     path, start, end = symbol["path"], symbol["start_line"], symbol["end_line"]
     if repo_root is not None and path and start and end:
@@ -321,7 +360,7 @@ def callees(
 # --- implementors / overrides / importers ---------------------------------------
 
 
-def _related(
+def _related_rows(
     fetch_all: QueryFn, project_name: str, query: str, qn: str
 ) -> list[RelatedRow]:
     rows = fetch_all(
@@ -343,7 +382,7 @@ def implementors(
     fetch_all: QueryFn, project_name: str, qualified_name: str
 ) -> list[RelatedRow]:
     """Types that INHERIT from or IMPLEMENT `qualified_name`."""
-    return _related(
+    return _related_rows(
         fetch_all, project_name, cq.CYPHER_GRAPH_IMPLEMENTORS, qualified_name
     )
 
@@ -352,7 +391,9 @@ def overrides(
     fetch_all: QueryFn, project_name: str, qualified_name: str
 ) -> list[RelatedRow]:
     """Methods that OVERRIDE `qualified_name`, and the method it overrides."""
-    return _related(fetch_all, project_name, cq.CYPHER_GRAPH_OVERRIDES, qualified_name)
+    return _related_rows(
+        fetch_all, project_name, cq.CYPHER_GRAPH_OVERRIDES, qualified_name
+    )
 
 
 def importers(
@@ -381,7 +422,13 @@ def importers(
         key=lambda r: (
             r["module"],
             r["line"] if r["line"] is not None else -1,
-            r["col"] or -1,
+            # `or -1` would fold a real column 0 -- the common case, an import
+            # at the start of a line -- into the same key as a missing column,
+            # leaving co-located rows in the arbitrary order the graph
+            # returned them.
+            r["col"] if r["col"] is not None else -1,
+            r["alias"] or "",
+            r["imported_name"] or "",
         ),
     )
 
@@ -393,8 +440,8 @@ class ReachIndex:
     """The project's reverse call graph plus the test classifier's inputs.
 
     Built once from the dead-code fetch (one query each for nodes and edges)
-    so a caller with several symbols to look up (a structural delta, issue
-    #1525) does not re-read the project per symbol.
+    and walked backwards from one symbol; the structural delta (issue #1525)
+    walks callers per hop instead and does not use it.
     """
 
     def __init__(

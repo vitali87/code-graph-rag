@@ -35,7 +35,8 @@ def _job_run_script(job: dict) -> str:
 @pytest.fixture(scope="module")
 def smoke_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location("smoke_wheel", SMOKE_SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["smoke_wheel"] = module
     spec.loader.exec_module(module)

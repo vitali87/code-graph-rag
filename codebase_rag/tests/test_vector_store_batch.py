@@ -58,12 +58,13 @@ class TestUpsertWithRetry:
         mock_client = MagicMock()
         mock_client.upsert.side_effect = ConnectionError("timeout")
 
+        points = [MagicMock()]
         with (
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_SLEEP),
             pytest.raises(ConnectionError, match="timeout"),
         ):
-            _upsert_with_retry([MagicMock()])
+            _upsert_with_retry(points)
 
     def test_exponential_backoff_delays(self) -> None:
         from codebase_rag.vector_store import _upsert_with_retry

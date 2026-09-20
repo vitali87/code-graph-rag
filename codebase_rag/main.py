@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from collections import deque
 from collections.abc import Callable, Coroutine
@@ -99,6 +100,7 @@ from .types_defs import (
     ToolArgs,
 )
 from .utils.rich_markdown import LeftAlignedMarkdown
+from .utils.token_utils import estimate_message_tokens
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -713,12 +715,16 @@ async def _run_agent_response_loop(
         # line). Inheriting it means the shipped default is a decision the
         # repository made rather than one chosen to satisfy a review.
         #
-        # DELIBERATELY TIMID, and issue #1500 owns the policy. Two ways this
-        # declines to act: `_token_usage` reports 0 for every provider whose
-        # counter never runs (`_refresh_context_tokens` returns early unless
-        # Anthropic with a key), and `prune_old_tool_results` refuses below its
-        # own recovery floor. A mechanism that discards data should be inert
-        # where it cannot measure, so both silences are the wanted direction.
+        # DELIBERATELY TIMID, and issue #1500 owns the policy.
+        # `prune_old_tool_results` still refuses below its own recovery floor,
+        # so a mechanism that discards data stays inert until it would buy
+        # something real.
+        #
+        # It is no longer inert for want of a measurement, though. This used
+        # to read 0 for every provider whose counter never ran, which meant
+        # compaction was Anthropic-only without saying so; the counter now
+        # falls back to a local estimate, so the threshold is reachable
+        # whatever the session is talking to.
         _, _, context_pct = _token_usage()
         if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
             # Assign THROUGH the slice: callers hold this same list and the
@@ -727,7 +733,7 @@ async def _run_agent_response_loop(
             # reachability check while doing nothing.
             message_history[:] = prune_old_tool_results(message_history)
 
-        _spawn_background(_refresh_context_tokens(list(message_history)))
+        _spawn_context_refresh(list(message_history))
 
         output_text = response.output
         if not isinstance(output_text, str):
@@ -888,6 +894,41 @@ def _token_usage() -> tuple[int, int, float]:
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
+# The context estimate runs on a DAEMON thread, not on `asyncio.to_thread`'s
+# default executor. That executor registers an atexit hook that JOINS its
+# threads, so a cancelled refresh still made shutdown wait out an in-flight
+# estimate -- seconds on a large history (Greptile, PR #1832). A daemon thread
+# is never joined, so an abandoned estimate cannot delay exit.
+#
+# Safe precisely because the estimate is pure and its result is discarded on
+# cancellation: it reads a message list and returns a number, touching no file
+# and no connection, so a thread killed at exit leaves nothing half-written.
+# Do NOT run anything that writes this way.
+
+
+_context_refresh_task: asyncio.Task[None] | None = None
+
+
+def _spawn_context_refresh(messages: list[ModelMessage]) -> None:
+    """Start a context refresh, superseding any still in flight.
+
+    Only the NEWEST count is wanted -- it is a percentage on a status line and
+    a compaction trigger, and an older history's total is stale the moment a
+    turn completes. Without this, several turns in quick succession each
+    started a full-history tokenisation and they ran CONCURRENTLY: measured at
+    5 simultaneous estimates from 5 refreshes (Greptile, PR #1832).
+
+    Cancelling is safe because the estimate is pure and its result is
+    discarded: `_settle` already ignores a future nobody holds.
+    """
+    global _context_refresh_task
+    if _context_refresh_task is not None and not _context_refresh_task.done():
+        _context_refresh_task.cancel()
+    task = asyncio.create_task(_refresh_context_tokens(messages))
+    _context_refresh_task = task
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 def _spawn_background(coro: Coroutine[None, None, None]) -> None:
     task = asyncio.create_task(coro)
@@ -895,11 +936,119 @@ def _spawn_background(coro: Coroutine[None, None, None]) -> None:
     task.add_done_callback(_background_tasks.discard)
 
 
+def _settle(
+    loop: asyncio.AbstractEventLoop,
+    future: asyncio.Future[int],
+    *,
+    value: int | None = None,
+    error: BaseException | None = None,
+) -> None:
+    """Resolve `future` from another thread, ignoring an already-settled one.
+
+    A cancelled refresh leaves the future done before the daemon thread
+    finishes, and setting a result on a cancelled future raises.
+    """
+
+    def apply() -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(value or 0)
+
+    try:
+        loop.call_soon_threadsafe(apply)
+    except RuntimeError:
+        # The loop closed while the daemon thread was still estimating, which
+        # is the normal shape of shutdown: nothing is awaiting this future any
+        # more, and `call_soon_threadsafe` raises "Event loop is closed" on a
+        # thread with no handler, surfacing as an uncaught exception at exit
+        # (Greptile, PR #1832).
+        #
+        # Dropping the result is correct rather than merely quiet. The
+        # estimate is pure and its only consumer is the future nobody holds;
+        # there is nothing to retry, flush or report. This is the one case
+        # where "the answer no longer matters" is literally true.
+        return
+
+
+# One estimate at a time. Cancelling the awaiting TASK does not stop a daemon
+# thread already tokenising, so several turns in quick succession each started
+# a full-history walk and they ran concurrently -- measured at 5 simultaneous
+# estimates (Greptile, PR #1832). The lock makes a later estimate wait, and the
+# generation check below makes it exit instead: only the newest count is wanted.
+_estimate_lock = threading.Lock()
+_estimate_generation = 0
+
+
+async def _estimate_off_loop(messages: list[ModelMessage]) -> int:
+    """`estimate_message_tokens` on a daemon thread, awaited without blocking."""
+    global _estimate_generation
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[int] = loop.create_future()
+    _estimate_generation += 1
+    mine = _estimate_generation
+
+    def run() -> None:
+        with _estimate_lock:
+            if mine != _estimate_generation:
+                # Superseded while queued: a newer history is already the
+                # answer, so tokenising this one is pure waste. Left unsettled
+                # on purpose -- the awaiting task was cancelled with it.
+                return
+            try:
+                result = estimate_message_tokens(messages)
+            except Exception as exc:  # noqa: BLE001 - relayed to the awaiter
+                # `Exception`, not `BaseException` (SonarCloud S5754). A
+                # tokenisation failure belongs to the awaiter; a
+                # KeyboardInterrupt or SystemExit does not -- relaying one
+                # would report a shutdown signal as an estimation error, and
+                # this thread is a daemon that the interpreter is entitled to
+                # stop without ceremony.
+                _settle(loop, future, error=exc)
+            else:
+                _settle(loop, future, value=result)
+
+    threading.Thread(target=run, name="cgr-context-estimate", daemon=True).start()
+    return await future
+
+
 async def _refresh_context_tokens(messages: list[ModelMessage]) -> None:
+    """Update the session's context-token count, for ANY provider.
+
+    The local estimate is written FIRST and unconditionally, then upgraded to
+    the provider's exact count where one is obtainable. That order is the fix
+    for #1500: this function is the only writer of `context_tokens`, and the
+    pruning trigger reads a percentage derived from it, so every path that
+    returned without writing left compaction switched off.
+
+    Leaving the value at 0 is not a neutral failure. Zero renders as "0% of
+    the context used", which is indistinguishable from a genuinely empty
+    session and looks like abundant headroom. An approximate number is worth
+    far more here than an exact absence.
+
+    The estimate runs in a THREAD. A coroutine runs synchronously until its
+    first await, so tokenising here inline blocked the interactive loop for as
+    long as it took -- measured at 3.3s on a twelve-message tool-call history,
+    with the whole UI frozen for the duration (Greptile, PR #1832). This is
+    a background refresh feeding a status line and a compaction trigger, so
+    it must never be the reason a keystroke waits.
+    """
     try:
         config = settings.active_orchestrator_config
     except Exception:
+        # No config at all still deserves a number: the estimate needs only
+        # the messages, and the count drives compaction rather than billing.
+        app_context.session.context_tokens = await _estimate_off_loop(messages)
         return
+
+    app_context.session.context_tokens = await _estimate_off_loop(messages)
+
+    # An exact count beats the estimate where it exists -- it accounts for
+    # tool definitions and system-prompt overhead that tiktoken over a message
+    # list cannot see. Anthropic is the only provider exposing one today, so
+    # this is an upgrade to the line above, never a precondition for it.
     if config.provider != cs.Provider.ANTHROPIC or not config.api_key:
         return
     try:
@@ -934,7 +1083,7 @@ def _prime_context_token_counter(system_prompt: str) -> None:
     baseline_messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content=system_prompt)])
     ]
-    _spawn_background(_refresh_context_tokens(baseline_messages))
+    _spawn_context_refresh(baseline_messages)
 
 
 def _short_model_id() -> tuple[str, str]:

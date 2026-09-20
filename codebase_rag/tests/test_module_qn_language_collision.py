@@ -50,7 +50,8 @@ def test_same_stem_files_get_distinct_module_qns(
     }
     py_mod = modules.get("pkg/shape.py")
     cpp_mod = modules.get("pkg/shape.cpp")
-    assert py_mod and cpp_mod, f"both module nodes expected: {modules}"
+    assert py_mod, f"both module nodes expected: {modules}"
+    assert cpp_mod, f"both module nodes expected: {modules}"
     assert py_mod != cpp_mod, f"module qn collision: {py_mod}"
 
 
@@ -63,7 +64,8 @@ def test_same_stem_methods_do_not_collide(
     area = _qns_by_path(mock_ingestor, NodeLabel.METHOD, "area")
     py_area = area.get("pkg/shape.py")
     cpp_area = area.get("pkg/shape.cpp")
-    assert py_area and cpp_area, f"both area methods expected: {area}"
+    assert py_area, f"both area methods expected: {area}"
+    assert cpp_area, f"both area methods expected: {area}"
     assert py_area != cpp_area, f"method qn collision across languages: {area}"
 
     # The method qn must derive from its own (disambiguated) module qn, not a

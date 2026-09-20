@@ -40,7 +40,8 @@ MOD_SRC = textwrap.dedent(
 
 def _load_module(mod_path: Path):
     spec = importlib.util.spec_from_file_location("evaltest_decorator_mod", mod_path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

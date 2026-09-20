@@ -11,12 +11,15 @@ twin of `services/graph_diff.py`, which diffs exported indexes offline.
 Everything is fixed Cypher scoped to one project plus client-side set
 arithmetic over the fetched rows, so the report is deterministic and cheap:
 the graph reads are linear in the touched files' edges, plus one linear
-project scan each for the duplicate and test-reach indexes.
+project scan for the duplicate index; tests reaching a changed symbol are
+found by walking its callers one hop at a time.
 """
 
 from __future__ import annotations
 
+import ast
 import re
+import textwrap
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -149,6 +152,14 @@ class SymbolDelta(TypedDict):
     changed: list[str]
 
 
+class StaleImporter(TypedDict):
+    """A module still importing from where a moved symbol used to live."""
+
+    importer: str
+    path: str
+    line: int
+
+
 class StructuralDelta(TypedDict):
     paths: list[str]
     reparsed: list[str]
@@ -160,6 +171,9 @@ class StructuralDelta(TypedDict):
     arity_findings: list[ArityAtSite]
     new_duplicates: list[NewDuplicate]
     new_import_cycles: list[list[str]]
+    # Importers that still name a module a moved symbol has left. Empty for
+    # every operation that moves nothing, so a non-move never carries one.
+    stale_importers: list[StaleImporter]
     tests_reaching: list[TestReach]
     call_sites: SiteCounts
     reingest_ms: float
@@ -251,7 +265,10 @@ def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Sna
     missing = sorted({s.callee for s in sites} - set(definitions))
     callees: dict[str, Definition] = {}
     if missing:
-        for row in fetch_all(cq.CYPHER_DELTA_DEFINITIONS_BY_QN, {cs.KEY_QNS: missing}):
+        for row in fetch_all(
+            cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
+            {cs.KEY_QNS: missing, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+        ):
             definition = _definition(row)
             if definition.qualified_name:
                 callees[definition.qualified_name] = definition
@@ -278,19 +295,10 @@ def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Sna
 # --- symbols ------------------------------------------------------------------
 
 
-def _renames(
-    removed: list[str], added: list[str], before: Snapshot, after: Snapshot
-) -> list[RenameFinding]:
-    # A rename keeps the body: the same whole-skeleton fingerprint under a
-    # new name in the same file. Paired one-to-one in sorted order so a
-    # duplicated body cannot be reported as two renames of one symbol.
-    by_shape: dict[tuple[str, str], list[str]] = {}
-    for qn in added:
-        definition = after.definitions[qn]
-        if definition.fingerprint:
-            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
-                qn
-            )
+def _pair_by_shape(
+    removed: list[str], by_shape: dict[tuple[str, str], list[str]], before: Snapshot
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 1: same fingerprint, same file, new name -- a plain rename."""
     renames: list[RenameFinding] = []
     unpaired: list[str] = []
     for qn in removed:
@@ -302,8 +310,16 @@ def _renames(
             )
         else:
             unpaired.append(qn)
-    # A move keeps the name and the body but changes the file: pair what is
-    # left by name and fingerprint across files (issue #1534).
+    return renames, unpaired
+
+
+def _pair_by_move(
+    unpaired: list[str],
+    by_shape: dict[tuple[str, str], list[str]],
+    before: Snapshot,
+    after: Snapshot,
+) -> tuple[list[RenameFinding], list[str]]:
+    """Pass 2: same name and body, different file -- a move (issue #1534)."""
     by_name_shape: dict[tuple[str, str], list[str]] = {}
     for candidates in by_shape.values():
         for qn in candidates:
@@ -311,6 +327,8 @@ def _renames(
             by_name_shape.setdefault(
                 (definition.name, definition.fingerprint), []
             ).append(qn)
+    renames: list[RenameFinding] = []
+    still_unpaired: list[str] = []
     for qn in unpaired:
         definition = before.definitions[qn]
         candidates = by_name_shape.get((definition.name, definition.fingerprint))
@@ -318,6 +336,144 @@ def _renames(
             new = candidates.pop(0)
             by_shape[(after.definitions[new].path, definition.fingerprint)].remove(new)
             renames.append(RenameFinding(old=qn, new=new, path=definition.path))
+        else:
+            still_unpaired.append(qn)
+    return renames, still_unpaired
+
+
+def _carried_container(
+    qn: str,
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+) -> str | None:
+    """The added container a removed one moved to, when its members agree.
+
+    A class carries no fingerprint of its own, so a renamed class reads as
+    removed plus added; its methods do carry one and were paired already.
+    """
+    definition = before.definitions[qn]
+    if definition.fingerprint:
+        return None
+    prefix = qn + cs.SEPARATOR_DOT
+    targets = {
+        r["new"][: len(r["new"]) - (len(r["old"]) - len(qn))]
+        for r in renames
+        if r["old"].startswith(prefix)
+    }
+    if len(targets) != 1:
+        return None
+    (target,) = targets
+    candidate = after.definitions.get(target)
+    if (
+        candidate is None
+        or candidate.fingerprint
+        or candidate.label != definition.label
+        or target in paired_new
+        or target not in added
+    ):
+        return None
+    return target
+
+
+def _pair_lone_containers(
+    still_unpaired: list[str],
+    renames: list[RenameFinding],
+    paired_new: set[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]],
+) -> list[RenameFinding]:
+    """Pass 4: an EMPTY container, paired only when the caller DECLARED it.
+
+    An empty container has no fingerprint and no descendants, and the only
+    thing that changed is its name -- so nothing in the two snapshots can
+    tell a rename from a replacement. They are the same edit. Neither
+    content similarity (git's heuristic) nor tree-sitter's changed ranges
+    separates them, because the difference is intent, not syntax.
+
+    So this pass does not infer. An operation that RENAMED something knows
+    which pairs it applied and passes them in `declared`; anything else is
+    reported as a removal plus an addition, which is the truth about what
+    the snapshots show. Guessing here produced renames that never happened,
+    and the contract treats an unexpected rename as a failure, so an
+    invented one rolls back a correct edit (Greptile, PR #1547).
+    """
+    lone_removed = [
+        qn
+        for qn in still_unpaired
+        if not before.definitions[qn].fingerprint
+        and not any(r["old"] == qn for r in renames)
+    ]
+    lone_added = [
+        qn
+        for qn in added
+        if qn not in paired_new and not after.definitions[qn].fingerprint
+    ]
+    found: list[RenameFinding] = []
+    for qn in lone_removed:
+        definition = before.definitions[qn]
+        matches = [
+            other
+            for other in lone_added
+            if (qn, other) in declared
+            and after.definitions[other].path == definition.path
+            and after.definitions[other].label == definition.label
+        ]
+        if len(matches) != 1:
+            continue
+        target = matches[0]
+        peers = [other for other in lone_removed if (other, target) in declared]
+        if len(peers) == 1:
+            found.append(RenameFinding(old=qn, new=target, path=definition.path))
+            paired_new.add(target)
+            lone_added.remove(target)
+    return found
+
+
+def _renames(
+    removed: list[str],
+    added: list[str],
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
+) -> list[RenameFinding]:
+    # A rename keeps the body: the same whole-skeleton fingerprint under a
+    # new name in the same file. Paired one-to-one in sorted order so a
+    # duplicated body cannot be reported as two renames of one symbol.
+    #
+    # Four passes, each narrower than the last and each extracted to its own
+    # function (S3776): plain rename, move, container carried by its members,
+    # then the lone empty container.
+    by_shape: dict[tuple[str, str], list[str]] = {}
+    for qn in added:
+        definition = after.definitions[qn]
+        if definition.fingerprint:
+            by_shape.setdefault((definition.path, definition.fingerprint), []).append(
+                qn
+            )
+
+    renames, unpaired = _pair_by_shape(removed, by_shape, before)
+    moved, still_unpaired = _pair_by_move(unpaired, by_shape, before, after)
+    renames.extend(moved)
+
+    paired_new = {r["new"] for r in renames}
+    for qn in still_unpaired:
+        target = _carried_container(qn, renames, paired_new, added, before, after)
+        if target is not None:
+            renames.append(
+                RenameFinding(old=qn, new=target, path=before.definitions[qn].path)
+            )
+            paired_new.add(target)
+
+    renames.extend(
+        _pair_lone_containers(
+            still_unpaired, renames, paired_new, added, before, after, declared
+        )
+    )
     return renames
 
 
@@ -333,10 +489,14 @@ def _changed(before: Snapshot, after: Snapshot) -> list[str]:
     return changed
 
 
-def _symbols(before: Snapshot, after: Snapshot) -> SymbolDelta:
+def _symbols(
+    before: Snapshot,
+    after: Snapshot,
+    declared: frozenset[tuple[str, str]] = frozenset(),
+) -> SymbolDelta:
     added = sorted(set(after.definitions) - set(before.definitions))
     removed = sorted(set(before.definitions) - set(after.definitions))
-    renamed = _renames(removed, added, before, after)
+    renamed = _renames(removed, added, before, after, declared)
     renamed_old = {r["old"] for r in renamed}
     renamed_new = {r["new"] for r in renamed}
     return SymbolDelta(
@@ -391,11 +551,44 @@ def _dangling(
 # --- signature changes --------------------------------------------------------
 
 
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)")
+# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
+# and `**name` accepts keywords, not positionals.
+_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
+
+
+def _header_is_variadic(header: str) -> bool:
+    """Whether a `def` header declares `*args` or keyword-only params.
+
+    Parsed, not scanned. Scanning got both directions wrong, and this is
+    the sole suppressor of a too-many-arguments verdict, so each costs
+    something different: a false positive hides a real arity error, and a
+    false negative makes a CORRECT edit fail its postcondition and roll
+    back.
+
+    A `*` inside a default (`b=2*3`) or a string (`doc='a*b'`) is not
+    `*args`, and a real `*rest` can follow a default that itself contains
+    a `)` -- which the old first-`)` cut discarded. `ast` is the right
+    oracle because it is the same parser that decides whether the call
+    raises at runtime.
+
+    An unparseable header answers False, keeping the arity check ACTIVE:
+    for a suppressor, refusing to suppress is the safe direction.
+    """
+    body = textwrap.dedent(header).strip()
+    if not body:
+        return False
+    try:
+        tree = ast.parse(body + "\n    pass\n")
+    except SyntaxError:
+        return False
+    node = tree.body[0] if tree.body else None
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return False
+    return node.args.vararg is not None or bool(node.args.kwonlyargs)
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
-    """Whether the Python definition's header declares `*args` or a bare `*`.
+    """Whether the Python definition's header declares `*args`.
 
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
@@ -417,12 +610,7 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
         header.append(line)
         if ")" in line:
             break
-    text = "\n".join(header)
-    open_at = text.find("(")
-    close_at = text.find(")", open_at + 1)
-    if open_at < 0 or close_at < 0:
-        return False
-    return _VARIADIC.search(text[open_at:close_at]) is not None
+    return _header_is_variadic("\n".join(header))
 
 
 def _arity_verdict(
@@ -434,8 +622,14 @@ def _arity_verdict(
     if site.arg_count is None:
         return len(declared), cs.DELTA_ARITY_UNKNOWN
     is_method = definition.label in _METHOD_LABELS
-    # `arg_count` already counts keyword arguments (issue #1522).
-    passed = site.arg_count + (1 if is_method else 0)
+    # `arg_count` counts keyword arguments too (issue #1522); only the
+    # positionals plus the keywords naming a declared positional parameter
+    # fill the declared list. A keyword naming nothing declared is neutral:
+    # it may be a keyword-only parameter or `**kwargs`, which the stored
+    # positional list cannot see, and a wrong name is not an arity fault.
+    positional = site.arg_count - len(site.kwarg_names)
+    matched = sum(1 for name in site.kwarg_names if name in declared)
+    passed = positional + matched + (1 if is_method else 0)
     # `diagnose_arity` owns the receiver arithmetic (`self` counts for
     # CPython but is not caller-supplied); here the "message" is the site.
     verdict = diagnose_arity(
@@ -446,10 +640,12 @@ def _arity_verdict(
     declared_count = verdict.declared_count - (1 if is_method else 0)
     if verdict.confirmed:
         return declared_count, cs.DELTA_ARITY_OK
-    if passed > verdict.declared_count:
+    if positional + (1 if is_method else 0) > verdict.declared_count:
         if _is_variadic(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
+    if passed > verdict.declared_count:
+        return declared_count, cs.DELTA_ARITY_OK
     return declared_count, cs.DELTA_ARITY_POSSIBLY_MISSING
 
 
@@ -542,7 +738,7 @@ def _shape(row: ResultRow) -> _Shape:
     )
 
 
-def _match(
+def _match_duplicate_shapes(
     candidate: _Shape, other: _Shape, threshold: float
 ) -> tuple[str, float] | None:
     if other.qualified_name == candidate.qualified_name:
@@ -555,6 +751,46 @@ def _match(
     if similarity >= threshold:
         return cs.KIND_SIMILAR, similarity
     return None
+
+
+def _best_duplicate_match(
+    candidate: _Shape,
+    shapes: list[_Shape],
+    fresh_set: set[str],
+    threshold: float,
+) -> tuple[float, _Shape, str] | None:
+    """The most similar prior shape `candidate` duplicates, if any."""
+    best: tuple[float, _Shape, str] | None = None
+    for other in shapes:
+        found = _match_duplicate_shapes(candidate, other, threshold)
+        # An existing symbol is the original; a fresh one is at best a
+        # peer, reported once from the lexically earlier side.
+        if found is None or (
+            other.qualified_name in fresh_set
+            and other.qualified_name < candidate.qualified_name
+        ):
+            continue
+        kind, similarity = found
+        if best is None or similarity > best[0]:
+            best = (similarity, other, kind)
+    return best
+
+
+def _new_duplicate(
+    candidate: _Shape, other: _Shape, kind: str, similarity: float
+) -> NewDuplicate:
+    return NewDuplicate(
+        qualified_name=candidate.qualified_name,
+        path=candidate.path,
+        start_line=candidate.start_line,
+        kind=kind,
+        similarity=round(similarity, 3),
+        original=DuplicateOriginal(
+            qualified_name=other.qualified_name,
+            path=other.path,
+            start_line=other.start_line,
+        ),
+    )
 
 
 def _new_duplicates(
@@ -577,85 +813,82 @@ def _new_duplicates(
     for candidate in shapes:
         if candidate.qualified_name not in fresh_set:
             continue
-        best: tuple[float, _Shape, str] | None = None
-        for other in shapes:
-            found = _match(candidate, other, threshold)
-            # An existing symbol is the original; a fresh one is at best a
-            # peer, reported once from the lexically earlier side.
-            if found is None or (
-                other.qualified_name in fresh_set
-                and other.qualified_name < candidate.qualified_name
-            ):
-                continue
-            kind, similarity = found
-            if best is None or similarity > best[0]:
-                best = (similarity, other, kind)
+        best = _best_duplicate_match(candidate, shapes, fresh_set, threshold)
         if best is not None:
             similarity, other, kind = best
-            out.append(
-                NewDuplicate(
-                    qualified_name=candidate.qualified_name,
-                    path=candidate.path,
-                    start_line=candidate.start_line,
-                    kind=kind,
-                    similarity=round(similarity, 3),
-                    original=DuplicateOriginal(
-                        qualified_name=other.qualified_name,
-                        path=other.path,
-                        start_line=other.start_line,
-                    ),
-                )
-            )
+            out.append(_new_duplicate(candidate, other, kind, similarity))
     return sorted(out, key=lambda d: (d["path"], d["start_line"], d["qualified_name"]))
 
 
 # --- import cycles ------------------------------------------------------------
 
 
+class _TarjanState:
+    """The bookkeeping Tarjan's algorithm carries between its two phases."""
+
+    def __init__(self) -> None:
+        self.index: dict[str, int] = {}
+        self.low: dict[str, int] = {}
+        self.on_stack: set[str] = set()
+        self.stack: list[str] = []
+        self.counter = 0
+
+    def enter(self, node: str) -> None:
+        """Number `node` and push it onto the current path."""
+        self.index[node] = self.low[node] = self.counter
+        self.counter += 1
+        self.stack.append(node)
+        self.on_stack.add(node)
+
+    def pop_component(self, root: str) -> frozenset[str]:
+        """Unwind the path down to `root`, which closes one SCC."""
+        component: set[str] = set()
+        while True:
+            member = self.stack.pop()
+            self.on_stack.discard(member)
+            component.add(member)
+            if member == root:
+                return frozenset(component)
+
+
+def _tarjan_descend(
+    state: _TarjanState,
+    graph: dict[str, frozenset[str]],
+    work: list[tuple[str, Iterable[str]]],
+    node: str,
+    child: str,
+) -> None:
+    """Follow one edge: recurse into an unseen child, else relax the low-link."""
+    if child not in state.index:
+        state.enter(child)
+        work.append((child, iter(sorted(graph.get(child, ())))))
+    elif child in state.on_stack:
+        state.low[node] = min(state.low[node], state.index[child])
+
+
 def strongly_connected(graph: dict[str, frozenset[str]]) -> list[frozenset[str]]:
     """Tarjan's SCCs, iteratively (a module graph can be thousands deep)."""
-    index: dict[str, int] = {}
-    low: dict[str, int] = {}
-    on_stack: set[str] = set()
-    stack: list[str] = []
+    state = _TarjanState()
     out: list[frozenset[str]] = []
-    counter = 0
     for root in sorted(graph):
-        if root in index:
+        if root in state.index:
             continue
         work: list[tuple[str, Iterable[str]]] = [
             (root, iter(sorted(graph.get(root, ()))))
         ]
-        index[root] = low[root] = counter
-        counter += 1
-        stack.append(root)
-        on_stack.add(root)
+        state.enter(root)
         while work:
             node, children = work[-1]
             child = next(children, None)
             if child is not None:
-                if child not in index:
-                    index[child] = low[child] = counter
-                    counter += 1
-                    stack.append(child)
-                    on_stack.add(child)
-                    work.append((child, iter(sorted(graph.get(child, ())))))
-                elif child in on_stack:
-                    low[node] = min(low[node], index[child])
+                _tarjan_descend(state, graph, work, node, child)
                 continue
             work.pop()
             if work:
                 parent = work[-1][0]
-                low[parent] = min(low[parent], low[node])
-            if low[node] == index[node]:
-                component: set[str] = set()
-                while True:
-                    member = stack.pop()
-                    on_stack.discard(member)
-                    component.add(member)
-                    if member == node:
-                        break
-                out.append(frozenset(component))
+                state.low[parent] = min(state.low[parent], state.low[node])
+            if state.low[node] == state.index[node]:
+                out.append(state.pop_component(node))
     return out
 
 
@@ -696,7 +929,7 @@ def _walk_callers(fetch_all: QueryFn, prefix: str, targets: set[str]) -> _Reach:
     a project-wide reverse call graph costs more to build than most deltas
     take in total.
     """
-    depth = {qn: 0 for qn in targets}
+    depth = dict.fromkeys(targets, 0)
     through = {qn: qn for qn in targets}
     nodes: dict[_NodeId, PropertyDict] = {}
     frontier = sorted(targets)
@@ -797,10 +1030,16 @@ def structural_delta(
     after: Snapshot,
     report: ReingestReport | None = None,
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
-    """Diff two snapshots of the same paths, then look up what they touch."""
+    """Diff two snapshots of the same paths, then look up what they touch.
+
+    `declared_renames` are pairs the CALLER applied and therefore knows. They
+    are needed only where the snapshots cannot show identity -- an empty
+    container -- and are empty for a plain write, which really is inferring.
+    """
     started = time.perf_counter()
-    symbols = _symbols(before, after)
+    symbols = _symbols(before, after, declared_renames)
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
     # A re-parsed file was edited: every symbol it defines may behave
@@ -820,6 +1059,7 @@ def structural_delta(
         arity_findings=_arity_findings(after, repo_root),
         new_duplicates=_new_duplicates(fetch_all, project_name, fresh),
         new_import_cycles=_new_import_cycles(before, after),
+        stale_importers=_stale_importers(after, symbols),
         tests_reaching=_tests_reaching(fetch_all, project_name, touched)
         if touched
         else [],
@@ -831,12 +1071,65 @@ def structural_delta(
     )
 
 
+def _module_of(qualified_name: str) -> str:
+    """The module a symbol's qualified name sits in, or "" if it has none."""
+    head, sep, _tail = qualified_name.rpartition(cs.SEPARATOR_DOT)
+    return head if sep else ""
+
+
+def _stale_importers(after: Snapshot, symbols: SymbolDelta) -> list[StaleImporter]:
+    """Importers still naming a module every moved symbol has left.
+
+    A MOVE is a rename whose module segment changed; a plain rename keeps the
+    module and is not one, so it contributes no vacated module and this
+    returns empty for it. That is what keeps the check specific to moves
+    without the contract having to say so (#1825).
+
+    "Vacated" is the load-bearing word. A module that still defines anything
+    is a legitimate import target, so only a module the moved symbols left
+    EMPTY counts -- otherwise moving one helper out of a busy module would
+    report every importer of its remaining siblings.
+    """
+    vacated: set[str] = set()
+    for renamed in symbols["renamed"]:
+        old_module = _module_of(str(renamed["old"]))
+        new_module = _module_of(str(renamed["new"]))
+        if old_module and old_module != new_module:
+            vacated.add(old_module)
+    if not vacated:
+        return []
+    # Anything the graph still defines under a vacated module means the module
+    # is alive and importing it is correct.
+    still_defined = {
+        _module_of(qn) for qn in after.definitions if _module_of(qn) in vacated
+    }
+    vacated -= still_defined
+    if not vacated:
+        return []
+    stale: list[StaleImporter] = []
+    for importer, targets in after.imports.items():
+        # One entry per IMPORTER, not per stale target: the finding is that
+        # this module still points at somewhere the move emptied, and naming
+        # the same importer once per vacated target would repeat it.
+        if not targets & vacated:
+            continue
+        stale.append(
+            StaleImporter(
+                importer=importer,
+                path=after.module_paths.get(importer, ""),
+                line=0,
+            )
+        )
+    return sorted(stale, key=lambda entry: (entry["path"], entry["importer"]))
+
+
 def observe(
     fetch_all: QueryFn,
     project_name: str,
     paths: Iterable[str],
     apply: Callable[[], ReingestReport],
     repo_root: Path | None = None,
+    declared_renames: frozenset[tuple[str, str]] = frozenset(),
 ) -> StructuralDelta:
     """Snapshot `paths`, run `apply` (the scoped re-ingest), snapshot, diff.
 
@@ -850,7 +1143,15 @@ def observe(
     report = apply()
     reingest_ms = (time.perf_counter() - apply_started) * 1000
     after = snapshot(fetch_all, project_name, path_list)
-    delta = structural_delta(fetch_all, project_name, before, after, report, repo_root)
+    delta = structural_delta(
+        fetch_all,
+        project_name,
+        before,
+        after,
+        report,
+        repo_root,
+        declared_renames=declared_renames,
+    )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything
     # this function added on top of it: both snapshots and the diff.

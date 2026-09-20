@@ -70,6 +70,16 @@ class TestCypherQueryEmbeddingsStructure:
                     f"$project_name + '.' must be parenthesized in: {stripped!r}"
                 )
 
+    @pytest.mark.parametrize(
+        "query",
+        [cs.CYPHER_QUERY_EMBEDDINGS, cs.CYPHER_QUERY_PROJECT_NODE_IDS],
+    )
+    def test_includes_methods_from_any_module_defined_container(
+        self, query: str
+    ) -> None:
+        assert "MATCH (m:Module)-[:DEFINES]->(c)-[:DEFINES_METHOD]->(n:Method)" in query
+        assert query.count("STARTS WITH ($project_name + '.')") == 2
+
 
 class TestGenerateSemanticEmbeddings:
     @_PATCH_DEPS

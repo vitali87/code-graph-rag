@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -62,6 +62,7 @@ class TypeInferenceEngine:
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_class_generic_arity",
+        "csharp_class_owner_module",
         "csharp_method_return_types",
         "function_locations",
         "_java_type_inference",
@@ -76,6 +77,7 @@ class TypeInferenceEngine:
         "_cpp_type_inference",
         "_dart_type_inference",
         "dart_extends_type_args",
+        "dart_constructor_qns",
     )
 
     def __init__(
@@ -111,9 +113,11 @@ class TypeInferenceEngine:
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_class_owner_module: dict[str, str] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
+        dart_constructor_qns: set[str] | None = None,
     ):
         self.import_processor = import_processor
         self.function_registry = function_registry
@@ -220,6 +224,22 @@ class TypeInferenceEngine:
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
         )
+        # The module qn of the file that DECLARED each class, recorded at
+        # ingest because it cannot be recovered from the class qn: a C#
+        # class qn embeds its namespace, so `proj/Core.cs` declaring
+        # `namespace Util` yields `proj.Core.Util.Helper`, which sits under
+        # the sibling module `proj.Core.Util` (`Core/Util.cs`). Inferring
+        # the owner by longest module prefix therefore attributes the class
+        # to the wrong file (#1769 review).
+        # Deliberately NOT forwarded to `CSharpTypeInferenceEngine` below:
+        # resolution never consults it. Only `remove_file_from_state`'s prune
+        # reads it, and it reads it from here. Passing it raised
+        # `unexpected keyword argument` inside the call pass, where the
+        # exception was SWALLOWED -- the arity map is populated earlier, so a
+        # probe checking only that map still looked correct (#1769 review).
+        self.csharp_class_owner_module = (
+            csharp_class_owner_module if csharp_class_owner_module is not None else {}
+        )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
         )
@@ -231,6 +251,11 @@ class TypeInferenceEngine:
         # receiver fallback (#875).
         self.dart_extends_type_args = (
             dart_extends_type_args if dart_extends_type_args is not None else {}
+        )
+        # Constructor qns, read by the call pass to record a named
+        # constructor call as a construction (#2012).
+        self.dart_constructor_qns = (
+            dart_constructor_qns if dart_constructor_qns is not None else set()
         )
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
@@ -319,6 +344,20 @@ class TypeInferenceEngine:
             self._dart_type_inference = DartTypeInferenceEngine()
         return self._dart_type_inference
 
+    def reset_semantic_join_memos(self) -> None:
+        # The Go, Java and C# engines each memoise rel-path -> module qn for
+        # the semantic join and rebuild it only when module_qn_to_file_path
+        # changes SIZE. A rename on a reused updater removes one qn and adds
+        # one, so the size holds and the memo would keep the old path; it
+        # is cleared with the resolver's other memos at the start of Pass 3.
+        for engine in (
+            self._go_type_inference,
+            self._java_type_inference,
+            self._csharp_type_inference,
+        ):
+            if engine is not None:
+                engine._rel_to_module.clear()
+
     @property
     def lua_type_inference(self) -> LuaTypeInferenceEngine:
         if self._lua_type_inference is None:
@@ -365,7 +404,9 @@ class TypeInferenceEngine:
         language: cs.SupportedLanguage,
         class_context: str | None = None,
     ) -> dict[str, str]:
-        local = self._build_local_variable_type_map(caller_node, module_qn, language)
+        local = self._build_local_variable_type_map(
+            caller_node, module_qn, language, class_context
+        )
         # When the caller is a method, overlay its class's member-field types as a
         # base so a bare `field_.method()` receiver resolves; a same-named parameter
         # or local shadows a field, so the local map wins on conflict.
@@ -583,6 +624,88 @@ class TypeInferenceEngine:
             class_qn = self._resolve_class_name(field_type, module_qn) or field_type
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{segments[-1]}"
         return self.method_return_types.get(method_qn)
+
+    def drop_go_return_types(self, qns: Collection[str]) -> None:
+        """Forget the Go return types recorded under `qns` and drop the index.
+
+        `GraphUpdater.remove_file_from_state` calls this for a deleted or
+        re-parsed file's definitions. The map used to keep them (issue #1668),
+        and the `(package, name)` index below is filled with `setdefault`, so a
+        surviving or new sibling defining a free function of the same name lost
+        to the stale entry and its return type was never recorded.
+
+        The index is invalidated outright rather than left to the size check:
+        one deletion followed by one addition leaves the size unchanged, and
+        the check would then serve the stale index over a map that no longer
+        holds the entry.
+        """
+        for qn in qns:
+            self.go_function_return_types.pop(qn, None)
+        self._go_free_fn_index = {}
+        self._go_free_fn_index_size = -1
+
+    def drop_csharp_side_tables(
+        self, function_qns: Collection[str], class_qns: Collection[str]
+    ) -> None:
+        """Forget the C# side-table entries owned by removed definitions.
+
+        `GraphUpdater.remove_file_from_state` reached the registry, both
+        return-type maps and `csharp_partial_groups`, but never these four
+        (issue #1769): a deleted file's generic methods, class arities, local
+        functions and extension methods outlived it on a reused updater and
+        went on steering resolution towards a definition that is gone.
+
+        `function_qns` are the method and function qns the caller determined
+        this file owned, under the same filter the registry sweep uses;
+        `class_qns` are the class qns, which carry no span records of their
+        own and are owned by the module recorded for them at ingest
+        (`csharp_class_owner_module`) -- their qn embeds a namespace and so
+        cannot be attributed by prefix.
+        `csharp_extension_methods` is keyed by simple NAME with a list of
+        owners, so its prune drops the owning entries from each list and
+        removes the key only once nothing is left under it.
+
+        The maps are mutated in place: the lazily built
+        `CSharpTypeInferenceEngine` shares these same objects by reference,
+        so rebinding any of them here would leave that engine reading the
+        pre-prune state.
+        """
+        function_qns = set(function_qns)
+        self.csharp_generic_methods -= function_qns
+        for qn in function_qns:
+            self.csharp_local_functions.pop(qn, None)
+        for qn in class_qns:
+            self.csharp_class_generic_arity.pop(qn, None)
+            # Dropped together: an owner record for a class whose arity is
+            # gone names a file this updater no longer has, and would keep
+            # the entry alive across the next deletion of the same qn.
+            self.csharp_class_owner_module.pop(qn, None)
+        for name in list(self.csharp_extension_methods):
+            kept = [
+                entry
+                for entry in self.csharp_extension_methods[name]
+                if entry[0] not in function_qns
+            ]
+            if kept:
+                self.csharp_extension_methods[name] = kept
+            else:
+                del self.csharp_extension_methods[name]
+
+    def drop_method_return_types(self, qns: Collection[str]) -> None:
+        """Forget the return types recorded under `qns` (issues #1738, #1753).
+
+        `GraphUpdater.remove_file_from_state` calls this for a deleted or
+        re-parsed file's definitions, beside `drop_go_return_types`. Both
+        maps, the general one and the C# `(type, arity)` one, are read
+        directly, with no derived index to invalidate.
+        """
+        for qn in qns:
+            self.method_return_types.pop(qn, None)
+            self.csharp_method_return_types.pop(qn, None)
+        # A Dart constructor's qn is written by the same ingest step as its
+        # return type, so it leaves with it; a stale one would keep stamping
+        # INSTANTIATES on a call that now reaches a static factory (#2012).
+        self.dart_constructor_qns.difference_update(qns)
 
     def _go_free_fn_return_type(self, name: str, module_qn: str) -> str | None:
         # Same module (file) first; then the enclosing package's sibling files
@@ -832,12 +955,18 @@ class TypeInferenceEngine:
         return fields
 
     def _build_local_variable_type_map(
-        self, caller_node: ASTNode, module_qn: str, language: cs.SupportedLanguage
+        self,
+        caller_node: ASTNode,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        class_context: str | None = None,
     ) -> dict[str, str]:
         match language:
             case cs.SupportedLanguage.PYTHON:
+                # The Python builder seeds `self`/`cls` from the class itself,
+                # ahead of its assignment walk (issue #1901).
                 return self.python_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node, module_qn, class_context
                 )
             case (
                 cs.SupportedLanguage.JS

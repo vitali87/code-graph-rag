@@ -100,4 +100,5 @@ def test_check_graph_integrity_reports_orphans(
 
     assert len(results) == 1
     assert results[0].passed is False
-    assert results[0].error is not None and "427" in results[0].error
+    assert results[0].error is not None
+    assert "427" in results[0].error

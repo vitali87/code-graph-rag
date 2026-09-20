@@ -7,7 +7,7 @@ description: "Measured latency of a one-file scoped re-ingest (GraphUpdater.rein
 Issue #1524 asks for a graph that reflects an agent's edit in hundreds of
 milliseconds. `GraphUpdater.reingest(paths)` re-parses only the named files
 and the files that depend on them (one level, found through the graph's own
-`CALLS`/`REFERENCES`/`INSTANTIATES`/`IMPORTS`/`INHERITS` edges), resolves
+`CALLS`/`REFERENCES`/`INSTANTIATES`/`IMPORTS`/`INHERITS`/`IMPLEMENTS`/`RETURNS`/`ACCEPTS` edges), resolves
 calls within that set only, and restores every other inbound edge verbatim.
 The watcher (`realtime_updater.py`) and the MCP `reingest` tool both run
 through it.
@@ -61,7 +61,8 @@ of the touched files' subgraph and the diff, and reports its own cost as
 |---|---|---|---|---|
 | `codebase_rag/graph_query.py` (hub, 48 dependents) | 2,446 ms | 2,527 ms | 142 ms | 677 ms |
 
-The p95 is the first iteration, before the process has warmed the
+The 200 ms target is a p50 target: the steady-state overhead of the delta
+is what an agent pays per write. The p95 is the first iteration, before the process has warmed the
 symbol-resolution and path caches; every later iteration sits within a few
 milliseconds of the p50. The overhead is dominated by the backward
 test-reach walk (one indexed query per hop, bounded to 12 hops), which is
@@ -95,3 +96,13 @@ now resolve into) the changed file, instead of re-parsing whole dependents,
 would cut the hub case to the cost of the changed file plus a fraction of
 each dependent. That needs the per-site edge properties from #1522 to find
 those sites cheaply and is left for a follow-up.
+
+## What a scoped re-ingest does not rebuild
+
+Two passes are repository-wide by construction and are left to
+`update_repository`: the code-quality finding analysis (`HAS_SMELL`,
+`HAS_VULNERABILITY`, `IMPLEMENTS_PATTERN`) and the URL-to-endpoint link pass
+(`RESOLVES_TO`), which drops every network link and rebuilds it from all live
+resources. A re-parsed file's finding edges are detached with its old subtree
+and come back on the next full update; endpoint links for a changed route are
+refreshed the same way. Scoping those two passes is tracked separately.

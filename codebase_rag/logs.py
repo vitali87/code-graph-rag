@@ -98,8 +98,30 @@ GO_FRONTEND_NO_FACTS = (
     "Go frontend produced no facts; every join falls back to tree-sitter. "
     "Tool diagnostics:\n{stderr}"
 )
+# A run rooted at a path that is neither a file nor a directory used to walk
+# nothing and report success (issue #1651): a deleted or mistyped target was
+# indistinguishable from one that was indexed.
+REPO_PATH_MISSING = (
+    "Repository path {path} does not exist as a file or a directory; nothing "
+    "was indexed"
+)
 GRAPH_ALREADY_IN_SYNC = (
     "Knowledge graph already in sync (hash cache matches every file). Skipping passes."
+)
+EXCLUSION_SET_CHANGED = (
+    "Exclusion set changed since the last sync ({previous} -> {current}); "
+    "re-running so newly excluded files leave the graph and newly included "
+    "ones enter it."
+)
+EXCLUSION_STATE_MISSING = (
+    "No recorded exclusion set for this graph, so it cannot be shown "
+    "unchanged; re-running once to establish it. Expect this exactly once "
+    "per existing index."
+)
+EXCLUSION_STATE_NOT_RECORDED = (
+    "The graph could not be asked for its module paths, so newly excluded "
+    "files may still be indexed; the exclusion set is not recorded and the "
+    "next run will reconcile again."
 )
 
 # Analysis logs
@@ -264,13 +286,40 @@ DEBOUNCE_MAX_WAIT_ADJUSTED = (
     "Setting max_wait to debounce value."
 )
 DELETION_QUERY = "Ran deletion query for path: {path}"
-RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 EDIT_TX_REJECTED = "Edit transaction {tx} rejected by verification: {why}"
 EDIT_TX_APPLIED = "Edit transaction {tx} applied {count} file(s)"
 EDIT_TX_RESTORE_FAILED = "Edit transaction could not restore {path}: {error}"
 REINGEST_DONE = "Re-ingested {reparsed} file(s) (+{affected} dependent, -{removed} removed) in {ms} ms"
+REINGEST_SKIPPED_IGNORED = "Re-ingest skipped path(s) the ignore rules exclude: {paths}"
+TRUNCATED_SYMBOL_NAME = (
+    "{path}: the name {name!r} was extracted from bytes that are not valid "
+    "UTF-8; the grammar splits the token at the bad byte, so this symbol is "
+    "indexed under a truncated name and its callers will not resolve to it "
+    "(issue #1810)"
+)
+REINGEST_UNREADABLE = (
+    "Re-ingest could not read {path} after classifying it from disk "
+    "({error}); it is not reported as re-parsed"
+)
 TYPE_EDGES_EMITTED = "Emitted {count} RETURNS/ACCEPTS edges from type annotations"
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
+WATCHER_REINGEST_REFUSED = "Re-ingest refused for {path}: {error}"
+# A refusal and an abort leave the graph untouched; anything else may have
+# deleted the affected subtrees without rebuilding them, so the retained
+# updater describes a graph that no longer exists (issue #1681).
+WATCHER_REINGEST_FAILED = (
+    "Re-ingest FAILED for {path}: {error}. The graph may be partial, so the "
+    "next change triggers a full re-index before any scoped update."
+)
+WATCHER_REBUILD_FAILED = (
+    "Re-index after a failed re-ingest also FAILED: {error}. The graph is still "
+    "partial; the next change will try again. Run 'cgr start --update-graph' if "
+    "this persists."
+)
+WATCHER_REBUILDING_AFTER_FAILURE = (
+    "Re-indexing the whole repository before this change, because the last "
+    "re-ingest failed part way through."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
@@ -835,6 +884,30 @@ MCP_SERVER_STARTING = "[GraphCode MCP] Starting MCP server..."
 MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..."
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
+# The incomplete-run marker (issue #1679). Both are warnings rather than
+# errors: the run itself is unaffected, but the cross-process guard silently
+# degrades to the in-process flag, which an operator can only notice here.
+MCP_INCOMPLETE_MARKER_STUCK_AFTER_ABORT = (
+    "[GraphCode MCP] A run for {project} stopped before writing anything to "
+    "the graph, but its incomplete-run marker could not be cleared. The marker "
+    "records that nothing was written, so the next scoped reingest or process "
+    "clears it once the graph store accepts writes again."
+)
+MCP_INCOMPLETE_MARKER_FAILED = (
+    "[GraphCode MCP] Could not persist the incomplete-run marker for "
+    "{project} (incomplete={incomplete}): {error}. A crash from here would "
+    "leave the next process unable to tell the update did not finish."
+)
+MCP_INCOMPLETE_MARKER_UNREADABLE = (
+    "[GraphCode MCP] Could not read the incomplete-run marker for {project}: "
+    "{error}. Refusing scoped reingest until it can be read; update_repository "
+    "recovers either way."
+)
+MCP_INCOMPLETE_MARKER_RECOVERED = (
+    "[GraphCode MCP] The incomplete-run marker for {project} was left by a run "
+    "that stopped before its first graph write, so the graph is as that run "
+    "found it; cleared it and continuing."
+)
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (
@@ -850,7 +923,31 @@ MCP_HTTP_SERVER_READY = (
 HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
 HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
 HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
-HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+# `errno` and `strerror` as well as the message: a publish failure names a
+# path and a bare message otherwise, which is not enough to tell WHICH
+# syscall refused on a platform the developer cannot reproduce on. A bare
+# `OSError("...")` carries errno None, so the value also distinguishes a
+# real syscall failure from one this module raised itself.
+HASH_CACHE_SAVE_FAILED = (
+    "Failed to save hash cache to {path}: {error} "
+    "(errno={errno} strerror={strerror} failing_path={failing_path})"
+)
+# A scoped re-ingest backdates the hash cache to the instant it observed
+# (`_reingest_update_hashes`); these name that step, distinct from the
+# atomic publish's own temporary-file cleanup below.
+REINGEST_CACHE_STAMP_FAILED = (
+    "Could not backdate {path} to the observed instant ({error}); removing it so "
+    "the next run rebuilds rather than trusting a stamp that can hide edits"
+)
+REINGEST_CACHE_STAMP_CLEANUP_FAILED = (
+    "Could not remove {path} after its backdate failed ({error}); it keeps a write "
+    "time later than any edit made during this run, so the next run may skip that "
+    "file. Delete it by hand, or re-run once the path is writable"
+)
+CACHE_STAMP_CLEANUP_FAILED = (
+    "Could not remove the temporary cache file {path} ({error}); it is inert, since "
+    "nothing reads a .tmp path, but it can be deleted by hand"
+)
 PERIODIC_FLUSH = "Periodic flush after {count} files processed"
 INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
 INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
@@ -858,24 +955,69 @@ INCREMENTAL_AFFECTED_CALLERS = (
     "Re-parsing {count} dependent caller file(s) of re-indexed targets"
 )
 INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+REINGEST_MODULE_PATHS_UNKNOWN = (
+    "Re-ingest aborted: the graph's module paths could not be read, so the "
+    "module qns already taken are unknown"
+)
+REINGEST_CONTAINER_KIND_UNKNOWN = (
+    "Re-ingest aborted: a directory's recorded container kind could not be "
+    "read, so whether it is new or has diverged from disk is unknown"
+)
+INCREMENTAL_FILE_FAILED = (
+    "Failed to index {path}; the remaining changed files are still rebuilt "
+    "before the error is raised: {error}"
+)
 INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
 HASH_CACHE_ORPHANED = (
     "Hash cache exists but project '{project}' has no modules in the graph; "
     "the database was likely wiped since the last sync. Discarding the cache "
     "and rebuilding fully."
 )
+HASH_CACHE_DISCARD_FAILED = (
+    "Could not discard the orphaned cache file {path} ({error}); this run "
+    "ignores it and rebuilds fully, so nothing is lost, but the stale file is "
+    "still on disk and EVERY later run pays the same full rebuild until it "
+    "goes. Delete it by hand, or re-run once the path is writable"
+)
 PARSER_FINGERPRINT_SAVE_FAILED = "Failed to save parser fingerprint to {path}: {error}"
 PARSER_FINGERPRINT_MISMATCH = (
-    "Parser code changed since this graph was built. Incremental sync keeps "
-    "results from the old parser for files not touched since the last sync, so "
-    "the graph may be stale. Run 'cgr start --clean --update-graph' to rebuild "
-    "it from scratch. '--clean' on its own deletes the graph without rebuilding "
-    "it, and deletes every project in a shared database, not just this one."
+    "A parser input changed since this graph was built: parser code, a grammar "
+    "or toolchain version, a frontend mode, or the capture selection. "
+    "Incremental sync keeps results from the old inputs for files not touched "
+    "since the last sync, so the graph may be stale. To rebuild THIS repository "
+    "only, delete its '.cgr-hash-cache.json', '.cgr-dir-mtimes.json' and "
+    "'.cgr-parser-fingerprint' and index again with 'cgr start --update-graph': "
+    "every file is then re-parsed, and other projects in a shared database "
+    "are untouched. That is a partial rebuild, not a clean one: it adds what "
+    "the new inputs emit, but a re-parse only removes what the re-parsed "
+    "module DEFINES, so nodes and edges the old inputs left outside that "
+    "subtree survive it. Measured on one repository, 12 of 82 stale edges "
+    "outlived the cache deletion because their other end was an inferred or "
+    "external node the re-parse never touched (issue #1649), and a partial "
+    "result looks exactly like the remedy working. When names or node kinds "
+    "changed, or when superseded EDGES must go rather than new ones merely "
+    "being added, the only reliable rebuild is to index the source as a NEW "
+    "project -- 'cgr start --repo-path <path> --project-name <a-fresh-name> "
+    "--update-graph', which deletes nothing and leaves the old project in "
+    "place to compare against -- or to run 'cgr start --clean "
+    "--update-graph'. Note '--clean' "
+    "deletes EVERY project in a shared database, not just this one; on its "
+    "own it deletes the graph without rebuilding it."
+)
+
+GLOSS_PRUNE_FAILED = (
+    "Could not sweep orphaned glosses: {error}. The project delete itself "
+    "succeeded; the orphans are unreachable rather than wrong, and the next "
+    "deliberate project delete sweeps them."
 )
 
 REHYDRATE_QUERY_FAILED = (
     "Could not read persisted definitions from the graph; continuing with "
     "only this run's freshly parsed registry."
+)
+SEED_PRUNE_NO_VERDICT = (
+    "Could not read module paths from the graph; keeping every seeded module "
+    "qn rather than treating an unreadable graph as an empty one."
 )
 CSHARP_TYPE_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} C# type location(s) from the graph for the partial join"
@@ -887,8 +1029,13 @@ FUNCTION_LOCATIONS_REHYDRATED = (
     "Rehydrated {count} function location(s) from the persisted graph"
 )
 INBOUND_CAPTURE_FAILED = (
-    "Could not read inbound edges from the graph; this full rebuild "
-    "re-parses every caller, so the edges are re-resolved from source."
+    "Could not read inbound edges from the graph; this full rebuild re-parses "
+    "every caller, so source-derived edges are re-resolved, and Gloss notes "
+    "are re-attached to their symbols by recorded name at the end of the run."
+)
+GLOSS_REANCHOR_FAILED = (
+    "Could not re-attach Gloss notes to their symbols after the sync: {error}. "
+    "Unattached notes are re-attached by the next run."
 )
 
 # Orphan pruning logs
@@ -899,6 +1046,19 @@ PRUNE_DELETING = "Pruning orphan {label}: {path}"
 PRUNE_LEGACY_IDENTITIES = "Swept {count} legacy target-resolved File record(s)"
 PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
 PRUNE_SKIP = "No orphan nodes found. Graph is clean."
+# Distinct from PRUNE_SKIP: the prune did not run, which is not the
+# same claim as running and finding nothing (issue #1756).
+PRUNE_SKIPPED_SINGLE_FILE = (
+    "Single-file run: skipping the orphan prune, which can only speak "
+    "for a full project walk."
+)
+# A single-file run updates an existing hash cache but never creates one:
+# the cache marks a project root (#1775), so one created in a subdirectory
+# would root every later single-file run below it there.
+HASH_CACHE_SKIPPED_SINGLE_FILE = (
+    "Single-file run: not creating a hash cache at {path}, which would "
+    "mark that directory as a project root."
+)
 FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
 FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
 FILE_HASH_NEW = "New file detected: {path}"

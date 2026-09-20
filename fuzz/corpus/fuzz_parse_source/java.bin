@@ -1,0 +1,9 @@
+package app;
+
+import java.util.List;
+
+public class Greeter {
+    public String greet(String name) { return name; }
+    public static void main(String[] a) { new Greeter().greet("x"); }
+}
+

@@ -38,9 +38,20 @@ class Expectation(NamedTuple):
     # Qualified names allowed to disappear (an inline, a move's old home).
     removed: tuple[str, ...] = ()
     symbol_count_unchanged: bool = True
+    # Whether renames the delta reports but this expectation never asked for
+    # fail the contract. Deliberately NOT folded into
+    # `symbol_count_unchanged`: an inline waives symbol COUNTS, and waiving a
+    # count is not consent to rename an unrelated symbol. Descendants carried
+    # by a requested rename are not "unexpected" -- see `_carried_by_ancestor`.
+    no_unexpected_rename: bool = True
     caller_count_unchanged: bool = True
     no_dangling: bool = True
     no_new_cycle: bool = True
+    # Whether an importer still targeting a module the moved symbol left
+    # fails the contract. Off by default: only a MOVE vacates a module, and
+    # a non-move's delta reports none, so switching it on for every operation
+    # would add a check that can never fire and read as coverage (#1825).
+    no_stale_importer: bool = False
     no_new_duplicate: bool = True
     # `path:line` of the call sites the operation deliberately left alone;
     # every other site of a changed signature must read as mapped.
@@ -75,12 +86,15 @@ def rename_expectation(
     )
 
 
-def change_signature_expectation(unmapped: Iterable[str]) -> Expectation:
+def change_signature_expectation(
+    unmapped: Iterable[str], heuristic_allowed: bool = False
+) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_CHANGE_SIGNATURE,
         unmapped=tuple(sorted(set(unmapped))),
         # A parameter added with a default changes no caller count.
         caller_count_unchanged=True,
+        heuristic_allowed=heuristic_allowed,
     )
 
 
@@ -88,11 +102,35 @@ def move_expectation(old_qn: str, new_qn: str) -> Expectation:
     return Expectation(
         operation=cs.CONTRACT_OP_MOVE,
         renames=((old_qn, new_qn),),
+        # The promise the module docstring has always made for a move, and
+        # that nothing checked: the contract asked whether the definition
+        # reached its new home and never whether anyone still points at the
+        # old one (#1825).
+        no_stale_importer=True,
     )
 
 
 def _site_key(site: Mapping[str, object]) -> str:
     return f"{site.get(cs.KEY_PATH)}:{site.get(cs.KEY_LINE)}"
+
+
+def _carried_by_ancestor(
+    pair: tuple[str, str], expected: Iterable[tuple[str, str]]
+) -> bool:
+    """Is this rename the mechanical consequence of an expected one?
+
+    True only when `old` is a strict descendant of an expected `old` AND `new`
+    is that expected rename applied to it. Both halves are load-bearing: the
+    separator anchor stops `helper` from swallowing the sibling `helperX`, and
+    requiring the substituted new name stops `helper.inner -> assist.other`,
+    where the child's own segment was renamed too and nobody asked for it.
+    """
+    old, new = pair
+    for expected_old, expected_new in expected:
+        prefix = expected_old + cs.SEPARATOR_DOT
+        if old.startswith(prefix) and new == expected_new + old[len(expected_old) :]:
+            return True
+    return False
 
 
 def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str]:
@@ -102,6 +140,30 @@ def _check_symbols(expectation: Expectation, delta: StructuralDelta) -> list[str
     for pair in expectation.renames:
         if pair not in renamed:
             failures.append(cs.CONTRACT_RENAME_MISSING.format(old=pair[0], new=pair[1]))
+    # Membership in one direction only catches a rename that did NOT happen.
+    # A rename that happened as WELL leaves the operation retaining a change
+    # nobody asked for, so the set must match rather than merely contain --
+    # the same both-directions check `added` and `removed` already get below.
+    #
+    # Set equality alone is too strong, though: unlike `added`/`removed`, whose
+    # elements are independent, a qualified name is a PATH. Renaming `helper`
+    # necessarily moves `helper.inner` to `assist.inner` -- the child's own
+    # segment did not change, its ancestor's did -- and `_hierarchy` (rename.py)
+    # walks only `overrides` edges, so no descendant is ever enumerated. Demanding
+    # verbatim equality would roll back every correct rename of a symbol that
+    # contains a nested definition, and would make a class move (whose methods
+    # all carry the class qn) unsatisfiable by construction.
+    unexpected_renames = sorted(
+        pair
+        for pair in renamed - set(expectation.renames)
+        if not _carried_by_ancestor(pair, expectation.renames)
+    )
+    if expectation.no_unexpected_rename and unexpected_renames:
+        failures.append(
+            cs.CONTRACT_RENAME_UNEXPECTED.format(
+                pairs=", ".join(f"{old} -> {new}" for old, new in unexpected_renames)
+            )
+        )
     unexpected_added = sorted(set(symbols["added"]) - set(expectation.added))
     unexpected_removed = sorted(set(symbols["removed"]) - set(expectation.removed))
     if expectation.symbol_count_unchanged and (unexpected_added or unexpected_removed):
@@ -132,6 +194,26 @@ def _check_callers(expectation: Expectation, delta: StructuralDelta) -> list[str
     return failures
 
 
+def _changed_site_fault(
+    site: Mapping[str, object], unmapped: set[str], rewritten: set[str]
+) -> str | None:
+    """The fault to report for one call site of a changed signature, if any.
+
+    Split out of `_check_sites_mapped` for S3776: the nesting of the two
+    loops plus these three verdicts put that function one point over the
+    threshold. The decision is per site and reads better named anyway.
+    """
+    key = _site_key(site)
+    verdict = site["verdict"]
+    if verdict == cs.DELTA_ARITY_OK or key in unmapped:
+        return None
+    # A site the operation itself rewrote supplied every value, so the
+    # mapping covers it even where the delta cannot see the argument.
+    if verdict == cs.DELTA_ARITY_POSSIBLY_MISSING and key in rewritten:
+        return None
+    return f"{key} ({verdict})"
+
+
 def _check_sites_mapped(
     expectation: Expectation, delta: StructuralDelta, rewritten: set[str]
 ) -> list[str]:
@@ -141,20 +223,17 @@ def _check_sites_mapped(
     supplied every value); a site it left alone must read `ok` or be
     listed as unmapped. `too_many` is definitive either way.
     """
+    if expectation.operation != cs.CONTRACT_OP_CHANGE_SIGNATURE:
+        # Only a signature change owes a mapping per site; a rename or a
+        # move leaves every call's arguments as they were, and the delta's
+        # arity findings list pre-existing faults in the touched files.
+        return []
     unmapped = set(expectation.unmapped)
     bad: list[str] = []
     for change in delta["signature_changes"]:
         for site in change["sites"]:
-            key = _site_key(site)
-            verdict = site["verdict"]
-            if (
-                verdict in (cs.DELTA_ARITY_OK, cs.DELTA_ARITY_UNKNOWN)
-                or key in unmapped
-            ):
-                continue
-            if verdict == cs.DELTA_ARITY_POSSIBLY_MISSING and key in rewritten:
-                continue
-            bad.append(f"{key} ({verdict})")
+            if fault := _changed_site_fault(site, unmapped, rewritten):
+                bad.append(fault)
     for site in delta["arity_findings"]:
         key = _site_key(site)
         if key not in unmapped:
@@ -184,12 +263,34 @@ def _check_structure(expectation: Expectation, delta: StructuralDelta) -> list[s
                 cycles="; ".join(" -> ".join(c) for c in delta["new_import_cycles"])
             )
         )
-    if expectation.no_new_duplicate and delta["new_duplicates"]:
+    if expectation.no_stale_importer and delta["stale_importers"]:
+        failures.append(
+            cs.CONTRACT_STALE_IMPORTER.format(
+                sites=", ".join(
+                    f"{entry['path']}:{entry['line']}"
+                    for entry in delta["stale_importers"]
+                )
+            )
+        )
+    # The renamed symbol is "fresh" to the delta, so a twin that already
+    # existed before the edit is reported beside it; the edit introduced no
+    # duplicate, only a new name for one half of an old pair.
+    expected_new = {new for _old, new in expectation.renames}
+    introduced = [
+        d
+        for d in delta["new_duplicates"]
+        if d["qualified_name"] not in expected_new
+        and not any(
+            d["qualified_name"].startswith(new + cs.SEPARATOR_DOT)
+            for new in expected_new
+        )
+    ]
+    if expectation.no_new_duplicate and introduced:
         failures.append(
             cs.CONTRACT_NEW_DUPLICATE.format(
                 pairs=", ".join(
                     f"{d['qualified_name']} = {d['original']['qualified_name']}"
-                    for d in delta["new_duplicates"]
+                    for d in introduced
                 )
             )
         )
@@ -234,9 +335,21 @@ def measure(
     repo_root: Path,
     files: Iterable[str],
     reingest: Reingest,
+    declared_renames: Iterable[tuple[str, str]] = (),
 ) -> StructuralDelta:
-    """The delta of files an operation just wrote, through the re-ingest."""
+    """The delta of files an operation just wrote, through the re-ingest.
+
+    `declared_renames` are the pairs the operation APPLIED. The delta infers
+    renames from the snapshots, which cannot be done for an empty container
+    (no fingerprint, no members, and the name is what changed), so an
+    operation that knows says so rather than leaving it to a guess.
+    """
     paths = sorted(set(files))
     return observe(
-        fetch_all, project_name, paths, lambda: reingest(paths), repo_root=repo_root
+        fetch_all,
+        project_name,
+        paths,
+        lambda: reingest(paths),
+        repo_root=repo_root,
+        declared_renames=frozenset(declared_renames),
     )

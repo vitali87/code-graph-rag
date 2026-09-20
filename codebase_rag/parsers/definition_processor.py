@@ -27,18 +27,24 @@ from ..utils.path_utils import (
     base_module_qn,
     cached_relative_path,
     cached_resolve_posix,
+    declaration_extension,
+    has_implementation_sibling,
 )
 from .class_ingest import ClassIngestMixin
 from .cpp import CppTypeInferenceEngine
 from .cpp.preproc_recovery import parse_with_preproc_recovery
 from .csharp_frontend import CallSiteKey
+from .definition_docstring import extract_definition_docstring
 from .dependency_parser import parse_dependencies
+from .field_nodes import PendingFieldType
 from .frontends.protocol import ImplementsPair, ResolvedCallSite
 from .function_ingest import FunctionIngestMixin
 from .go import utils as go_utils
 from .handlers import get_handler
 from .java_generated import generator_hint
 from .js_ts.ingest import JsTsIngestMixin
+from .module_docstring import extract_module_docstring
+from .parameter_nodes import PendingParameterType
 from .utils import safe_decode_with_fallback, sorted_captures
 
 if TYPE_CHECKING:
@@ -68,6 +74,8 @@ class DefinitionProcessor(
         func_class_captures_cache: dict[Path, dict] | None = None,
         *,
         flow_capture_enabled: bool = False,
+        exclude_paths: frozenset[str] | None = None,
+        unignore_paths: frozenset[str] | None = None,
     ):
         super().__init__()
         self.ingestor = ingestor
@@ -78,10 +86,27 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.flow_capture_enabled = flow_capture_enabled
+        # The indexer's eligibility policy, needed by the declaration
+        # tie-break: a declaration must yield only to an implementation that
+        # will actually be indexed, not merely one that exists on disk.
+        self.exclude_paths = exclude_paths
+        self.unignore_paths = unignore_paths
         # {go module qn: its `package` clause name}; Go package membership is
         # (directory, clause), so receiver binding needs both.
         self.go_package_names: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
+        # {class qn: module qn of the file that DECLARED it}, written for
+        # EVERY language at class ingest. `class_inheritance` and
+        # `class_field_types` are keyed by a class qn, and a class records
+        # no function span, so the span-based ownership the registry sweep
+        # uses cannot attribute one. Nor can a prefix rule: a C# class qn
+        # embeds its namespace, so `proj/Core.cs` with `namespace Util`
+        # yields `proj.Core.Util.Helper`, sitting under the SIBLING module
+        # `proj.Core.Util` (#1769 review). This is the C#-only
+        # `csharp_class_owner_module`'s cross-language counterpart, needed
+        # because both maps above are written by every language's ingest
+        # (#1772).
+        self.class_owner_module: dict[str, str] = {}
         # {class_qn: [(method_qn, method_name)]} for Dart @override methods;
         # whether they override an EXTERNAL base is only decidable once every
         # class is registered, so resolve_deferred_inherits consumes this.
@@ -90,6 +115,10 @@ class DefinitionProcessor(
         # read at call resolution to bind a member call on an undeclared
         # receiver against the type arguments of an EXTERNAL base (#875).
         self.dart_extends_type_args: dict[str, list[str]] = {}
+        # Dart constructor qns (default, named, const, factory): a named
+        # constructor call resolves to its own method, so the call pass
+        # needs this set to record the construction (issue #2012).
+        self.dart_constructor_qns: set[str] = set()
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).
@@ -145,6 +174,13 @@ class DefinitionProcessor(
         # so `Builder` vs `Builder<TResult>` (same simple name) can be told
         # apart when a type reference's written arity is known.
         self.csharp_class_generic_arity: dict[str, int] = {}
+        # {class qn: module qn of the file that DECLARED it}. Recorded
+        # rather than derived: a C# class qn embeds its namespace, so
+        # `proj/Core.cs` with `namespace Util` yields
+        # `proj.Core.Util.Helper`, which sits under the SIBLING module
+        # `proj.Core.Util`. No prefix rule on the qn can recover the
+        # declarer, so the prune reads this map (#1769).
+        self.csharp_class_owner_module: dict[str, str] = {}
         # {method qn: (normalized return type, its written generic arity)}
         # for chained-receiver typing; separate from the cross-language
         # method_return_types because the arity is C#-specific.
@@ -278,6 +314,12 @@ class DefinitionProcessor(
         # implementation units whose IMPLEMENTS edge waits for its
         # interface to be known.
         self.cpp_module_interfaces: set[str] = set()
+        # The subset of the above that THIS run's parsing registered, as
+        # opposed to entries read back from the graph. Rehydration rebuilds
+        # the graph-derived part and must not drop these: a just-parsed
+        # interface's node write is still in the ingestor's buffer, so it is
+        # absent from the rows rehydration fetches.
+        self.cpp_interfaces_parsed_this_run: set[str] = set()
         self._deferred_cpp_module_impls: list[tuple[str, str]] = []
         # Inline (non-file) module qns, e.g. Rust `mod x {}`; deferred
         # import verification counts them as real internal targets.
@@ -295,6 +337,8 @@ class DefinitionProcessor(
         ] = []
         # Return/parameter annotations awaiting the full registry (#1527).
         self.pending_type_facts: list[PendingTypeFact] = []
+        self.pending_parameter_types: list[PendingParameterType] = []
+        self.pending_field_types: list[PendingFieldType] = []
         # Registered qns that are macro definitions (Rust macro_rules!):
         # macros register as Function nodes but live in a separate namespace,
         # so Pass-3 gates macro-invocation call sites to these targets and
@@ -309,6 +353,35 @@ class DefinitionProcessor(
         self._func_class_captures_cache = func_class_captures_cache
 
     def _disambiguate_module_qn(self, module_qn: str, file_path: Path) -> str:
+        # A TypeScript declaration file and its implementation strip to the
+        # SAME module qn once `.d.ts` is treated as one extension (#1720), and
+        # the rule below would award it to whichever is walked first. That is
+        # the stub: `"foo.d.ts" < "foo.ts"` in the ascending within-directory
+        # walk. The type-only file would own the name every importer resolves
+        # to while the callable definitions sat under `proj.foo.ts`, which
+        # nothing asks for -- the regression that closed PR #1721.
+        #
+        # So a declaration yields whenever an implementation EXISTS ON DISK,
+        # which is a fact about the repository rather than about parse order.
+        # A declaration with no implementation still takes the bare name: for
+        # `@types/*` packages and for a compiled library shipped beside its
+        # types, that file IS the module, and an unconditional yield would put
+        # it back under a name nothing resolves to.
+        # Note this REWRITES the candidate rather than returning it: the
+        # yielded name is itself a qn like any other and can collide with a
+        # real module (`foo/d/ts.py` derives `proj.foo.d.ts`), so it still has
+        # to go through the check below rather than skip it.
+        if (declaration := declaration_extension(file_path.name)) and (
+            has_implementation_sibling(
+                file_path,
+                self.repo_path,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            )
+        ):
+            suffix = declaration.lstrip(cs.SEPARATOR_DOT)
+            module_qn = f"{module_qn}{cs.SEPARATOR_DOT}{suffix}"
+
         # Two files that share a basename but differ by extension (foo.py /
         # foo.cpp) strip to the same module qn. Append the extension to the
         # later one so their module nodes and all derived class/method qns stay
@@ -326,16 +399,35 @@ class DefinitionProcessor(
         Runs once the registry holds every file's types (issue #1527); the
         queue empties, so a watch-mode re-parse only re-resolves its own.
         """
+        from .field_nodes import emit_field_type_edges
+        from .parameter_nodes import emit_parameter_type_edges
         from .type_facts import TypeReferenceResolver, emit_type_edges
 
-        if not self.pending_type_facts:
+        # Every queue, not just the first: a Parameter or Field fact with no
+        # RETURNS/ACCEPTS fact beside it would otherwise be skipped outright,
+        # and OF_TYPE silently absent. A class whose only annotations are on
+        # fields is the case that reaches this (found by the Field regression).
+        if not (
+            self.pending_type_facts
+            or self.pending_parameter_types
+            or self.pending_field_types
+        ):
             return 0
         resolver = TypeReferenceResolver(
             self.function_registry,
             self.import_processor.import_mapping,
             self.project_name,
         )
-        return emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        emitted = emit_type_edges(self.pending_type_facts, resolver, self.ingestor)
+        # Parameter OF_TYPE edges resolve in the same pass, for the same
+        # reason: the annotation may name a type from a later file.
+        emitted += emit_parameter_type_edges(
+            self.pending_parameter_types, resolver, self.ingestor
+        )
+        emitted += emit_field_type_edges(
+            self.pending_field_types, resolver, self.ingestor
+        )
+        return emitted
 
     def process_file(
         self,
@@ -395,6 +487,8 @@ class DefinitionProcessor(
                     self.flow_capture_enabled and language in FLOW_REGISTERED_LANGUAGES
                 ),
             }
+            if docstring := self._get_module_docstring(root_node, language):
+                module_props[cs.KEY_DOCSTRING] = docstring
             if self.generated_source_prefixes and (
                 hint := generator_hint(
                     relative_path_str, self.generated_source_prefixes
@@ -433,13 +527,40 @@ class DefinitionProcessor(
                 if combined_query:
                     cursor = QueryCursor(combined_query)
                     combined_captures = sorted_captures(cursor, root_node)
-            if self._func_class_captures_cache is not None and combined_captures:
+            # An UNAVAILABLE query is not an empty result. `combined_captures`
+            # stays None when the language has no combined query (or building
+            # it raised), and caching {} for that would tell the call walk
+            # "this file has no functions" when the truth is "nobody looked".
+            # Measured: it attributed a call to the MODULE alongside the
+            # correct function-owned edge, so the graph gained a spurious
+            # `proj.pkg.caller CALLS ...` beside `proj.pkg.caller.run CALLS
+            # ...` (Greptile, PR #1833). Absent is the honest state there, and
+            # it is what the reader already falls back on.
+            if self._func_class_captures_cache is not None and (
+                combined_captures is not None
+            ):
+                # Write unconditionally, including the EMPTY entry. The two
+                # truthiness guards this replaces both skipped the write when
+                # the file yielded nothing, which LEFT THE PREVIOUS PARSE'S
+                # ENTRY in place -- captures holding nodes from a tree that
+                # has since been discarded.
+                #
+                # A file emptied (or made unparseable) between runs is exactly
+                # that case: its AST cache is correctly refreshed to the empty
+                # tree, but `_process_function_calls` reads these captures, so
+                # it walked the OLD call sites and re-emitted a CALLS edge out
+                # of a function that no longer exists in the source (#1794).
+                # `_load_ast_from_disk` already pops this cache on eviction for
+                # the same reason; the re-parse path has to keep it true too.
+                #
+                # An absent entry and an empty one are not the same thing to
+                # the reader: absent means "not parsed this run, look at the
+                # AST", empty means "parsed, and it has nothing".
                 cache_entry: dict[str, list] = {}
                 for key in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS, cs.CAPTURE_CALL):
-                    if key in combined_captures:
+                    if combined_captures and key in combined_captures:
                         cache_entry[key] = combined_captures[key]
-                if cache_entry:
-                    self._func_class_captures_cache[file_path] = cache_entry
+                self._func_class_captures_cache[file_path] = cache_entry
 
             # A reused updater's second run re-parses this module into a map
             # still holding the first run's spans. The key is (module_qn,
@@ -458,6 +579,24 @@ class DefinitionProcessor(
             if language in cs.JS_TS_LANGUAGES:
                 self._ingest_missing_import_patterns(
                     root_node, module_qn, language, queries
+                )
+                # Written AFTER parse_imports, which is what fills the set, and
+                # unconditionally rather than only when non-empty: the node
+                # already exists from the batch above, so the flush MERGEs and
+                # `SET n += props`, which updates a property but never removes
+                # one. Writing the empty list is therefore the only way a
+                # re-parse can CLEAR specifiers whose target now exists
+                # (issue #1714).
+                self.ingestor.ensure_node_batch(
+                    cs.NodeLabel.MODULE,
+                    {
+                        cs.KEY_QUALIFIED_NAME: module_qn,
+                        cs.KEY_UNRESOLVED_SPECIFIERS: sorted(
+                            self.import_processor.unresolved_specifiers.get(
+                                module_qn, ()
+                            )
+                        ),
+                    },
                 )
             if language == cs.SupportedLanguage.CPP:
                 self._ingest_cpp_module_declarations(root_node, module_qn, file_path)
@@ -555,13 +694,51 @@ class DefinitionProcessor(
             properties=rel_properties,
         )
 
-    def _get_docstring(self, node: ASTNode) -> str | None:
-        body_node = node.child_by_field_name(cs.FIELD_BODY)
-        if not body_node or not body_node.children:
+    def _get_module_docstring(
+        self, root_node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation for a whole file, in whatever form its language uses.
+
+        Python's is a string literal and reuses `_get_docstring`; every other
+        language marks it with a comment convention, which needs the marker
+        prefixes in `module_docstring` because the grammars report a doc
+        comment and an ordinary one as the same node type.
+        """
+        if language == cs.SupportedLanguage.PYTHON:
+            return self._get_docstring(root_node, language)
+        return extract_module_docstring(root_node, language)
+
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None:
+        """The documentation of one definition, in its language's own form.
+
+        Python's is a string literal inside the body; every other language
+        marks it with a comment convention above the declaration, which needs
+        the per-language markers in `definition_docstring` because the
+        grammars report a doc comment and an ordinary one as the same node
+        type (issue #1809). `language` is required rather than defaulted: a
+        default would silently route every call site that forgot it back to
+        the Python path, and the property would stay empty for that language
+        with nothing failing.
+        """
+        if language != cs.SupportedLanguage.PYTHON:
+            return extract_definition_docstring(node, language)
+        if node.type == cs.TS_PY_MODULE:
+            # A module node has no `body` field: its statements are direct
+            # children, one level shallower than a class or function body.
+            statements = node.children
+        else:
+            body_node = node.child_by_field_name(cs.FIELD_BODY)
+            if not body_node:
+                return None
+            statements = body_node.children
+        if not statements:
             return None
-        first_statement = body_node.children[0]
+        first_statement = statements[0]
         if (
             first_statement.type == cs.TS_PY_EXPRESSION_STATEMENT
+            and first_statement.children
             and first_statement.children[0].type == cs.TS_PY_STRING
         ):
             text = first_statement.children[0].text

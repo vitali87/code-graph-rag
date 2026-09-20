@@ -47,6 +47,7 @@ from .transaction import (
     VerificationResult,
     transaction,
     undo_last,
+    undo_transaction,
 )
 
 __all__ = [
@@ -93,4 +94,5 @@ __all__ = [
     "line_col_to_byte",
     "transaction",
     "undo_last",
+    "undo_transaction",
 ]

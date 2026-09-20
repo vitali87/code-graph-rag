@@ -297,8 +297,6 @@ class JavaTypeResolverMixin:
                     class_name := safe_decode_text(name_node)
                 ):
                     class_names.append(class_name)
-            case _:
-                pass
 
         for child in node.children:
             self._traverse_for_class_declarations(child, class_names)

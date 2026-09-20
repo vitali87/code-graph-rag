@@ -183,28 +183,27 @@ def _extract_name_from_declaration(func_node: Node) -> str | None:
 
 
 def _extract_name_from_field_declaration(func_node: Node) -> str | None:
-    has_function_declarator = any(
-        child.type == cs.CppNodeType.FUNCTION_DECLARATOR for child in func_node.children
-    )
-    if not has_function_declarator:
-        return None
-
     for child in func_node.children:
-        if child.type == cs.CppNodeType.FUNCTION_DECLARATOR:
-            declarator = child.child_by_field_name(cs.FIELD_DECLARATOR)
-            if (
-                declarator
-                and declarator.type == cs.CppNodeType.FIELD_IDENTIFIER
-                and declarator.text
-            ):
-                return safe_decode_text(declarator)
+        if child.type != cs.CppNodeType.FUNCTION_DECLARATOR:
+            continue
+        if (name := _function_declarator_field_name(child)) is not None:
+            return name
+    return None
 
-            for grandchild in child.children:
-                if (
-                    grandchild.type == cs.CppNodeType.FIELD_IDENTIFIER
-                    and grandchild.text
-                ):
-                    return safe_decode_text(grandchild)
+
+def _function_declarator_field_name(declarator_node: Node) -> str | None:
+    """The field identifier a `function_declarator` names: its `declarator`
+    field when that is one, else the first field-identifier child."""
+    declarator = declarator_node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if (
+        declarator
+        and declarator.type == cs.CppNodeType.FIELD_IDENTIFIER
+        and declarator.text
+    ):
+        return safe_decode_text(declarator)
+    for grandchild in declarator_node.children:
+        if grandchild.type == cs.CppNodeType.FIELD_IDENTIFIER and grandchild.text:
+            return safe_decode_text(grandchild)
     return None
 
 

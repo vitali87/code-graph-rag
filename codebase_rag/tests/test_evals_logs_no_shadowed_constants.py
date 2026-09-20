@@ -30,10 +30,18 @@ def _bindings(body: list[ast.stmt]) -> list[str]:
     A bare `NAME: str` does not, since an annotation without a value binds
     nothing at runtime.
 
-    Branches of one `if`/`try` are UNIONED rather than concatenated. At most
-    one branch executes, so `if x: FOO = 1` / `else: FOO = 2` binds `FOO`
-    once; summing them would report a duplicate that cannot occur and make
-    the guard fire on correct code.
+    Alternative branches of one `if`/`try` are MERGED rather than
+    concatenated. At most one alternative executes, so `if x: FOO = 1` /
+    `else: FOO = 2` binds `FOO` once; summing them would report a duplicate
+    that cannot occur and make the guard fire on correct code. The merge keeps
+    each name at the HIGHEST count any one alternative gives it, so a name
+    bound twice inside a single branch still reads as a duplicate.
+
+    A `try` has one success path, not two: `else` runs after a body that
+    raised nothing, so body-then-else is a single path whose bindings
+    concatenate, and each `except` handler is an alternative to that path
+    (issue #1686). Treating `else` as an alternative let `try: A = 1 ...
+    else: A = 2` through.
     """
     names: list[str] = []
     for node in body:
@@ -48,16 +56,28 @@ def _bindings(body: list[ast.stmt]) -> list[str]:
             names.append(node.name)
         elif isinstance(node, ast.If):
             names.extend(
-                sorted(set(_bindings(node.body)) | set(_bindings(node.orelse)))
+                _merge_alternatives([_bindings(node.body), _bindings(node.orelse)])
             )
         elif isinstance(node, ast.Try):
-            branches = [node.body, node.orelse, *(h.body for h in node.handlers)]
-            alternatives: set[str] = set()
-            for branch in branches:
-                alternatives |= set(_bindings(branch))
-            names.extend(sorted(alternatives))
+            success_path = _bindings(node.body) + _bindings(node.orelse)
+            handlers = [_bindings(h.body) for h in node.handlers]
+            names.extend(_merge_alternatives([success_path, *handlers]))
             names.extend(_bindings(node.finalbody))
     return names
+
+
+def _merge_alternatives(paths: list[list[str]]) -> list[str]:
+    """The bindings of whichever one of `paths` runs, at their worst case.
+
+    Each name is kept at the highest count any single path gives it: a name
+    bound in two alternatives counts once (only one runs), a name bound twice
+    in one alternative counts twice (that path does bind it twice).
+    """
+    worst: Counter[str] = Counter()
+    for path in paths:
+        for name, count in Counter(path).items():
+            worst[name] = max(worst[name], count)
+    return sorted(worst.elements())
 
 
 def _module_level_bindings(path: Path) -> list[str]:
@@ -72,12 +92,40 @@ _SHADOWS = [
     ("def then assign", "def A():\n    pass\n\n\nA = 2\n"),
     ("class then assign", "class A:\n    pass\n\n\nA = 2\n"),
     ("annotated then plain", "A: int = 1\nA = 2\n"),
+    # `else` runs after a body that raised nothing: one path, two bindings.
+    ("try body then else", "try:\n    A = 1\nexcept E:\n    pass\nelse:\n    A = 2\n"),
+    # Twice inside ONE alternative is still twice; a set per branch hid it.
+    ("twice inside one if branch", "if X:\n    A = 1\n    A = 2\n"),
+    (
+        "twice inside one except handler",
+        "try:\n    pass\nexcept E:\n    A = 1\n    A = 2\n",
+    ),
+    # `finally` runs after EVERY path, so it concatenates onto each of them.
+    (
+        "try body then finally",
+        "try:\n    A = 1\nexcept E:\n    pass\nfinally:\n    A = 2\n",
+    ),
+    (
+        "handler then finally",
+        "try:\n    pass\nexcept E:\n    A = 1\nfinally:\n    A = 2\n",
+    ),
 ]
 
 _CLEAN = [
     ("distinct names", "A = 1\nB = 2\n"),
     ("if/else alternatives", "if X:\n    A = 1\nelse:\n    A = 2\n"),
     ("try/except alternatives", "try:\n    A = 1\nexcept E:\n    A = 2\n"),
+    # `except` and `else` are alternatives to each other: a body that raised
+    # runs the handler and skips `else`; one that did not runs `else` only.
+    (
+        "except/else alternatives",
+        "try:\n    pass\nexcept E:\n    A = 1\nelse:\n    A = 2\n",
+    ),
+    (
+        "else/except with body",
+        "try:\n    B = 0\nexcept E:\n    A = 1\nelse:\n    A = 2\n",
+    ),
+    ("finally only", "try:\n    pass\nexcept E:\n    pass\nfinally:\n    A = 2\n"),
     ("bare annotation then assign", "A: int\nA = 2\n"),
     ("attribute assignment", "A = 1\nA.b = 2\n"),
     ("nested function local", "A = 1\n\n\ndef f():\n    A = 2\n"),

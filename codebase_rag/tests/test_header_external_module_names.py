@@ -1,0 +1,251 @@
+"""A header's ExternalModule is named by the header, not by its extension.
+
+`_ensure_external_module_node` derived the node's `name` by splitting the
+qualified name on its last dot. For a system header that qualified name is
+`std.stdio.h`, so the last segment is the EXTENSION and every `.h` include
+minted an ExternalModule called `h` (issue #1758). A slashed include kept its
+raw slash in the qualified name too (`std.sys/types.h`), which no dotted
+lookup can address and which does not segment like any other module path.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.parser_loader import load_parsers
+from evals.cgr_graph import _StatefulIngestor
+
+SRC = """#include <stdio.h>
+#include <sys/types.h>
+#include <vector>
+int main(void) { return 0; }
+"""
+
+
+def _external_modules(root: Path) -> dict[str, str]:
+    """{qualified name: name} for every ExternalModule the run emits."""
+    parsers, queries = load_parsers()
+    for language in (cs.SupportedLanguage.C, cs.SupportedLanguage.CPP):
+        if language not in parsers:
+            pytest.skip(f"{language} parser not available")
+    (root / "m.c").write_text(SRC, encoding="utf-8")
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run()
+    store.flush_all()
+    label = str(cs.NodeLabel.EXTERNAL_MODULE)
+    return {
+        str(props[cs.KEY_QUALIFIED_NAME]): str(props[cs.KEY_NAME])
+        for (node_label, _uid), props in store.nodes.items()
+        if node_label == label and cs.KEY_QUALIFIED_NAME in props
+    }
+
+
+def test_a_header_external_module_is_named_by_the_header(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    external = _external_modules(root)
+
+    assert external, "fixture guard: the run emitted no ExternalModule nodes at all"
+    # The control: a non-header system include was already named correctly,
+    # so a fix that renamed everything would show up here.
+    assert external.get("std.vector") == "vector", (
+        f"a bare system include's name changed: {external}"
+    )
+
+    assert external.get("std.stdio.h") == "stdio", (
+        f"a .h include is still named by its extension: {external}"
+    )
+
+
+def test_a_slashed_system_include_is_segmented_like_a_module_path(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    external = _external_modules(root)
+
+    assert external, "fixture guard: the run emitted no ExternalModule nodes at all"
+    assert not any(cs.SEPARATOR_SLASH in qn for qn in external), (
+        f"a slash survived into an ExternalModule qualified name: {external}"
+    )
+    assert external.get("std.sys.types.h") == "types", (
+        f"a slashed header is not segmented and named by its stem: {external}"
+    )
+
+
+COLLIDING = "#include <std>\n#include <std.h>\nint main(void) { return 0; }\n"
+
+
+def _import_targets(root: Path, source: str) -> set[str]:
+    """Every IMPORTS target the run emits for `m.c`."""
+    parsers, queries = load_parsers()
+    for language in (cs.SupportedLanguage.C, cs.SupportedLanguage.CPP):
+        if language not in parsers:
+            pytest.skip(f"{language} parser not available")
+    (root / "m.c").write_text(source, encoding="utf-8")
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="proj",
+    ).run()
+    store.flush_all()
+    return {
+        str(dst)
+        for (_sl, _src, rel, _tl, dst) in store.edges
+        if rel == cs.RelationshipType.IMPORTS.value
+    }
+
+
+def test_two_headers_binding_one_local_name_each_keep_their_edge(
+    tmp_path: Path,
+) -> None:
+    """`<std>` and `<std.h>` both bind the local name `std`.
+
+    `import_mapping` holds one binding per local name and the IMPORTS edges
+    are derived from it, so the second include overwrote the first and the
+    file ended up importing only one of the two headers it includes
+    (issue #1758). The binding can still only name one of them; the edge for
+    the displaced header is kept beside it.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    targets = _import_targets(root, COLLIDING)
+
+    assert targets, "fixture guard: the run emitted no IMPORTS edges at all"
+    assert targets == {"std", "std.h"}, (
+        f"a header lost its IMPORTS edge to another binding the same name: {targets}"
+    )
+
+
+def test_the_two_segment_floor_keeps_a_bare_std_header_named_by_its_extension() -> None:
+    """Pins the deliberately accepted `<std.h>` inconsistency.
+
+    The rule needs three or more segments, so `std.h` keeps the name `h`
+    while its local binding is `std`. That is the cheaper of two errors --
+    without the floor, `segments[-2]` would name the node `std`, colliding
+    with the `std` namespace module every C++ file imports.
+
+    Pinned because nothing else covers the floor: removing
+    `len(segments) >= 3` left every other assertion in this file green
+    (#1758 review).
+    """
+    from codebase_rag.parsers.import_processor import _external_module_name
+
+    assert _external_module_name("std.h") == "h"
+    assert _external_module_name("std.hpp") == "hpp"
+    # Three segments is where the rule starts applying.
+    assert _external_module_name("std.stdio.h") == "stdio"
+
+
+def test_the_header_rule_does_not_rename_other_languages_externals() -> None:
+    """The `.h` rule must not reach a package whose last segment is `h`.
+
+    `_external_module_name` serves EVERY language's external imports, not
+    just C/C++ includes, and `h` is a real Python package (the HTTP/2
+    library). An unconditional "last segment is an extension" rule renamed
+    `mypkg.h` to `mypkg` for languages that have no headers at all, so the
+    rule is confined to the `std.` prefix `_cpp_include_full_name` applies.
+    """
+    from codebase_rag.parsers.import_processor import _external_module_name
+
+    # The header shapes the rule exists for.
+    assert _external_module_name("std.stdio.h") == "stdio"
+    assert _external_module_name("std.sys.types.h") == "types"
+    assert _external_module_name("std.a.b.c.hpp") == "c"
+    # A non-header external keeps its last segment, header-shaped or not.
+    assert _external_module_name("std.vector") == "vector"
+    assert _external_module_name("os.path") == "path"
+    assert _external_module_name("mypkg.h") == "h", (
+        "the header rule renamed a package whose last segment is literally h"
+    )
+    assert _external_module_name("a.b.h") == "h", (
+        "the header rule reached a qn that carries no std. include prefix"
+    )
+
+
+def test_a_removed_module_declaration_does_not_suppress_a_later_include_edge(
+    temp_repo: Path,
+) -> None:
+    """A stale declaration exemption must not veto a real include (#1758).
+
+    `_cpp_declaration_mappings` records `(module_qn, full_name)` for an
+    `export module X;` so the main edge loop does not emit a self-import. The
+    shadowed-include sweep reads that same set, and it matches on the RESOLVED
+    qn rather than on the declaration binding -- so an exemption left behind
+    by a re-parse that REMOVED the declaration can suppress a genuine
+    include's edge. Before the sweep existed the stale entry was inert,
+    because it only ever matched the binding it came from, which was gone.
+
+    Drives `parse_imports` twice on ONE processor, because that is the only
+    way to reach it: every test using `run_updater` gets a fresh
+    `ImportProcessor`, so the per-module clear is unobservable there and the
+    whole file stayed green with the clear removed.
+    """
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CPP not in parsers:
+        pytest.skip("cpp parser not available")
+    processor = ImportProcessor(repo_path=temp_repo, project_name="proj")
+    module_qn = "proj.m"
+
+    def parse(source: str) -> None:
+        tree = parsers[cs.SupportedLanguage.CPP].parse(source.encode())
+        processor.parse_imports(
+            tree.root_node, module_qn, cs.SupportedLanguage.CPP, queries
+        )
+
+    # v1 declares module `foo`, registering the exemption.
+    parse("export module foo;\n")
+    assert (module_qn, "proj.foo") in processor._cpp_declaration_mappings, (
+        "fixture guard: the declaration must register an exemption, or there "
+        "is no stale entry for the re-parse to leave behind"
+    )
+
+    # v2 removes the declaration and includes two headers that bind the same
+    # local name `foo`, so the first is displaced and only the sweep carries
+    # its edge. `foo.h` resolves to `proj.foo` -- the very qn the stale
+    # exemption names.
+    parse('#include "foo.h"\n#include "sub/foo.h"\n')
+    assert (module_qn, "proj.foo") not in processor._cpp_declaration_mappings, (
+        "the removed declaration's exemption survived the re-parse, so the "
+        "sweep will veto the include that resolves to the same qn"
+    )
+
+
+def test_two_spellings_of_one_header_path_share_a_qualified_name() -> None:
+    """Pins an accepted collision that `main` did not have (#1758 review).
+
+    Segmenting the include path means `<sys/types.h>` and a literal
+    `<sys.types.h>` produce the same qn. On `main` the slashed form kept its
+    slash (`std.sys/types.h`), so the two were distinct -- but that qn was
+    unaddressable by any dotted lookup, which is the bug this change fixes.
+
+    The trade is deliberate: `/` is the include separator in C and C++ and a
+    dot appears only inside the final component, so the colliding spelling is
+    not a form real source takes. A conflated pair of headers that both exist
+    is a cheaper error than a target nothing can resolve against.
+
+    Asserted rather than left implicit so that if someone later needs the two
+    kept apart, this test names the decision being reversed.
+    """
+    from codebase_rag.parsers.import_processor import _dotted_include_path
+
+    assert _dotted_include_path("sys/types.h") == _dotted_include_path("sys.types.h")
+    # And the separator really is what collapses: distinct DIRECTORIES stay
+    # distinct, so the change does not conflate unrelated headers.
+    assert _dotted_include_path("a/b.h") != _dotted_include_path("c/b.h")

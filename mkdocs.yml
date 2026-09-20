@@ -107,6 +107,7 @@ nav:
     - Structural Delta: architecture/structural-delta.md
     - Adding a Language Frontend: architecture/language-frontends.md
     - Security Model: architecture/security.md
+    - Incident Response: incident-response.md
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md
@@ -118,6 +119,7 @@ nav:
   - Advanced:
     - Adding Languages: advanced/adding-languages.md
     - Ignore Patterns: advanced/ignore-patterns.md
+    - Git Submodules: advanced/git-submodules.md
     - Building Binaries: advanced/building-binaries.md
     - Troubleshooting: advanced/troubleshooting.md
   - Roadmap: roadmap.md

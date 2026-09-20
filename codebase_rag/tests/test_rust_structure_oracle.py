@@ -65,4 +65,5 @@ def test_cgr_matches_syn_oracle_on_rust_structure(tmp_path: Path) -> None:
     for label in ("Class", "Interface", "Enum", "Type", "Function", "Method"):
         row = by_label.get(label)
         assert row is not None, (label, by_label)
-        assert row["precision"] == 1.0 and row["recall"] == 1.0, (label, row)
+        assert row["precision"] == 1.0, (label, row)
+        assert row["recall"] == 1.0, (label, row)

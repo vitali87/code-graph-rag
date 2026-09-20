@@ -158,6 +158,7 @@ EXAMPLES_CHANGE_SIGNATURE = (
     "Examples:\n  cgr change-signature myproj.pkg.util.helper -p a@0 -p n:int=1 -p b@1\n"
     "  cgr change-signature myproj.pkg.Store.get -p key@key -p default=None --dry-run"
 )
+HELP_SIGNATURE_QN = "Qualified name of the function or method whose signature changes."
 CMD_MOVE = (
     "Move a module-level definition to another module: importers rewritten, "
     "needed imports carried, refused when it would create an import cycle."
@@ -200,7 +201,7 @@ EXAMPLES_CONTEXT = (
 HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
 HELP_CONTEXT_BUDGET = "Token budget for the slice."
 HELP_SIGNATURE_PARAM = (
-    "A new parameter, in order: name[:annotation][=default][@source] where "
+    "A new parameter, in order: name\\[:annotation]\\[=default]\\[@source] where "
     "@2 maps from old index 2, @old from the old parameter old, =literal "
     "without a source is inserted where a site passes nothing, and a bare "
     "name is unmapped."

@@ -19,7 +19,6 @@ def _skip(
     return should_skip_rel_file(
         rel_path,
         parts[:-1],
-        Path(rel_path).suffix,
         exclude_paths=exclude,
         unignore_paths=unignore,
     )

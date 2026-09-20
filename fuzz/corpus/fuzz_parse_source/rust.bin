@@ -1,0 +1,10 @@
+use std::path::Path;
+
+pub struct Greeter;
+
+impl Greeter {
+    pub fn greet(&self, name: &str) -> String { name.to_string() }
+}
+
+fn main() { let g = Greeter; g.greet("x"); }
+

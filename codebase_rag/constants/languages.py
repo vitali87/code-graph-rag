@@ -43,6 +43,7 @@ EXT_HH = ".hh"
 EXT_IXX = ".ixx"
 EXT_CPPM = ".cppm"
 EXT_CCM = ".ccm"
+EXT_MXX = ".mxx"
 EXT_C = ".c"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
@@ -81,7 +82,15 @@ CPP_EXTENSIONS = (
     EXT_IXX,
     EXT_CPPM,
     EXT_CCM,
+    EXT_MXX,
 )
+# C++ module interface units, a subset of CPP_EXTENSIONS by construction. This
+# used to be a second literal list in constants/ast_cpp.py and it drifted:
+# `.mxx` was named there and parsed by nothing, so a `.mxx` interface produced
+# no Module and no ModuleInterface and its implementation units resolved
+# against nothing (issue #1727). Spelled from the named constants so the two
+# sets cannot disagree again; test_cpp_module_extension_parity pins it.
+CPP_MODULE_EXTENSIONS = (EXT_IXX, EXT_CPPM, EXT_CCM, EXT_MXX)
 # Translation-unit sources: only these can define a linkable OS entry point;
 # headers and C++ module interface files never are the entry unit.
 C_CPP_SOURCE_EXTENSIONS = (EXT_C, EXT_CPP, EXT_CC, EXT_CXX)
@@ -168,6 +177,11 @@ JS_TS_MODULE_EXTENSIONS: tuple[str, ...] = (
     ".cjs",
     ".js",
 )
+# What marks a member of the set above as TYPE-ONLY. A declaration file and its
+# implementation strip to the same module qn, and the implementation is the one
+# holding the callable definitions, so it must own the name importers resolve
+# to (issue #1720). Kept here so the two are read from one place.
+DECLARATION_EXT_PREFIX = ".d."
 TSCONFIG_FILENAMES: tuple[str, ...] = (
     "tsconfig.json",
     "tsconfig.base.json",
@@ -449,9 +463,48 @@ IGNORE_PATTERNS = frozenset(
         "venv",
     }
 )
-IGNORE_SUFFIXES = frozenset(
-    {".tmp", "~", ".pyc", ".pyo", ".o", ".a", ".so", ".dll", ".class"}
+# Machine-generated artefacts: never hand-edited, never first-party. Matched
+# against the whole FILENAME with `str.endswith`, not against `Path.suffix`,
+# because two entries here are not suffixes in pathlib's sense:
+# `Path("jquery.min.js").suffix` is ".js" and `Path("notes.py~").suffix` is
+# ".py~", so a `Path.suffix` test silently matched neither (issue #1636).
+# Use `path_utils.is_ignored_filename`; do not re-derive the rule.
+# Compiled output and editor droppings. Nothing a parser reads, and nothing a
+# user would ask for, so an unignore must never resurrect one: rescuing
+# `build/` must not drag `build/out.pyc` back in.
+UNCONDITIONAL_IGNORE_SUFFIXES = frozenset(
+    {
+        ".tmp",
+        "~",
+        ".pyc",
+        ".pyo",
+        ".o",
+        ".a",
+        ".so",
+        ".dll",
+        ".class",
+    }
 )
+# Generated, but TEXT a parser can read, so unlike the set above these are
+# files a user can plausibly want in the graph: a project vendoring a single
+# minified helper it maintains, or someone indexing a bundle on purpose to ask
+# questions about it. Ignored by default for the reason below, but an explicit
+# unignore rescues them (issue #1637).
+#
+# Vendored bundles that generated API docs (jazzy, YARD, JSDoc, Sphinx) ship
+# alongside the source they document. Their symbols are whatever the minifier
+# emitted, and they outnumber the real ones.
+RESCUABLE_IGNORE_SUFFIXES = frozenset(
+    {
+        ".min.js",
+        ".min.css",
+    }
+)
+IGNORE_SUFFIXES = UNCONDITIONAL_IGNORE_SUFFIXES | RESCUABLE_IGNORE_SUFFIXES
+# `str.endswith` takes a tuple, and the repository walk tests every filename,
+# so build it once rather than per file. Derived, never edited separately.
+IGNORE_FILENAME_ENDINGS = tuple(sorted(IGNORE_SUFFIXES))
+UNCONDITIONAL_IGNORE_FILENAME_ENDINGS = tuple(sorted(UNCONDITIONAL_IGNORE_SUFFIXES))
 
 # pathspec style for .cgrignore / --exclude patterns (#495).
 GITWILDMATCH_STYLE = "gitignore"

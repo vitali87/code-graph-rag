@@ -310,7 +310,8 @@ def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> N
     (tmp_path / "src" / "main.rs").write_text("fn main() {}\n")
     processor = _processor(tmp_path)
     warmed = processor._rust_entry_decls(["src"])
-    assert "lib" in warmed and "main" in warmed
+    assert "lib" in warmed
+    assert "main" in warmed
 
     (tmp_path / "Cargo.toml").write_text(
         '[package]\nname = "fixture"\nversion = "0.1.0"\n'
@@ -318,6 +319,7 @@ def test_manifest_refresh_evicts_newly_disabled_entry_stems(tmp_path: Path) -> N
     )
     processor.refresh_rust_path_caches_for(tmp_path / "Cargo.toml", created=False)
     refreshed = processor._rust_entry_decls(["src"])
-    assert "lib" not in refreshed and "main" not in refreshed
+    assert "lib" not in refreshed
+    assert "main" not in refreshed
     fresh = _processor(tmp_path)._rust_entry_decls(["src"])
     assert set(refreshed) == set(fresh)

@@ -12,7 +12,7 @@ from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from evals import constants as ec
 from evals.cgr_graph import extract_cgr_php_graph
-from evals.oracles import php_oracle_available, run_php_oracle
+from evals.oracles import php_oracle_skip_reason, run_php_oracle
 from evals.score import score_span
 
 PHP_SRC = """\
@@ -48,8 +48,9 @@ function standalone(int $a): int
 
 
 def _require_php() -> None:
-    if not php_oracle_available():
-        pytest.skip("node/npm toolchain not available")
+    reason = php_oracle_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
     if cs.SupportedLanguage.PHP not in load_parsers()[0]:
         pytest.skip("php parser not available")
 
@@ -67,8 +68,6 @@ def test_cgr_matches_php_parser_oracle_on_node_spans(tmp_path: Path) -> None:
     by_label = {row["label"]: row for row in result.rows}
     aggregate = by_label.get(ec.AGGREGATE_LABEL)
     assert aggregate is not None, (by_label, result.diff)
-    assert aggregate["precision"] == 1.0 and aggregate["recall"] == 1.0, (
-        aggregate,
-        result.diff,
-    )
+    assert aggregate["precision"] == 1.0, (aggregate, result.diff)
+    assert aggregate["recall"] == 1.0, (aggregate, result.diff)
     assert aggregate["tp"] >= 4, aggregate

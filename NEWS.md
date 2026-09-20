@@ -11,10 +11,29 @@ the README. The release workflow prepends feature entries via
 (dropping non-feature themes), and moves the marker below the block it
 inserted; hand edits remain welcome between releases and render too.
 
+- **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
+- **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.
+- **Gloss Node & Notes**: Introduced the Gloss node for agent-authored notes and enabled writing and reading Gloss notes via the MCP server.
+<!-- latest-release-end -->
+- **File System Operations**: Improved handling of file system operations with platform-neutral joins and safeguards against removing project root.
+- **Cache Management**: Enhanced cache management with atomic publishing, dedicated cache stamps, and improved deletion handling for orphan caches.
+- **Graph Querying**: Introduced deterministic graph query tools for more precise analysis of code relationships.
+- **Re-ingestion & Parsing**: Improved re-ingestion processes, including handling of deleted files, re-parsing of related files, and rebuilding of key data structures.
+- **Security & Stability**: Addressed security concerns by blocking removal of project root and improved stability by preventing skipped edits and handling orphaned caches.
+- **C++ & Go Integration**: Enhanced integration with C++ and Go, including parsing of module interfaces and handling of module-level class aliases.
+- **Index Consistency**: Ensure incremental deletes match clean index states.
+- **Patch Reporting**: Distinguish between unverifiable and verified patches in reports.
+- **Windows Teardown**: Clear the read-only bit when removing a temp repo for successful Windows teardown.
+- **TypeScript Grading**: Grade TypeScript inheritance against the tsc oracle for improved accuracy.
+- **Exclude Set Handling**: Record the exclusion set to ensure `--exclude` flags are correctly applied across runs.
+- **MCP Indexing**: Honour `.cgrignore` and `.gitignore` in MCP index and update processes, matching the CLI.
+- **Transactional Multi-File Edits**: Multi-file edits now run as a transaction with staged verification and undo, alongside concrete-syntax-preserving patchers per language and import rewriting for renames and moves.
+- **Scala Inheritance and Markdown Front-Matter**: Scala `INHERITS` edges are read from `extends`/`with` clauses, and declared Markdown front-matter is read onto the `Module` node.
+- **Graph Retrieval**: MCP and CLI graph retrieval is scoped to one project, and call-site and import-site locations are now stored on graph edges.
+- **Direct MCP Tools**: `find_duplicate_code` and `get_function_source` are exposed as direct MCP tools, and PHP `use function` imports resolve through declared namespaces.
 - **Graph Indexing**: The name property is now indexed for improved graph read-path lookups. SQL routines are also indexed to resolve calls that name their target in a string.
 - **Duplicate Code Detection**: An AST-based duplicate code detection system has been introduced, alongside fixes for duplicate detection across multiple repositories.
 - **Agentic QA**: A new agentic QA benchmark harness and indexing-time benchmark have been added.
-<!-- latest-release-end -->
 - **Java Taint Improvements**: Enhanced taint tracking in Java, including handling JDK shims, chained call receivers, literal arguments, and type-test patterns.
 - **C# Taint Propagation**: Improved taint propagation in C# with refinements to argument binding, tuple deconstruction, and await plumbing methods.
 - **Semantic Frontend Enhancements**: Added in-process Jedi semantic frontend for Python and re-run semantic frontends on the watch path for more accurate analysis.

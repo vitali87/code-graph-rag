@@ -1,0 +1,9 @@
+using System;
+
+namespace App {
+  public class Greeter {
+    public string Greet(string name) => name;
+    public static void Main() { new Greeter().Greet("x"); }
+  }
+}
+

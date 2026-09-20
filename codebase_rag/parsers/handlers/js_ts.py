@@ -99,9 +99,10 @@ class JsTsHandler(BaseLanguageHandler):
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                if name := self._extract_node_name(current):
-                    path_parts.append(name)
-                elif name := self.extract_function_name(current):
+                # The declared name first, then the assignment-derived one.
+                if (name := self._extract_node_name(current)) or (
+                    name := self.extract_function_name(current)
+                ):
                     path_parts.append(name)
             elif current.type in lang_config.class_node_types:
                 if not self.is_inside_method_with_object_literals(func_node):

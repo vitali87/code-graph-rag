@@ -390,3 +390,77 @@ class TestSharedState:
         assert "test.module.func" in definition_proc.function_registry
         assert "test.module.func" in type_inf.function_registry
         assert "test.module.func" in call_proc._resolver.function_registry
+
+
+class TestTheUnignorePolicyReachesEveryProcessor:
+    """Generated-source discovery re-resolves the unignore policy per run.
+
+    Every processor that prunes must prune identically, or a sweep reads files
+    the indexer skipped (issue #1088). That propagation used to be two named
+    assignments in ``_register_generated_sources``, which is an inventory that
+    FAILS OPEN: a processor added later silently keeps the stale policy and no
+    assertion anywhere notices. The declaration tie-break (#1720) became the
+    third consumer and was missed exactly that way -- under a stale policy it
+    rejects an implementation inside a rescued generated-source tree, so the
+    declaration claims the qualified name importers resolve to and displaces
+    the file holding the callable definitions (Greptile P1, PR #1728).
+
+    Written against the DERIVED set rather than a named list, so a fourth
+    consumer is covered without editing these tests.
+    """
+
+    def test_every_built_processor_carrying_the_policy_is_updated(
+        self, factory: ProcessorFactory
+    ) -> None:
+        # Build them all, so none escapes the check by never existing.
+        factory.import_processor
+        factory.structure_processor
+        factory.definition_processor
+        factory.type_inference
+        factory.call_processor
+        resolved = frozenset({"target/generated-sources/annotations/**"})
+
+        updated = factory.propagate_unignore_paths(resolved)
+
+        carriers = [
+            slot
+            for slot in factory.__slots__
+            if slot.startswith("_")
+            and getattr(factory, slot, None) is not None
+            and hasattr(getattr(factory, slot), "unignore_paths")
+        ]
+        # The precondition: something carries the policy at all, so a green
+        # result cannot come from an empty set of carriers on both sides.
+        assert carriers, factory.__slots__
+        assert sorted(updated) == sorted(carriers)
+        for slot in carriers:
+            assert getattr(factory, slot).unignore_paths == resolved, slot
+
+    def test_the_definition_processor_is_one_of_them(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """Named explicitly because it is the consumer that was missed.
+
+        The enumeration above stays green if ``DefinitionProcessor`` simply
+        stops carrying ``unignore_paths`` -- it drops out of ``carriers`` on
+        both sides of the comparison. This pins that it IS a carrier, which is
+        what the #1720 tie-break depends on.
+        """
+        proc = factory.definition_processor
+        resolved = frozenset({"build/generated/sources/**"})
+
+        factory.propagate_unignore_paths(resolved)
+
+        assert proc.unignore_paths == resolved
+
+    def test_a_processor_built_after_the_update_sees_the_new_policy(
+        self, factory: ProcessorFactory
+    ) -> None:
+        """The other half: a lazily-built processor must not resurrect the old
+        policy from a stale factory field."""
+        resolved = frozenset({"target/generated-sources/annotations/**"})
+
+        factory.propagate_unignore_paths(resolved)
+
+        assert factory._definition_processor is None
+        assert factory.definition_processor.unignore_paths == resolved

@@ -28,6 +28,13 @@ LUA_METHOD_SEPARATOR = ":"
 TS_LUA_CHUNK = "chunk"
 TS_LUA_FUNCTION_DECLARATION = "function_declaration"
 TS_LUA_FUNCTION_DEFINITION = "function_definition"
+# A `key = value` entry of a table constructor (`{ f = function() end }`): the
+# key is the `name` field (an identifier, or a string for `["key"] =`), the
+# value the `value` field.
+TS_LUA_FIELD = "field"
+# The token that opens a computed or string key: `["k"] = v`, `[k] = v`.
+LUA_OPEN_BRACKET = "["
+TS_LUA_TABLE_CONSTRUCTOR = "table_constructor"
 
 # Import processor function names
 IMPORT_REQUIRE = "require"

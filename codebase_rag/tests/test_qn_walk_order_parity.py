@@ -23,11 +23,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from codebase_rag.graph_updater import GraphUpdater
+import pytest
+
+from codebase_rag import constants as cs
+from codebase_rag.graph_updater import GraphUpdater, _module_key
 from codebase_rag.parsers.cpp_frontend.qn import build_module_qn_map
+from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.utils.path_utils import (
     _walk_dir_keys,
     base_module_qn,
+    module_stem,
     walk_eligible_files,
 )
 
@@ -126,6 +131,68 @@ class TestTheQnMapWalksInIndexerOrder:
         assert list(qn_map) == _indexer_order(tmp_path, unignore_paths=rescues)
 
 
+class TestTheQnMapAssignsTheSAMEQnsNotJustTheSameOrder:
+    """Order parity is not qn parity once the tie-break stops being order.
+
+    ``build_module_qn_map`` says it mirrors ``_disambiguate_module_qn``, and
+    every existing check of that claim compares WALK ORDER or the SET of file
+    keys. Both are satisfied by two implementations that hand the same files
+    different qualified names, which is the #1025 failure exactly: one module,
+    two nodes, no error.
+
+    That gap was latent while both sides broke ties on "first walked". The
+    declaration rule (#1720) makes the indexer break one tie on the filesystem
+    instead, so the mirror is now a claim about behaviour that nothing checked.
+    This compares the assignments themselves.
+
+    The map walks EVERY eligible file, not only C++ ones -- it shares the
+    indexer's walk by construction -- so a `.d.ts` is in it and can claim a
+    base qn out from under another file.
+    """
+
+    @staticmethod
+    def _indexer_qns(repo: Path) -> dict[str, str]:
+        """What the tree-sitter pass would name each file, in walk order."""
+        proc = DefinitionProcessor.__new__(DefinitionProcessor)
+        proc.module_qn_to_file_path = {}
+        proc.repo_path = repo
+        proc.exclude_paths = None
+        proc.unignore_paths = None
+        assigned: dict[str, str] = {}
+        for _dirpath, _fname, rel in walk_eligible_files(repo):
+            path = repo / rel
+            qn = proc._disambiguate_module_qn(base_module_qn(Path(rel), PROJECT), path)
+            proc.module_qn_to_file_path[qn] = path
+            assigned[rel] = qn
+        return assigned
+
+    def test_a_declaration_beside_its_implementation_agrees(
+        self, tmp_path: Path
+    ) -> None:
+        # `"foo.d.ts" < "foo.ts"`, so a first-walked-wins map gives the stub
+        # `proj.foo` while the indexer now gives it to the implementation.
+        _write(tmp_path, "foo.d.ts", "export declare const a: number;\n")
+        _write(tmp_path, "foo.ts", "export const a = 1;\n")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+    def test_a_lone_declaration_agrees(self, tmp_path: Path) -> None:
+        # The control: with no implementation the declaration keeps the bare
+        # qn on BOTH sides, so a map that simply never yielded would pass the
+        # test above by matching a rule the indexer does not have.
+        _write(tmp_path, "foo.d.ts", "export declare const a: number;\n")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+    def test_a_plain_extension_collision_agrees(self, tmp_path: Path) -> None:
+        # And the pre-existing rule is unaffected: foo.cpp/foo.h still go to
+        # the first walked, on both sides.
+        _write(tmp_path, "foo.cpp")
+        _write(tmp_path, "foo.h")
+
+        assert build_module_qn_map(tmp_path, PROJECT) == self._indexer_qns(tmp_path)
+
+
 class TestTheBaseModuleQnIsSharedNotMirrored:
     """``__init__.py``/``mod.rs`` name their package, not themselves.
 
@@ -141,6 +208,55 @@ class TestTheBaseModuleQnIsSharedNotMirrored:
         assert base_module_qn(Path("pkg/__init__.py"), PROJECT) == f"{PROJECT}.pkg"
         assert base_module_qn(Path("x/mod.rs"), PROJECT) == f"{PROJECT}.x"
 
+    def test_a_declaration_file_loses_its_whole_compound_suffix(self) -> None:
+        """`.d.ts` is ONE extension, not `.ts` after a `.d` segment.
+
+        The single-suffix rule indexed `pkg/index.d.ts` as `proj.pkg.index.d`,
+        while `JS_TS_MODULE_EXTENSIONS` lists `.d.ts` and the JS/TS resolver
+        treats that file as the `./pkg` entry point and looks for
+        `proj.pkg.index`. The file was stored under a name nothing asks for
+        (issue #1720).
+        """
+        assert base_module_qn(Path("pkg/index.d.ts"), PROJECT) == f"{PROJECT}.pkg.index"
+        assert base_module_qn(Path("t/util.d.mts"), PROJECT) == f"{PROJECT}.t.util"
+        assert base_module_qn(Path("t/util.d.cts"), PROJECT) == f"{PROJECT}.t.util"
+
+    def test_every_declaration_extension_is_stripped_whole(self) -> None:
+        """The forcing function: a `.d.*` added to the language set later must
+        not fall back to the single-suffix rule and reintroduce #1720.
+
+        The `".d."` here is deliberately a literal rather than
+        ``cs.DECLARATION_EXT_PREFIX``. The production code partitions the
+        extension set with that constant, so selecting the cases with it too
+        would make this test agree with the code by construction: a wrong
+        constant would select a wrong set and still pass. The literal is the
+        independent statement of which extensions are declarations.
+        """
+        leftovers = {
+            ext: base_module_qn(Path(f"pkg/m{ext}"), PROJECT)
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+            if ext.startswith(".d.")
+        }
+        assert leftovers, "no declaration extensions in the language set to check"
+        assert all(qn == f"{PROJECT}.pkg.m" for qn in leftovers.values()), leftovers
+
+    def test_the_two_extension_strippers_agree(self) -> None:
+        """``graph_updater._module_key`` strips the same set, separately.
+
+        It was written for the specifier-waiter lookup (#1714) before this
+        helper existed, so the rule now has two implementations. They must
+        agree on every module extension: `_module_key` decides what an
+        importer's specifier resolves to and `module_stem` decides what the
+        file is stored as, so a divergence is #1720 again in the other
+        direction -- a waiter asking for a name the file was never given.
+        """
+        divergent = {
+            ext: (_module_key(f"pkg/m{ext}"), f"pkg/{module_stem(f'm{ext}')}")
+            for ext in cs.JS_TS_MODULE_EXTENSIONS
+            if _module_key(f"pkg/m{ext}") != f"pkg/{module_stem(f'm{ext}')}"
+        }
+        assert not divergent, divergent
+
     def test_only_the_final_suffix_is_stripped(self) -> None:
         # `.tar.gz` loses only `.gz`; a dotted DIRECTORY keeps its dots.
         assert base_module_qn(Path("weird.tar.gz"), PROJECT) == f"{PROJECT}.weird.tar"
@@ -148,6 +264,109 @@ class TestTheBaseModuleQnIsSharedNotMirrored:
             base_module_qn(Path("dir.with.dots/f.py"), PROJECT)
             == f"{PROJECT}.dir.with.dots.f"
         )
+
+
+class TestADeclarationNeverStealsTheImplementationsName:
+    """Stripping `.d.ts` whole is not safe on its own -- it CAUSES a collision.
+
+    Before #1720, `foo.d.ts` derived `proj.foo.d` and `foo.ts` derived
+    `proj.foo`, so they never met. Making the declaration strip to `proj.foo`
+    puts both files on one name, and the pre-existing rule awards it to
+    whichever is walked FIRST. Within a directory the walk is ascending, and
+    `"foo.d.ts" < "foo.ts"`, so the stub would win every time: the type-only
+    file would own the name every importer resolves to, and the implementation
+    -- the file that actually holds the callable definitions -- would be
+    displaced to `proj.foo.ts`, which nothing asks for.
+
+    That is exactly the regression that closed PR #1721, caught only because
+    the partial fix was tried and measured. So the tie is broken on the
+    FILESYSTEM (does an implementation sibling exist?) rather than on walk
+    order, which is why both parametrisations below must pass.
+    """
+
+    def _processor(self, repo: Path) -> DefinitionProcessor:
+        proc = DefinitionProcessor.__new__(DefinitionProcessor)
+        proc.module_qn_to_file_path = {}
+        # The declaration tie-break consults the indexer's eligibility policy,
+        # so the processor needs the repo root and the (here empty) filters.
+        proc.repo_path = repo
+        proc.exclude_paths = None
+        proc.unignore_paths = None
+        return proc
+
+    def _assign(self, proc: DefinitionProcessor, repo: Path, path: Path) -> str:
+        qn = proc._disambiguate_module_qn(
+            base_module_qn(path.relative_to(repo), PROJECT), path
+        )
+        proc.module_qn_to_file_path[qn] = path
+        return qn
+
+    @pytest.mark.parametrize("declaration_first", [True, False])
+    def test_the_implementation_wins_in_either_walk_order(
+        self, tmp_path: Path, declaration_first: bool
+    ) -> None:
+        decl = tmp_path / "foo.d.ts"
+        impl = tmp_path / "foo.ts"
+        decl.write_text("export declare const a: number;\n", encoding="utf-8")
+        impl.write_text("export const a = 1;\n", encoding="utf-8")
+        order = [decl, impl] if declaration_first else [impl, decl]
+
+        proc = self._processor(tmp_path)
+        qns = {path.name: self._assign(proc, tmp_path, path) for path in order}
+
+        assert qns["foo.ts"] == f"{PROJECT}.foo", qns
+        assert qns["foo.d.ts"] != f"{PROJECT}.foo", qns
+        # ...and the loser still gets a name of its own rather than colliding.
+        assert len(set(qns.values())) == 2, qns
+
+    def test_a_lone_declaration_still_takes_the_bare_qn(self, tmp_path: Path) -> None:
+        """The control, and the reason the rule is not "declarations always lose".
+
+        A published package whose only entry point is a `.d.ts` is the ordinary
+        case for `@types/*` and for a compiled library shipped beside its
+        types. If the yield were unconditional, that file would be stored under
+        a name no importer resolves to and #1720 would be reintroduced for
+        every repo that has no matching implementation on disk.
+        """
+        decl = tmp_path / "foo.d.ts"
+        decl.write_text("export declare const a: number;\n", encoding="utf-8")
+
+        proc = self._processor(tmp_path)
+
+        assert self._assign(proc, tmp_path, decl) == f"{PROJECT}.foo"
+
+    def test_an_unrelated_neighbour_is_not_an_implementation_sibling(
+        self, tmp_path: Path
+    ) -> None:
+        """The yield keys on the STEM, not on "some .ts exists nearby"."""
+        decl = tmp_path / "foo.d.ts"
+        other = tmp_path / "bar.ts"
+        decl.write_text("export declare const a: number;\n", encoding="utf-8")
+        other.write_text("export const b = 2;\n", encoding="utf-8")
+
+        proc = self._processor(tmp_path)
+
+        assert self._assign(proc, tmp_path, decl) == f"{PROJECT}.foo"
+
+    def test_a_plain_same_stem_collision_still_goes_to_the_first_seen(
+        self, tmp_path: Path
+    ) -> None:
+        """The declaration rule must not disturb the general case (#1025).
+
+        `foo.py` and `foo.cpp` still collide, and the first walked still wins.
+        Without this, narrowing the change to declarations would be untested
+        and a broader rewrite of the tie-break would look equally green.
+        """
+        first = tmp_path / "foo.cpp"
+        second = tmp_path / "foo.py"
+        first.write_text("int x;\n", encoding="utf-8")
+        second.write_text("x = 1\n", encoding="utf-8")
+
+        proc = self._processor(tmp_path)
+        qns = {p.name: self._assign(proc, tmp_path, p) for p in (first, second)}
+
+        assert qns["foo.cpp"] == f"{PROJECT}.foo", qns
+        assert qns["foo.py"] == f"{PROJECT}.foo.py", qns
 
 
 class TestOneUnignorePatternIsEnoughToRescue:

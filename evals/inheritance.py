@@ -14,11 +14,13 @@ import typer
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag.utils.path_utils import should_skip_path
 
 from . import constants as ec
 from . import logs as ls
 from .ast_oracle import _from_base_parts, _iter_py_files, _module_dotted
 from .cgr_graph import _capture
+from .ignore_rules import ignore_rules
 from .oracles.cpp_oracle import cpp_available, run_cpp_oracle
 
 if TYPE_CHECKING:
@@ -28,6 +30,7 @@ from .oracles.csharp_oracle import (
     run_csharp_oracle,
 )
 from .oracles.java_oracle import java_available, run_java_oracle
+from .oracles.typescript_oracle import run_typescript_oracle, typescript_available
 from .score import _prf
 from .structure_report import render, write_outputs
 from .types_defs import DiffBucket, LocationStats, ScoreResult, ScoreRow
@@ -521,6 +524,82 @@ def csharp_cgr_inheritance(target: Path, project: str) -> CgrResult:
     return CgrResult(inherits=inherits, overrides=set())
 
 
+def ts_oracle_inheritance(target: Path) -> OracleResult:
+    # The tsc oracle emits a class's `extends` as INHERITS and its `implements`
+    # as IMPLEMENTS, both by SIMPLE name with the subtype pinned to a location
+    # -- the same shape javac and Roslyn produce, so both kinds fold together
+    # here exactly as they do there (issue #1190).
+    #
+    # An interface's `extends` also arrives as INHERITS, because cgr models a
+    # superinterface as inheritance rather than implementation. That is the
+    # oracle agreeing with cgr on the unit, not a miscategorisation, and
+    # test_ts_inheritance_eval.py pins it so a later oracle edit cannot
+    # silently drop those rows from the graded set.
+    graph = run_typescript_oracle(target)
+    # The oracle walks the target itself, so the configured exclusions have to
+    # be applied to its OUTPUT: `ts_cgr_inheritance` captures through
+    # `_capture`, which passes the merged ignore rules to `GraphUpdater`
+    # (issue #1520), and grading a wider set on the oracle side than the graph
+    # can contain scores an excluded directory as a hit on both sides
+    # (Greptile P1, PR #1519). Filtered through the indexer's own predicate
+    # rather than a second copy of the rule, for the same reason
+    # `_iter_py_files` is.
+    exclude_paths, unignore_paths = ignore_rules(target)
+    eligible: dict[str, bool] = {}
+
+    def _keep(rel_file: str) -> bool:
+        if rel_file not in eligible:
+            eligible[rel_file] = not should_skip_path(
+                target / rel_file, target, exclude_paths, unignore_paths, is_file=True
+            )
+        return eligible[rel_file]
+
+    inherits: set[InheritEdge] = set()
+    subclasses: set[str] = set()
+    for edge in graph.name_edges:
+        if edge.rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        if not _keep(edge.source.file):
+            continue
+        key = _location_key(edge.source.file, edge.source.start_line)
+        subclasses.add(key)
+        inherits.add((key, edge.target_name))
+    return OracleResult(
+        inherits=inherits,
+        overrides=set(),
+        top_classes=frozenset(subclasses),
+        override_scope=frozenset(),
+    )
+
+
+def ts_cgr_inheritance(target: Path, project: str) -> CgrResult:
+    ingestor = _capture(target, project)
+    props_by_node = {
+        (label, str(uid)): props for (label, uid), props in ingestor.nodes.items()
+    }
+    inherits: set[InheritEdge] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in ingestor.rels:
+        if rel_type not in (_INHERITS, _IMPLEMENTS):
+            continue
+        props = props_by_node.get((from_label, str(from_val)))
+        path = str(props.get(cs.KEY_PATH, "")) if props else ""
+        # `.d.ts` files declare types without defining them; the oracle skips
+        # them, so grading cgr's edges from them would score rows the oracle
+        # never had a chance to produce.
+        if not path.endswith(ec.TS_SUFFIXES) or path.endswith(ec.TS_DTS_SUFFIX):
+            continue
+        line = props.get(cs.KEY_START_LINE) if props else None
+        # Node properties are a heterogeneous union; a non-integer start_line
+        # is unusable as a location key, so skip rather than coerce it.
+        if not isinstance(line, int):
+            continue
+        # The oracle names the supertype simply, so the qn is reduced to its
+        # last segment to compare like with like.
+        base = str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        inherits.add((_location_key(path, line), base))
+    return CgrResult(inherits=inherits, overrides=set())
+
+
 def score_inheritance(
     cgr: CgrResult,
     oracle: OracleResult,
@@ -585,6 +664,29 @@ def main(
             csharp_cgr_inheritance(target, project),
             csharp_oracle_inheritance(target),
             inherits_label=ec.CSHARP_SUPERTYPES_LABEL,
+        )
+        write_outputs(
+            result,
+            out_dir,
+            ec.INHERITANCE_SCORES_FILENAME,
+            ec.INHERITANCE_DIFF_FILENAME,
+        )
+        render(result, ec.INHERITANCE_TITLE)
+        return
+
+    if language == ec.InheritanceLanguage.TYPESCRIPT:
+        # Same reasoning as the Java, C# and C++ branches: without node and the
+        # vendored typescript the oracle yields nothing, and scoring that would
+        # write a header-only CSV and an empty diff while exiting 0 --
+        # reporting "no gradeable edges" when the truth is "the grader never
+        # ran".
+        if not typescript_available():
+            logger.error(ls.TS_ORACLE_MISSING)
+            raise typer.Exit(code=1)
+        result = score_inheritance(
+            ts_cgr_inheritance(target, project),
+            ts_oracle_inheritance(target),
+            inherits_label=ec.TS_SUPERTYPES_LABEL,
         )
         write_outputs(
             result,

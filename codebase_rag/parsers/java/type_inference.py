@@ -201,7 +201,5 @@ class JavaTypeInferenceEngine(
                     | cs.TS_RECORD_DECLARATION
                 ):
                     return current
-                case _:
-                    pass
             current = current.parent
         return None

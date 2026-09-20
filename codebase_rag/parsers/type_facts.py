@@ -33,8 +33,15 @@ from .utils import safe_decode_with_fallback
 
 # Identifiers, dotted paths and Rust `::` paths inside an annotation. Generic
 # brackets, pointers, arrays and unions fall away; every candidate is then
-# checked against the registry, so builtins simply resolve to nothing.
-_TYPE_NAME_RE = re.compile(r"[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*")
+# checked against the registry, so builtins simply resolve to nothing. The
+# identifier start is any word character but a digit, so a Unicode class
+# name (`class Δ`) is a candidate exactly as an ASCII one is.
+_TYPE_NAME_RE = re.compile(r"[^\W\d]\w*(?:(?:\.|::)[^\W\d]\w*)*")
+
+# A Rust path from the crate root. The registry keys modules by their file
+# path under the project (`proj.src.model.Item`), never by `crate`, so the
+# marker is dropped and the rest resolves by scope and unique suffix.
+_RUST_CRATE_ROOT = "crate" + cs.SEPARATOR_DOT
 
 # Parameter-list children that declare no parameter (`*` and `/` separators).
 _PY_SEPARATORS = frozenset({cs.TS_PY_KEYWORD_SEPARATOR, cs.TS_PY_POSITIONAL_SEPARATOR})
@@ -237,6 +244,7 @@ def queue_type_facts(
     qualified_name: str,
     module_qn: str | None,
     facts: TypeFacts,
+    path: str | None = None,
 ) -> None:
     """Hold a definition's annotations until every file's types are registered.
 
@@ -249,7 +257,12 @@ def queue_type_facts(
         return
     sink.append(
         PendingTypeFact(
-            label, qualified_name, module_qn, facts.return_type, facts.param_types
+            label,
+            qualified_name,
+            module_qn,
+            facts.return_type,
+            facts.param_types,
+            path,
         )
     )
 
@@ -309,7 +322,13 @@ class TypeReferenceResolver:
         return None
 
     def resolve(self, name: str, module_qn: str) -> str | None:
-        for candidate in self._scoped_candidates(name, module_qn):
+        # A crate-root path is absolute: it must not bind to a nearer module
+        # that happens to share the tail, so the scoped walk is skipped and
+        # only the unique-suffix match below decides.
+        absolute = name.startswith(_RUST_CRATE_ROOT)
+        if absolute:
+            name = name[len(_RUST_CRATE_ROOT) :]
+        for candidate in () if absolute else self._scoped_candidates(name, module_qn):
             if self._is_type(candidate):
                 return candidate
         matches = [
@@ -319,7 +338,21 @@ class TypeReferenceResolver:
         ]
         if not matches:
             return None
+        if absolute:
+            return self._root_nearest_unique(matches)
         return self._nearest_unique(matches, module_qn)
+
+    @staticmethod
+    def _root_nearest_unique(matches: list[str]) -> str | None:
+        # An absolute path names the type closest to the crate root: the
+        # shortest matching qn wins, and two at the same depth stay
+        # unresolved rather than guessed.
+        ranked = sorted(matches, key=lambda qn: (qn.count(cs.SEPARATOR_DOT), qn))
+        if len(ranked) > 1 and ranked[0].count(cs.SEPARATOR_DOT) == ranked[1].count(
+            cs.SEPARATOR_DOT
+        ):
+            return None
+        return ranked[0]
 
     def resolve_annotation(self, annotation: str, module_qn: str) -> list[str]:
         found: dict[str, None] = {}

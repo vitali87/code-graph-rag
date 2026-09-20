@@ -1,0 +1,532 @@
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from typing import TypedDict
+
+import pytest
+import yaml
+
+from codebase_rag import constants as cs
+
+WORKFLOW = (
+    Path(__file__).resolve().parents[2]
+    / ".github"
+    / "workflows"
+    / "require-ci-at-head.yml"
+)
+REPO = "vitali87/code-graph-rag"
+FORK = "lllleolin-max/code-graph-rag"
+HEAD = "287269496abaf96da59dbc9b3216310671773af6"
+BRANCH = "fix-special-token-text-counting"
+PR = 1865
+PR_CREATED_AT = "2026-09-12T07:30:00Z"
+RUN_CREATED_AT = "2026-09-12T07:36:19Z"
+GH_STUB = r"""
+gh() {
+  if [[ "$1" == api && "$2" == --paginate &&
+        "$3" == "repos/$REPO/pulls?state=all&head=lllleolin-max%3Afix-special-token-text-counting&per_page=100" &&
+        "$4" == --jq ]]; then
+    printf '%s\n' "$GH_PULL_REQUESTS" | jq "$5" || return
+    return "${GH_PR_EXIT_CODE:-0}"
+  fi
+  if [[ "$1" != api || "$2" != --paginate ||
+        "$3" != "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" ||
+        "$4" != --jq ]]; then
+    echo 'Unexpected gh invocation' >&2
+    return 97
+  fi
+  printf '%s\n' "$GH_PAGES" | jq "$5" || return
+  return "${GH_EXIT_CODE:-0}"
+}
+"""
+
+
+class Repository(TypedDict):
+    full_name: str
+
+
+class PullRequest(TypedDict):
+    number: int
+
+
+class PullRequestHead(TypedDict):
+    ref: str
+    sha: str
+    repo: Repository | None
+
+
+class SourcePullRequest(TypedDict, total=False):
+    number: int
+    created_at: str
+    closed_at: str | None
+    head: PullRequestHead
+
+
+class WorkflowRun(TypedDict, total=False):
+    name: str
+    path: str
+    head_sha: str
+    head_branch: str
+    head_repository: Repository | None
+    repository: Repository
+    pull_requests: list[PullRequest] | None
+    status: str
+    conclusion: str | None
+    event: str
+    created_at: str
+
+
+def _make_workflow_run(
+    *,
+    repo: str = FORK,
+    branch: str = BRANCH,
+    sha: str = HEAD,
+    prs: tuple[int, ...] = (),
+    status: str = "completed",
+    conclusion: str | None = "action_required",
+) -> WorkflowRun:
+    return WorkflowRun(
+        name="CI",
+        path=".github/workflows/ci.yml",
+        head_sha=sha,
+        head_branch=branch,
+        head_repository=Repository(full_name=repo),
+        repository=Repository(full_name=REPO),
+        pull_requests=[PullRequest(number=number) for number in prs],
+        status=status,
+        conclusion=conclusion,
+        event="pull_request",
+        created_at=RUN_CREATED_AT,
+    )
+
+
+def _make_source_pull_request(number: int = PR) -> SourcePullRequest:
+    return SourcePullRequest(
+        number=number,
+        created_at=PR_CREATED_AT,
+        closed_at=None,
+        head=PullRequestHead(ref=BRANCH, sha=HEAD, repo=Repository(full_name=FORK)),
+    )
+
+
+def _execute_workflow_check(
+    pages: list[list[WorkflowRun]],
+    *,
+    head_repo: str = FORK,
+    env: dict[str, str] | None = None,
+    pr_pages: list[list[SourcePullRequest]] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    bash = shutil.which("bash")
+    if bash is None or shutil.which("jq") is None:
+        pytest.skip("the Ubuntu workflow requires bash and jq")
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    step = workflow["jobs"]["require-ci-at-head"]["steps"][0]
+    return subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", GH_STUB + step["run"]],
+        env={
+            **os.environ,
+            "REPO": REPO,
+            "HEAD_SHA": HEAD,
+            "HEAD_BRANCH": BRANCH,
+            "HEAD_REPO": head_repo,
+            "PR_NUMBER": str(PR),
+            "GH_PAGES": "\n".join(
+                json.dumps({"workflow_runs": runs}) for runs in pages
+            ),
+            "GH_EXIT_CODE": "0",
+            "GH_PULL_REQUESTS": "\n".join(
+                json.dumps(page)
+                for page in (
+                    pr_pages
+                    if pr_pages is not None
+                    else [[_make_source_pull_request()]]
+                )
+            ),
+            "GH_PR_EXIT_CODE": "0",
+            **(env or {}),
+        },
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        check=False,
+        timeout=15,
+    )
+
+
+def test_fork_run_with_empty_pull_requests_is_present() -> None:
+    result = _execute_workflow_check([[_make_workflow_run()]])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Found 1 'CI' run(s)" in result.stdout
+
+
+@pytest.mark.parametrize("repo", [REPO, FORK])
+@pytest.mark.parametrize("prs", [(PR,), (PR + 1, PR)])
+def test_explicit_current_pr_association_is_present(
+    repo: str, prs: tuple[int, ...]
+) -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run(repo=repo, prs=prs)]], head_repo=repo
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_same_repo_empty_association_is_not_proof() -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run(repo=REPO)]], head_repo=REPO
+        ).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("repo", [REPO, FORK])
+def test_explicit_foreign_pr_is_rejected(repo: str) -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run(repo=repo, prs=(PR + 1,))]], head_repo=repo
+        ).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("prs", [(), (PR,)])
+@pytest.mark.parametrize(
+    "run",
+    [
+        _make_workflow_run(repo="another-contributor/code-graph-rag"),
+        _make_workflow_run(repo=REPO),
+        _make_workflow_run(branch="another-branch-at-the-same-sha"),
+        _make_workflow_run(sha="a" * 40),
+    ],
+    ids=["another-fork", "base-repo", "another-branch", "another-sha"],
+)
+def test_run_source_must_match_even_with_pr_association(
+    run: WorkflowRun, prs: tuple[int, ...]
+) -> None:
+    candidate = run.copy()
+    candidate["pull_requests"] = [PullRequest(number=number) for number in prs]
+
+    assert _execute_workflow_check([[candidate]]).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "field", ["head_sha", "head_branch", "head_repository", "pull_requests", "path"]
+)
+def test_missing_run_identity_fails_closed(field: str) -> None:
+    run = _make_workflow_run()
+    run.pop(field)
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize("field", ["head_repository", "pull_requests"])
+def test_null_run_identity_fails_closed(field: str) -> None:
+    run = _make_workflow_run()
+    run[field] = None
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "field", ["HEAD_SHA", "HEAD_BRANCH", "HEAD_REPO", "PR_NUMBER", "REPO"]
+)
+def test_missing_pr_identity_fails_closed(field: str) -> None:
+    assert (
+        _execute_workflow_check([[_make_workflow_run()]], env={field: ""}).returncode
+        != 0
+    )
+
+
+def test_workflow_dispatch_without_pr_payload_fails_closed() -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]],
+        env={"HEAD_SHA": "", "HEAD_BRANCH": "", "HEAD_REPO": "", "PR_NUMBER": ""},
+    )
+
+    assert result.returncode != 0
+    assert "No pull_request head SHA" in result.stdout
+
+
+def test_workflow_display_name_cannot_impersonate_ci() -> None:
+    run = _make_workflow_run(prs=(PR,))
+    run["path"] = ".github/workflows/another.yml"
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize(
+    ("status", "conclusion"),
+    [
+        ("queued", None),
+        ("in_progress", None),
+        ("completed", "success"),
+        ("completed", "failure"),
+        ("completed", "cancelled"),
+        ("completed", "action_required"),
+    ],
+)
+def test_run_existence_does_not_replace_all_checks_pass(
+    status: str, conclusion: str | None
+) -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run(status=status, conclusion=conclusion)]]
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_run_on_later_page_is_found() -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run(branch="unrelated")] * 100, [_make_workflow_run()]]
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Found 1 'CI' run(s)" in result.stdout
+
+
+def test_no_runs_fails_closed() -> None:
+    assert _execute_workflow_check([[]]).returncode != 0
+
+
+def test_api_failure_after_partial_results_fails_closed() -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_EXIT_CODE": "1"}
+        ).returncode
+        != 0
+    )
+
+
+def test_malformed_api_response_fails_closed() -> None:
+    assert _execute_workflow_check([[]], env={"GH_PAGES": "not json"}).returncode != 0
+
+
+def test_identity_comes_from_the_pull_request_event() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    env = workflow["jobs"]["require-ci-at-head"]["steps"][0]["env"]
+
+    assert env["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert env["HEAD_BRANCH"] == "${{ github.event.pull_request.head.ref }}"
+    assert env["HEAD_REPO"] == "${{ github.event.pull_request.head.repo.full_name }}"
+    assert env["PR_NUMBER"] == "${{ github.event.pull_request.number }}"
+    assert env["REPO"] == "${{ github.repository }}"
+
+
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("different_head", [False, True])
+def test_another_pr_on_the_same_source_branch_is_ambiguous(
+    closed: bool, different_head: bool
+) -> None:
+    other = _make_source_pull_request(PR + 1)
+    if closed:
+        other["closed_at"] = "2026-09-12T07:31:00Z"
+    if different_head:
+        other["head"]["sha"] = "a" * 40
+
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]], pr_pages=[[_make_source_pull_request(), other]]
+    )
+
+    assert result.returncode != 0
+
+
+def test_another_pr_with_the_same_source_cannot_inherit_the_run() -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]], env={"PR_NUMBER": str(PR + 1)}
+    )
+
+    assert result.returncode != 0
+
+
+def test_the_current_pr_head_must_still_match() -> None:
+    pr = _make_source_pull_request()
+    pr["head"]["sha"] = "a" * 40
+
+    assert (
+        _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[pr]]).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("different_field", ["repository", "branch"])
+def test_unrelated_pr_sources_do_not_create_ambiguity(different_field: str) -> None:
+    other = _make_source_pull_request(PR + 1)
+    if different_field == "repository":
+        other["head"]["repo"] = Repository(
+            full_name="another-contributor/code-graph-rag"
+        )
+    else:
+        other["head"]["ref"] = "another-branch"
+
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]], pr_pages=[[_make_source_pull_request(), other]]
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_another_pr_on_a_later_page_still_creates_ambiguity() -> None:
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]],
+        pr_pages=[[_make_source_pull_request()], [_make_source_pull_request(PR + 1)]],
+    )
+
+    assert result.returncode != 0
+
+
+def test_current_pr_on_a_later_page_is_found() -> None:
+    other = _make_source_pull_request(PR + 1)
+    other["head"]["ref"] = "another-branch"
+    result = _execute_workflow_check(
+        [[_make_workflow_run()]],
+        pr_pages=[[other] * 100, [_make_source_pull_request()]],
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("field", ["number", "head", "created_at"])
+def test_incomplete_pr_history_fails_closed(field: str) -> None:
+    pr = _make_source_pull_request()
+    pr.pop(field)
+
+    assert (
+        _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[pr]]).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("field", ["repo", "ref", "sha"])
+def test_incomplete_pr_head_fails_closed(field: str) -> None:
+    pr = _make_source_pull_request()
+    pr["head"].pop(field)
+
+    assert (
+        _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[pr]]).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    ["", "invalid timestamp", "2026-09-12T07:37:00Z", "2026-02-30T07:30:00Z"],
+)
+def test_pr_creation_must_be_known_and_no_later_than_run_creation(
+    timestamp: str,
+) -> None:
+    pr = _make_source_pull_request()
+    pr["created_at"] = timestamp
+
+    assert (
+        _execute_workflow_check([[_make_workflow_run()]], pr_pages=[[pr]]).returncode
+        != 0
+    )
+
+
+def test_missing_run_creation_fails_closed() -> None:
+    run = _make_workflow_run()
+    del run["created_at"]
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    ["", "invalid timestamp", "2026-09-12T07:29:00Z", "2026-09-31T07:30:00Z"],
+)
+def test_a_run_must_be_created_after_the_current_pr(timestamp: str) -> None:
+    run = _make_workflow_run()
+    run["created_at"] = timestamp
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize(
+    "event", ["", "push", "workflow_dispatch", "pull_request_target"]
+)
+def test_fork_fallback_requires_a_pull_request_event(event: str) -> None:
+    run = _make_workflow_run()
+    run["event"] = event
+
+    assert _execute_workflow_check([[run]]).returncode != 0
+
+
+@pytest.mark.parametrize("response", ["[]", "{}", "not json"])
+def test_missing_or_malformed_pr_history_fails_closed(response: str) -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_PULL_REQUESTS": response}
+        ).returncode
+        != 0
+    )
+
+
+def test_pr_api_failure_after_partial_results_fails_closed() -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_PR_EXIT_CODE": "1"}
+        ).returncode
+        != 0
+    )
+
+
+def test_explicit_association_does_not_need_the_fork_history_fallback() -> None:
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run(prs=(PR,))]], env={"GH_PR_EXIT_CODE": "1"}
+        ).returncode
+        == 0
+    )
+
+
+@pytest.mark.parametrize("number", ["1865", 0, -1, 1865.5, True, None])
+def test_malformed_pr_number_fails_closed(number: str | int | float | None) -> None:
+    response = json.dumps(_make_source_pull_request())
+    response = response.replace('"number": 1865', f'"number": {json.dumps(number)}')
+
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_PULL_REQUESTS": f"[{response}]"}
+        ).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("malformed", ['""', "null", "1", "[]", "{}"])
+def test_malformed_pr_repository_fails_closed(malformed: str) -> None:
+    response = json.dumps(_make_source_pull_request())
+    response = response.replace(json.dumps(FORK), malformed)
+
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_PULL_REQUESTS": f"[{response}]"}
+        ).returncode
+        != 0
+    )
+
+
+def test_malformed_later_history_page_fails_closed() -> None:
+    response = json.dumps([_make_source_pull_request()]) + "\n{}"
+
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], env={"GH_PULL_REQUESTS": response}
+        ).returncode
+        != 0
+    )
+
+
+def test_a_later_pr_on_the_same_branch_still_creates_ambiguity() -> None:
+    other = _make_source_pull_request(PR + 1)
+    other["created_at"] = "2026-09-12T07:37:00Z"
+
+    assert (
+        _execute_workflow_check(
+            [[_make_workflow_run()]], pr_pages=[[_make_source_pull_request(), other]]
+        ).returncode
+        != 0
+    )

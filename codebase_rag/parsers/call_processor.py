@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
-from typing import NamedTuple
+from typing import Concatenate, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -13,7 +13,7 @@ from tree_sitter import Node, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..language_spec import LanguageSpec
+from ..language_spec import LanguageSpec, decode_node_text
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
 from ..types_defs import (
@@ -48,10 +48,10 @@ from .string_call import load_string_call_specs, string_call_target
 from .type_inference import TypeInferenceEngine
 from .utils import (
     cpp_parameter_names,
+    enclosing_class_node,
     function_span_key,
     get_function_captures,
     go_parameter_names,
-    is_method_node,
     js_ts_parameter_names,
     module_qn_for_entity,
     node_site_properties,
@@ -670,6 +670,24 @@ _RESOLVED_RELS = frozenset(
 )
 
 
+def _preserves_verdict[**P, R](
+    fn: Callable[Concatenate[CallProcessor, P], R],
+) -> Callable[Concatenate[CallProcessor, P], R]:
+    # The resolver's verdict belongs to the call node being emitted; the
+    # passes that resolve a call's ARGUMENTS (callable flow, function
+    # references, callable parameters) go through the resolver too and would
+    # otherwise overwrite it before the edge reads it back (issue #1526).
+    @wraps(fn)
+    def wrapper(self: CallProcessor, *args: P.args, **kwargs: P.kwargs) -> R:
+        saved = self._resolver.last_resolution
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            self._resolver.last_resolution = saved
+
+    return wrapper
+
+
 def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Restore the processor's current edge-site node when the pass returns.
 
@@ -691,6 +709,99 @@ def _site_scoped[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
             self._resolution = prev_resolution
 
     return wrapper
+
+
+_GO_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_GO_FUNCTION_DECLARATION,
+        cs.TS_GO_METHOD_DECLARATION,
+        cs.TS_GO_FUNC_LITERAL,
+    }
+)
+# Each is an implicit block for a declaration inside it: a `case` clause's
+# body is its own scope without braces, so a type declared under `case 0:`
+# is invisible to the `default:` arm (#1747 review).
+_GO_BLOCK_TYPES = frozenset(
+    {
+        cs.TS_GO_BLOCK,
+        cs.TS_GO_EXPRESSION_CASE,
+        cs.TS_GO_TYPE_CASE,
+        cs.TS_GO_COMMUNICATION_CASE,
+        cs.TS_GO_DEFAULT_CASE,
+    }
+)
+_Point = tuple[int, int]
+_Span = tuple[_Point, _Point]
+
+
+def _go_innermost_block_end(node: Node, block_end: _Point | None) -> _Point | None:
+    """The innermost block end in force below `node`: its own end for a
+    function, or for a block-like node already inside one; else inherited."""
+    if node.type in _GO_SCOPE_TYPES or (
+        block_end is not None and node.type in _GO_BLOCK_TYPES
+    ):
+        return (node.end_point.row, node.end_point.column)
+    return block_end
+
+
+def _go_type_spec_start(node: Node, name: str) -> _Point | None:
+    """The start point of `node` when it is a `type_spec` declaring `name`."""
+    if node.type != cs.TS_GO_TYPE_SPEC:
+        return None
+    spec_name = node.child_by_field_name(cs.FIELD_NAME)
+    if spec_name is None or safe_decode_text(spec_name) != name:
+        return None
+    return (node.start_point.row, node.start_point.column)
+
+
+def _go_variant_spans(
+    variants: list[str], declarations: list[tuple[int, _Span | None]]
+) -> list[_Span | None] | None:
+    """One visible span (None for package level) per registry variant.
+
+    The natural qn is the first declaration in document order; a `@line`
+    variant names its declaration by line. None when the two cannot be put
+    in correspondence, which keeps the caller's fan-out.
+    """
+    if len(declarations) != len(variants):
+        return None
+    by_line = dict(declarations)
+    spans: list[_Span | None] = []
+    for index, variant in enumerate(variants):
+        marker = variant.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        if cs.DUP_QN_MARKER not in marker:
+            if index != 0:
+                return None
+            spans.append(declarations[0][1])
+            continue
+        suffix = marker.split(cs.DUP_QN_MARKER, 1)[1]
+        line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
+        if not line_text.isdigit() or int(line_text) not in by_line:
+            return None
+        spans.append(by_line[int(line_text)])
+    return spans
+
+
+def _go_composite_type_name(type_node: Node | None) -> str | None:
+    """The type a Go composite literal constructs, as written: `Error`, `pkg.Error`.
+
+    A `generic_type` (`Box[int]{...}`) constructs its base type. Anything
+    else -- a slice, map, array or struct type literal -- is a container or
+    an anonymous type and has no class to instantiate.
+    """
+    if type_node is None:
+        return None
+    if type_node.type == cs.TS_GO_GENERIC_TYPE:
+        return _go_composite_type_name(type_node.child_by_field_name(cs.FIELD_TYPE))
+    if type_node.type == cs.TS_GO_TYPE_IDENTIFIER:
+        return safe_decode_text(type_node)
+    if type_node.type == cs.TS_GO_QUALIFIED_TYPE:
+        package = type_node.child_by_field_name(cs.FIELD_GO_PACKAGE)
+        name = type_node.child_by_field_name(cs.FIELD_NAME)
+        if package is None or name is None:
+            return None
+        return f"{safe_decode_text(package)}{cs.SEPARATOR_DOT}{safe_decode_text(name)}"
+    return None
 
 
 class _JsFileBindingCollector:
@@ -1183,7 +1294,12 @@ class CallProcessor:
         if not name_node:
             return None
         text = name_node.text
-        return None if text is None else text.decode(cs.ENCODING_UTF8)
+        # Replacement decode, not strict: one undecodable byte in this file
+        # must not abort the whole call pass and strand the file's CALLS
+        # edges (issue #1797). This is NOT the call pass's only name funnel
+        # -- `_get_call_target_name` decodes call targets separately and is
+        # routed through the same helper.
+        return None if text is None else decode_node_text(text)
 
     def _collect_all_call_nodes(
         self,
@@ -1573,6 +1689,15 @@ class CallProcessor:
 
     def reset_resolution_caches(self) -> None:
         self._resolver.reset_resolution_caches()
+        self._resolver.type_inference.reset_semantic_join_memos()
+        # Both indexes are derived from module_qn_to_file_path and rebuilt
+        # lazily: the package index only when the map's SIZE changes, the
+        # path index never. A deleted module removed from the map and a new
+        # one added in the same run leave the size unchanged, so a stale
+        # entry would survive into Pass 3 and raise on lookup.
+        self._package_index = {}
+        self._package_index_size = -1
+        self._path_to_module_qn = None
 
     def process_calls_in_file(
         self,
@@ -1730,6 +1855,13 @@ class CallProcessor:
                     None,
                     self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
                 )
+                # A module-scope `var e = &Error{}` constructs too (issue #1642).
+                self._ingest_go_composite_literal_instantiations(
+                    root_node,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+                    module_qn,
+                    self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+                )
                 # A module-scope Go var bound to a bare function value
                 # (var preExecHookFn = preExecHook) references it even in a file
                 # with no calls, so scan before the no-calls early return.
@@ -1808,7 +1940,9 @@ class CallProcessor:
                 # gets no caller pass, and a call inside a NAMED function is
                 # still excluded because that function's flat filter owns it.
                 exclusion_nodes = (
-                    self._attributable_func_nodes(sorted_func_nodes, language)
+                    self._attributable_func_nodes(
+                        sorted_func_nodes, language, module_qn
+                    )
                     if language in _JS_TS_LANGUAGES
                     else sorted_func_nodes
                 )
@@ -1865,9 +1999,19 @@ class CallProcessor:
         # enclosing free function. Anonymous closures (not attributable) stay
         # excluded so their calls still bubble up. Other languages keep the flat
         # _filter_calls_in_node behavior their flow-tracing relies on.
-        owned_func_nodes = self._attributable_func_nodes(func_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            func_nodes, language, module_qn
+        )
         for func_node in func_nodes:
-            if has_classes and self._is_method(func_node, lang_config):
+            # Anything scoped inside a class body -- a method, and a function
+            # nested in a method -- is walked by _process_methods_in_class
+            # with the class context set. Walking it here too emitted every
+            # call edge twice, and once the class pass could type `self`
+            # the second copy was a false bare-name edge (issue #1903).
+            # Skip only what that pass will actually walk: it drops a class
+            # it cannot name (a JS mixin's `(Base) => class extends Base`),
+            # and those nested functions would otherwise lose every edge.
+            if has_classes and self._class_pass_owns(func_node, lang_config, language):
                 continue
 
             if language in _C_FAMILY_LANGUAGES:
@@ -1894,11 +2038,29 @@ class CallProcessor:
                 # A function expression bound to a variable or table field
                 # (`local f = function()`, `M.f = function()`) has no name field;
                 # the definition pass names it after its assignment target, so
-                # recover the same name here or the whole body is skipped.
-                func_name = lua_utils.extract_assigned_name(
-                    func_node,
-                    accepted_var_types=(cs.TS_DOT_INDEX_EXPRESSION, cs.TS_IDENTIFIER),
-                )
+                # recover the same name here or the whole body is skipped. A
+                # table-constructor field value is named by its key path first
+                # (issue #1631), through the SAME helper the definition pass
+                # uses: a returned or passed table has no assignment target at
+                # all, and without this the body's calls were dropped or
+                # credited to the enclosing function (#1631 review).
+                field = lua_utils.field_function_path(func_node)
+                if field is not None:
+                    func_name = field[0]
+                elif lua_utils.is_field_value(func_node):
+                    # A field with no name is anonymous in the definition
+                    # pass too; naming it after the assignment here would
+                    # credit its calls to a node that does not exist
+                    # (#1750 review).
+                    func_name = None
+                else:
+                    func_name = lua_utils.extract_assigned_name(
+                        func_node,
+                        accepted_var_types=(
+                            cs.TS_DOT_INDEX_EXPRESSION,
+                            cs.TS_IDENTIFIER,
+                        ),
+                    )
             if not func_name:
                 # A nameless JS/TS function expression that a NAMED pass
                 # registered (`exports.f = function`, `x: function`) has a
@@ -2184,7 +2346,9 @@ class CallProcessor:
         # Only functions that get their own caller node exclude their calls from
         # the enclosing scope; anonymous arrows (skipped below) must not, so
         # their calls bubble up instead of dropping.
-        owned_func_nodes = self._attributable_func_nodes(method_nodes, language)
+        owned_func_nodes = self._attributable_func_nodes(
+            method_nodes, language, module_qn
+        )
         for method_node in method_nodes:
             # The body byte-range slice also captures functions of a NESTED
             # class (Outer body contains Inner.run); those belong to the
@@ -2199,6 +2363,20 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name and language in _JS_TS_LANGUAGES:
                 method_name = self._js_ts_arrow_binding_name(method_node)
+            # A nameless function expression the definition pass registered
+            # under a name (`x: function () {}` in a method's object literal,
+            # `this.h = function () {}` in a constructor) has a real node:
+            # adopt the record's simple name, as the module pass does. Since
+            # #1903 handed every class-scoped function to this pass, a
+            # `continue` here would leave that node with no outgoing edge.
+            if (
+                not method_name
+                and language in _JS_TS_LANGUAGES
+                and (recorded := self._recorded_caller(method_node, module_qn))
+                is not None
+                and recorded.is_named
+            ):
+                method_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the
@@ -2508,12 +2686,12 @@ class CallProcessor:
                     | cs.TS_PHP_NAME
                 ):
                     if func_child.text is not None:
-                        return func_child.text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(func_child.text)
                 case cs.TS_GENERIC_FUNCTION:
                     # turbofish: unwrap to the underlying callee identifier
                     inner = func_child.child_by_field_name(cs.TS_FIELD_FUNCTION)
                     if inner and inner.text:
-                        return inner.text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(inner.text)
                 case cs.TS_RS_FIELD_EXPRESSION if language == cs.SupportedLanguage.RUST:
                     # Rust member call `a.b.method()`: use the full dotted receiver
                     # chain as the call name so the resolver can map the receiver to
@@ -2522,11 +2700,11 @@ class CallProcessor:
                     # path; a paren-free chain ends at the bare-method trie fallback
                     # when the receiver type is unknown.
                     if (text := func_child.text) is not None:
-                        return text.decode(cs.ENCODING_UTF8)
+                        return decode_node_text(text)
                 case cs.TS_CPP_FIELD_EXPRESSION:
                     field_node = func_child.child_by_field_name(cs.FIELD_FIELD)
                     if field_node and field_node.text:
-                        method = field_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(field_node.text)
                         # Prepend a simple-identifier receiver (`obj->m`/`obj.m`
                         # -> `obj.m`) so the resolver can map obj to its type and
                         # bind the correct class method; a `.`-joined two-part name
@@ -2539,7 +2717,7 @@ class CallProcessor:
                             and arg.type == cs.TS_IDENTIFIER
                             and arg.text
                         ):
-                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(arg.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         # A factory-call receiver (`parser(ia, cb).parse(...)`,
                         # nlohmann's basic_json::parse) is a call_expression on a
@@ -2564,7 +2742,7 @@ class CallProcessor:
                             )
                             and arg.text
                         ):
-                            receiver = arg.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(arg.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CSHARP_GENERIC_NAME if (
@@ -2577,7 +2755,7 @@ class CallProcessor:
                     # graph (Polly's parameterless HandleInner overload
                     # delegating to its Func sibling).
                     if func_child.text is not None:
-                        full = func_child.text.decode(cs.ENCODING_UTF8)
+                        full = decode_node_text(func_child.text)
                         return full.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                 case cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION if (
                     language == cs.SupportedLanguage.CSHARP
@@ -2592,13 +2770,13 @@ class CallProcessor:
                         cs.TS_CSHARP_FIELD_EXPRESSION
                     )
                     if name_node and name_node.text:
-                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(name_node.text)
                         # A generic member (`recv.Handle<T>`) registers
                         # generic-free; strip the type arguments so the
                         # name-keyed fallbacks can match.
                         method = method.split(cs.CHAR_ANGLE_OPEN, 1)[0]
                         if expr_node and expr_node.text:
-                            receiver = expr_node.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(expr_node.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CSHARP_CONDITIONAL_ACCESS_EXPRESSION if (
@@ -2622,7 +2800,7 @@ class CallProcessor:
                         else None
                     )
                     if name_node and name_node.text:
-                        method = name_node.text.decode(cs.ENCODING_UTF8)
+                        method = decode_node_text(name_node.text)
                         receiver_node = (
                             func_child.named_children[0]
                             if (func_child.named_children)
@@ -2633,7 +2811,7 @@ class CallProcessor:
                             and receiver_node is not binding
                             and receiver_node.text
                         ):
-                            receiver = receiver_node.text.decode(cs.ENCODING_UTF8)
+                            receiver = decode_node_text(receiver_node.text)
                             return f"{receiver}{cs.SEPARATOR_DOT}{method}"
                         return method
                 case cs.TS_CALL_EXPRESSION if language in _JS_TS_LANGUAGES:
@@ -2648,7 +2826,7 @@ class CallProcessor:
                     if self._unwrap_bound_function(func_child) is not None:
                         peeled = self._peel_bound_callable(func_child)
                         if peeled.text is not None:
-                            return peeled.text.decode(cs.ENCODING_UTF8)
+                            return decode_node_text(peeled.text)
                 case cs.TS_PARENTHESIZED_EXPRESSION:
                     return self._get_iife_target_name(func_child)
                 case cs.TS_FUNCTION_EXPRESSION | cs.TS_GENERATOR_FUNCTION if (
@@ -2676,7 +2854,7 @@ class CallProcessor:
                 # it is not reported as dead.
                 ctor = call_node.child_by_field_name(cs.FIELD_CONSTRUCTOR)
                 if ctor is not None and ctor.text is not None:
-                    return ctor.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(ctor.text)
             case cs.TS_OBJECT_CREATION_EXPRESSION if language in (
                 cs.SupportedLanguage.JAVA,
                 cs.SupportedLanguage.CSHARP,
@@ -2688,7 +2866,7 @@ class CallProcessor:
                 # -> ArrayList); a scoped name (`Outer.Inner`) is left for the resolver.
                 type_node = call_node.child_by_field_name(cs.FIELD_TYPE)
                 if type_node is not None and type_node.text is not None:
-                    return type_node.text.decode(cs.ENCODING_UTF8).split(
+                    return decode_node_text(type_node.text).split(
                         cs.CHAR_ANGLE_OPEN, 1
                     )[0]
             case cs.TS_NEW_EXPRESSION if language == cs.SupportedLanguage.CPP:
@@ -2719,16 +2897,16 @@ class CallProcessor:
             ):
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
-                    operator_text = operator_node.text.decode(cs.ENCODING_UTF8)
+                    operator_text = decode_node_text(operator_node.text)
                     return cpp_utils.convert_operator_symbol_to_name(operator_text)
             case cs.TS_METHOD_INVOCATION:
                 object_node = call_node.child_by_field_name(cs.FIELD_OBJECT)
                 name_node = call_node.child_by_field_name(cs.FIELD_NAME)
                 if name_node and name_node.text:
-                    method_name = name_node.text.decode(cs.ENCODING_UTF8)
+                    method_name = decode_node_text(name_node.text)
                     if not object_node or not object_node.text:
                         return method_name
-                    object_text = object_node.text.decode(cs.ENCODING_UTF8)
+                    object_text = decode_node_text(object_node.text)
                     return f"{object_text}{cs.SEPARATOR_DOT}{method_name}"
             # Scala infix operator call (`a ~> b`, `xs map f`): the callee is the
             # `operator` field's method name. tree-sitter has no `function` field
@@ -2742,7 +2920,7 @@ class CallProcessor:
             case cs.TS_SCALA_INFIX_EXPRESSION if language == cs.SupportedLanguage.SCALA:
                 operator_node = call_node.child_by_field_name(cs.FIELD_OPERATOR)
                 if operator_node and operator_node.text:
-                    return operator_node.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(operator_node.text)
             # Rust `square!(3)`: the callee lives in the `macro` field (no
             # `function`/`name` field), so the invocation was captured as a
             # call but dropped nameless here; unresolvable even now that
@@ -2750,11 +2928,11 @@ class CallProcessor:
             case cs.TS_RS_MACRO_INVOCATION if language == cs.SupportedLanguage.RUST:
                 macro_node = call_node.child_by_field_name(cs.FIELD_MACRO)
                 if macro_node is not None and macro_node.text is not None:
-                    return macro_node.text.decode(cs.ENCODING_UTF8)
+                    return decode_node_text(macro_node.text)
 
         if name_node := call_node.child_by_field_name(cs.FIELD_NAME):
             if name_node.text is not None:
-                return name_node.text.decode(cs.ENCODING_UTF8)
+                return decode_node_text(name_node.text)
 
         return None
 
@@ -3000,6 +3178,16 @@ class CallProcessor:
             )
         else:
             local_var_types = None
+        if language == cs.SupportedLanguage.PYTHON:
+            # Names this caller binds that also name an import: the resolver
+            # refuses to read the import map for them (issue #1907).
+            shadowed = self._resolver.type_inference.python_type_inference.shadowed_import_names(
+                caller_node, module_qn
+            )
+            if shadowed:
+                self._resolver.python_shadowed_imports[caller_qn] = shadowed
+            else:
+                self._resolver.python_shadowed_imports.pop(caller_qn, None)
 
         # Rust match arms and iterator-adaptor closures both reuse one binding
         # name for different types at different byte ranges (`cmd` per arm;
@@ -3213,6 +3401,12 @@ class CallProcessor:
                 class_context,
                 self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
             )
+            self._ingest_go_composite_literal_instantiations(
+                caller_node,
+                caller_spec,
+                module_qn,
+                self._flow_scope_boundaries(queries[language][cs.QUERY_CONFIG]),
+            )
         if language == cs.SupportedLanguage.CPP:
             self._ingest_cpp_braced_return_instantiations(
                 caller_node, caller_spec, caller_qn, module_qn
@@ -3291,6 +3485,12 @@ class CallProcessor:
         for call_node in call_nodes:
             self._site_node = call_node
             self._resolution = cs.EdgeResolution.EXACT
+            # A callee bound by a language frontend (Jedi, the Java and C#
+            # engines, the Go frontend, a typed C++ operator) never enters
+            # resolve_function_call, which is where the resolver resets its
+            # verdict; without this reset such an edge would inherit the
+            # label the previous call node left behind (issue #1526).
+            resolver.last_resolution = cs.EdgeResolution.EXACT
             node_id = _id(call_node)
             if call_name_cache is not None and node_id in call_name_cache:
                 call_name = call_name_cache[node_id]
@@ -3760,6 +3960,35 @@ class CallProcessor:
                 self._record_csharp_cross_module_use(module_qn, callee_qn)
 
             if (
+                language == cs.SupportedLanguage.DART
+                and callee_type != class_label
+                and callee_qn in resolver.type_inference.dart_constructor_qns
+            ):
+                # A named constructor (`Box.of(1)`) resolves to its own METHOD,
+                # never to the class, so the class branch below never records
+                # the construction: INSTANTIATES the owning class here and let
+                # the method path keep the CALLS edge (issue #2012).
+                owner_qn = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                owner_variants = [
+                    variant
+                    for variant in resolver.function_registry.variants(owner_qn)
+                    if resolver.function_registry.get(variant) == NodeType.CLASS
+                ]
+                # Twin classes take the same stamp the class branch gives a
+                # two-candidate construction (local review).
+                self._resolution = (
+                    cs.EdgeResolution.OVERLOAD
+                    if len(owner_variants) > 1
+                    else resolver.last_resolution
+                )
+                for class_variant in owner_variants:
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.INSTANTIATES,
+                        (class_label, qn_key, class_variant),
+                    )
+
+            if (
                 language == cs.SupportedLanguage.CPP
                 and call_node.type == cs.TS_NEW_EXPRESSION
                 and callee_type != class_label
@@ -3955,13 +4184,21 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
-                    for ctor_type, ctor_qn in sorted(
-                        resolver.java_constructor_targets(callee_qn)
-                    ):
-                        for variant in resolver.function_registry.variants(ctor_qn):
-                            ensure_rel(
-                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
-                            )
+                    ctor_edges = [
+                        (ctor_type, variant)
+                        for ctor_type, ctor_qn in sorted(
+                            resolver.java_constructor_targets(callee_qn)
+                        )
+                        for variant in resolver.function_registry.variants(ctor_qn)
+                    ]
+                    if len(ctor_edges) > 1:
+                        # Every declared constructor takes an edge because
+                        # argument-type selection is not attempted: one call,
+                        # several candidates, which is what `overload` means
+                        # (issue #1526).
+                        self._resolution = cs.EdgeResolution.OVERLOAD
+                    for ctor_type, variant in ctor_edges:
+                        ensure_rel(caller_spec, calls_rel, (ctor_type, qn_key, variant))
                     continue
                 # A JS/TS `new X(...)` runs X's `constructor` method (leaf name
                 # `constructor`, not Python's `__init__`); redirect the CALLS
@@ -4086,6 +4323,10 @@ class CallProcessor:
                             calls_rel,
                             (cs.NodeLabel.FUNCTION, qn_key, variant),
                         )
+        # Edges the later passes emit (decorators, property reads, operator
+        # dispatch) are exact bindings; they must not carry the verdict the
+        # last call node of this loop left behind.
+        self._resolution = cs.EdgeResolution.EXACT
 
     @_site_scoped
     def _ingest_operator_dispatch_calls(
@@ -4280,7 +4521,9 @@ class CallProcessor:
             # ... }`): it gets no caller pass, so its assignments would else be
             # scanned by nobody and the stored functions report dead. Named
             # nested scopes still own their own pass.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
@@ -4520,7 +4763,9 @@ class CallProcessor:
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
             # callers, so their JSX, rendered on behalf of this scope, would
             # otherwise be scanned by nobody and report as dead.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _JSX_NAMED_ELEMENT_TYPES:
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -4618,7 +4863,7 @@ class CallProcessor:
         while stack:
             node = self._site_node = stack.pop()
             if node.type in boundary_types:
-                if not self._is_unowned_js_scope(node):
+                if not self._is_unowned_js_scope(node, module_qn):
                     continue
                 self._emit_expression_body_return(
                     node,
@@ -4762,7 +5007,9 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = self._site_node = stack.pop()
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
@@ -5157,6 +5404,234 @@ class CallProcessor:
         return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT) or None
 
     @_site_scoped
+    def _ingest_go_composite_literal_instantiations(
+        self,
+        caller_node: Node,
+        caller_spec: tuple[str, str, str],
+        module_qn: str,
+        boundary_types: frozenset[str],
+    ) -> None:
+        # `Error{...}` and `&Error{...}` are how Go constructs a struct: there
+        # is no constructor call, so the call pass never saw a construction
+        # and no Go program produced an INSTANTIATES edge (issue #1642). The
+        # composite literal is the construction site. Only a literal whose
+        # `type` names a type is one: a slice, map or array literal builds a
+        # container, and its element literals carry no type of their own.
+        # Revive-only, like the C++ braced-return pass: nothing is emitted
+        # unless the type resolves to a registered first-party Class.
+        registry = self._resolver.function_registry
+        ensure_rel = self._emit_rel
+        stack: list[Node] = list(caller_node.children)
+        while stack:
+            node = stack.pop()
+            if node.type in boundary_types:
+                continue
+            stack.extend(node.children)
+            if node.type != cs.TS_GO_COMPOSITE_LITERAL:
+                continue
+            type_name = _go_composite_type_name(node.child_by_field_name(cs.FIELD_TYPE))
+            if not type_name:
+                continue
+            class_qn = self._go_struct_class(type_name, module_qn)
+            if class_qn is None:
+                continue
+            self._site_node = node
+            for class_variant in self._go_visible_class_variants(
+                class_qn, module_qn, node
+            ):
+                if registry.get(class_variant) != NodeType.CLASS:
+                    continue
+                ensure_rel(
+                    caller_spec,
+                    cs.RelationshipType.INSTANTIATES,
+                    (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, class_variant),
+                )
+
+    def _go_struct_class(self, type_name: str, module_qn: str) -> str | None:
+        """The registered Class a Go composite literal's type names, or None.
+
+        Go types are PACKAGE-scoped: a bare `Name` can only be a type declared
+        in the literal's own package (the files beside it), and `pkg.Name` one
+        declared in the package the import map binds `pkg` to. Types are
+        registered under the FILE that declares them (`proj.m.types.Error`),
+        so the lookup crosses the file segment the source never names.
+
+        Deliberately not `_resolve_class_name`: its last step is a repo-wide
+        search by simple name, which bound `Error{}` in package `m` to a
+        same-named struct in package `a`, or to a Python `class Error`, and
+        dead-code then revived the wrong type while reporting the constructed
+        one dead (#1642 review). The one Class named `Name` directly under a
+        file of the right package is the answer; two candidates, or none,
+        resolve to nothing rather than a guess.
+        """
+        package_alias, _, name = type_name.rpartition(cs.SEPARATOR_DOT)
+        import_map = self._resolver.import_processor.import_mapping.get(module_qn) or {}
+        if package_alias:
+            packages = [import_map.get(package_alias)]
+        else:
+            # Own package first; a bare name can also be an exported type of a
+            # DOT-imported package (`import . "proj/m"`), which the import
+            # pass records under a `.`-prefixed key (#1747 review).
+            packages = [module_qn.rpartition(cs.SEPARATOR_DOT)[0]] + [
+                path
+                for key, path in import_map.items()
+                if key.startswith(cs.SEPARATOR_DOT)
+            ]
+        for package_qn in packages:
+            if not package_qn:
+                continue
+            found = self._go_class_in_package(package_qn, name, module_qn)
+            if found is not None:
+                return found
+        return None
+
+    def _go_class_in_package(
+        self, package_qn: str, name: str, module_qn: str
+    ) -> str | None:
+        """The one Class `name` declared directly under a file of `package_qn`.
+
+        Two files of the package declaring the same name is Go's own error;
+        the shape that does occur is a function-local type shadowing a
+        package-level one, which the registry also files directly under the
+        declaring module. The one declared in THIS file wins then, because a
+        local type is what a bare literal in that file names (#1747 review).
+        Anything still ambiguous resolves to nothing rather than a guess.
+        """
+        registry = self._resolver.function_registry
+        depth = package_qn.count(cs.SEPARATOR_DOT) + 2
+        candidates = [
+            qn
+            for qn in registry.find_with_prefix_and_suffix(package_qn, name)
+            if registry.get(qn) == NodeType.CLASS
+            and qn.count(cs.SEPARATOR_DOT) == depth
+            and self._go_declaration_is_visible(
+                qn.rpartition(cs.SEPARATOR_DOT)[0], package_qn, module_qn
+            )
+        ]
+        if len(candidates) > 1:
+            own = [
+                qn
+                for qn in candidates
+                if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            ]
+            candidates = own if own else candidates
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _go_declaration_is_visible(
+        self, declaring_qn: str, package_qn: str, module_qn: str
+    ) -> bool:
+        """Whether a type declared in `declaring_qn` is in scope for `module_qn`.
+
+        A directory is not a package: `package m_test` files sit beside
+        `package m` files and are a DIFFERENT package, and any `_test.go` is
+        compiled only under `go test`. Without this filter a production
+        `Error{}` in a third file of the package saw both `types.Error` and a
+        same-named `Error` from `m_test.go`, and the ambiguity rule emitted
+        nothing (CodeRabbit, #1747). Same rules as `_go_package_receiver_qn`:
+        a test file is visible only to a test requester of the same package,
+        and within the requester's own directory the `package` clauses must
+        agree. A lookup through an import is into ANOTHER package, whose
+        clause the requester does not share, so only the test rule applies.
+        """
+        declaring_path = self.module_qn_to_file_path.get(declaring_qn)
+        if declaring_path is None:
+            return True
+        requester = self.module_qn_to_file_path.get(module_qn)
+        requester_is_test = requester is not None and requester.stem.endswith(
+            cs.GO_TEST_FILE_SUFFIX
+        )
+        own_package = package_qn == module_qn.rpartition(cs.SEPARATOR_DOT)[0]
+        if declaring_path.stem.endswith(cs.GO_TEST_FILE_SUFFIX) and not (
+            requester_is_test and own_package
+        ):
+            return False
+        if not own_package:
+            return True
+        requester_package = self._go_package_names.get(module_qn)
+        return (
+            requester_package is None
+            or self._go_package_names.get(declaring_qn) == requester_package
+        )
+
+    def _go_visible_class_variants(
+        self, class_qn: str, module_qn: str, literal: Node
+    ) -> list[str]:
+        """The registry variants of `class_qn` that `literal` can name.
+
+        One file declaring `Local` at package level and again inside a
+        function registers both under one qn, the second as a `@line`
+        variant, and a literal fanned out to both. Go scoping says a local
+        type is visible from its declaration to the end of its innermost
+        block and shadows the package-level twin there; a literal before the
+        declaration, or outside the nested block that holds it, names the
+        package type (CodeRabbit and #1747 review). So choose by position
+        against that span. Any shape this cannot settle keeps the fan-out.
+        """
+        variants = self._resolver.function_registry.variants(class_qn)
+        if len(variants) < 2 or not class_qn.startswith(
+            f"{module_qn}{cs.SEPARATOR_DOT}"
+        ):
+            return variants
+        name = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        declarations = self._go_type_declaration_scopes(module_qn, name)
+        spans = _go_variant_spans(variants, declarations)
+        if spans is None:
+            return variants
+        # A point, not a row: `x := Local{}; type Local struct{}` on one line
+        # puts the literal BEFORE the declaration, and rows alone attributed
+        # it to the later local type (#1747 review).
+        point: _Point = (literal.start_point.row, literal.start_point.column)
+        local = [
+            variant
+            for variant, span in zip(variants, spans, strict=True)
+            if span is not None and span[0] <= point <= span[1]
+        ]
+        package_level = [
+            variant
+            for variant, span in zip(variants, spans, strict=True)
+            if span is None
+        ]
+        if len(local) == 1:
+            return local
+        if not local and len(package_level) == 1:
+            return package_level
+        return variants
+
+    def _go_type_declaration_scopes(
+        self, module_qn: str, name: str
+    ) -> list[tuple[int, _Span | None]]:
+        """(1-based line, visible span or None) per `type name` declaration.
+
+        The span of a function-local declaration runs from the declaration's
+        own (row, column) to the end of its innermost enclosing block: a bare
+        `{ }` block, a loop or branch body, a `case` clause's implicit body,
+        or the function body itself, which is where Go makes it visible.
+        None marks a package-level declaration, visible everywhere in the
+        file. In document order, which is the order the definition pass
+        registered them in, so the first is the natural qn and the rest are
+        variants named by their line.
+        """
+        type_inference = self._resolver.type_inference
+        file_path = type_inference.module_qn_to_file_path.get(module_qn)
+        if file_path is None or not (entry := type_inference.ast_cache.load(file_path)):
+            return []
+        root_node, _ = entry
+        found: list[tuple[int, _Span | None]] = []
+        # The second item is the end point of the innermost block, or None
+        # above every function.
+        stack: list[tuple[Node, _Point | None]] = [(root_node, None)]
+        while stack:
+            node, block_end = stack.pop()
+            block_end = _go_innermost_block_end(node, block_end)
+            start = _go_type_spec_start(node, name)
+            if start is not None:
+                found.append(
+                    (start[0] + 1, None if block_end is None else (start, block_end))
+                )
+            stack.extend((child, block_end) for child in node.children)
+        found.sort(key=lambda item: item[0])
+        return found
+
     def _ingest_go_composite_function_references(
         self,
         caller_node: Node,
@@ -5869,14 +6344,36 @@ class CallProcessor:
         # getter (issue #869).
         if language == cs.SupportedLanguage.DART and registry.is_property(res_qn):
             return
-        for target_qn in registry.variants(res_qn):
-            ensure_rel(
-                source_spec,
-                rel_type,
-                (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
-            )
-            if language == cs.SupportedLanguage.CSHARP:
-                self._record_csharp_cross_module_use(module_qn, target_qn)
+        # The callback's OWN verdict, not the enclosing call's. `resolve_func`
+        # just ran the resolver on `arg_text`, so `last_resolution` describes
+        # this reference; `self._resolution` still describes the call whose
+        # argument it is. Emitting through the stale value labelled a callback
+        # found only by trie fallback as exact, so `dead-code --min-resolution
+        # exact` kept a target it should have dropped (#1543 review). Scoped:
+        # the enclosing call's label is restored on the way out, so the edge
+        # it emits afterwards reads its own verdict back (issue #1526).
+        # And, like a primary call, a callback that fans out to same-named
+        # candidates is an `overload`: one reference, several targets, none
+        # chosen (#1543 review). The resolver's single-target verdict would
+        # otherwise let an exact floor keep every one of them.
+        prev_resolution = self._resolution
+        targets = registry.variants(res_qn)
+        self._resolution = (
+            cs.EdgeResolution.OVERLOAD
+            if len(targets) > 1
+            else self._resolver.last_resolution
+        )
+        try:
+            for target_qn in targets:
+                ensure_rel(
+                    source_spec,
+                    rel_type,
+                    (res_type, cs.KEY_QUALIFIED_NAME, target_qn),
+                )
+                if language == cs.SupportedLanguage.CSHARP:
+                    self._record_csharp_cross_module_use(module_qn, target_qn)
+        finally:
+            self._resolution = prev_resolution
 
     def _record_csharp_cross_module_use(self, module_qn: str, entity_qn: str) -> None:
         # A resolved first-party entity pins the C# namespace import to the
@@ -5890,6 +6387,7 @@ class CallProcessor:
                 module_qn, target_module
             )
 
+    @_preserves_verdict
     def _ingest_callable_param_calls(
         self,
         call_node: Node,
@@ -5922,6 +6420,7 @@ class CallProcessor:
                     caller_qn,
                 )
 
+    @_preserves_verdict
     def _collect_callable_flow(
         self,
         call_node: Node,
@@ -6115,6 +6614,7 @@ class CallProcessor:
                     (registry[target_qn], cs.KEY_QUALIFIED_NAME, target_qn),
                 )
 
+    @_preserves_verdict
     def _ingest_higher_order_builtin_calls(
         self,
         call_node: Node,
@@ -6139,6 +6639,7 @@ class CallProcessor:
                 caller_qn,
             )
 
+    @_preserves_verdict
     def _ingest_argument_function_references(
         self,
         call_node: Node,
@@ -6349,7 +6850,12 @@ class CallProcessor:
                     is_call_target = (
                         parent is not None
                         and parent.type == call_type
-                        and parent.child_by_field_name(func_field) is node
+                        # `==` not `is`: py-tree-sitter builds a fresh
+                        # wrapper per lookup, so the node returned here is
+                        # never the same object as the one taken from
+                        # .children, and identity would leave this guard
+                        # permanently False.
+                        and parent.child_by_field_name(func_field) == node
                     )
                     if not is_call_target and (
                         callee_info := resolve_func(
@@ -6527,6 +7033,8 @@ class CallProcessor:
         # only when no in-scope local/parameter shadows it.
         node_type = node.type
         if node_type == cs.TS_DART_SELECTOR:
+            if self._dart_is_shadowed_construction(node, shadow_spans):
+                return None
             read_name = dart_utils.dart_member_read_name(node)
         elif node_type == cs.TS_DART_CASCADE_SECTION:
             read_name = dart_utils.dart_cascade_read_name(node)
@@ -6537,6 +7045,23 @@ class CallProcessor:
         if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
             return read_name
         return None
+
+    def _dart_is_shadowed_construction(
+        self,
+        node: Node,
+        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
+    ) -> bool:
+        # `X<int>(1).m` is token-for-token identical to the chained
+        # comparison `a < b > (1).m`, so reading the receiver as a
+        # construction is a guess (issue #2015). When a local or parameter
+        # of that name is in scope the operand is that variable, not a type,
+        # so the site is a comparison and must not bind its member: without
+        # this, a local named after a class emits a wrong REFERENCES edge.
+        base = dart_utils.dart_ambiguous_construction_base(node)
+        if base is None:
+            return False
+        pos = node.start_byte
+        return any(lo <= pos < hi for lo, hi in shadow_spans().get(base, ()))
 
     def _dart_unshadowed_name(
         self,
@@ -7037,7 +7562,7 @@ class CallProcessor:
         return js_ts_utils.arrow_binding_name(func_node)
 
     def _attributable_func_nodes(
-        self, func_nodes: list[Node], language: cs.SupportedLanguage
+        self, func_nodes: list[Node], language: cs.SupportedLanguage, module_qn: str
     ) -> list[Node]:
         # The func nodes that will get their own caller node: named functions
         # plus arrows/function-expressions bound to a name. An anonymous arrow
@@ -7057,13 +7582,22 @@ class CallProcessor:
             return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
+        # A nameless function expression the definition pass registered under
+        # a name (`x: function () {}` in an object literal, `this.h = function
+        # () {}`) gets its own caller pass, so it must own its calls too, or
+        # the enclosing function keeps a second copy of every edge.
         return [
             n
             for n in func_nodes
-            if self._get_node_name(n) or self._js_ts_arrow_binding_name(n)
+            if self._get_node_name(n)
+            or self._js_ts_arrow_binding_name(n)
+            or (
+                (recorded := self._recorded_caller(n, module_qn)) is not None
+                and recorded.is_named
+            )
         ]
 
-    def _is_unowned_js_scope(self, node: Node) -> bool:
+    def _is_unowned_js_scope(self, node: Node, module_qn: str) -> bool:
         # An anonymous arrow/function/generator expression that gets no caller
         # node of its own (no name, no binding name): a `.map()`/`cell`/
         # forwardRef callback. Its calls bubble up to the enclosing named
@@ -7075,7 +7609,37 @@ class CallProcessor:
             cs.TS_GENERATOR_FUNCTION,
         ):
             return False
-        return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
+        if self._get_node_name(node) or self._js_ts_arrow_binding_name(node):
+            return False
+        # A nameless FUNCTION EXPRESSION the definition pass registered under
+        # a name (`x: function () {}`) has neither, but IS a node with its own
+        # walk, so a reference inside it belongs to that node alone. Without
+        # this the enclosing scope emitted a second copy of every REFERENCES
+        # edge (issue #1932).
+        #
+        # Deliberately NOT extended to arrows, and the reason is narrower
+        # than it looks. An arrow that is an object value in a config array
+        # (`{ cell: ({row}) => <CopyId/> }`, TanStack columns) is registered
+        # under its key too, so owning it would MOVE the edge to `cols.cell`
+        # rather than drop it -- the component stays reachable either way.
+        # What it would break is the edge's SOURCE, which
+        # test_jsx_component_in_config_callback_is_referenced asserts is the
+        # module. Changing that is a behaviour change for consumers, so
+        # arrows keep bubbling here.
+        #
+        # A generator expression has no such consumer and duplicates exactly
+        # as a function expression does, so it is included.
+        #
+        # All three types are identical on both underlying signals
+        # (_attributable_func_nodes says unattributable, the recorded name
+        # says is_named), so this split is an enumeration, not a property.
+        if node.type not in (
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
+            return True
+        recorded = self._recorded_caller(node, module_qn)
+        return recorded is None or not recorded.is_named
 
     def reset_js_receiver_bindings(self) -> None:
         # Despite the historical name this clears ALL per-run JS call-pass
@@ -7885,5 +8449,17 @@ class CallProcessor:
     ) -> dict[str, list[tuple[Node | None, Node | None]]]:
         return _JsFileBindingCollector(self._unwrap_ts_value).collect(root)
 
-    def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
-        return is_method_node(func_node, lang_config)
+    def _class_pass_owns(
+        self, func_node: Node, lang_config: LanguageSpec, language: cs.SupportedLanguage
+    ) -> bool:
+        # Mirrors _process_calls_in_classes: a class with a body that it can
+        # name gets a class pass; everything inside it is that pass's.
+        class_node = enclosing_class_node(func_node, lang_config)
+        if class_node is None:
+            return False
+        if class_node.child_by_field_name(cs.FIELD_BODY) is None:
+            return False
+        class_name = self._get_class_name_for_node(class_node, language)
+        if not class_name and language in _JS_TS_LANGUAGES:
+            class_name = js_ts_utils.class_binding_name(class_node)
+        return bool(class_name)

@@ -232,13 +232,13 @@ function DatabaseService(connectionString) {
     if missing_functions:
         print(f"❌ Missing correctly nested arrow functions: {missing_functions}")
         print(f"✅ Actually created functions: {sorted(created_functions)}")
-        assert False, (
+        pytest.fail(
             f"Missing nested arrow functions with correct qualified names: {missing_functions}"
         )
 
     if incorrectly_created:
         print(f"❌ Incorrectly created module-level functions: {incorrectly_created}")
-        assert False, (
+        pytest.fail(
             f"Arrow functions incorrectly created at module level: {incorrectly_created}"
         )
 
@@ -317,7 +317,7 @@ class ServiceFactory {
             f"❌ Incorrectly created module-level export functions (should be nested): {incorrectly_created}"
         )
         print(f"✅ Actually created functions: {sorted(created_functions)}")
-        assert False, (
+        pytest.fail(
             f"Export functions should be nested, not at module level: {incorrectly_created}"
         )
 
@@ -427,7 +427,7 @@ class ModuleFactory {
             f"❌ Missing correctly nested CommonJS export functions: {missing_functions}"
         )
         print(f"✅ Actually created functions: {sorted(created_functions)}")
-        assert False, (
+        pytest.fail(
             f"Missing nested CommonJS export functions with correct qualified names: {missing_functions}"
         )
 
@@ -435,6 +435,6 @@ class ModuleFactory {
         print(
             f"❌ Incorrectly created module-level CommonJS exports: {incorrectly_created}"
         )
-        assert False, (
+        pytest.fail(
             f"CommonJS exports should be nested, not at module level: {incorrectly_created}"
         )

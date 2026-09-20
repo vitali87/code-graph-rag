@@ -61,7 +61,8 @@ def test_markdown_row_pins_corpus_commit_and_scale(tmp_path: Path) -> None:
     assert "63 s wall" in row
     assert "1.5 GiB peak RSS" in row
     assert "50000 nodes / 120000 edges" in row
-    assert row.startswith("|") and row.endswith("| — |")
+    assert row.startswith("|")
+    assert row.endswith("| — |")
 
 
 def test_markdown_row_without_rss_or_commit() -> None:

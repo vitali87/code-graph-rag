@@ -12,7 +12,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag import constants as cs
-from codebase_rag.tests.conftest import create_and_run_updater
+from codebase_rag.tests.conftest import (
+    create_and_run_updater,
+    force_mtime_after_cache,
+)
 
 
 def test_module_path_lookup_failure_forces_delete_before_reingest(
@@ -79,6 +82,7 @@ def test_incremental_rehydration_failure_aborts(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
     source.write_text("def f():\n    return 2\n", encoding="utf-8")
+    force_mtime_after_cache(temp_repo, source)
 
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_ALL_DEFINITION_QNS:
@@ -183,6 +187,7 @@ def test_incremental_run_aborts_when_inbound_capture_fails(
     create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing=None)
 
     source.write_text("def f():\n    return 2\n", encoding="utf-8")
+    force_mtime_after_cache(temp_repo, source)
 
     def unavailable(query: str, params: dict | None = None) -> list:
         if query == cs.CYPHER_INBOUND_EDGES:

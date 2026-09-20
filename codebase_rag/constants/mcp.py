@@ -41,6 +41,10 @@ class MCPToolName(StrEnum):
     FLOW_VERDICT = "flow_verdict"
     EXPLAIN_TRACEBACK = "explain_traceback"
     RANK_ROOT_CAUSES = "rank_root_causes"
+    # Agent-authored notes about code (issue #1808): written to the graph,
+    # never into source files, and read back per symbol.
+    ANNOTATE = "annotate"
+    GLOSSES = "glosses"
 
 
 class MCPTransport(StrEnum):
@@ -104,6 +108,10 @@ class MCPParamName(StrEnum):
     DELETED = "deleted"
     TARGET = "target"
     DEPTH = "depth"
+    BODY = "body"
+    KIND = "kind"
+    MENTIONS = "mentions"
+    AUTHOR = "author"
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
@@ -142,7 +150,29 @@ MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
     "before reingest"
 )
+MCP_INCOMPLETE_MARKER_STUCK = (
+    "{project} was processed, but its incomplete-run marker could not be "
+    "cleared. Later scoped re-ingests will refuse until it goes. The next "
+    "index or update retries the removal; check the graph store is writable."
+)
+MCP_INCOMPLETE_MARKER_REQUIRED = (
+    "Refusing to change the graph of {project}: the incomplete-run marker could "
+    "not be written. Without it a crash part way through would leave a "
+    "partial graph that a fresh process cannot recognise, and a later scoped "
+    "reingest would treat it as authoritative. Check the graph store is "
+    "writable and retry."
+)
+MCP_REINGEST_AFTER_FAILED_RUN = (
+    "The last index or update of project {project} failed part way, so its "
+    "graph is incomplete; run update_repository before reingest"
+)
+MCP_QUERY_AFTER_FAILED_RUN = (
+    "The last index or update of project {project} failed part way, so its "
+    "graph is incomplete; {tool} would answer from a partial graph. Run "
+    "update_repository before reading it"
+)
 REINGEST_OUTSIDE_REPO = "Path is outside the repository: {path}"
+REINGEST_IS_DIRECTORY = "Path is a directory, not a file: {path}"
 MCP_GRAPH_QUERY_ERROR = "Error running {tool}: {error}"
 GRAPH_QUERY_MAX_DEPTH = 5
 MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
@@ -152,6 +182,18 @@ MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 # Refused rather than answered with zero rows: an empty result for a
 # misspelled project name is indistinguishable from a genuine empty result.
 MCP_UNKNOWN_PROJECT = "Unknown project {project!r}. Indexed projects: {known}"
+MCP_GLOSS_TARGET_NOT_FOUND = "No definition matches {target!r} in project {project!r}."
+MCP_GLOSS_TARGET_AMBIGUOUS = (
+    "{target!r} names {count} definitions; pass one of the qualified names "
+    "listed under 'candidates'."
+)
+MCP_GLOSS_MENTION_REFUSED = "mention {name!r}: {error}"
+MCP_GLOSS_KIND_UNKNOWN = "Unknown gloss kind {kind!r}. Kinds: {kinds}"
+MCP_GLOSS_BODY_EMPTY = "A gloss needs a non-empty body."
+MCP_GLOSS_NOT_WRITTEN = (
+    "The gloss on {target!r} was not written: its subject or a mentioned "
+    "definition left the graph between resolving and writing. Re-index and retry."
+)
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."

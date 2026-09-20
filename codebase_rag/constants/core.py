@@ -5,6 +5,18 @@ from enum import StrEnum
 INIT_PY = "__init__.py"
 
 ENCODING_UTF8 = "utf-8"
+# Any UTF encoding can carry the whole of Unicode; the check Rich itself
+# uses to decide whether a stream can show box-drawing characters.
+ENCODING_UTF_PREFIX = "utf"
+# Longest UTF-8 sequence, so a window this size either side of a name spans
+# any single character that could legitimately sit next to it.
+UTF8_MAX_SEQUENCE_BYTES = 4
+# Sigils an ingestor prepends to a synthesized symbol name (a C# destructor
+# is stored as `~Greeter` while the source leaf is `Greeter`).
+SYNTHETIC_NAME_PREFIXES = "~"
+# What `errors="replace"` substitutes for an undecodable byte. Its presence
+# in an extracted symbol name means the name is damaged.
+UNICODE_REPLACEMENT_CHAR = "\ufffd"
 
 ARG_TARGET_CODE = "target_code"
 ARG_REPLACEMENT_CODE = "replacement_code"
@@ -103,6 +115,30 @@ TEXT_UNKNOWN = "unknown"
 
 TMP_EXTENSION = ".tmp"
 
+# Filenames whose module IS their directory, PER LANGUAGE: an importer writes
+# the directory name, never the file's own stem. The extension is part of the
+# rule, not decoration -- `index.py` and `mod.py` are ordinary Python modules
+# imported by those names, and a language-blind stem set silently gives them no
+# importable name at all. `lib.rs`/`main.rs` are crate roots named by the
+# manifest rather than the directory, so they are deliberately absent.
+DIRECTORY_MODULE_STEM_BY_EXT: dict[str, str] = {
+    ".py": "__init__",
+    ".rs": "mod",
+    ".js": "index",
+    ".jsx": "index",
+    ".mjs": "index",
+    ".cjs": "index",
+    ".ts": "index",
+    ".tsx": "index",
+    # `.mts`/`.cts` are TypeScript's ESM/CJS forms and are directory entry
+    # points exactly as `.mjs`/`.cjs` are. They belong to `TS_EXTENSIONS` and
+    # to `JS_TS_MODULE_EXTENSIONS`, which is the set cgr's own directory-index
+    # resolution already searches, so omitting them here made `pkg/index.mts`
+    # derive `pkg.index` instead of `pkg` and the unresolved-importer query
+    # asked for a name no waiter had written (issue #1682 review).
+    ".mts": "index",
+    ".cts": "index",
+}
 MOD_RS = "mod.rs"
 LIB_RS = "lib.rs"
 MAIN_RS = "main.rs"
@@ -123,12 +159,25 @@ OPERATOR_PREFIX = "operator"
 KEYWORD_SUPER = "super"
 KEYWORD_SELF = "self"
 KEYWORD_CONSTRUCTOR = "constructor"
+# Receivers that name the enclosing type rather than an ordinary value, so
+# `self.Inner()` and `cls.Inner()` are real nested-class constructions.
+# Membership is not sufficient on its own: `self` is also a legal Go receiver
+# name, and a spelling test alone accepted `self.Error()` for a module-level
+# `Error`. The caller pairs this with a nesting check against the enclosing
+# type, which is what actually distinguishes the two (issue #1641).
+SELF_RECEIVER_KEYWORDS = frozenset({"self", "cls", "this"})
 
 # Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
+# The exclusion set the last run indexed under, covering both the excludes and
+# the unignores (which come from `!` lines in .cgrignore/.gitignore and from
+# interactive setup; there is no --unignore flag). Nothing on disk changes when
+# only the CLI --exclude flags do, so without this the sync check cannot tell
+# that the eligible set moved (issue #1606).
+EXCLUSION_STATE_FILENAME = ".cgr-exclusion-state.json"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
@@ -144,12 +193,21 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         DIR_MTIMES_FILENAME,
         PARSER_FINGERPRINT_FILENAME,
         DELOMBOK_STATE_FILENAME,
+        EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
         EDIT_LOCK_FILENAME,
     }
 )
 # Edit transactions (issue #1528).
 EDIT_HISTORY_LIMIT = 50
+
+# What a TransactionConflict means for a rename's rollback. Absence from the
+# history is only evidence of an undo while the history has not reached its
+# retention limit; at the limit an entry can have been EVICTED with its
+# rename still on disk.
+RENAME_UNDO_STACKED = "stacked"
+RENAME_UNDO_UNDONE = "undone"
+RENAME_UNDO_UNKNOWN = "unknown"
 EDIT_TRANSACTION_ID_LENGTH = 12
 EDIT_STAGING_PREFIX = "cgr-edit-"
 DIFF_DEV_NULL = "/dev/null"
@@ -173,6 +231,12 @@ PARSER_FINGERPRINT_SOURCE_FILES: tuple[str, ...] = (
     "ast_cache.py",
     "language_spec.py",
     "parser_loader.py",
+    # `base_module_qn` lives here, and the whole graph keys on the names it
+    # derives: change the rule and every module node should be re-keyed. It
+    # was absent, so a change touching ONLY this file left existing indexes on
+    # the old identities with no staleness warning, and `utils/` is in neither
+    # of the directory globs above (issue #1720 review).
+    "utils/path_utils.py",
 )
 PY_SOURCE_GLOB = "*.py"
 # The bundled Roslyn C# frontend tool is parser code too, though .cs/.csproj

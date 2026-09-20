@@ -14,10 +14,10 @@ The knowledge graph uses a unified schema across all supported languages.
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?` |
+| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
+| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | Enum | same as Interface |
 | Type | same as Interface, but `path` and `absolute_path` are optional |
@@ -85,11 +85,11 @@ The knowledge graph uses a unified schema across all supported languages.
 | IMPORTS | `alias: string?` | The name the statement binds in the importing scope: the `as` name when renamed, otherwise the imported symbol or module name. Wildcard imports and Go dot-imports bind no name and carry no alias. |
 | IMPORTS | `imported_name: string?` | For symbol-level imports (`from x import y`, `import { y as z }`, `use a::b::y`, Java `import a.b.C`, `const { y } = require(...)`) the symbol's own name; `*` for wildcards; absent for whole-module imports. |
 | CALLS, REFERENCES, INSTANTIATES | `resolution: string?` | How the edge was bound (issue #1526): `exact` (scope, import, type or signature), `overload` (one edge per same-named candidate), `heuristic` (name-only: trie suffix, wildcard import, package member), `trace_confirmed` (a static edge a runtime trace observed), `dynamic` (a call only a trace saw). Absent on edges emitted before the label existed; they rank as `exact`. |
-| CALLS (`dynamic` only) | `dispatch_literal: boolean?`, `unlocatable: boolean?` | `dispatch_literal: true` with `line`/`col` pointing at the `getattr(obj, "name")` argument or the registry-key literal the call went through; `unlocatable: true` when the caller holds no such literal. |
+| CALLS (`dynamic` only) | `dispatch_literal: boolean?`, `unlocatable: boolean?` | `dispatch_literal: true` with `line`/`col` pointing at the `getattr(obj, "name")` argument or the registry-key literal the call went through; `unlocatable: true` when the caller's own body (nested definitions excluded) holds no such literal, or more than one, since two candidates cannot be told apart statically. |
 
 Sites are stored as **one edge per site**: a function that calls `g` twice has two `CALLS` edges to `g`, one per call expression, and `from x import a, b` yields two `IMPORTS` edges to `x` (same statement span, different `alias`). The site properties join the write-time `MERGE` key (`line`, `col`; plus `alias` for `IMPORTS`), the same mechanism that keeps parallel `FLOWS_TO` edges apart, so re-indexing is idempotent. A query that wants callers rather than call sites should `DISTINCT` on the endpoint; a query that wants the sites reads `r.line`.
 
-Edges emitted without a syntactic site carry none of these properties and keep collapsing on their endpoints: libclang macro uses and `#include` edges, Roslyn-only facts, inferred C# namespace imports, interprocedural callable-parameter flow edges, and edges written back by dynamic tracing. For a Go grouped `import ( ... )` block the site is the individual spec line, which is the unit an import rewrite edits. `cgr diff` treats these properties as location, not structure: a line shift never reports as a changed relationship.
+Edges emitted without a syntactic site (and trace-written edges without a dispatch literal, those marked `unlocatable`) carry none of these properties and keep collapsing on their endpoints: libclang macro uses and `#include` edges, Roslyn-only facts, inferred C# namespace imports, interprocedural callable-parameter flow edges, and edges written back by dynamic tracing. For a Go grouped `import ( ... )` block the site is the individual spec line, which is the unit an import rewrite edits. `cgr diff` treats these properties as location, not structure: a line shift never reports as a changed relationship.
 
 `CALLS` edges are otherwise created by static analysis with no further properties. [Dynamic call tracing](../guide/dynamic-tracing.md) decorates them with runtime provenance (`dynamic`, `dynamic_call_count`, `dynamic_workloads`, `dynamic_workload_count`, `dynamic_receiver_types`) and creates runtime-only edges flagged `static_missed: true` when no matching static edge existed in the graph at ingest time. Dynamic dispatch, reflection, and registries are the common causes. Ingest also upgrades every observed static edge's `resolution` to `trace_confirmed` in place (on each of its sites) and tags the runtime-only edges `dynamic`; `cgr dead-code --min-resolution` and the `callers`/`callees` tools read the label.
 
@@ -128,6 +128,79 @@ Taint is propagated through plain `x = y` assignments. `FLOWS_TO` is intentional
 
 See [I/O and Data-Flow Edges](data-flow-edges.md) for the detailed reference: the taint model, propagation and kill rules, the `kind`/`via` edge properties, scope attribution, and example queries.
 
+## Module Documentation
+
+Every `Module` node carries the documentation for the file as a whole in its
+optional `docstring` property, in whatever form the language uses.
+
+The grammars do not distinguish a documentation comment from an ordinary one
+-- tree-sitter reports Rust's `//!` and a throwaway `// note` both as
+`line_comment` -- so the marker prefix decides, not the node type.
+
+| Language | Marker | Notes |
+|----------|--------|-------|
+| Python | `"""docstring"""` | A string literal as the first statement |
+| Rust | `//!`, `/*!` | Inner docs only; `///` documents the next item, not the module |
+| Go | `//` above `package` | No marker: a blank line before `package` makes it a licence header instead |
+| Java, Scala | `/**`, `/*!`, `///` | Javadoc/Scaladoc |
+| JavaScript, TypeScript, TSX | `/**`, `/*!` | JSDoc. `///` is TypeScript's `<reference/>` directive, not a doc |
+| C, C++ | `/**`, `/*!`, `///` | Doxygen |
+| C# | `///`, `/**`, `/*!` | XML documentation comments |
+| Dart | `///`, `/**`, `/*!` | Library docs |
+| PHP | `/**`, `/*!`, `///` | Follows the `<?php` tag |
+| Lua | `---` | LuaDoc/LDoc; a plain `--` is an ordinary comment |
+| SQL | none | No module-documentation convention, so nothing is extracted |
+
+Consecutive line comments join into one block, and a blank line ends it. A
+shebang before the comment is skipped, so a CLI entry point keeps its
+documentation.
+
+A comment that does not carry its language's marker is left alone: recording a
+licence header or a `// TODO` as the file's documentation is a wrong answer
+that reads like a right one. Three further kinds are excluded for the same
+reason, even when they do carry the marker:
+
+- **Directives** -- `//go:generate`, `//nolint:`, `// Code generated ... DO NOT
+  EDIT.` -- are instructions to tooling. They are skipped rather than treated
+  as the end of the comment, so a real doc beneath one is still found.
+- **Separator rules** -- `--------`, `////////` -- are decoration, not prose.
+- **TypeScript's `/// <reference />`** is machine input, so `///` is not a doc
+  marker in JavaScript, TypeScript or TSX; `/**` is.
+
+## Definition Documentation
+
+`Class`, `Function`, `Method`, `Interface`, `Enum`, `Type` and `Union` carry
+the documentation of that one definition in the same optional `docstring`
+property. Python's is the string literal that opens the body; every other
+language's is the doc comment immediately above the declaration -- or above
+the statement that wraps it: an `export`, a Go `type`, a `const f = () =>`
+assignment, a `module.exports.f = function` assignment. A comment that trails
+the previous line (`int a; ///< the a field`) is that line's remark, never the
+next declaration's documentation.
+
+The markers are the ones in the module table with one exception: Rust
+documents a definition with the **outer** forms, `///` and `/**`, while `//!`
+and `/*!` describe the enclosing module and are never attached to an item. Go
+has no marker at either level, so `//` directly above a declaration is its doc.
+
+Whether a comment belongs to the file or to the declaration beneath it is one
+decision, made once, from the blank line: a doc comment touching a declaration
+is that declaration's, a detached one is the file's. So `/** Class docs */`
+directly above `class C {}` lands on the `Class` node and not on the `Module`,
+and the same comment separated by a blank line does the reverse. Rust is the one
+language where a detached `///` belongs to neither -- it documents nothing, and
+`rustc` warns on it.
+
+An attribute between the comment and its declaration does not detach it
+(`/// doc` / `#[derive(Debug)]` / `struct S`). In the other languages an
+annotation is part of the declaration node itself, so the comment is already
+adjacent and no skipping is needed.
+
+The exclusions are the module table's -- separator rules, directives, ordinary
+comments without the marker -- for the same reason: an `// ordinary note`
+recorded as a function's documentation is a wrong answer that reads like a
+right one.
+
 ## Nested Definitions
 
 A function or class defined inside another function or method (a closure or a function-local class) is attached by `DEFINES` to its **enclosing scope**, not flattened onto the Module. So `DEFINES` can originate from a `Function` or `Method` as well as a `Module`. A top-level function or class is still defined by its `Module`.
@@ -153,7 +226,7 @@ Language notes:
 - **Rust**: macros and functions live in separate namespaces, so a macro invocation (`write!`) never binds a same-named `fn` and a function call never binds a same-named macro. `#[macro_export]` sets `is_exported` (macros take no `pub`).
 - **C/C++** (macro semantics, shared by the libclang-backed modes): compiler builtins, system-header macros, and empty-bodied object-like macros (include guards, feature flags) are not nodes. A macro use inside a function body emits `CALLS` from that function; a use outside any function attributes to the `Module`. A macro whose definition body references another macro emits a macro-to-macro `CALLS` edge, since nested expansions are never reported as individual uses.
 - **C/C++ hybrid mode** (the default: `CPP_FRONTEND=hybrid`; `libclang` forces the pure libclang frontend and `treesitter` disables libclang entirely; the libclang bindings ship in the `cpp` extra, `pip install "code-graph-rag[cpp]"`): tree-sitter remains the backbone (every file gets its tree-sitter definitions and calls; nothing is skipped) and libclang layers on only macro `Function` nodes and `#include` `IMPORTS` edges, whose qualified names are identical between the two schemes. Macro uses are attributed to the tightest enclosing tree-sitter definition span after the definition pass, so macro `CALLS` edges join the qualified-name scheme the rest of the graph uses.
-- **C# hybrid mode** (the default: `CSHARP_FRONTEND=auto` runs it wherever `dotnet` is on PATH, falling back to pure tree-sitter otherwise; `hybrid`/`roslyn` force it, `treesitter` disables it): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site.
+- **C# hybrid mode** (opt-in: the default is `CSHARP_FRONTEND=treesitter`; selecting `auto` uses hybrid mode when `dotnet` is on PATH, while `hybrid`/`roslyn` explicitly request Roslyn-backed analysis; unavailable toolchains fall back to tree-sitter): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site. See the [security model](security.md#repository-parsing-and-toolchains) before enabling toolchain-backed analysis on untrusted repositories.
 
 ## Language-Specific AST Mappings
 

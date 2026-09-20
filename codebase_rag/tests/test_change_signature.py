@@ -220,6 +220,41 @@ def test_default_literal_incompatible_with_declared_type_is_refused(
         )
 
 
+def test_a_site_passing_surplus_arguments_is_refused_not_truncated(
+    tmp_path: Path,
+) -> None:
+    """An argument the new signature has no home for must not be dropped.
+
+    `_map_arguments` consumes one value per spec; anything left over is an
+    argument the caller passes and the mapping does not name. Rewriting the
+    site would delete it from the caller's source, and the contract cannot
+    catch that -- the argument is gone from the file before the delta is
+    measured, so the `too_many` arity check sees nothing.
+    """
+    root = tmp_path / "proj"
+    surplus = dict(FIXTURE)
+    # A stale caller passing three arguments to a two-parameter definition.
+    surplus["pkg/app.py"] = (
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(1, 2, 3)\n"
+    )
+    for rel, text in surplus.items():
+        _write(root, rel, text)
+    store, updater = _index(root)
+    before = (root / "pkg/app.py").read_text()
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.util.helper"),
+        ["a@0", "b@1"],
+        reingest=updater.reingest,
+    )
+
+    assert {u.owner for u in report.unmapped} == {_qn("pkg.app.run")}
+    assert (root / "pkg/app.py").read_text() == before, "the site was rewritten"
+
+
 def test_unmapped_parameter_leaves_sites_untouched_and_lists_them(
     repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -257,7 +292,7 @@ def test_method_hierarchy_is_rewritten_together(temp_repo: Path) -> None:
         "pkg/shapes.py",
         "class Base:\n    def area(self, scale):\n        return scale\n\n\n"
         "class Square(Base):\n    def area(self, scale):\n        return scale * 4\n\n\n"
-        "def total(shape):\n    return shape.area(2)\n",
+        "def total(shape: Base):\n    return shape.area(2)\n",
     )
     store, updater = _index(root)
     report = change_signature(
@@ -416,3 +451,344 @@ async def test_mcp_change_signature_tool_reports_sites_and_unmapped(
         qualified_name=_qn("pkg.util.helper"), new_params=["a@zz"], project=PROJECT
     )
     assert isinstance(refused, dict) and cs.DICT_KEY_ERROR in refused
+
+
+def test_a_chained_call_rewrites_its_own_arguments(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(root, "pkg/util.py", "def helper(a):\n    return str(a)\n")
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(2).upper()\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        ["a@0", "n:int=1"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    # `helper(2)`'s arguments, not the outer `.upper()` call's.
+    assert "return helper(2, 1).upper()" in (root / "pkg/app.py").read_text()
+
+
+def test_a_variadic_definition_is_refused(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(root, "pkg/util.py", "def helper(a, *args):\n    return a\n")
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(1, 2, 3)\n",
+    )
+    store, _updater = _index(root)
+    with pytest.raises(SignatureRefused):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.util.helper",
+            ["a@0", "args@1"],
+        )
+    assert "helper(1, 2, 3)" in (root / "pkg/app.py").read_text()
+
+
+def test_keyword_only_separator_is_not_a_parameter(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(root, "pkg/util.py", "def helper(a, *, b='x'):\n    return a + b\n")
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(1, b='y')\n",
+    )
+    store, updater = _index(root)
+    # A keyword-only parameter has no positional index to map from.
+    with pytest.raises(SignatureRefused):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.util.helper",
+            ["a@0", "b@b"],
+            dry_run=True,
+        )
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        ["a@0", "n:int=1"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.old_params == ("a",)
+    # The keyword-only section follows the new positionals behind its own
+    # `*`, exactly as written; the site keeps its keyword value.
+    assert "def helper(a, n: int = 1, *, b='x'):" in (root / "pkg/util.py").read_text()
+    assert "helper(1, 1, b='y')" in (root / "pkg/app.py").read_text()
+
+
+def test_allow_heuristic_applies_through_the_contract(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(root, "pkg/util.py", "def helper(a):\n    return a\n")
+    # Not imported: bound by name only, a heuristic site.
+    _write(root, "pkg/app.py", "def run():\n    return helper(2)\n")
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        ["a@0", "n:int=1"],
+        allow_heuristic=True,
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert "helper(2, 1)" in (root / "pkg/app.py").read_text()
+
+
+def test_an_override_with_fewer_parameters_is_refused(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root,
+        "pkg/shapes.py",
+        "class Base:\n    def area(self, scale, unit):\n        return scale\n\n\n"
+        "class Square(Base):\n    def area(self, scale):\n        return scale * 4\n",
+    )
+    store, _updater = _index(root)
+    with pytest.raises(SignatureRefused):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.shapes.Base.area",
+            ["scale@0", "unit@1", "extra:int=0"],
+            dry_run=True,
+        )
+
+
+def test_a_partial_respec_keeps_the_old_default(temp_repo: Path) -> None:
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root,
+        "pkg/util.py",
+        "def helper(a: int, b='x') -> str:\n    return str(a) + b\n",
+    )
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(2)\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.util.helper",
+        ["a@0", "b:str@1"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    # The annotation is added; the old default survives, so `helper(2)` still runs.
+    assert (
+        "def helper(a: int, b: str = 'x') -> str:" in (root / "pkg/util.py").read_text()
+    )
+
+
+# --- review findings: rewrites that committed a broken program ------------------
+
+
+def test_two_parameters_cannot_share_one_source(
+    repo: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A source holds one value per site, so it cannot feed two parameters.
+
+    `_map_arguments` consumes the value: the first mapping took it and every
+    later one read as omitted, so the definition gained a parameter no caller
+    passed. The edit reported success and the callers raised `TypeError`.
+    """
+    root, store, updater = repo
+    with pytest.raises(SignatureRefused) as excinfo:
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            _qn("pkg.util.helper"),
+            ["left@0", "right@0", "b@1"],
+            reingest=updater.reingest,
+        )
+    assert "left, right" in str(excinfo.value)
+    assert (root / "pkg/util.py").read_text().startswith("def helper(a: int")
+
+
+def test_distinct_sources_are_not_refused_as_duplicates(temp_repo: Path) -> None:
+    """The guard must not catch an ordinary rename of every parameter.
+
+    Its own fixture, with no defaulted parameter: the shared one has
+    `b: str = 'x'` and a `helper(2)` site relying on it, which a rename leaves
+    possibly-missing and the postcondition rightly rolls back. That rollback is
+    the operation working correctly, so the shared fixture would be testing
+    something other than this guard.
+    """
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root, "pkg/util.py", "def helper(a: int, b: str) -> str:\n    return b * a\n"
+    )
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(2, 'x')\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.util.helper"),
+        ["first@0", "second@1"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert "def helper(first: int, second: str)" in (root / "pkg/util.py").read_text()
+
+
+def test_several_new_parameters_are_not_duplicate_sources(temp_repo: Path) -> None:
+    """Two parameters with literals share no source: both have none."""
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root, "pkg/util.py", "def helper(a: int, b: str) -> str:\n    return b * a\n"
+    )
+    _write(
+        root,
+        "pkg/app.py",
+        "from pkg.util import helper\n\n\ndef run():\n    return helper(2, 'x')\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.util.helper"),
+        ["a@0", "b@1", "m:int=1", "n:int=2"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert report.new_params == ("a", "b", "m", "n")
+
+
+def test_override_keyword_callers_use_the_override_s_own_names(
+    temp_repo: Path,
+) -> None:
+    """A caller binds by the name the method it calls declares.
+
+    `old_names` was derived once from the selected definition and reused for
+    every hierarchy member's call sites, so an override spelling a parameter
+    differently had its keyword callers read as unknown keywords and left
+    unrewritten -- against a definition that had been rewritten. The committed
+    program then raised `TypeError` for the stale keyword.
+
+    The existing hierarchy test spells the parameter `scale` in both classes,
+    which is why this went unseen: the names have to differ for the bug to
+    show.
+    """
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root,
+        "pkg/shapes.py",
+        "class Base:\n    def area(self, scale):\n        return scale\n\n\n"
+        "class Square(Base):\n    def area(self, factor):\n        return factor * 4\n"
+        "\n\ndef use_square():\n    return Square().area(factor=2)\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.shapes.Base.area"),
+        ["size@0"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    text = (root / "pkg/shapes.py").read_text()
+    # Both definitions are rewritten, so no caller may still say `factor`.
+    assert "factor=2" not in text, text
+
+
+def test_positional_only_marker_survives_a_rewrite(temp_repo: Path) -> None:
+    """`/` is load-bearing on rebuild even though it is not a parameter.
+
+    It was skipped on parse and never re-emitted, so `def target(a, b, /, c)`
+    came back as `def target(a, b, c)` and started accepting `target(a=1, b=2,
+    c=3)` -- a call the original rejects. Dropping it widens the callable
+    contract silently.
+    """
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root,
+        "pkg/only.py",
+        "def target(a, b, /, c):\n    return a + b + c\n\n\n"
+        "def call():\n    return target(1, 2, 3)\n",
+    )
+    store, updater = _index(root)
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        _qn("pkg.only.target"),
+        ["a@0", "b@1", "c@2", "d:int=4"],
+        reingest=updater.reingest,
+    )
+    assert report.applied, report.message
+    assert "/" in (root / "pkg/only.py").read_text().split("\n")[0]
+
+
+def test_a_rewrite_across_the_positional_only_boundary_is_refused(
+    temp_repo: Path,
+) -> None:
+    """Reordering across `/` changes which arguments may be named.
+
+    That is a question this operation is not asked to answer, so it refuses
+    rather than emitting a signature whose contract differs from the one the
+    caller requested.
+    """
+    root = temp_repo / PROJECT
+    root.mkdir()
+    _write(root, "pkg/__init__.py", "")
+    _write(
+        root,
+        "pkg/only.py",
+        "def target(a, b, /, c):\n    return a + b + c\n\n\n"
+        "def call():\n    return target(1, 2, 3)\n",
+    )
+    store, updater = _index(root)
+    with pytest.raises(SignatureRefused):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            _qn("pkg.only.target"),
+            ["b@1", "a@0", "c@2"],
+            reingest=updater.reingest,
+        )

@@ -82,17 +82,30 @@ def _accumulate_sampled(
         if not isinstance(stack, list):
             return False
         weight = _sample_weight(cast("list[object]", weights), position)
-        ancestor: str | None = None
-        for frame_index in stack:
-            if not _valid_index(frame_index, len(names)):
-                return False
-            current = names[frame_index]
-            if current is None:
-                continue
-            if ancestor is not None:
-                key = (ancestor, current)
-                edges[key] = edges.get(key, 0) + weight
-            ancestor = current
+        if not _accumulate_stack(stack, names, weight, edges):
+            return False
+    return True
+
+
+def _accumulate_stack(
+    stack: Sequence[object],
+    names: list[str | None],
+    weight: float,
+    edges: dict[tuple[str, str], float],
+) -> bool:
+    """One sampled stack, root first: each in-scope frame under the nearest
+    in-scope ancestor adds `weight` to that edge. False on a bad frame index."""
+    ancestor: str | None = None
+    for frame_index in stack:
+        if not _valid_index(frame_index, len(names)):
+            return False
+        current = names[frame_index]
+        if current is None:
+            continue
+        if ancestor is not None:
+            key = (ancestor, current)
+            edges[key] = edges.get(key, 0) + weight
+        ancestor = current
     return True
 
 

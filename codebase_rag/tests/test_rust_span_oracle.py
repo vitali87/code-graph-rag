@@ -74,9 +74,7 @@ def test_cgr_matches_syn_oracle_on_node_spans(tmp_path: Path) -> None:
     by_label = {row["label"]: row for row in result.rows}
     aggregate = by_label.get(ec.AGGREGATE_LABEL)
     assert aggregate is not None, (by_label, result.diff)
-    assert aggregate["precision"] == 1.0 and aggregate["recall"] == 1.0, (
-        aggregate,
-        result.diff,
-    )
+    assert aggregate["precision"] == 1.0, (aggregate, result.diff)
+    assert aggregate["recall"] == 1.0, (aggregate, result.diff)
     # Guard the sample actually exercises multi-line spans (else it is vacuous).
     assert aggregate["tp"] >= 5, aggregate

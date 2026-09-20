@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import constants as cs
-from ...utils.path_utils import base_module_qn, walk_eligible_files
+from ...utils.path_utils import (
+    base_module_qn,
+    declaration_extension,
+    has_implementation_sibling,
+    walk_eligible_files,
+)
 from ..cpp.utils import convert_operator_symbol_to_name
 from . import constants as fc
 
@@ -40,10 +45,23 @@ def build_module_qn_map(
     # Mirror DefinitionProcessor._disambiguate_module_qn: a base qn is claimed
     # by the first file (in walk order); a later file colliding on that base qn
     # gets its extension appended (foo.cpp -> proj.foo, foo.h -> proj.foo.h).
+    #
+    # The one tie NOT broken by walk order is a TypeScript declaration beside
+    # its implementation (#1720): the declaration yields, decided on the
+    # filesystem. This walk covers every eligible file rather than only C++
+    # ones, so a `.d.ts` is in this map and would otherwise claim `proj.foo`
+    # here while the indexer gave it to `foo.ts` -- one module under two names,
+    # which is the #1025 failure the mirror exists to prevent.
     claimed: dict[str, str] = {}
     result: dict[str, str] = {}
     for rel in _eligible_rel_files(repo_path, exclude_paths, unignore_paths):
         base = base_module_qn(Path(rel), project_name)
+        if (declaration := declaration_extension(Path(rel).name)) and (
+            has_implementation_sibling(
+                repo_path / rel, repo_path, exclude_paths, unignore_paths
+            )
+        ):
+            base = f"{base}{cs.SEPARATOR_DOT}{declaration.lstrip(cs.SEPARATOR_DOT)}"
         existing = claimed.get(base)
         if existing is None or existing == rel:
             final = base

@@ -31,8 +31,10 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
+from ..parameter_nodes import PendingParameterType
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -161,8 +163,10 @@ class ClassIngestMixin:
     flow_capture_enabled: bool
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    class_owner_module: dict[str, str]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
+    dart_constructor_qns: set[str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -170,6 +174,7 @@ class ClassIngestMixin:
     csharp_partial_groups: dict[str, list[str]]
     csharp_generic_methods: set[str]
     csharp_class_generic_arity: dict[str, int]
+    csharp_class_owner_module: dict[str, str]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -190,11 +195,14 @@ class ClassIngestMixin:
     rust_impl_method_traits: dict[str, str]
     rust_inherent_impl_methods: set[str]
     cpp_module_interfaces: set[str]
+    cpp_interfaces_parsed_this_run: set[str]
     _deferred_cpp_module_impls: list[tuple[str, str]]
     declared_module_qns: set[str]
     rust_function_modules: dict[str, str]
     pending_endpoints: list[tuple[cs.NodeLabel, str, list[str], str | None]]
     pending_type_facts: list[PendingTypeFact]
+    pending_parameter_types: list[PendingParameterType]
+    pending_field_types: list[PendingFieldType]
 
     def _namespace_qn(self, class_qn: str, module_qn: str) -> str:
         # Strip the module-file prefix so two nodes for the same C++ type in
@@ -219,7 +227,9 @@ class ClassIngestMixin:
         )
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]: ...
@@ -313,6 +323,7 @@ class ClassIngestMixin:
         module_qn: str,
         file_path: Path,
     ) -> None:
+        before = set(self.cpp_module_interfaces)
         cpp_modules.ingest_cpp_module_declarations(
             root_node,
             module_qn,
@@ -323,6 +334,10 @@ class ClassIngestMixin:
             self.cpp_module_interfaces,
             self._deferred_cpp_module_impls,
         )
+        # Remember what this parse added, so rehydration can rebuild the
+        # graph-derived entries without dropping an interface whose node
+        # write has not been flushed yet.
+        self.cpp_interfaces_parsed_this_run |= self.cpp_module_interfaces - before
 
     def resolve_deferred_cpp_module_impls(self) -> int:
         """Emit ModuleImplementation IMPLEMENTS edges for interfaces that exist.
@@ -1076,7 +1091,7 @@ class ClassIngestMixin:
             cs.KEY_START_LINE: class_start_line,
             cs.KEY_START_COL: class_start_col,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(class_node),
+            cs.KEY_DOCSTRING: self._get_docstring(class_node, language),
             cs.KEY_IS_EXPORTED: is_exported,
         }
         if file_path is not None:
@@ -1097,6 +1112,13 @@ class ClassIngestMixin:
                 leaf = class_name.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
                 self.simple_name_lookup[leaf].add(class_qn)
 
+        # The declaring module, for the class-keyed maps' prune (#1772).
+        # Recorded here rather than in the per-language field-type branches
+        # below, because `class_inheritance` is written for EVERY language
+        # while those branches cover only five, and a class carries no span
+        # record for the sweep to attribute it by.
+        self.class_owner_module[class_qn] = module_qn
+
         parent_label, parent_qn, parent_span = self._determine_function_parent(
             class_node, class_qn, module_qn, lang_config, language
         )
@@ -1115,6 +1137,25 @@ class ClassIngestMixin:
         # type_spec is class_node, so this is a no-op for non-templates and for
         # Go/Rust (which never take the template_declaration branch).
         member_node = type_spec if type_spec is not None else class_node
+        # Declared fields ride with their owner: same gate, same props source
+        # for path/absolute_path, queued type for the deferred OF_TYPE pass.
+        # Emitted AFTER the owner node so a batch flush never writes the edge
+        # before its endpoint, and from member_node: a templated C++ class's
+        # wrapper has no body, its members live on the inner class_specifier
+        # (local review P1).
+        emit_declared_fields(
+            self.ingestor,
+            self.pending_field_types,
+            # `determine_node_type` returns a NodeType; every member's value is a
+            # NodeLabel value (checked when this was written), so the owner
+            # label is the same name in the graph's own enum.
+            cs.NodeLabel(node_type.value),
+            class_qn,
+            module_qn,
+            member_node,
+            language,
+            class_props,
+        )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
@@ -1232,6 +1273,10 @@ class ClassIngestMixin:
                     self.csharp_class_generic_arity[class_qn] = len(
                         child.named_children
                     )
+                    # The declaring module, recorded because the class qn
+                    # cannot yield it: a namespace pushes the qn under a
+                    # sibling module's qn (#1769 review).
+                    self.csharp_class_owner_module[class_qn] = module_qn
                     break
             # A `partial` type is split across files into N path-distinct
             # nodes; group the parts into one shared list so a typed receiver
@@ -1393,6 +1438,7 @@ class ClassIngestMixin:
                 module_qn=owner_module_qn,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             # Record where this method landed, same as the generic method
             # path: the registered qn (a collision deduplicates it to
@@ -1543,6 +1589,7 @@ class ClassIngestMixin:
                 annotated_override_sink=annotated_override_sink,
                 pending_endpoints=self.pending_endpoints,
                 type_fact_sink=self.pending_type_facts,
+                parameter_type_sink=self.pending_parameter_types,
             )
             if (
                 ingested_qn is not None
@@ -1561,6 +1608,8 @@ class ClassIngestMixin:
                 and (dart_return := dart_utils.dart_return_type_name(method_node))
             ):
                 self.method_return_types[ingested_qn] = dart_return
+                if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+                    self.dart_constructor_qns.add(ingested_qn)
             if ingested_qn is not None:
                 # Rust trait bodies reach here rather than the impl path above;
                 # a trait is no module either (issue #1086).

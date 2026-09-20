@@ -72,6 +72,31 @@ def matches_ignore_patterns(rel_path_str: str, patterns: frozenset[str]) -> bool
 _GLOB_MAGIC = re.compile(r"[*?\[]")
 
 
+def unignore_names_this_file(rel_path_str: str, patterns: frozenset[str]) -> bool:
+    """Whether some unignore pattern names THIS FILE rather than a container.
+
+    `matches_ignore_patterns` cannot answer this: gitwildmatch matches
+    `build/js/jquery.min.js` against the directory pattern `build` just as
+    readily as against the file's own path, so a directory-level `!` would
+    otherwise rescue a bundle inside it.
+
+    This is the "what counts as exact" decision issue #1637 left open. A
+    pattern qualifies when, with any trailing slash removed, it equals the
+    file's path or its bare filename -- so `!docs/js/jquery.min.js` and
+    `!jquery.min.js` both rescue, while `!docs`, `!docs/js` and `!docs/**` do
+    not. Globs are deliberately excluded: `!docs/**` reads as "rescue this
+    subtree", which is the directory-level intent the split preserves.
+    """
+    filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    for pattern in patterns:
+        candidate = pattern.strip().rstrip(cs.SEPARATOR_SLASH)
+        if not candidate or _GLOB_MAGIC.search(candidate):
+            continue
+        if candidate.lstrip(cs.SEPARATOR_SLASH) in (rel_path_str, filename):
+            return True
+    return False
+
+
 def unignore_could_match_within(pattern: str, rel_dir: str) -> bool:
     # Dir-pruning guard: keep a pruned-by-default directory when an
     # unignore pattern could match it or anything beneath it.
@@ -124,6 +149,33 @@ def should_keep_dir(
     )
 
 
+def is_ignored_filename(name: str) -> bool:
+    """Whether a filename is a machine-generated artefact, by its ending.
+
+    The single definition of the `IGNORE_SUFFIXES` rule, shared by the
+    repository walk and the real-time watcher. It tests the whole filename
+    rather than `Path.suffix` because the list holds endings that are not
+    pathlib suffixes: `Path("jquery.min.js").suffix` is ".js" and
+    `Path("notes.py~").suffix` is ".py~", so a `Path.suffix` membership test
+    matched neither, and the two consumers disagreed about which files belong
+    in the graph -- `~` was live for the watcher and dead for the indexer
+    (issue #1636).
+    """
+    return name.endswith(cs.IGNORE_FILENAME_ENDINGS)
+
+
+def is_unconditionally_ignored_filename(name: str) -> bool:
+    """Whether a filename is ignored even against an explicit unignore.
+
+    The stricter half of `is_ignored_filename`: compiled output and editor
+    droppings, which no configuration should resurrect. The rest of the list
+    is text a parser can read, so an explicit `!` line rescues it instead
+    (issue #1637). Both walk predicates must ask this question the same way,
+    or the indexer and the watcher disagree about which files are in the graph.
+    """
+    return name.endswith(cs.UNCONDITIONAL_IGNORE_FILENAME_ENDINGS)
+
+
 def should_skip_path(
     path: Path,
     repo_path: Path,
@@ -132,7 +184,11 @@ def should_skip_path(
     is_file: bool | None = None,
 ) -> bool:
     _is_file = path.is_file() if is_file is None else is_file
-    if _is_file and path.suffix in cs.IGNORE_SUFFIXES:
+    # Ahead of every exclude/unignore check for the UNCONDITIONAL half only:
+    # compiled output is not source in any configuration, so rescuing the
+    # DIRECTORY it sits in must not drag it back in. The rescuable half is
+    # tested after the unignore below, so an explicit `!` line can win.
+    if _is_file and is_unconditionally_ignored_filename(path.name):
         return True
     # Containment below is lexical, so a symlink whose target escapes the root
     # would pass it and let a repo-scoped sweep read or overwrite outside files
@@ -148,6 +204,15 @@ def should_skip_path(
     match_path = rel_path_str if _is_file else f"{rel_path_str}/"
     if exclude_paths and matches_ignore_patterns(match_path, exclude_paths):
         return True
+    # The rescuable half, decided BEFORE the general unignore below: that check
+    # returns False for a directory-level `!` too, since gitwildmatch matches
+    # `build/js/jquery.min.js` against the pattern `build`. Requiring a pattern
+    # that names the FILE is what keeps `!build/` from resurrecting a bundle
+    # inside it while `!build/js/jquery.min.js` rescues it (issue #1637).
+    if _is_file and is_ignored_filename(path.name):
+        return not (
+            unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
+        )
     # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(match_path, unignore_paths):
         return False
@@ -180,18 +245,126 @@ def has_ignored_dir_part(dir_parts: tuple[str, ...]) -> bool:
 def should_skip_rel_file(
     rel_path_str: str,
     dir_parts: tuple[str, ...],
-    suffix: str,
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
 ) -> bool:
-    if suffix in cs.IGNORE_SUFFIXES:
+    # The filename comes from `rel_path_str` rather than a caller-supplied
+    # suffix: every caller derived that suffix with a last-dot split, which
+    # cannot see a compound ending like ".min.js" no matter what this function
+    # then does with it (issue #1636). First, matching `should_skip_path`; the
+    # two must agree on precedence as well as on the rule.
+    filename = rel_path_str.rsplit(cs.SEPARATOR_SLASH, 1)[-1]
+    if is_unconditionally_ignored_filename(filename):
         return True
     if exclude_paths and matches_ignore_patterns(rel_path_str, exclude_paths):
         return True
+    # Same position and rule as `should_skip_path`: the rescuable half needs a
+    # pattern naming the FILE, decided before the general unignore below, or a
+    # directory-level `!` would rescue it there (#1637). The two predicates
+    # must agree on precedence, not merely on the ending rule.
+    if is_ignored_filename(filename):
+        return not (
+            unignore_paths and unignore_names_this_file(rel_path_str, unignore_paths)
+        )
     # unignore rescues only built-in ignores, never explicit user excludes.
     if unignore_paths and matches_ignore_patterns(rel_path_str, unignore_paths):
         return False
     return has_ignored_dir_part(dir_parts)
+
+
+# Longest first, so `.d.ts` is tried before the `.ts` it ends with. Derived
+# from the language set rather than restated, so an extension added there
+# cannot silently fall through to the single-suffix rule below (issue #1720).
+_MODULE_EXTS_LONGEST_FIRST: tuple[str, ...] = tuple(
+    sorted(cs.JS_TS_MODULE_EXTENSIONS, key=str.__len__, reverse=True)
+)
+
+
+def module_stem(filename: str) -> str:
+    """The filename with its MODULE extension removed, compound ones included.
+
+    ``Path.with_suffix("")`` strips one dot-segment, which is right for `.py`
+    and wrong for `.d.ts`: TypeScript declaration files carry a two-segment
+    extension that the language treats as a unit, and every other part of cgr
+    already does too -- ``JS_TS_MODULE_EXTENSIONS`` lists `.d.ts`, and the
+    JS/TS resolver looks up `pkg/index.d.ts` as the `pkg` entry point. Only the
+    qn derivation disagreed, storing it as `proj.pkg.index.d`, a name no
+    importer ever asks for, so its definitions were unreachable (issue #1720).
+
+    Extensions outside the language set keep the single-suffix behaviour:
+    `archive.tar.gz` is not a module named `archive`, and a `.d` in some other
+    language is not a declaration marker.
+    """
+    for ext in _MODULE_EXTS_LONGEST_FIRST:
+        if filename.endswith(ext) and len(filename) > len(ext):
+            return filename[: -len(ext)]
+    return Path(filename).stem
+
+
+_DECLARATION_EXTS: tuple[str, ...] = tuple(
+    ext
+    for ext in _MODULE_EXTS_LONGEST_FIRST
+    if ext.startswith(cs.DECLARATION_EXT_PREFIX)
+)
+_IMPLEMENTATION_EXTS: tuple[str, ...] = tuple(
+    ext for ext in _MODULE_EXTS_LONGEST_FIRST if ext not in _DECLARATION_EXTS
+)
+
+
+def declaration_extension(filename: str) -> str | None:
+    """The TYPE-ONLY module extension this file carries, if any.
+
+    Partitioned from the one language set rather than listed again, so a
+    declaration form added to ``JS_TS_MODULE_EXTENSIONS`` is classified here
+    without a second edit.
+    """
+    for ext in _DECLARATION_EXTS:
+        if filename.endswith(ext) and len(filename) > len(ext):
+            return ext
+    return None
+
+
+def has_implementation_sibling(
+    path: Path,
+    repo_path: Path,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Will a same-stem NON-declaration module actually be INDEXED?
+
+    Asked of the filesystem rather than of the parse registry deliberately.
+    The registry answers "has one been seen yet", which depends on walk order;
+    the disk answers "does one exist", which does not. The distinction is the
+    whole point -- a `.d.ts` sorts before its `.ts` in an ascending walk, so a
+    registry-based tie-break hands the shared name to the stub every time
+    (issue #1720, and the regression that closed PR #1721).
+
+    But existence alone is too permissive, and the gap is not hypothetical: an
+    excluded `foo.ts` is on disk and will never be a node, so yielding
+    `proj.foo` to it leaves NOTHING owning the name imports of `./foo` resolve
+    to -- #1720 reintroduced by its own fix, under a configuration the first
+    version of this predicate could not see (Greptile P1 on PR #1728).
+
+    So candidates are filtered through `should_skip_path`, the same predicate
+    the repository walk prunes with. Sharing it is what stops this from
+    disagreeing with the indexer about which files exist (issue #1088); asking
+    the question a second way here is how the two would drift apart.
+    """
+    stem = module_stem(path.name)
+    for ext in _IMPLEMENTATION_EXTS:
+        candidate = path.parent / f"{stem}{ext}"
+        if not candidate.is_file():
+            continue
+        if should_skip_path(
+            candidate,
+            repo_path,
+            exclude_paths=exclude_paths,
+            unignore_paths=unignore_paths,
+            is_file=True,
+        ):
+            continue
+        return True
+    return False
 
 
 def base_module_qn(rel_path: Path, project_name: str) -> str:
@@ -208,7 +381,7 @@ def base_module_qn(rel_path: Path, project_name: str) -> str:
     if rel_path.name in (cs.INIT_PY, cs.MOD_RS):
         parts = rel_path.parent.parts
     else:
-        parts = rel_path.with_suffix("").parts
+        parts = (*rel_path.parent.parts, module_stem(rel_path.name))
     return cs.SEPARATOR_DOT.join([project_name, *parts])
 
 
@@ -276,13 +449,10 @@ def walk_eligible_files(
         for fname in sorted(filenames):
             if fname in state_filenames:
                 continue
-            dot = fname.rfind(".")
-            suffix = fname[dot:] if dot != -1 else ""
             rel_path_str = f"{dir_prefix}{fname}"
             if not should_skip_rel_file(
                 rel_path_str,
                 dir_parts,
-                suffix,
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
             ):

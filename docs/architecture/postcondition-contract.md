@@ -24,7 +24,7 @@ verdict.affected_tests   # the delta's tests_reaching, for the caller to run
 | Operation          | Promise                                                                                                                 |
 |--------------------|-------------------------------------------------------------------------------------------------------------------------|
 | `rename`           | The delta reports exactly the requested `(old, new)` pairs as renamed; no other symbol appears or disappears; the call-site count into the touched definitions is unchanged; no caller is dangling; no site resolved by guesswork (`heuristic`, `overload`, `dynamic`) was rewritten unless `heuristic_allowed`. |
-| `change_signature` | Every call site of a changed signature reads `ok` (or `unknown`, for languages without stored parameters) or is listed in `unmapped` as `path:line`; no `too_many` arity finding remains unlisted. |
+| `change_signature` | Every call site of a changed signature reads `ok`, was rewritten by the operation (a rewritten site is mapped by construction), or is listed in `unmapped` as `path:line`; an `unknown` verdict is not accepted; no `too_many` arity finding remains unlisted. |
 | `move`             | The old name is reported renamed to its new home, importers are updated (no dangling callers), and no import cycle appeared. |
 | all                | No new duplicate group; every file parses.                                                                              |
 
@@ -37,7 +37,8 @@ caller count, and says so with `removed=(qn,)` and
 
 An operation measures its delta through the scoped re-ingest of the files it
 wrote (`measure`), verifies, and on failure undoes its transaction with
-`undo_last` and re-ingests the restored files so the graph follows. The
+`undo_transaction`, which refuses when a later edit was recorded on top
+of it, and re-ingests the restored files so the graph follows. The
 [rename operation](rename.md#postcondition-contract) does this whenever it is
 given a `reingest` callable; the MCP `rename` tool and `cgr rename` pass the
 live updater's. The verdict rides on the operation's report (`verdict`), so

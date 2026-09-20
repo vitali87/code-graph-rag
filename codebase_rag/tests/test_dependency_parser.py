@@ -11,6 +11,7 @@ from codebase_rag.parsers.dependency_parser import (
     GemfileParser,
     GoModParser,
     PackageJsonParser,
+    PubspecYamlParser,
     PyProjectTomlParser,
     RequirementsTxtParser,
     _extract_pep508_package_name,
@@ -866,3 +867,34 @@ class TestParseDependencies:
         deps = parse_dependencies(csproj)
 
         assert len(deps) == 1
+
+
+class TestPubspecYamlParser:
+    def test_exact_entries_under_dependency_blocks(self, tmp_path: Path) -> None:
+        # One line per rule the scanner applies: a comment, a nested `sdk:`
+        # key under a name-only parent (`flutter:`), a shallower late entry
+        # that is not at the block's entry indent, a nameless line, a block
+        # that is not a dependencies block, and a dev block (#1669 review:
+        # the previous tests asserted membership only, so the deeper-key
+        # skip and the empty-name drop could not go red).
+        pubspec = tmp_path / "pubspec.yaml"
+        pubspec.write_text(
+            "name: demo\n"
+            "dependencies:\n"
+            "  # a comment\n"
+            "  flutter:\n"
+            "    sdk: flutter\n"
+            "  http: ^1.0.0\n"
+            " shallow: 1\n"
+            "  : nameless\n"
+            "environment:\n"
+            "  sdk: '>=3.0.0'\n"
+            "dev_dependencies:\n"
+            "  test: ^1.24.0\n",
+            encoding="utf-8",
+        )
+        assert PubspecYamlParser().parse(pubspec) == [
+            Dependency("flutter", ""),
+            Dependency("http", "^1.0.0"),
+            Dependency("test", "^1.24.0"),
+        ]

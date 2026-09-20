@@ -195,7 +195,12 @@ def _from_import_targets(module_qn: str, node: Node) -> dict[str, str]:
     base = _from_import_base(module_qn, base)
     out: dict[str, str] = {}
     for child in node.named_children:
-        if child is base_node:
+        # `==` not `is`: py-tree-sitter builds a fresh wrapper per lookup, so
+        # the node from child_by_field_name is never the same object as the
+        # one in named_children. With identity this never skipped the base,
+        # and a dotless module name passed the dot filter below and mapped
+        # to itself as though it were an imported symbol.
+        if child == base_node:
             continue
         if child.type == cs.TS_PY_DOTTED_NAME:
             name = _decode(child)
@@ -231,6 +236,39 @@ def _resolve_module(modules: set[str], importer_qn: str, dotted: str) -> str | N
         return None
     candidates.sort(key=len)
     return candidates[0]
+
+
+def _resolve_import_module(
+    modules: set[str], importer_qn: str, dotted: str
+) -> str | None:
+    # A dotted target names a module, or a symbol whose head does.
+    target = _resolve_module(modules, importer_qn, dotted)
+    if target is not None:
+        return target
+    head, _, _attr = dotted.rpartition(cs.SEPARATOR_DOT)
+    return _resolve_module(modules, importer_qn, head) if head else None
+
+
+def imported_module_qns(module_qn: str, root: Node, modules: set[str]) -> set[str]:
+    """The known modules `module_qn` imports, resolved as the registry does.
+
+    A scoped re-ingest uses this to find the router modules a mounting
+    module's mounts need, so it must agree with the registry's own import
+    resolution (`_resolve_module`) rather than the import processor's map,
+    which records a sibling `import routes` bare under a package root.
+    """
+    found: set[str] = set()
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if node.type in (cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT):
+            for dotted in _import_targets(module_qn, node).values():
+                target = _resolve_import_module(modules, module_qn, dotted)
+                if target is not None and target != module_qn:
+                    found.add(target)
+            continue
+        stack.extend(node.named_children)
+    return found
 
 
 class RouterRegistry:

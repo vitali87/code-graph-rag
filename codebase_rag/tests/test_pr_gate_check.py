@@ -1,0 +1,2184 @@
+"""The PR-readiness checker's own traps, each taken from real GitHub JSON.
+
+Every fixture below was captured from a live PR in this repository rather
+than written by hand, because the whole point of the checker is that the
+naive reading of these payloads is wrong in a way that reads as success
+(issues #1581, #1582).
+
+The four that bite, and which a naive implementation gets wrong:
+
+* `statusCheckRollup` mixes two shapes. A `CheckRun` carries `name`; a
+  `StatusContext` carries `context` and has no `name` key at all, so
+  `select(.name | test(...))` raises mid-pipeline and the error reads as
+  "no matching contexts" if stderr scrolls past.
+* A queued check reports `conclusion: ""` -- an empty STRING, not null --
+  so a `.conclusion // "pending"` default never fires and the check looks
+  concluded.
+* `Integration Tests` and `Binary Smoke Test` match a loose `/test/i` but
+  are not unit coverage, so a loose pattern over-counts.
+* A CodeRabbit skip notice is a comment with a non-empty body. Counting
+  comments therefore cannot distinguish "reviewed" from "declined to
+  review", and the skip wording is not a closed set -- three variants are
+  in the wild.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from codebase_rag.tests.conftest import assert_fixture_covers
+from scripts import check_pr_gated
+from scripts.check_pr_gated import (
+    AGGREGATED_JOBS,
+    BLOCKED_VALIDATION_MARKERS,
+    absent_context_reason,
+    context_name,
+    is_concluded,
+    is_real_review,
+    missing_aggregated_jobs,
+    required_contexts_present,
+    review_execution_caveats,
+    unit_test_contexts,
+    unresolved_in_page,
+    validation_was_blocked,
+)
+
+REAL_STATUS_CONTEXT = {
+    "__typename": "StatusContext",
+    "context": "CodeRabbit",
+    "startedAt": "2026-09-01T22:37:05Z",
+    "state": "SUCCESS",
+    "targetUrl": "",
+}
+
+
+REAL_CHECK_RUN = {
+    "__typename": "CheckRun",
+    "completedAt": "2026-09-01T22:33:32Z",
+    "conclusion": "SKIPPED",
+    "detailsUrl": "https://github.com/vitali87/code-graph-rag/actions/runs/33566887159/job/100052009082",
+    "name": "scan-scheduled",
+    "startedAt": "2026-09-01T22:33:32Z",
+    "status": "COMPLETED",
+    "workflowName": "OSV-Scanner",
+}
+
+
+REAL_QUEUED_CHECK_RUN = {
+    "__typename": "CheckRun",
+    "completedAt": "",
+    "conclusion": "",
+    "name": "Unit Tests (ubuntu-latest, py3.12)",
+    "startedAt": "2026-09-01T22:33:32Z",
+    "status": "QUEUED",
+    "workflowName": "CI",
+}
+
+
+REAL_RATE_LIMIT_NOTICE = (
+    "<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\n"
+    "<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->\n"
+    "\n> [!WARNING]\n> ## Review limit reached\n> \n"
+    "> **Next included review available in 31 minutes.**\n"
+)
+
+
+REAL_AUTO_REVIEW_DISABLED_NOTICE = (
+    "> [!IMPORTANT]\n> ## Review skipped\n>\n"
+    "> Auto reviews are disabled on base/target branches other than the "
+    "default branch.\n>\n> Please check the settings in the CodeRabbit UI "
+    "or the `.coderabbit.yaml` file in this repository. To trigger a single "
+    "review, invoke the `@coderabbitai review` command.\n>\n"
+    "> Configuration used: **defaults**\n"
+)
+
+
+REAL_EMPTY_BUT_COMPLETED_REVIEW = (
+    "**Actionable comments posted: 0**\n\n"
+    "<details>\n<summary>♻️ Duplicate comments (1)</summary>\n"
+    "</details>\n\n"
+    "No actionable comments were generated in the recent review."
+)
+
+
+class TestContextName:
+    """Both rollup shapes must yield a name, and neither may raise."""
+
+    def test_a_check_run_uses_its_name(self) -> None:
+        assert context_name(REAL_CHECK_RUN) == "scan-scheduled"
+
+    def test_a_status_context_has_no_name_key_and_must_not_raise(self) -> None:
+        assert "name" not in REAL_STATUS_CONTEXT
+        assert context_name(REAL_STATUS_CONTEXT) == "CodeRabbit"
+
+    def test_the_entry_a_name_only_scan_drops_is_the_review_bot(self) -> None:
+        """The drop is not random: it lands on the review evidence.
+
+        Verified independently on PR #1624, whose rollup is 28 `CheckRun`
+        entries and exactly one `StatusContext` -- and that one is
+        CodeRabbit. So a scan keyed on `name` reports the review bot ABSENT
+        on a PR where it reviewed cleanly and anchored to the head, which
+        fails in the safe-looking direction.
+
+        The control is the naive scan itself, so the assertion below means
+        something rather than restating the implementation.
+        """
+        rollup = [
+            {"__typename": "CheckRun", "name": "Unit Tests (ubuntu-latest, py3.12)"},
+            REAL_STATUS_CONTEXT,
+        ]
+
+        naive = [e.get("name") for e in rollup if e.get("name")]
+        resolved = [context_name(e) for e in rollup]
+
+        assert "CodeRabbit" not in naive, "fixture no longer shows the drop"
+        assert "CodeRabbit" in resolved
+
+    def test_an_unknown_shape_yields_empty_rather_than_raising(self) -> None:
+        """A silent skip is wrong, but so is dying mid-scan.
+
+        Returning "" lets the caller report the entry as unnamed instead of
+        aborting the whole check, which is how the jq form failed.
+        """
+        assert context_name({"__typename": "Mystery"}) == ""
+
+
+class TestIsConcluded:
+    def test_a_queued_check_is_not_concluded(self) -> None:
+        """`conclusion` is "" here, not null: a `or "pending"` default lies."""
+        assert REAL_QUEUED_CHECK_RUN["conclusion"] == ""
+        assert is_concluded(REAL_QUEUED_CHECK_RUN) is False
+
+    def test_a_completed_check_is_concluded(self) -> None:
+        assert is_concluded(REAL_CHECK_RUN) is True
+
+    def test_the_naive_none_default_would_have_passed_this(self) -> None:
+        """Pins why the guard is written against "" and not against None."""
+        assert (REAL_QUEUED_CHECK_RUN["conclusion"] or "pending") == "pending"
+        assert REAL_QUEUED_CHECK_RUN.get("conclusion", "pending") == ""
+
+
+class TestUnitTestContexts:
+    def test_integration_and_smoke_are_not_unit_tests(self) -> None:
+        rollup = [
+            {"__typename": "CheckRun", "name": "Unit Tests (ubuntu-latest, py3.12)"},
+            {"__typename": "CheckRun", "name": "Integration Tests (ubuntu-latest)"},
+            {"__typename": "CheckRun", "name": "Binary Smoke Test"},
+        ]
+
+        names = unit_test_contexts(rollup)
+
+        assert names == ["Unit Tests (ubuntu-latest, py3.12)"]
+
+    def test_a_loose_match_would_have_counted_three(self) -> None:
+        """The control that makes the assertion above mean something."""
+        rollup = [
+            {"__typename": "CheckRun", "name": "Unit Tests (ubuntu-latest, py3.12)"},
+            {"__typename": "CheckRun", "name": "Integration Tests (ubuntu-latest)"},
+            {"__typename": "CheckRun", "name": "Binary Smoke Test"},
+        ]
+
+        loose = [e for e in rollup if "test" in context_name(e).lower()]
+
+        assert len(loose) == 3, "fixture no longer demonstrates the over-count"
+
+
+class TestRequiredContextsPresent:
+    def test_a_missing_context_is_reported_not_ignored(self) -> None:
+        rollup = [{"__typename": "CheckRun", "name": "All Checks Pass"}]
+
+        missing = required_contexts_present(rollup, ["All Checks Pass", "CodeRabbit"])
+
+        assert missing == ["CodeRabbit"]
+
+    def test_presence_is_not_inferred_from_absence_of_failure(self) -> None:
+        """An empty rollup must report every required context missing.
+
+        This is the #1582 shape: zero failures out of a set containing no
+        tests reads as clean.
+        """
+        missing = required_contexts_present([], ["All Checks Pass"])
+
+        assert missing == ["All Checks Pass"]
+
+
+class TestMissingAggregatedJobs:
+    def test_matrix_job_names_are_matched_by_prefix(self) -> None:
+        """Exact comparison finds none of them and reports everything missing."""
+        rollup = [
+            {"__typename": "CheckRun", "name": f"{job} (ubuntu-latest, py3.12)"}
+            for job in AGGREGATED_JOBS
+        ]
+
+        assert missing_aggregated_jobs(rollup) == []
+
+    def test_the_codeql_only_set_reports_every_job_missing(self) -> None:
+        """The #1582 shape: a green aggregate over a set containing no tests.
+
+        Seven CodeQL contexts and nothing else is what a stacked branch is
+        left with after a rebase cancels its runs, and `0 FAILURE` over that
+        set reads as clean.
+        """
+        rollup = [
+            {"__typename": "CheckRun", "name": "Analyze (actions)"},
+            {"__typename": "CheckRun", "name": "Analyze (python)"},
+            {"__typename": "StatusContext", "context": "CodeRabbit"},
+        ]
+
+        assert missing_aggregated_jobs(rollup) == list(AGGREGATED_JOBS)
+
+
+class TestReviewEvidenceIsNotForgeable:
+    """A verdict marker written by anyone must not satisfy the gate.
+
+    Greptile's P1 on PR #1625: bodies were pooled without author, so the
+    PR author could write "confidence score" in an ordinary comment and
+    the gate would report the PR reviewed. The check then asserted
+    something the author controls (CWE-345).
+    """
+
+    def test_the_pr_author_cannot_forge_a_verdict(self) -> None:
+        forged = "Looks good. confidence score is fine here."
+
+        assert is_real_review(forged, "vitali87") is False
+
+    def test_the_same_body_from_the_bot_does_count(self) -> None:
+        """The control: it is the AUTHOR that makes the difference, not the text.
+
+        Without this the test above would also pass if `is_real_review`
+        rejected the body for some unrelated reason.
+        """
+        forged = "Looks good. confidence score is fine here."
+
+        assert is_real_review(forged, "coderabbitai") is True
+
+    def test_a_trusted_author_alone_is_not_enough(self) -> None:
+        """The bot posts the skip notices too, so author alone cannot decide."""
+        assert is_real_review(REAL_RATE_LIMIT_NOTICE, "coderabbitai") is False
+
+    def test_the_bot_suffix_spelling_is_accepted(self) -> None:
+        """`author.login` and `user.login` differ on the `[bot]` suffix."""
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai[bot]")
+
+    def test_an_unknown_author_fails_closed(self) -> None:
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "") is False
+
+
+class TestUnresolvedInPage:
+    """An unresolved thread on page two must not be invisible.
+
+    `reviewThreads(first: 100)` without `pageInfo` silently truncates, and
+    PR #1503 carried 53 threads, so the ceiling is reachable rather than
+    theoretical (Greptile P1 on PR #1625).
+    """
+
+    @staticmethod
+    def _page(unresolved: int, has_next: bool, cursor: str) -> dict[str, object]:
+        nodes = [{"isResolved": False}] * unresolved
+        return {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": nodes,
+                            "pageInfo": {
+                                "hasNextPage": has_next,
+                                "endCursor": cursor,
+                            },
+                        }
+                    }
+                }
+            }
+        }
+
+    def test_page_one_reports_that_another_page_exists(self) -> None:
+        count, has_next, cursor = unresolved_in_page(self._page(0, True, "Y3Vyc29y"))
+
+        assert count == 0
+        assert has_next is True, "a single-page read would stop here and report clean"
+        assert cursor == "Y3Vyc29y"
+
+    def test_the_blocker_on_page_two_is_counted(self) -> None:
+        count, has_next, _ = unresolved_in_page(self._page(1, False, ""))
+
+        assert count == 1
+        assert has_next is False
+
+    def test_a_malformed_page_raises_rather_than_reporting_zero(self) -> None:
+        """The caller turns this into "unverified", never into a clean count."""
+        with pytest.raises((KeyError, TypeError)):
+            unresolved_in_page({"data": {}})
+
+    def test_a_page_with_nodes_but_no_pageinfo_is_unverified_not_final(self) -> None:
+        """The one shape that used to answer "complete" instead of "unverified".
+
+        `info = threads.get("pageInfo", {})` defaulted `hasNextPage` to
+        False, so a page carrying `nodes` and no `pageInfo` key read as the
+        FINAL page and returned its count with no error -- while every other
+        unreadable shape here routes to unverified. A missing key answered
+        as a clean result is the class this script exists to close, so the
+        inconsistency mattered more than its likelihood (CodeRabbit on
+        PR #1625).
+
+        The two-page fixtures above are the control: they must stay green,
+        or this would have been "fixed" by making every page unverified.
+        """
+        no_page_info = {
+            "data": {
+                "repository": {
+                    "pullRequest": {"reviewThreads": {"nodes": [{"isResolved": False}]}}
+                }
+            }
+        }
+
+        with pytest.raises(KeyError):
+            unresolved_in_page(no_page_info)
+
+    def test_a_pageinfo_without_hasnextpage_is_unverified_not_final(self) -> None:
+        """The same defect one level down, which the first fix missed.
+
+        `bool(info.get("hasNextPage"))` is False for a `pageInfo` that exists
+        but omits the field, so pagination ended as if complete. Fixing the
+        missing-`pageInfo` case without this one repaired the named instance
+        rather than the class (CodeRabbit on PR #1625).
+        """
+        missing_flag = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"isResolved": False}],
+                            "pageInfo": {"endCursor": "Y3Vyc29y"},
+                        }
+                    }
+                }
+            }
+        }
+
+        with pytest.raises(KeyError):
+            unresolved_in_page(missing_flag)
+
+    def test_a_string_hasnextpage_is_refused_rather_than_trusted(self) -> None:
+        """A wrong type must not be read as an answer.
+
+        `"false"` is a truthy string, so a shape change turning the flag into
+        a string would invert this check while looking like it worked.
+        """
+        wrong_type = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": "false", "endCursor": ""},
+                        }
+                    }
+                }
+            }
+        }
+
+        with pytest.raises(TypeError):
+            unresolved_in_page(wrong_type)
+
+
+class TestIsRealReview:
+    @pytest.mark.parametrize(
+        ("label", "body"),
+        [
+            ("rate limited", REAL_RATE_LIMIT_NOTICE),
+            ("auto review disabled", REAL_AUTO_REVIEW_DISABLED_NOTICE),
+        ],
+    )
+    def test_a_skip_notice_is_not_a_review(self, label: str, body: str) -> None:
+        assert body.strip(), f"{label}: fixture is empty, so it proves nothing"
+        assert is_real_review(body, "coderabbitai") is False, label
+
+    def test_a_completed_review_that_found_nothing_still_counts(self) -> None:
+        """The case that makes "non-empty body" and "no findings" both wrong.
+
+        A review reporting zero actionable comments DID run. Treating it as
+        skipped would refuse a properly reviewed PR.
+        """
+        assert is_real_review(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai") is True
+
+    def test_an_empty_body_is_not_a_review(self) -> None:
+        assert is_real_review("", "coderabbitai") is False
+        assert is_real_review("   \n  ", "coderabbitai") is False
+
+    def test_an_unrecognised_notice_shape_is_refused_not_admitted(self) -> None:
+        """Fails closed on wording nobody has seen yet.
+
+        The skip wording is not a closed set -- three variants are already
+        in the wild, and #1581 was filed knowing only two. So the test is
+        "does this positively carry a review verdict", not "is this absent
+        from a blocklist of known skips"; a blocklist admits every future
+        variant by default, which is the wrong direction to fail in.
+        """
+        invented_future_notice = (
+            "> [!WARNING]\n> ## Review postponed\n> Some new reason nobody "
+            "has written down yet.\n"
+        )
+
+        assert is_real_review(invented_future_notice, "coderabbitai") is False
+
+
+class TestCiRunsAtHeadIsNotWindowed:
+    """The run lookup must ask by SHA, not page recent runs.
+
+    Measured on PR #1826: its CI run was 36 minutes old, all 40 of the most
+    recent repo runs were newer, and the tool reported a fully green PR as
+    having "no CI run at the head". A windowed lookup turns repo traffic
+    into a false "never ran" verdict, which is the exact confusion this
+    checker exists to remove.
+    """
+
+    HEAD = "8c93429b6e9bc17a61b3096c296cae1a26f1a411"
+
+    CI_PATH = ".github/workflows/ci.yml"
+
+    def _payload(self, *, path: str | None = None) -> str:
+        return json.dumps(
+            {
+                "workflow_runs": [
+                    {
+                        "id": 34416630107,
+                        "name": "CI",
+                        "path": path if path is not None else self.CI_PATH,
+                        "head_sha": self.HEAD,
+                    }
+                ]
+            }
+        )
+
+    def test_the_query_is_scoped_to_the_head_sha(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert any(f"head_sha={self.HEAD}" in arg for call in seen for arg in call)
+
+    def test_the_request_paginates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`head_sha` is exact but not unbounded -- it pages at 30 by default.
+
+        Without --paginate a run on a later page reads as "no run at
+        head", which is the windowing bug this fix removes, returning at
+        a larger size. The decoder test cannot catch this: it feeds
+        pre-concatenated pages to a stub, so it covers the parsing but
+        not the flag that makes multiple pages arrive.
+        """
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        # Assert the ARGUMENT ORDER, not merely that the flag is present.
+        # `gh --paginate api ...` is rejected by gh, and a presence-only
+        # check passes for it -- caught exactly that way while restoring
+        # this flag after a mutation.
+        assert seen, "no gh call was made"
+        call = seen[0]
+        assert call[0] == "api"
+        assert "--paginate" in call
+        assert call.index("--paginate") > call.index("api")
+        assert any("per_page=100" in arg for arg in call)
+
+    def test_it_does_not_page_recent_runs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A `--limit` listing is the bug; it must not be how the answer is got."""
+        seen: list[tuple[str, ...]] = []
+
+        def fake(*args: str) -> str:
+            seen.append(args)
+            return self._payload()
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert not any("--limit" in call for call in seen)
+
+    def test_a_run_older_than_any_window_is_still_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", lambda *a: self._payload()
+        )
+
+        runs = check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert [r["id"] for r in runs] == [34416630107]
+
+    def test_a_non_ci_workflow_at_the_same_sha_is_excluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: self._payload(path=".github/workflows/codeql.yml"),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_an_impostor_workflow_merely_named_ci_is_excluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A display name is a string any workflow file may declare.
+
+        Matching on it would let a second file called `CI` satisfy the
+        check without running a single test, so the run is identified by
+        the workflow PATH. The repo's own require-ci-at-head workflow
+        matches on path for this reason.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: self._payload(path=".github/workflows/not-really-ci.yml"),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_a_run_on_a_later_page_is_still_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`--paginate` concatenates one JSON object per page.
+
+        Decoding only the first would reintroduce the windowing bug at a
+        larger size: a match on page two would read as "no run at head".
+        """
+        page_one = json.dumps(
+            {
+                "workflow_runs": [
+                    {"id": 1, "name": "OSV", "path": ".github/workflows/osv.yml"}
+                ]
+            }
+        )
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: page_one + "\n" + self._payload(),
+        )
+
+        runs = check_pr_gated.ci_runs_at_head(self.HEAD)
+
+        assert [r["id"] for r in runs] == [34416630107]
+
+    def test_an_unreachable_api_reports_no_runs_rather_than_raising(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *a: "")
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+
+class TestCheckResolvesRunOwnershipWithTheRestField:
+    """`check` must read the run id by the name the REST payload uses.
+
+    `ci_runs_at_head` returns REST `workflow_runs` entries, which carry
+    `id`. The previous lookup returned `gh run list` entries, which carry
+    `databaseId`. Keeping the old name fetches `actions/runs/None`, leaves
+    `owners` empty, and reports "does not resolve to #<pr>" -- trading one
+    false blocker for another. Verified against live PR #1826.
+    """
+
+    def test_ownership_resolves_rather_than_reporting_an_empty_owner_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        head = "f" * 40
+        view = {
+            "headRefOid": head,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={head}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 555,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": head,
+                            }
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/555"):
+                return json.dumps({"pull_requests": [{"number": 1826}]})
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        reasons, _caveats = check_pr_gated.check("1826")
+
+        # Unpacked: `check` returns (reasons, caveats), so iterating the tuple
+        # yields two LISTS and `"..." in r` is a list-membership test that can
+        # never match a substring. The assertion then held whether or not the
+        # reason was present, and could not fail (found while fixing #1944).
+        assert not any("does not resolve to" in r for r in reasons), reasons
+
+
+class TestCiRunsAtHeadFailsClosedOnMalformedPages:
+    """Malformed paginated output must yield fewer runs, never more.
+
+    Every degradation here reports "no CI run at the head", which blocks
+    a merge. The opposite direction -- inventing a run from unparseable
+    output -- would report a PR gated on evidence that does not exist.
+    """
+
+    CI_PATH = ".github/workflows/ci.yml"
+
+    def _page(self, run_id: int = 1) -> str:
+        return json.dumps({"workflow_runs": [{"id": run_id, "path": self.CI_PATH}]})
+
+    def _runs(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> list[dict]:
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *a: raw)
+        return check_pr_gated.ci_runs_at_head("a" * 40)
+
+    @pytest.mark.parametrize(
+        "label,raw,expected",
+        [
+            ("empty", "", 0),
+            ("whitespace only", "   \n  ", 0),
+            ("one page", None, 1),
+            ("trailing whitespace", None, 1),
+            ("page is null", None, 1),
+            ("page is a list", None, 1),
+            ("workflow_runs missing", None, 1),
+            ("workflow_runs not a list", None, 1),
+        ],
+    )
+    def test_malformed_output_never_invents_a_run(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        label: str,
+        raw: str | None,
+        expected: int,
+    ) -> None:
+        bodies = {
+            "one page": self._page(),
+            "trailing whitespace": self._page() + "\n\n  ",
+            "page is null": "null\n" + self._page(),
+            "page is a list": "[1,2]\n" + self._page(),
+            "workflow_runs missing": '{"total_count":0}' + "\n" + self._page(),
+            "workflow_runs not a list": '{"workflow_runs":"x"}' + "\n" + self._page(),
+        }
+        body = bodies[label] if raw is None else raw
+
+        assert len(self._runs(monkeypatch, body)) == expected
+
+    @pytest.mark.parametrize(
+        "prefix", ["\n", " ", "\t\n ", "\r\n"], ids=["nl", "space", "mixed", "crlf"]
+    )
+    def test_leading_whitespace_does_not_discard_every_page(
+        self, monkeypatch: pytest.MonkeyPatch, prefix: str
+    ) -> None:
+        """`raw_decode` does not tolerate leading whitespace.
+
+        Skipping separators only AFTER a decode means a response that
+        opens with one raises on the first pass and returns nothing,
+        reported as "no CI run exists at the head SHA" -- the very
+        verdict this lookup was rewritten to stop producing falsely.
+        """
+        runs = self._runs(monkeypatch, prefix + self._page())
+
+        assert [r["id"] for r in runs] == [1]
+
+    def test_leading_whitespace_before_multiple_pages_keeps_them_all(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = "\n" + self._page(1) + "\n" + self._page(2)
+
+        assert [r["id"] for r in self._runs(monkeypatch, raw)] == [1, 2]
+
+    def test_a_truncated_final_page_keeps_the_pages_already_decoded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cut-off last page must not discard the complete ones before it."""
+        raw = self._page() + "\n" + '{"workflow_runs":[{"id":2,'
+
+        assert [r["id"] for r in self._runs(monkeypatch, raw)] == [1]
+
+    def test_the_page_loop_terminates_on_unparseable_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards against an infinite loop when the decoder cannot advance."""
+        assert self._runs(monkeypatch, "not json" + self._page()) == []
+
+
+class TestTheTrueNegativeSurvivesTheFix:
+    """Removing the false "no CI run" must not weaken the real one.
+
+    The point of this gate is to refuse a PR whose CI never ran, so a fix
+    aimed at a false negative has to be checked against the true one --
+    otherwise it trades a tool that cries wolf for one that waves
+    everything through.
+    """
+
+    HEAD = "a" * 40
+
+    def test_a_head_with_no_runs_at_all_reports_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: json.dumps({"total_count": 0, "workflow_runs": []}),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+    def test_a_head_whose_runs_are_all_other_workflows_reports_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CodeQL and OSV run without CI on a queued head -- a real case.
+
+        Observed on #1847: every other workflow had reported while
+        `ci.yml` was still pending, so the head carried runs but none of
+        them was the one the gate requires.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            lambda *a: json.dumps(
+                {
+                    "workflow_runs": [
+                        {"id": 1, "path": ".github/workflows/codeql.yml"},
+                        {"id": 2, "path": ".github/workflows/osv-scanner.yml"},
+                    ]
+                }
+            ),
+        )
+
+        assert check_pr_gated.ci_runs_at_head(self.HEAD) == []
+
+
+REAL_REVIEW_WITH_BLOCKED_VALIDATION = (
+    "## Confidence score: 3/5\n\n"
+    "Last reviewed commit: 7d3c49e5\n\n"
+    "- A standalone rollback harness was attempted, but production imports "
+    "could not start because prompt_toolkit was absent in the incomplete "
+    "environment.\n"
+    "- The test suite remains blocked in this environment and historic paths "
+    "could not be behaviorally disproved; no precise present bug can be "
+    "claimed without a runnable import/test environment.\n"
+)
+
+
+REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR = (
+    "## Confidence score: 4/5\n\n"
+    "Both commands failed during import with ModuleNotFoundError: No module "
+    "named 'loguru' before _updater_for_reingest() could run; dependency "
+    "installation is blocked because building pymgclient requires CMake.\n"
+)
+
+
+class TestValidationWasBlocked:
+    """A review that could not RUN reads identically to one that verified.
+
+    #1824: the blocked-validation note lands in a collapsed log section
+    that a merge gate never opens and a human skims past. Detecting it is
+    the difference between "the bot checked this" and "the bot reasoned
+    about this and said so".
+    """
+
+    def test_the_real_blocked_review_is_detected(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+
+    def test_the_import_error_wording_is_deliberately_NOT_detected(self) -> None:
+        """A KNOWN MISS, accepted on purpose.
+
+        This artifact's phrasings ("failed during import with
+        ModuleNotFoundError", "dependency installation is blocked") are
+        exactly as plausible in a finding about the reviewed code: a
+        plugin that fails to import, an installer that blocks. Detecting
+        it would flag executed reviews as unexecuted, which discredits
+        work that was done -- a worse error than staying silent.
+
+        The blocklist fails permissive by design, so a miss degrades to
+        today's behaviour. If this artifact needs catching, the fix is a
+        reviewer-validation SECTION to parse, not a broader substring.
+        """
+        assert validation_was_blocked(REAL_REVIEW_BLOCKED_BY_IMPORT_ERROR) is False
+
+    def test_a_review_that_ran_is_not_flagged(self) -> None:
+        """The negative case. Without this the detector could return True
+        for everything and every test above would still pass."""
+        assert validation_was_blocked(REAL_EMPTY_BUT_COMPLETED_REVIEW) is False
+
+    def test_an_empty_body_is_not_flagged(self) -> None:
+        assert validation_was_blocked("") is False
+        assert validation_was_blocked("   \n ") is False
+
+    def test_a_blocked_review_is_still_a_real_review(self) -> None:
+        """Blocked validation must NOT disqualify the artifact.
+
+        The finding in #1547's blocked review turned out to be correct and
+        was fixed. Unverified is not wrong, so this is a caveat on the
+        evidence, never a reason to refuse the PR -- and non-execution is
+        legitimate anyway when a PR has no Python surface to exercise.
+        """
+        assert (
+            is_real_review(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps") is True
+        )
+
+
+class TestReviewExecutionCaveats:
+    """The WIRING, not the detector.
+
+    Without these, deleting the caveat call from `check` leaves every
+    other test in this file green -- coverage that cannot fail for the
+    reason it exists (found by mutating the call site, not by reading).
+    """
+
+    def test_a_blocked_review_produces_a_caveat(self) -> None:
+        caveats = review_execution_caveats(
+            [(REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps")]
+        )
+
+        assert len(caveats) == 1
+        assert "could not execute" in caveats[0]
+
+    def test_a_review_that_ran_produces_none(self) -> None:
+        assert (
+            review_execution_caveats(
+                [(REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai")]
+            )
+            == []
+        )
+
+    def test_no_reviews_produces_none(self) -> None:
+        assert review_execution_caveats([]) == []
+
+    def test_all_reviewers_blocked_says_so(self) -> None:
+        """Distinct wording from the partial case: if EVERY review was
+        blocked there is no executed second opinion to fall back on."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (
+                    "Confidence score: 3/5. The findings could not be "
+                    "behaviorally disproved in this environment.",
+                    "coderabbitai",
+                ),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("every review artifact present")
+
+    def test_one_blocked_among_several_is_the_partial_case(self) -> None:
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_EMPTY_BUT_COMPLETED_REVIEW, "coderabbitai"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+
+class TestCheckSurfacesTheCaveat:
+    """`check` itself must consult the caveat, not merely be able to.
+
+    The class above tests the helper in isolation and stays green when
+    the call site is deleted -- the exact "two guards, remove either and
+    it is still green" shape. This one stubs the only I/O seam
+    (`_gh_stdout_or_empty`) and asserts on `check`'s own return value, so
+    removing the call from `check` reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, review_body: str) -> None:
+        view = {
+            "headRefOid": "d" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [{"body": review_body, "author": {"login": "greptile-apps"}}],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_reports_the_caveat_for_a_blocked_review(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert any("could not execute" in c for c in caveats)
+
+    def test_check_reports_no_caveat_for_a_review_that_ran(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_EMPTY_BUT_COMPLETED_REVIEW)
+
+        _, caveats = check_pr_gated.check("1547")
+
+        assert caveats == []
+
+    def test_a_blocked_review_is_never_a_blocking_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The core contract: unverified is not wrong, so it must not
+        appear among the reasons that refuse a PR."""
+        self._stub(monkeypatch, REAL_REVIEW_WITH_BLOCKED_VALIDATION)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert not any("could not execute" in r for r in reasons)
+
+
+REAL_REVIEW_DESCRIBING_A_CRASH = (
+    "## Confidence score: 4/5\n\n"
+    "Last reviewed commit: abc1234\n\n"
+    "- The server could not start when the config key is absent; it raises "
+    "KeyError before binding.\n"
+    "- The worker could not run the queued task, and users get a raw "
+    "ModuleNotFoundError traceback.\n"
+    "- The plugin failed during import when the entry point is misspelled.\n"
+)
+
+
+class TestMarkersDoNotMatchBugDescriptions:
+    """The false-positive direction, which nothing else covers.
+
+    Bare substrings like "could not start" match a finding DESCRIBING a
+    crash just as readily as a reviewer describing its own broken
+    environment. Flagging an executed review as unexecuted is worse than
+    staying silent, so every marker must name the reviewer's environment.
+    """
+
+    def test_a_review_describing_a_crash_is_not_flagged(self) -> None:
+        assert validation_was_blocked(REAL_REVIEW_DESCRIBING_A_CRASH) is False
+
+    def test_the_motivating_artifact_is_still_caught(self) -> None:
+        """Narrowing must not cost detection on the artifact #1824 was
+        filed against, whose note names the environment explicitly."""
+        assert validation_was_blocked(REAL_REVIEW_WITH_BLOCKED_VALIDATION) is True
+
+    def test_no_marker_subsumes_another(self) -> None:
+        """A marker that is a superstring of another can never be the one
+        that matches, so it is dead configuration that reads as coverage."""
+        dead = [
+            longer
+            for longer in BLOCKED_VALIDATION_MARKERS
+            for shorter in BLOCKED_VALIDATION_MARKERS
+            if longer != shorter and shorter in longer
+        ]
+
+        assert dead == []
+
+    def test_one_blocked_artifact_among_an_authors_own_is_partial(self) -> None:
+        """Greptile re-scores in place and posts repeatedly, so the same
+        author routinely has both a blocked and an executed artifact.
+        Counting distinct AUTHORS called that "every review blocked"."""
+        caveats = review_execution_caveats(
+            [
+                (REAL_REVIEW_WITH_BLOCKED_VALIDATION, "greptile-apps"),
+                (REAL_REVIEW_DESCRIBING_A_CRASH, "greptile-apps"),
+            ]
+        )
+
+        assert len(caveats) == 1
+        assert caveats[0].startswith("a review by greptile-apps")
+
+    def test_every_marker_is_load_bearing(self) -> None:
+        """Each marker must be the SOLE reason some real phrasing is
+        caught. Without this, any one could be deleted with the suite
+        green -- the fixtures match several markers each, so they cannot
+        distinguish a marker that works from one nobody needs.
+        """
+        sole_evidence = {
+            "blocked in this environment": (
+                "The test suite remains blocked in this environment."
+            ),
+            "could not be behaviorally disproved": (
+                "Historic paths could not be behaviorally disproved."
+            ),
+            "without a runnable import/test environment": (
+                "No bug can be claimed without a runnable import/test environment."
+            ),
+        }
+
+        assert set(sole_evidence) == set(BLOCKED_VALIDATION_MARKERS)
+        for marker, phrasing in sole_evidence.items():
+            assert validation_was_blocked(phrasing) is True, marker
+            others = tuple(m for m in BLOCKED_VALIDATION_MARKERS if m != marker)
+            assert not any(m in phrasing.lower() for m in others), marker
+
+    def test_an_executed_review_describing_these_defects_is_not_flagged(
+        self,
+    ) -> None:
+        """The false positives that forced the third narrowing.
+
+        Each of these is an EXECUTED review reporting a defect in the
+        reviewed application, using wording an earlier marker matched.
+        """
+        executed_findings = (
+            "I ran the full suite. The plugin failed during import with "
+            "ModuleNotFoundError when the entry point is misspelled.",
+            "Ran the installer end to end. When the lockfile is stale, "
+            "dependency installation is blocked and the CLI exits 0 anyway.",
+            "Executed the test suite. When the schema key is absent, "
+            "validation blocked the request but the error message is empty.",
+        )
+
+        for finding in executed_findings:
+            assert validation_was_blocked(finding) is False, finding
+
+
+class TestEveryCheckReturnPathIsATuple:
+    """`check` returns `tuple[list[str], list[str]]`, and one path did not.
+
+    Found by CodeRabbit on the PR that widened the signature: the
+    unreadable-PR early return still handed back a bare list, so `main`
+    raised `ValueError: not enough values to unpack` at exactly the
+    moment the tool exists to report -- `gh` being unusable. The
+    annotation does not catch it because nothing type-checks this script
+    in CI, and no test reached that branch.
+    """
+
+    @staticmethod
+    def _gh_is_broken(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every `gh` call returns empty, as it does when auth fails."""
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *args: "")
+
+    def test_an_unreadable_pr_returns_the_two_lists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._gh_is_broken(monkeypatch)
+
+        result = check_pr_gated.check("9999")
+
+        assert isinstance(result, tuple)
+        reasons, caveats = result
+        assert any("could not read PR #9999" in r for r in reasons)
+        assert caveats == []
+
+    def test_main_reports_the_failure_instead_of_crashing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The user-visible symptom: a traceback rather than a verdict.
+
+        Asserting on `main` and not just on `check` is the point -- the
+        bare list only becomes a crash at the unpacking call site, so a
+        test that stops at `check`'s return value cannot see it.
+        """
+        self._gh_is_broken(monkeypatch)
+
+        assert check_pr_gated.main(["check_pr_gated.py", "9999"]) == 1
+
+
+# Captured from #1547 at 41ad9750 on 2026-09-10, the run that motivated
+# #1827: `CI Ran At Head` had passed and twenty jobs were mid-flight, and
+# the tool reported the same sentence it prints when nothing ran at all.
+REAL_ROLLUP_MID_RUN = [
+    {"__typename": "CheckRun", "name": "CI Ran At Head", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Analyze (python)", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": ""},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": ""},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.13)",
+        "conclusion": "",
+    },
+]
+
+# The #1582 shape: everything concluded, the aggregate never appeared.
+# Every entry here must be a real `AGGREGATED_JOBS` member, or the fixture
+# cannot express "all of the aggregate's dependencies concluded" -- which is
+# the state these tests are about. The original pair (`CodeQL`,
+# `Analyze (actions)`) are NOT dependencies of `All Checks Pass`, so the tests
+# using it were asserting that every dependency had concluded while the rollup
+# contained none: green on an input the production path never produces. Found
+# when the no-dependency-reported guard was added (#1848).
+REAL_ROLLUP_ALL_CONCLUDED = [
+    {"__typename": "CheckRun", "name": "Lint & Format", "conclusion": "SUCCESS"},
+    {"__typename": "CheckRun", "name": "Type Check", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Unit Tests (ubuntu-latest, py3.12)",
+        "conclusion": "SUCCESS",
+    },
+    {
+        "__typename": "CheckRun",
+        "name": "Integration Tests (ubuntu-latest)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Binary Smoke Test", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Wheel Smoke (unlocked resolution)",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "Go Frontend", "conclusion": "SUCCESS"},
+    {
+        "__typename": "CheckRun",
+        "name": "Sonar Zero Issues Gate",
+        "conclusion": "SUCCESS",
+    },
+    {"__typename": "CheckRun", "name": "CodeQL", "conclusion": "SKIPPED"},
+    {"__typename": "CheckRun", "name": "Analyze (actions)", "conclusion": "SUCCESS"},
+]
+
+
+class TestAbsentContextReason:
+    """ "Absent" hides three states, two of which need opposite action.
+
+    `All Checks Pass` is an aggregate that reports only once its
+    dependencies finish, so it is legitimately missing for a whole run.
+    The same sentence also covers #1582, where every job concluded and it
+    never arrived. One means wait; the other means investigate.
+    """
+
+    def test_mid_run_says_the_checks_are_still_coming(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "has not reported YET" in reason
+        assert "3 check(s)" in reason
+
+    def test_mid_run_names_the_checks_still_running(self) -> None:
+        """A count alone leaves the reader to go and look anyway."""
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "Lint & Format" in reason
+
+    def test_mid_run_does_not_name_a_finished_check_as_pending(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN)
+
+        assert "CI Ran At Head" not in reason
+
+    def test_all_concluded_says_it_is_never_arriving(self) -> None:
+        reason = absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+    def test_an_empty_rollup_says_nothing_ran(self) -> None:
+        reason = absent_context_reason("All Checks Pass", [])
+
+        assert "no check reported at the head at all" in reason
+
+    def test_the_three_states_are_mutually_distinguishable(self) -> None:
+        """The whole point is that a reader can tell them apart.
+
+        Asserting each in isolation would pass if two returned the same
+        sentence, which is precisely the defect being fixed.
+        """
+        said = {
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_MID_RUN),
+            absent_context_reason("All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED),
+            absent_context_reason("All Checks Pass", []),
+        }
+
+        assert len(said) == 3
+
+    def test_a_queued_check_counts_as_pending(self) -> None:
+        """A queued check reports `conclusion: ""`, an empty STRING.
+
+        Read as concluded, a fully-queued run reports as "not going to
+        appear" -- the alarming wording, for the most ordinary state.
+        """
+        queued = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "has not reported YET" in absent_context_reason("X", queued)
+
+
+class TestCheckDistinguishesPendingFromNeverRan:
+    """`check` must consult the helper, not merely be able to.
+
+    The class above stays green when the call site is deleted. This one
+    stubs the I/O seam and asserts on `check`'s own return, so removing
+    the call reddens it.
+    """
+
+    @staticmethod
+    def _stub(monkeypatch: pytest.MonkeyPatch, rollup: list[dict[str, object]]) -> None:
+        view = {
+            "headRefOid": "e" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": rollup,
+            "comments": [],
+            "reviews": [],
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+    def test_check_says_in_flight_for_a_mid_run_pr(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert any("has not reported YET" in r for r in reasons)
+
+    def test_check_does_not_say_in_flight_once_everything_concluded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._stub(monkeypatch, REAL_ROLLUP_ALL_CONCLUDED)
+
+        reasons, _ = check_pr_gated.check("1582")
+
+        assert not any("has not reported YET" in r for r in reasons)
+        assert any("not going to appear" in r for r in reasons)
+
+    def test_a_mid_run_pr_is_still_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wording only. A PR mid-run is not verifiably gated, and the
+        tool is right to refuse it -- the defect was that it could not say
+        why, not that it refused.
+        """
+        self._stub(monkeypatch, REAL_ROLLUP_MID_RUN)
+
+        reasons, _ = check_pr_gated.check("1547")
+
+        assert any("required context absent at the head" in r for r in reasons)
+
+
+class TestEntryFinishedHandlesBothRollupShapes:
+    """A `StatusContext` carries `state`, never `conclusion`.
+
+    Judged by `is_concluded` alone, every third-party status is unfinished
+    forever, so a rollup containing one can never reach the all-concluded
+    branch: #1582 then reports as "still running, re-check" -- the
+    reassuring reading, in the one case that needs investigating. The
+    older `is_concluded` call site filters to a name only a `CheckRun`
+    ever has, which is why the gap stayed latent.
+    """
+
+    def test_a_finished_status_context_is_finished(self) -> None:
+        assert check_pr_gated.entry_finished(REAL_STATUS_CONTEXT) is True
+
+    def test_a_pending_status_context_is_not_finished(self) -> None:
+        pending = {"__typename": "StatusContext", "context": "X", "state": "PENDING"}
+
+        assert check_pr_gated.entry_finished(pending) is False
+
+    def test_a_queued_check_run_is_not_finished(self) -> None:
+        """The empty-STRING conclusion trap, still handled."""
+        queued = {"__typename": "CheckRun", "name": "X", "conclusion": ""}
+
+        assert check_pr_gated.entry_finished(queued) is False
+
+    def test_a_finished_status_context_does_not_block_the_verdict(self) -> None:
+        """The bug this predicate exists for, at the level that matters.
+
+        With the real captured fixture in an otherwise-concluded rollup,
+        the all-concluded branch must still be reachable.
+        """
+        rollup = [*REAL_ROLLUP_ALL_CONCLUDED, REAL_STATUS_CONTEXT]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "not going to appear" in reason
+        assert "YET" not in reason
+
+
+class TestOnlyDependenciesExplainAnAbsentAggregate:
+    """An unrelated pending check must not suppress "investigate".
+
+    `All Checks Pass` waits on AGGREGATED_JOBS and nothing else, so only
+    those being unfinished can explain its absence. Counting every
+    unfinished entry meant one unrelated pending check flipped the verdict
+    from "investigate" to "wait" -- and CodeRabbit is pending on nearly
+    every PR here, so the wrong branch was the common case. Reported by
+    Greptile on #1831.
+    """
+
+    @staticmethod
+    def _concluded() -> list[dict[str, object]]:
+        return [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+    @staticmethod
+    def _pending(name: str) -> dict[str, object]:
+        return {
+            "__typename": "CheckRun",
+            "name": name,
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+        }
+
+    def test_an_unrelated_pending_check_does_not_say_wait(self) -> None:
+        rollup = [*self._concluded(), self._pending("CodeRabbit")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" not in reason
+        assert "not going to appear" in reason
+
+    def test_a_pending_dependency_still_says_wait(self) -> None:
+        rollup = [*self._concluded()[:-1], self._pending("Binary Smoke Test")]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_matrix_dependency_is_matched_by_prefix(self) -> None:
+        """Matrix jobs carry a platform suffix, so exact matching finds none."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Unit Tests (ubuntu-latest, py3.12)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+
+    def test_a_pending_dependency_wins_over_unrelated_noise(self) -> None:
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "re-check rather than investigate" in reason
+        assert "Binary Smoke Test" in reason
+
+    def test_the_count_names_only_dependencies(self) -> None:
+        """The number must not include checks the aggregate does not await."""
+        rollup = [
+            *self._concluded()[:-1],
+            self._pending("Binary Smoke Test"),
+            self._pending("CodeRabbit"),
+            self._pending("Fuzz (address)"),
+        ]
+
+        reason = absent_context_reason("All Checks Pass", rollup)
+
+        assert "1 check(s)" in reason
+
+
+class TestPendingNamesReadHonestly:
+    """The parenthetical must not claim names it does not have."""
+
+    def test_no_ellipsis_when_every_pending_check_is_named(self) -> None:
+        one = [{"__typename": "CheckRun", "name": "Type Check", "conclusion": ""}]
+
+        assert "(Type Check)" in absent_context_reason("X", one)
+
+    def test_ellipsis_only_once_names_are_omitted(self) -> None:
+        """Names must be jobs the aggregate waits on, or they are filtered.
+
+        Synthetic names (`Check 0`) no longer reach the parenthetical:
+        only unfinished AGGREGATED_JOBS entries can explain the
+        aggregate's absence, so the fixture uses four real ones.
+        """
+        four = [
+            {"__typename": "CheckRun", "name": name, "conclusion": ""}
+            for name in AGGREGATED_JOBS[:4]
+        ]
+
+        assert "..." in absent_context_reason("X", four)
+
+    def test_no_empty_parentheses_when_no_name_is_known(self) -> None:
+        """A dependency-shaped entry whose name cannot be read.
+
+        `context_name` returns "" for a shape carrying neither `name` nor
+        `context`, so such an entry is filtered out with the unrelated
+        ones and cannot produce an empty parenthetical.
+        """
+        nameless = [{"conclusion": ""}, {"conclusion": ""}]
+
+        reason = absent_context_reason("X", nameless)
+
+        assert "()" not in reason
+        assert "still running" not in reason
+
+
+class TestADependencyIsMatchedExactlyOrByItsMatrixSuffix:
+    """`startswith` alone claims names that are not dependencies at all.
+
+    The matrix jobs carry a PARENTHESISED suffix (`Unit Tests (ubuntu-latest,
+    py3.12)`), which is why an exact comparison cannot be used. But a bare
+    prefix test also claims `Unit Tests Coverage` and `Unit Testsimposter`,
+    and an unrelated pending check misread as a dependency flips the verdict
+    from "investigate" back to "wait" -- the exact defect
+    `aggregated_job_for` exists to prevent (#1827).
+
+    Found on review of this branch, after the first version shipped the loose
+    match.
+    """
+
+    def test_the_exact_name_matches(self) -> None:
+        assert check_pr_gated.aggregated_job_for("Unit Tests") == "Unit Tests"
+
+    def test_a_matrix_suffix_matches(self) -> None:
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (ubuntu-latest, py3.12)")
+            == "Unit Tests"
+        )
+
+    def test_a_longer_unrelated_name_does_not_match(self) -> None:
+        """`Unit Tests Coverage` is a different check, not a matrix cell."""
+        assert check_pr_gated.aggregated_job_for("Unit Tests Coverage") is None
+
+    def test_a_name_glued_onto_the_job_does_not_match(self) -> None:
+        """No separator at all: the prefix test's worst case."""
+        assert check_pr_gated.aggregated_job_for("Unit Testsimposter") is None
+
+    def test_an_unrelated_check_does_not_match(self) -> None:
+        assert check_pr_gated.aggregated_job_for("CodeRabbit") is None
+
+
+class TestTheAbsentMessageClaimsOnlyWhatItExamined:
+    """The fallback must not say "every check" when it filtered to some.
+
+    `absent_context_reason` counts only the entries the aggregate DEPENDS on,
+    so an unrelated pending check is deliberately excluded and may still be
+    running. Saying "every check at the head has concluded" asserts something
+    the filter never looked at. Both reviewers raised this independently
+    (#1827).
+    """
+
+    def test_the_message_scopes_its_claim_to_the_aggregate(self) -> None:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check it aggregates has concluded" in reason
+
+    def test_the_message_does_not_claim_every_check_at_the_head(self) -> None:
+        """The unrelated pending check above is proof the claim would be false."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        rollup.append(
+            {"__typename": "CheckRun", "name": "CodeRabbit", "status": "IN_PROGRESS"}
+        )
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup)
+
+        assert "every check at the head" not in reason
+
+
+class TestAQueuedRunIsNotAMissingOne:
+    """A `queued` CI run contributes no rollup entry, so it read as absent.
+
+    The pending filter finds nothing (there are no dependency entries yet),
+    so the all-concluded fallback fired and reported "not going to appear"
+    about a run that had not started. Worse, with zero dependency entries it
+    asserted they had all concluded -- a claim about an empty set.
+
+    This is the window right after a push, where the tool is most consulted
+    and where the remedy the old message implies -- an empty commit to
+    re-trigger -- moves the head and discards any review anchored to the old
+    SHA. Measured live: a real PR had `ci.yml` at `queued` with only unrelated
+    contexts reported (#1848).
+    """
+
+    UNRELATED = [
+        {
+            "__typename": "CheckRun",
+            "name": "CodeRabbit",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+        }
+    ]
+
+    def test_a_queued_run_reports_as_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_a_queued_run_does_not_claim_it_will_never_appear(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "not going to appear" not in reason
+
+    def test_a_queued_run_warns_against_the_empty_commit(self) -> None:
+        """The destructive remedy is what makes this worth more than tidiness."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, [{"status": "queued"}]
+        )
+
+        assert "empty commit" in reason
+
+    def test_no_dependency_reported_does_not_claim_all_concluded(self) -> None:
+        """With no CI run either, the old message asserted an empty set."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.UNRELATED, []
+        )
+
+        assert "every check it aggregates has concluded" not in reason
+
+    def test_a_concluded_run_still_reports_it_will_not_appear(self) -> None:
+        """The control: the #1582 case must keep saying "investigate"."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", rollup, [{"status": "completed"}]
+        )
+
+        assert "not going to appear" in reason
+
+
+class TestAConflictIsNotWhyAContextIsAbsent:
+    """A conflicting branch DOES run PR workflows -- measured, not assumed.
+
+    An earlier version of this change claimed the opposite and returned "the
+    branch CONFLICTS, so the contexts will never arrive". That premise is
+    false: `ci.yml` triggers on plain `pull_request`, which fires on
+    opened/synchronize regardless of mergeability. Verified on two live
+    CONFLICTING PRs of this repo, each carrying a completed successful
+    `ci.yml` run at its head.
+
+    The arm was also checked FIRST, so on any conflicting branch it swallowed
+    the #1582 verdict this function exists to preserve -- "every dependency
+    concluded and the aggregate never appeared", which must say investigate.
+
+    These tests pin the corrected behaviour: mergeability is not consulted at
+    all, so no conflicting-branch input can suppress a real verdict (#1848).
+    """
+
+    def test_all_concluded_still_says_investigate(self) -> None:
+        """The verdict the removed arm masked, at the state that matters."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", rollup, [{"status": "completed"}]
+        )
+
+        assert "not going to appear" in reason
+
+    def test_no_arm_mentions_a_conflict(self) -> None:
+        """Mergeability explains a blocked MERGE, never an absent context."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "CodeRabbit",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+        ]
+
+        for runs in ([], [{"status": "queued"}], [{"status": "completed"}]):
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
+
+            assert "CONFLICT" not in reason.upper()
+
+
+class TestTheAllConcludedFixtureCoversEveryDependency:
+    """The fixture must be able to EXPRESS "all dependencies concluded".
+
+    It previously held `CodeQL` and `Analyze (actions)`, neither an
+    `AGGREGATED_JOBS` member, so four tests asserting that every dependency
+    had concluded were measuring the emptiness of a filter over a rollup
+    containing no dependency at all -- vacuously true. A peer session mutated
+    both entries' `conclusion` to `""` and the whole file stayed green.
+
+    These two guards are the reverse-direction checks the old fixture was
+    structurally incapable of carrying: one fails with the missing names
+    printed if the fixture is ever trimmed, the other requires the verdict to
+    FLIP when a dependency is unfinished (#1848).
+    """
+
+    def test_the_fixture_covers_every_aggregated_job(self) -> None:
+        covered = {
+            job
+            for entry in REAL_ROLLUP_ALL_CONCLUDED
+            if (
+                job := check_pr_gated.aggregated_job_for(
+                    check_pr_gated.context_name(entry)
+                )
+            )
+            is not None
+        }
+
+        assert_fixture_covers(
+            covered, set(AGGREGATED_JOBS), what="the all-concluded rollup"
+        )
+
+    def test_one_unfinished_dependency_flips_the_verdict(self) -> None:
+        """The assertion the vacuous fixture could not make.
+
+        If the fixture holds real dependencies, marking one unfinished must
+        move the verdict from "not going to appear" to "has not reported YET".
+        A rollup with no dependencies cannot produce that difference.
+        """
+        concluded = check_pr_gated.absent_context_reason(
+            "All Checks Pass", REAL_ROLLUP_ALL_CONCLUDED, [{"status": "completed"}]
+        )
+        one_running = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            [
+                {**entry, "status": "IN_PROGRESS", "conclusion": None}
+                if check_pr_gated.aggregated_job_for(check_pr_gated.context_name(entry))
+                == "Type Check"
+                else entry
+                for entry in REAL_ROLLUP_ALL_CONCLUDED
+            ],
+            [{"status": "completed"}],
+        )
+
+        assert "not going to appear" in concluded
+        assert "has not reported YET" in one_running
+
+
+class TestAnUnstartedRunOutranksTheEmptyRollupArm:
+    """An empty rollup is exactly what a queued run looks like.
+
+    The empty-rollup arm ran first and returned "no check reported at the head
+    at all", sending the reader to investigate a workflow that had simply not
+    started -- reintroducing, for the emptiest case of all, the defect this
+    change exists to fix. Found on review; the same arm-ordering mistake as the
+    conflict arm removed earlier in this branch (#1848).
+    """
+
+    def test_a_queued_run_with_an_empty_rollup_says_not_yet_started(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_an_empty_rollup_with_no_run_still_says_nothing_reported(self) -> None:
+        """The control: with no run at all, the empty-rollup arm is right."""
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", [], [])
+
+        assert "no check reported at the head at all" in reason
+
+
+class TestOnlyAPullRequestRunCreatesThisPrsContexts:
+    """A dispatched run at the same SHA is evidence about itself.
+
+    `workflow_dispatch` and `push` runs report under their own event and
+    contribute no PR check context, so counting one as "the contexts are
+    coming" says wait forever while the pull-request run has already finished.
+    That suppresses the #1582 verdict via an unrelated run (#1848).
+    """
+
+    def test_a_queued_dispatch_run_is_not_evidence_of_pending_contexts(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "workflow_dispatch"}]
+        )
+
+        assert "not yet started" not in reason
+
+    def test_a_dispatch_run_does_not_suppress_the_investigate_verdict(self) -> None:
+        """The case that matters: every dependency concluded, so investigate."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass",
+            rollup,
+            [{"status": "queued", "event": "workflow_dispatch"}],
+        )
+
+        assert "not going to appear" in reason
+
+    def test_a_run_without_an_event_field_is_treated_as_a_pr_run(self) -> None:
+        """Fail in the direction that preserves the old behaviour."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued"}]
+        )
+
+        assert "not yet started" in reason
+
+
+class TestAggregatedJobsCoversEveryDeclaredDependency:
+    """The list must match `all-checks-pass`'s `needs:` block in ci.yml.
+
+    Five of the nine were listed. A head where only a missing one had reported
+    looked like "no dependency reported at all", and a missing one still
+    running was not counted as pending. Found on review (#1848).
+
+    The coupling cannot be removed: the rollup carries display names while
+    `needs:` carries job ids, with no mapping available without parsing the
+    workflow. So it is asserted here instead, against the names the workflow
+    declares.
+    """
+
+    DECLARED_DISPLAY_NAMES = (
+        "Lint & Format",
+        "Type Check",
+        "Unit Tests",
+        "Integration Tests",
+        "Binary Smoke Test",
+        "Wheel Smoke (unlocked resolution)",
+        "Go Frontend",
+        "Sonar Zero Issues Gate",
+    )
+
+    def test_every_declared_dependency_is_aggregated(self) -> None:
+        missing = [
+            name
+            for name in self.DECLARED_DISPLAY_NAMES
+            if check_pr_gated.aggregated_job_for(name) is None
+        ]
+
+        assert not missing, f"not recognised as dependencies: {missing}"
+
+    def test_the_base_install_matrix_cell_resolves_to_unit_tests(self) -> None:
+        """`test-unit-base` needs no entry: the matrix rule covers it."""
+        assert (
+            check_pr_gated.aggregated_job_for("Unit Tests (base install)")
+            == "Unit Tests"
+        )
+
+    def test_a_missing_dependency_still_running_counts_as_pending(self) -> None:
+        """The consequence of the omission, not just the omission."""
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "Go Frontend",
+                "status": "IN_PROGRESS",
+            }
+        ]
+
+        reason = check_pr_gated.absent_context_reason("All Checks Pass", rollup, [])
+
+        assert "still running" in reason
+
+
+class TestTheArmsAreOrderedMostSpecificFirst:
+    """Three review findings on this function were all the same defect.
+
+    A new early-return arm silently steals cases from the arms after it,
+    because the conditions OVERLAP -- a running dependency and an unfinished
+    run are both true at once, and whichever is tested first wins regardless
+    of which is more informative. The three, in the order they were found:
+
+    1. the conflict arm (removed; its premise was false too) swallowed the
+       "every dependency concluded" verdict;
+    2. the empty-rollup arm swallowed the queued-run case;
+    3. the unstarted-run arm then swallowed the running-dependency case --
+       introduced by the fix for (2).
+
+    So this pins the PRECEDENCE rather than any single arm, over inputs where
+    more than one condition holds. A reordering that still satisfies every
+    other test in this file reddens here (#1848).
+    """
+
+    DEP_RUNNING = [
+        {
+            "__typename": "CheckRun",
+            "name": "Unit Tests (ubuntu-latest, py3.12)",
+            "status": "IN_PROGRESS",
+        }
+    ]
+    PR_RUN = {"status": "in_progress", "event": "pull_request"}
+
+    def test_a_running_dependency_outranks_an_unfinished_run(self) -> None:
+        """Both conditions hold; the named dependency is more informative.
+
+        Saying "produced no check entries so far" while a dependency is
+        visibly running is not merely less useful -- it is false.
+        """
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "still running" in reason
+        assert "no check entries" not in reason
+
+    def test_the_running_dependency_is_named(self) -> None:
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", self.DEP_RUNNING, [self.PR_RUN]
+        )
+
+        assert "Unit Tests (ubuntu-latest, py3.12)" in reason
+
+    def test_an_unfinished_run_outranks_the_empty_rollup_arm(self) -> None:
+        """Finding 2: an empty rollup is what a queued run looks like."""
+        reason = check_pr_gated.absent_context_reason(
+            "All Checks Pass", [], [{"status": "queued", "event": "pull_request"}]
+        )
+
+        assert "not yet started" in reason
+
+    def test_every_overlapping_combination_picks_one_verdict(self) -> None:
+        """The precedence table, as a single assertion over the overlaps.
+
+        Each row has at least two conditions true. Pinning the whole table
+        means a reordering cannot pass by satisfying the rows individually.
+        """
+        concluded = [
+            {
+                "__typename": "CheckRun",
+                "name": job,
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+            }
+            for job in AGGREGATED_JOBS
+        ]
+        queued_pr = {"status": "queued", "event": "pull_request"}
+        dispatch = {"status": "queued", "event": "workflow_dispatch"}
+
+        expected = [
+            (self.DEP_RUNNING, [self.PR_RUN], "still running"),
+            (self.DEP_RUNNING, [], "still running"),
+            ([], [queued_pr], "not yet started"),
+            ([], [dispatch], "no check reported at the head at all"),
+            (concluded, [dispatch], "has concluded"),
+            ([], [], "no check reported at the head at all"),
+        ]
+
+        for rollup, runs, marker in expected:
+            reason = check_pr_gated.absent_context_reason(
+                "All Checks Pass", rollup, runs
+            )
+
+            assert marker in reason, f"{marker!r} not in {reason!r}"
+
+
+class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:
+    """GitHub clears a run's `pull_requests` once its PR closes (issue #1944).
+
+    The ownership check treats an empty owner set as UNVERIFIED rather than
+    clean, which is right and closed a real fail-open: a run whose detail
+    fetch failed looked identical to one that genuinely named the PR. But on
+    a MERGED PR the field is cleared by GitHub itself, so a correctly gated
+    PR reports "does not resolve to #N; owners: none".
+
+    Reproduced live on #1930, which this session merged after verifying the
+    gate: its CI run at the merged head carries `pull_requests: []` while an
+    open PR's carries one entry. Same repo, same workflow, same author -- the
+    only difference is PR state.
+
+    So state is what distinguishes them, and the strictness must survive for
+    OPEN PRs, where an empty set still means the question went unanswered.
+    """
+
+    HEAD = "e" * 40
+
+    def _fake_gh(self, state: str, owners: list[dict[str, int]]):
+        view = {
+            "headRefOid": self.HEAD,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+            "state": state,
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={self.HEAD}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 777,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": self.HEAD,
+                            }
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/777"):
+                return json.dumps({"pull_requests": owners})
+            return ""
+
+        return fake
+
+    def test_a_merged_pr_does_not_report_an_unresolvable_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("MERGED", [])
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert not any("does not resolve to" in r for r in reasons), reasons
+
+    def test_an_open_pr_with_no_owner_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control, and the half that must not regress.
+
+        Without it this fix would read as "stop complaining about ownership",
+        which would reopen the fail-open the empty-is-unverified rule closed.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("OPEN", [])
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("does not resolve to" in r for r in reasons), reasons
+
+    def test_a_closed_pr_is_excused_and_says_so_in_the_caveat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLOSED, not merged, takes the same path -- GitHub clears the field
+        on either -- and the excuse must announce itself.
+
+        The caveat is the only thing distinguishing "ownership verified" from
+        "ownership assumed", so it is asserted rather than left to inspection:
+        a silent excuse and a verified pass would otherwise read alike.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("CLOSED", [])
+        )
+
+        reasons, caveats = check_pr_gated.check("1930")
+
+        assert not any("does not resolve to" in r for r in reasons), reasons
+        assert any("cleared its runs" in c for c in caveats), caveats
+        assert any("CLOSED" in c for c in caveats), caveats
+
+    def test_the_merged_excuse_announces_itself_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The MERGED caveat names the state, so a reader of the output can
+        tell WHICH assumption was made rather than only that one was."""
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_gh("MERGED", [])
+        )
+
+        _reasons, caveats = check_pr_gated.check("1930")
+
+        assert any("MERGED" in c and "issue #1944" in c for c in caveats), caveats
+
+    def test_a_merged_pr_whose_detail_fetch_failed_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fail-open this excuse must not reopen.
+
+        `_gh_stdout_or_empty` returns "" for a failed call and for an empty
+        body alike, so an UNREADABLE run and a genuinely cleared
+        `pull_requests` reach the owner loop identically. Excusing on PR state
+        alone would cover both, which is the shape the empty-is-unverified
+        rule closed (Greptile on PR #1625). Only a run that was actually read
+        may be excused, so this stays a reason even though the PR is MERGED.
+        """
+        head = self.HEAD
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(
+                    {
+                        "headRefOid": head,
+                        "baseRefName": "main",
+                        "statusCheckRollup": [],
+                        "comments": [],
+                        "reviews": [],
+                        "state": "MERGED",
+                    }
+                )
+            if args[0] == "api" and f"head_sha={head}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": 777,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": head,
+                            }
+                        ]
+                    }
+                )
+            # The detail fetch FAILS -- the case a cleared field is mistaken for.
+            return ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+
+        reasons, caveats = check_pr_gated.check("1930")
+
+        # The unread run is now reported by its own, more specific reason
+        # rather than folded into the ownership message: the question
+        # "did every run's detail parse" is prior to "which PR do they name".
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+        # And it is a REASON, never a caveat -- the closure excuse must not
+        # reach it, which is the whole point of this case.
+        assert not any("cleared its runs" in c for c in caveats), caveats
+
+    def _fake_two_runs(self, state: str, second_detail: str):
+        """Two CI runs at one head: 777 names this PR, 888 is `second_detail`."""
+        view = {
+            "headRefOid": self.HEAD,
+            "baseRefName": "main",
+            "statusCheckRollup": [],
+            "comments": [],
+            "reviews": [],
+            "state": state,
+        }
+
+        def fake(*args: str) -> str:
+            if args[:2] == ("pr", "view"):
+                return json.dumps(view)
+            if args[0] == "api" and f"head_sha={self.HEAD}" in " ".join(args):
+                return json.dumps(
+                    {
+                        "workflow_runs": [
+                            {
+                                "id": rid,
+                                "name": "CI",
+                                "path": ".github/workflows/ci.yml",
+                                "head_sha": self.HEAD,
+                            }
+                            for rid in (777, 888)
+                        ]
+                    }
+                )
+            if args[0] == "api" and args[1].endswith("/actions/runs/777"):
+                return json.dumps({"pull_requests": [{"number": 1930}]})
+            if args[0] == "api" and args[1].endswith("/actions/runs/888"):
+                return second_detail
+            return ""
+
+        return fake
+
+    def test_one_readable_run_does_not_excuse_an_unreadable_sibling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A matching owner must not mask incomplete evidence (bot review).
+
+        A head can carry several CI runs. When one resolves to this PR and
+        another cannot be read, `pr in owners` is true, so folding the
+        read-check into that condition reports nothing at all -- and the
+        unread run may be the one naming a different PR. Ownership is a claim
+        about EVERY run at the head, so it is checked first and on its own.
+        """
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_two_runs("OPEN", "")
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+
+    def test_an_unreadable_sibling_is_not_excused_by_closure_either(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same on a MERGED PR, where the closure excuse might cover it."""
+        monkeypatch.setattr(
+            check_pr_gated, "_gh_stdout_or_empty", self._fake_two_runs("MERGED", "")
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+
+    def test_a_detail_omitting_the_field_is_missing_data_not_a_clear(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A truthy detail with no `pull_requests` KEY is absent data.
+
+        GitHub's cleared form is `"pull_requests": []` -- the key present and
+        empty (verified on run 34874043546, a 35-key object). A response that
+        omits the key says nothing about ownership, so excusing it on a merged
+        PR would treat missing data as a verified clear.
+        """
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            self._fake_two_runs("MERGED", json.dumps({"id": 888, "status": "done"})),
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("could not read every CI run detail" in r for r in reasons), reasons
+
+    def test_an_open_pr_owned_by_another_number_still_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A populated owner set naming a DIFFERENT PR is the rebase-collision
+        case the message describes, and it must keep failing whatever the
+        state. Distinguishes "cleared by GitHub" from "resolved elsewhere"."""
+        monkeypatch.setattr(
+            check_pr_gated,
+            "_gh_stdout_or_empty",
+            self._fake_gh("MERGED", [{"number": 4242}]),
+        )
+
+        reasons, _caveats = check_pr_gated.check("1930")
+
+        assert any("does not resolve to" in r for r in reasons), reasons

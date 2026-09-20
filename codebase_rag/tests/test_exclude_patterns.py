@@ -623,6 +623,61 @@ class TestIgnoreSuffixesInteraction:
 
         assert should_skip_path(file_path, tmp_path, exclude_paths=exclude_paths)
 
+    def test_an_explicit_unignore_rescues_a_minified_bundle(
+        self, tmp_path: Path
+    ) -> None:
+        """Issue #1637: `.min.js` is text a user can plausibly want indexed."""
+        file_path = tmp_path / "docs" / "js" / "jquery.min.js"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"docs/js/jquery.min.js"})
+
+        assert not should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_a_minified_bundle_is_still_ignored_by_default(
+        self, tmp_path: Path
+    ) -> None:
+        """The rescue must be OPT-IN, or #1636's whole point is undone.
+
+        Without this, the test above is satisfied by simply deleting the
+        entries from the ignore list, which would index every vendored bundle
+        in every repository.
+        """
+        file_path = tmp_path / "docs" / "js" / "jquery.min.js"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        assert should_skip_path(file_path, tmp_path)
+
+    def test_an_unignore_does_not_rescue_compiled_output(self, tmp_path: Path) -> None:
+        """The invariant the split preserves, stated at file granularity.
+
+        `test_suffix_checked_before_include` pins the DIRECTORY case. This
+        pins the stronger one: naming the .pyc itself must still not rescue
+        it, or the split has quietly demoted every entry to rescuable.
+        """
+        file_path = tmp_path / "build" / "out.pyc"
+        file_path.parent.mkdir(parents=True)
+        file_path.touch()
+
+        unignore_paths = frozenset({"build/out.pyc"})
+
+        assert should_skip_path(file_path, tmp_path, unignore_paths=unignore_paths)
+
+    def test_the_two_tiers_partition_the_ignore_list(self) -> None:
+        """A new entry must be classified, not silently dropped from both.
+
+        `IGNORE_SUFFIXES` is derived from the two halves, so an entry added to
+        neither disappears from the ignore rule entirely rather than failing
+        loudly.
+        """
+        assert (
+            cs.UNCONDITIONAL_IGNORE_SUFFIXES | cs.RESCUABLE_IGNORE_SUFFIXES
+            == cs.IGNORE_SUFFIXES
+        )
+        assert not (cs.UNCONDITIONAL_IGNORE_SUFFIXES & cs.RESCUABLE_IGNORE_SUFFIXES)
+
 
 class TestDirectoryVsFileBehavior:
     def test_skip_directory_in_exclude(self, tmp_path: Path) -> None:

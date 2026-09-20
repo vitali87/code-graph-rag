@@ -187,3 +187,7 @@ AGENTIC_QA_RESUME_MISMATCH = (
     "Cannot --resume from {path}: its fingerprint {stored} does not match the "
     "current run {current}. Re-run without --resume to start fresh."
 )
+
+# The toolchain could not run the oracle: a stated RESULT, not a crash.
+# Carries the probe stderr so the operator sees why (issue #1639).
+ORACLE_UNAVAILABLE = "Oracle unavailable: {reason}"

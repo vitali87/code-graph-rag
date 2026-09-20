@@ -1,0 +1,8 @@
+local os = require('os')
+
+local Greeter = {}
+
+function Greeter.greet(name) return os.time(name) end
+
+return Greeter.greet('x')
+

@@ -166,8 +166,12 @@ MCP_REINGEST = (
     "for a typical file, seconds for a hub imported by dozens) instead of a "
     "full update_repository pass. "
     "Paths are relative to the project root; files that no longer exist are "
-    "removed from the graph. Returns the files re-parsed, the dependents "
-    "re-parsed with them, the files removed, and the elapsed milliseconds."
+    "removed from the graph; paths the project's ignore rules exclude are "
+    "skipped and reported rather than indexed. Repository-wide passes are "
+    "not re-run: code-quality findings (smells, vulnerabilities, patterns) "
+    "and URL-to-endpoint links are rebuilt only by update_repository. "
+    "Returns the files re-parsed, the dependents re-parsed with them, the "
+    "files removed, the paths skipped, and the elapsed milliseconds."
 )
 MCP_PARAM_REINGEST_PATHS = (
     "Files to re-ingest, relative to the project root (created, modified, or deleted)."
@@ -225,6 +229,46 @@ MCP_PARAM_TARGET = (
     "A qualified name, a bare name (`helper`, `Store.get`), or `path:line`."
 )
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
+MCP_ANNOTATE = (
+    "Attach a durable note (a Gloss) to one definition in the graph, never to "
+    "the source file. `target` names the definition the way `resolve` does; "
+    "a name matching several definitions is refused with the candidates, so "
+    "pass a qualified name to disambiguate. `kind` types the claim "
+    "(invariant, mirrors, platform-conditional, safety-precondition); "
+    "`mentions` lists other definitions the note refers to, each becoming a "
+    'MENTIONS edge. Write the WHY that is not in the code ("safe because '
+    'validate() runs first"), not a restatement of what the code does. '
+    "Returns the stored gloss, or an error and nothing written."
+)
+MCP_GLOSSES = (
+    "Notes (Glosses) about one definition: `annotating` are filed on it, "
+    "`mentioning` are filed on other definitions and refer to it. `target` "
+    "is resolved as `annotate` resolves it. Each note's `anchor_state` is "
+    "graded after each sync: EXACT when its definition's content hash still "
+    "equals the one recorded at writing, STALE when it differs (EXACT again "
+    "on revert), MOVED when the name is gone and exactly one definition in "
+    "the project carries the recorded hash (the note follows it; "
+    "`moved_from` keeps the old name), AMBIGUOUS when several do "
+    "(`candidate_qns` lists them) and LOST when none does. A note on a class "
+    "or module, or one written before hashes were recorded, is not graded "
+    "while attached (there is no hash to compare) and is LOST if its name "
+    "disappears (there is no hash to follow). "
+    "A target that no longer resolves returns the error plus `orphaned`: the "
+    "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_PARAM_GLOSS_BODY = (
+    "The note itself: the reasoning a reader cannot recover from the code."
+)
+MCP_PARAM_GLOSS_KIND = (
+    "One of `invariant`, `mirrors`, `platform-conditional`, `safety-precondition`."
+)
+MCP_PARAM_GLOSS_MENTIONS = (
+    "Optional. Comma-separated definitions the note refers to, each a name "
+    "`resolve` accepts; every one must resolve to exactly one definition."
+)
+MCP_PARAM_GLOSS_AUTHOR = (
+    "Optional. Who is writing the note (an agent or session name); default `agent`."
+)
 MCP_PARAM_MODULE_QN = "The module's qualified name (for example `myproj.pkg.util`)."
 MCP_RENAME = (
     "Rename a function, method, class or other definition everywhere the graph "
@@ -232,7 +276,9 @@ MCP_RENAME = (
     "instantiation site, import statements (aliases kept), overrides in both "
     "directions, and Python `__all__` entries. Refuses when any site was "
     "resolved heuristically, by overload fan-out, or only by a trace, unless "
-    "`allow_heuristic` is true. Every rewritten file must still parse; "
+    "`allow_heuristic` is true. A class referenced by an inheritance or type "
+    "annotation edge that carries no rewrite location refuses regardless of "
+    "`allow_heuristic`. Every rewritten file must still parse; "
     "otherwise nothing is written. Set `dry_run` to see the plan and diff "
     "without touching the tree. Applied edits are recorded for `cgr edits "
     "undo`, and Markdown mentions of the old name are listed for a human to "
@@ -321,7 +367,6 @@ MCP_QUERY_CODE_GRAPH = (
     "exact name or location: they run fixed queries with no LLM. Use this for "
     "open-ended questions. "
     "Query the codebase knowledge graph using natural language. "
-    "Use semantic_search unless you know the exact names of classes/functions you are searching for. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
     "Pass `project` to restrict results to one indexed project; use "
@@ -337,11 +382,13 @@ MCP_GET_CODE_SNIPPET = (
 )
 
 _MCP_DELTA_NOTE = (
-    " After the write, the touched files are re-ingested and a structural "
-    "delta is appended to the result: symbols added, removed and renamed, "
-    "callers left dangling, call sites passing too many arguments, signature "
-    "changes with a verdict per call site, new duplicates of existing "
-    "functions, new import cycles, and the tests reaching the edited symbols. "
+    " After a successful write on an indexed project, the touched files are "
+    "re-ingested and a structural delta is appended to the result as JSON: "
+    "symbols added, removed and renamed, callers left dangling, call sites "
+    "passing too many arguments, signature changes with a verdict per call "
+    "site, new duplicates of existing functions, new import cycles, and the "
+    "tests reaching the edited symbols. A project that is not indexed appends "
+    "nothing, and a failed analysis appends an error note instead of a delta. "
     "Read it before the next edit."
 )
 MCP_SURGICAL_REPLACE_CODE = (
@@ -496,6 +543,8 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.OVERRIDES: MCP_OVERRIDES,
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
+    MCPToolName.ANNOTATE: MCP_ANNOTATE,
+    MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
     MCPToolName.CHANGE_SIGNATURE: MCP_CHANGE_SIGNATURE,
     MCPToolName.MOVE: MCP_MOVE,

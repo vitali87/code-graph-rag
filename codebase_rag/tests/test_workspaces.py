@@ -23,13 +23,11 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _temp_home(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Generator[Path, None, None]:
+def _temp_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from codebase_rag.config import settings
 
     monkeypatch.setattr(settings, "CGR_HOME", tmp_path / "cgr-home")
-    yield tmp_path / "cgr-home"
+    return tmp_path / "cgr-home"
 
 
 class TestStorage:

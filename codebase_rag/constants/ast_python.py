@@ -18,6 +18,13 @@ TS_PY_LIST_COMPREHENSION = "list_comprehension"
 TS_PY_FOR_STATEMENT = "for_statement"
 TS_PY_FOR_IN_CLAUSE = "for_in_clause"
 TS_PY_ASSIGNMENT = "assignment"
+# Unpacking targets: `a, b = ...`, `(a, b) = ...`, `[a, b] = ...`.
+TS_PY_PATTERN_LIST = "pattern_list"
+TS_PY_TUPLE_PATTERN = "tuple_pattern"
+TS_PY_LIST_PATTERN = "list_pattern"
+PY_UNPACKING_TARGET_TYPES = frozenset(
+    {TS_PY_PATTERN_LIST, TS_PY_TUPLE_PATTERN, TS_PY_LIST_PATTERN}
+)
 PY_ASSIGNMENT_QUERY = "(assignment) @assignment"
 PY_RETURN_QUERY = "(return_statement) @return_stmt"
 TS_PY_CLASS_DEFINITION = "class_definition"
@@ -62,6 +69,7 @@ TS_FIELD_OPERATORS = "operators"
 TS_PY_IF_STATEMENT = "if_statement"
 TS_PY_TRY_STATEMENT = "try_statement"
 TS_PY_GLOBAL_STATEMENT = "global_statement"
+TS_PY_NONLOCAL_STATEMENT = "nonlocal_statement"
 # Match statement: arms are exclusive; an UNGUARDED `case _` (empty
 # case_pattern) always matches, removing the implicit no-match path.
 TS_PY_MATCH_STATEMENT = "match_statement"
@@ -76,6 +84,11 @@ TS_PY_DOTTED_NAME = "dotted_name"
 # `a | b` case alternatives; the bare `_` alternative is an ANONYMOUS
 # node, invisible to named_children.
 TS_PY_UNION_PATTERN = "union_pattern"
+# `Foo(x=<pattern>)`, `*rest` / `**rest` inside a case pattern.
+TS_PY_KEYWORD_PATTERN = "keyword_pattern"
+TS_PY_SPLAT_PATTERN = "splat_pattern"
+# `import x as y` / `from m import x as y`; the alias is a local binding.
+TS_PY_ALIASED_IMPORT = "aliased_import"
 TS_PY_WILDCARD_NODE = "_"
 TS_PY_WHILE_STATEMENT = "while_statement"
 TS_PY_ELIF_CLAUSE = "elif_clause"
@@ -84,6 +97,7 @@ TS_PY_EXCEPT_CLAUSE = "except_clause"
 TS_PY_FINALLY_CLAUSE = "finally_clause"
 TS_PY_CONDITIONAL_EXPRESSION = "conditional_expression"
 TS_PY_BOOLEAN_OPERATOR = "boolean_operator"
+TS_PY_BINARY_OPERATOR = "binary_operator"
 TS_PY_NOT_OPERATOR = "not_operator"
 TS_FIELD_CONDITION = "condition"
 TS_FIELD_CONSEQUENCE = "consequence"
@@ -92,6 +106,25 @@ TS_FIELD_ARGUMENT = "argument"
 # Python operator syntax dispatches to dunder methods at runtime; these names
 # let the call extractor synthesise the implied <operand>.__dunder__ call.
 PY_OP_IN = "in"
+PY_OP_AND = "and"
+# `left <op> right` dispatches to `left.__dunder__`, so the expression's type is
+# whatever that method returns -- which an overloaded operator can make a
+# different class from either operand (`Factory / Config -> Product`).
+PY_BINARY_OPERATOR_DUNDERS: dict[str, str] = {
+    "+": "__add__",
+    "-": "__sub__",
+    "*": "__mul__",
+    "/": "__truediv__",
+    "//": "__floordiv__",
+    "%": "__mod__",
+    "@": "__matmul__",
+    "**": "__pow__",
+    "|": "__or__",
+    "&": "__and__",
+    "^": "__xor__",
+    "<<": "__lshift__",
+    ">>": "__rshift__",
+}
 PY_BUILTIN_LEN = "len"
 PY_BUILTIN_GETATTR = "getattr"
 TS_PY_STRING_CONTENT = "string_content"
@@ -138,6 +171,8 @@ PY_METHOD_INIT = "__init__"
 DECORATOR_AT = "@"
 PROPERTY_DECORATORS: frozenset[str] = frozenset({"property", "cached_property"})
 ABSTRACT_DECORATORS: frozenset[str] = frozenset({"abstractmethod", "abstractproperty"})
+# A static method takes no receiver: a first parameter named `self` is explicit.
+STATIC_DECORATORS: frozenset[str] = frozenset({"staticmethod"})
 
 # Eager builtins that invoke a callable argument synchronously in the caller's
 # stack frame, so the trace attributes the call to the enclosing function (no

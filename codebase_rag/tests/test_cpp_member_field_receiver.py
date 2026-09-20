@@ -58,7 +58,8 @@ class DBImpl {
         "buffer_": "string",
         "ptr_": "Foo",
     }, fields
-    assert "Lock" not in fields and "Count" not in fields
+    assert "Lock" not in fields
+    assert "Count" not in fields
 
 
 # A first-party member field receiver: `mutex_.Lock()` must resolve to the field's

@@ -82,6 +82,10 @@ TS_GO_POINTER_TYPE = "pointer_type"
 # `pkg.Type` in a signature; kept as dotted text so a binding typed to an
 # external package's type stays TYPED (and drops) instead of trie-guessed.
 TS_GO_QUALIFIED_TYPE = "qualified_type"
+TS_GO_GENERIC_TYPE = "generic_type"
+# Field names of a `qualified_type` (`pkg.Name`): the package identifier and
+# the type name; a `composite_literal` carries its constructed type in `type`.
+FIELD_GO_PACKAGE = "package"
 # Go composite types a method may return; a chained call lands on the CONTAINER,
 # not its element, so return-type inference must not unwrap these (a `[]Command`
 # return must not resolve `.Run()` to `Command.Run`).

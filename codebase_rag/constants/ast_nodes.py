@@ -223,6 +223,7 @@ TS_PRIVATE_PROPERTY_IDENTIFIER = "private_property_identifier"
 
 TS_IMPORT_DECLARATION = "import_declaration"
 TS_STATIC = "static"
+TS_READONLY = "readonly"
 TS_SCOPED_IDENTIFIER = "scoped_identifier"
 TS_ASTERISK = "asterisk"
 

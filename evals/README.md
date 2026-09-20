@@ -308,6 +308,7 @@ uv run python -m evals.inheritance --target codebase_rag              # Python
 uv run python -m evals.inheritance --target repo --language java      # javac
 uv run python -m evals.inheritance --target repo --language cpp       # libclang
 uv run python -m evals.inheritance --target repo --language csharp    # Roslyn
+uv run python -m evals.inheritance --target repo --language typescript  # tsc
 ```
 
 **Language scope, and why the numbers are not comparable across it** (issue
@@ -320,10 +321,11 @@ uv run python -m evals.inheritance --target repo --language csharp    # Roslyn
 | `java` | javac | `supertypes(simple-name)` | `extends` + `implements`, base by **simple name** | not adjudicated |
 | `cpp` | libclang | `bases(simple-name)` | base specifiers, base by **simple name** | not adjudicated |
 | `csharp` | Roslyn | `supertypes(simple-name)` | base class + interfaces, by **simple name** | not adjudicated |
+| `typescript` | tsc | `supertypes(simple-name)` | `extends` + `implements`, by **simple name**; an interface's `extends` counts as inheritance | not adjudicated |
 
 Only the Python arm grades a *resolved qualified name*, which is the strictest
 unit; the compiler-backed arms compare simple names, so they cannot catch a base
-resolved to the wrong same-named class in another module. The three non-Python
+resolved to the wrong same-named class in another module. The four non-Python
 arms adjudicate no `OVERRIDES` at all, and `_prf` omits the row rather than
 scoring a category the oracle cannot decide — so an absent OVERRIDES row means
 "not measured", never "nothing found".

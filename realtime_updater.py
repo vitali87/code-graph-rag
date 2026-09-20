@@ -18,15 +18,19 @@ from codebase_rag.constants import (
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
     IGNORE_PATTERNS,
-    IGNORE_SUFFIXES,
     LOG_LEVEL_INFO,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
     EventType,
 )
-from codebase_rag.graph_updater import GraphUpdater
+from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.utils.path_utils import (
+    is_ignored_filename,
+    is_unconditionally_ignored_filename,
+    unignore_names_this_file,
+)
 
 
 class PendingTimer(Protocol):
@@ -76,7 +80,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # loaded runners (issue #1005). Production always uses threading.Timer.
         self._timer_factory = timer_factory
         self.ignore_patterns = IGNORE_PATTERNS
-        self.ignore_suffixes = IGNORE_SUFFIXES
+        # Set when a scoped re-ingest fails after it may have written, so the
+        # next change re-indexes the whole repository before touching it
+        # (issue #1681).
+        self._needs_full_rebuild = False
 
         self.debounce_seconds = debounce_seconds
         self.max_wait_seconds = max_wait_seconds
@@ -103,25 +110,89 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         else:
             logger.info(logs.WATCHER_ACTIVE)
 
+    def _rebuild_after_failure(self) -> bool:
+        """Re-index everything after a partial re-ingest. True when the graph is whole.
+
+        `force=True` is required, not tidiness: an incremental run skips files
+        whose hashes are unchanged, and after a re-ingest that deleted subtrees
+        without rebuilding them the FILES on disk are unchanged. A plain
+        `run()` would therefore skip exactly the files whose nodes are missing
+        and report success over a graph that is still partial.
+
+        A rebuild that itself fails must not escape either. This runs from a
+        watchdog callback, so an exception here ends the dispatcher and the
+        watcher goes silently deaf -- the same failure this recovery exists to
+        prevent, one level up. The flag stays set so the next change retries.
+        """
+        logger.warning(logs.WATCHER_REBUILDING_AFTER_FAILURE)
+        try:
+            self.updater.run(force=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(logs.WATCHER_REBUILD_FAILED.format(error=exc))
+            return False
+        self._needs_full_rebuild = False
+        return True
+
     def _is_relevant(self, path_str: str) -> bool:
         path = Path(path_str)
-        if any(path.name.endswith(suffix) for suffix in self.ignore_suffixes):
+        # Shared with the repository walk. These two predicates answer the same
+        # question and drifted apart once already (issue #1636).
+        if is_unconditionally_ignored_filename(path.name):
             return False
-        return all(part not in self.ignore_patterns for part in path.parts)
+        # The rescuable half (.min.js, .min.css) is ignored unless the run's
+        # unignore set names the file (issue #1637). Read from the updater
+        # rather than stored at construction: `_register_generated_sources`
+        # recomputes `unignore_paths` every run, so a copy taken here would
+        # go stale. Without this the watcher drops edits to a file the walk
+        # indexed, and the two consumers disagree again (issue #1636).
+        # Watchdog hands this method an ABSOLUTE path, while both checks below
+        # are about the path INSIDE the repository. Relativise once, here:
+        # matching the absolute form against repo-relative unignore patterns
+        # left only the bare-filename branch working, and testing the absolute
+        # form for ignored components makes the repository's own location
+        # decide the answer -- a checkout under /tmp has `tmp` as a component,
+        # so every file in it was dropped, first-party sources included.
+        relative = self._repo_relative(path)
+        if is_ignored_filename(path.name):
+            unignore_paths = getattr(self.updater, "unignore_paths", None)
+            # The rescuable half (.min.js, .min.css) is ignored unless the run's
+            # unignore set names the file (issue #1637). Read from the updater
+            # rather than stored at construction: `_register_generated_sources`
+            # recomputes `unignore_paths` every run, so a copy taken here would
+            # go stale.
+            if not (
+                unignore_paths
+                and unignore_names_this_file(relative.as_posix(), unignore_paths)
+            ):
+                return False
+        return all(part not in self.ignore_patterns for part in relative.parts)
+
+    def _repo_relative(self, path: Path) -> Path:
+        """The path as the repository sees it, mirroring `dispatch`.
+
+        Falls back to the bare filename when the path is outside the repo (or
+        the updater cannot say where the repo is, as with a test double): that
+        keeps the filename rules working and simply cannot consult directory
+        rules it has no directories for.
+        """
+        try:
+            return path.relative_to(self.updater.repo_path)
+        except (ValueError, AttributeError, TypeError):
+            return Path(path.name)
 
     def dispatch(self, event: FileSystemEvent) -> None:
         # ┌─────────────────────────────────────────────────────────────────────┐
         # │                      Real-Time Graph Update Steps                   │
         # ├─────────────────────────────────────────────────────────────────────┤
-        # │ Step 1: Delete all old data from the graph for this file           │
-        # │         Provides a clean slate for the updated information         │
-        # │ Step 2: Clear the specific in-memory state for the file            │
-        # │         Prevents stale in-memory representations                   │
-        # │ Step 3: Re-parse the file if it was modified or created            │
-        # │         Rebuilds in-memory state (AST, function registry)          │
-        # │ Step 4: Re-process all function calls across the entire codebase   │
-        # │         Fixes "island" problem; changes reflect in all relations   │
-        # │ Step 5: Flush all collected changes to the database                │
+        # │ Step 1: Drop events for directories and ignored or irrelevant      │
+        # │         paths before they cost anything                            │
+        # │ Step 2: Debounce, so a burst of saves to one file becomes one job  │
+        # │ Step 3: Hand the changed and deleted paths to                      │
+        # │         GraphUpdater.reingest, which deletes the old subtrees,     │
+        # │         re-parses the files plus their one-level dependents,       │
+        # │         resolves calls in that set only and flushes (#1524)        │
+        # │ Step 4: Log what was re-parsed, what depended on it, what was      │
+        # │         removed, and how long it took                              │
         # └─────────────────────────────────────────────────────────────────────┘
         src_path = event.src_path
         if isinstance(src_path, bytes):
@@ -243,10 +314,37 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         logger.warning(
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
-        if event.event_type == EventType.DELETED:
-            self.updater.reingest((), deleted=(path,))
-        else:
-            self.updater.reingest((path,))
+        # A previous scoped re-ingest died part way through, so the graph may be
+        # missing the subtrees it deleted and never rebuilt. Resolving this
+        # change against that state would compound the damage, so restore a
+        # whole graph first (issue #1681).
+        if self._needs_full_rebuild and not self._rebuild_after_failure():
+            # The rebuild failed too, so the graph is still partial. Skip the
+            # scoped work rather than resolve this change against it; the flag
+            # stays set and the next change tries again.
+            return
+        try:
+            if event.event_type == EventType.DELETED:
+                self.updater.reingest((), deleted=(path,))
+            else:
+                self.updater.reingest((path,))
+        except (ValueError, ReingestAborted) as exc:
+            # A refusal (a symlink resolving outside the repo, a directory where
+            # a file was expected) is raised while the paths are split, and an
+            # abort while the call was still READING the graph. Neither wrote
+            # anything, so the updater is still valid and later events run.
+            logger.warning(logs.WATCHER_REINGEST_REFUSED.format(path=path, error=exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            # Anything else may have deleted the affected subtrees and never
+            # rebuilt them. Letting it escape would end this callback with the
+            # updater retained, so every later event resolves against a graph
+            # that no longer matches its registry. Mirrors the MCP tool's
+            # posture (`_reingest_sync`), adapted for a long-lived watcher:
+            # recover on the next event rather than refusing for ever.
+            logger.error(logs.WATCHER_REINGEST_FAILED.format(path=path, error=exc))
+            self._needs_full_rebuild = True
+            return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 

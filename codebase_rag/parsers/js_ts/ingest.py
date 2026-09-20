@@ -44,10 +44,13 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     module_qn_to_file_path: dict[str, Path]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
+    class_owner_module: dict[str, str]
     _handler: LanguageHandler
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(
+        self, node: ASTNode, language: cs.SupportedLanguage
+    ) -> str | None: ...
 
     @abstractmethod
     def _emit_or_defer_defines(
@@ -142,6 +145,12 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
 
                 if child_qn not in self.class_inheritance:
                     self.class_inheritance[child_qn] = []
+                # JS prototype inheritance writes class_inheritance WITHOUT
+                # going through class ingest, so the owner has to be recorded
+                # here too or the entry survives its file's deletion (#1772).
+                # `child_qn` is built from `module_qn` directly above, so the
+                # declaring module is exact rather than inferred.
+                self.class_owner_module[child_qn] = module_qn
                 if parent_qn not in self.class_inheritance[child_qn]:
                     self.class_inheritance[child_qn].append(parent_qn)
 
@@ -236,7 +245,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                     method_qn,
                     method_name,
                     func_node,
-                    self._get_docstring(func_node),
+                    self._get_docstring(func_node, language),
                     self.module_qn_to_file_path.get(module_qn),
                     self.repo_path,
                 )
@@ -408,7 +417,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             method_qn,
             method_name,
             method_func_node,
-            self._get_docstring(method_func_node),
+            self._get_docstring(method_func_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )
@@ -648,7 +657,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             function_qn,
             function_name,
             function_node,
-            self._get_docstring(function_node),
+            self._get_docstring(function_node, language),
             self.module_qn_to_file_path.get(module_qn),
             self.repo_path,
         )

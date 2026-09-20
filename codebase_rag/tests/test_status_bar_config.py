@@ -10,11 +10,10 @@ from codebase_rag import main as main_mod
 
 
 @pytest.fixture(autouse=True)
-def reset_session(monkeypatch: pytest.MonkeyPatch):
+def reset_session(monkeypatch: pytest.MonkeyPatch) -> None:
     main_mod.app_context.session.confirm_edits = True
     main_mod.app_context.session.load_cgr_instructions = True
     main_mod.app_context.session.target_repo = None
-    yield
 
 
 @patch("codebase_rag.main.settings")

@@ -67,7 +67,8 @@ def test_cgr_matches_syn_oracle_on_closure_containment(tmp_path: Path) -> None:
     by_label = {row["label"]: row for row in result.rows}
     row = by_label.get(cs.RelationshipType.DEFINES.value)
     assert row is not None, (by_label, result.diff)
-    assert row["precision"] == 1.0 and row["recall"] == 1.0, (row, result.diff)
+    assert row["precision"] == 1.0, (row, result.diff)
+    assert row["recall"] == 1.0, (row, result.diff)
     # The method-nested closures must contribute resolvable DEFINES edges,
     # not just the free-function one (the gap this fix closes).
     assert row["tp"] >= 5, (row, result.diff)

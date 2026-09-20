@@ -18,6 +18,24 @@ from .utils import type_identifier_text
 GO_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 
+def _selector_segments(selector: Node) -> list[str] | None:
+    """`e.trees.get` -> `["e", "trees", "get"]`: the field identifiers of a
+    selector chain, root first, or None when a link is not a plain identifier."""
+    segments: list[str] = []
+    current: Node | None = selector
+    while current is not None and current.type == cs.TS_GO_SELECTOR_EXPRESSION:
+        field = current.child_by_field_name(cs.FIELD_FIELD)
+        if field is None or field.type != cs.TS_GO_FIELD_IDENTIFIER:
+            return None
+        segments.append(safe_decode_text(field) or "")
+        current = current.child_by_field_name(cs.FIELD_OPERAND)
+    if current is None or current.type != cs.TS_IDENTIFIER or not current.text:
+        return None
+    segments.append(safe_decode_text(current) or "")
+    segments.reverse()
+    return segments
+
+
 class GoTypeInferenceEngine:
     # Maps local variable / parameter / receiver names to their bare Go type name
     # within a function or method body, so the resolver can bind a receiver-dispatch
@@ -189,8 +207,6 @@ class GoTypeInferenceEngine:
                 self._collect_var_declaration(node, var_types)
             case cs.TS_GO_SHORT_VAR_DECLARATION:
                 self._collect_short_var_declaration(node, var_types)
-            case _:
-                pass
         for child in node.children:
             self._collect_body_declarations(child, var_types)
 
@@ -275,20 +291,8 @@ class GoTypeInferenceEngine:
             return [safe_decode_text(func) or ""] if func.text else None
         if func.type != cs.TS_GO_SELECTOR_EXPRESSION:
             return None
-        segments: list[str] = []
-        current: Node | None = func
-        while current is not None and current.type == cs.TS_GO_SELECTOR_EXPRESSION:
-            field = current.child_by_field_name(cs.FIELD_FIELD)
-            operand = current.child_by_field_name(cs.FIELD_OPERAND)
-            if field is None or field.type != cs.TS_GO_FIELD_IDENTIFIER:
-                return None
-            segments.append(safe_decode_text(field) or "")
-            current = operand
-        if current is None or current.type != cs.TS_IDENTIFIER or not current.text:
-            return None
-        segments.append(safe_decode_text(current) or "")
-        segments.reverse()
-        return segments if all(segments) else None
+        segments = _selector_segments(func)
+        return segments if segments and all(segments) else None
 
     def infer_value_type(self, value: Node) -> str | None:
         if value.type == cs.TS_GO_COMPOSITE_LITERAL:

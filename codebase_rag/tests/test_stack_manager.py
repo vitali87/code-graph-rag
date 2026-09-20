@@ -145,7 +145,8 @@ def test_compose_cmd_uses_project_and_file(stack_home: Path, tmp_path: Path) -> 
     cmd = mgr._compose_cmd("up", "-d")
     assert cmd[0] == "docker"
     assert cmd[1] == "compose"
-    assert "-p" in cmd and "cgr-test" in cmd
+    assert "-p" in cmd
+    assert "cgr-test" in cmd
     assert "-f" in cmd
     assert str(mgr.compose_file) in cmd
     assert cmd[-2:] == ["up", "-d"]

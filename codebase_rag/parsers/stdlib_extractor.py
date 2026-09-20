@@ -167,7 +167,10 @@ class StdlibExtractor:
                 return self._extract_go_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.RUST:
                 return self._extract_rust_stdlib_path(full_qualified_name)
-            case cs.SupportedLanguage.CPP:
+            # C shares the include grammar: the same CPP-only arm that hid a
+            # `.c` file's includes upstream (issue #1654) would send its system
+            # includes through the generic extractor here instead.
+            case cs.SupportedLanguage.CPP | cs.SupportedLanguage.C:
                 return self._extract_cpp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.JAVA:
                 return self._extract_java_stdlib_path(full_qualified_name)

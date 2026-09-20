@@ -456,7 +456,10 @@ class TestIngestion:
         differing from the first -- "changed" would also be satisfied by
         writing some other wrong value.
         """
-        from codebase_rag.tests.conftest import run_updater
+        from codebase_rag.tests.conftest import (
+            force_mtime_after_cache,
+            run_updater,
+        )
         from codebase_rag.types_defs import NodeType
 
         def module_props(ingestor: MagicMock) -> list[dict]:
@@ -482,6 +485,11 @@ class TestIngestion:
 
         mock_ingestor.reset_mock()
         target.write_text("# Doc\n\nBody.\n", encoding="utf-8")
+        # The rewrite must land on a later tick than the cache the first run
+        # wrote, or the second run skips the file and "no Module node emitted
+        # on re-index" fires for a reason that has nothing to do with
+        # front-matter (issue #1640; found by the sweep's own review).
+        force_mtime_after_cache(project, target)
         run_updater(project, mock_ingestor)
         second = module_props(mock_ingestor)
 

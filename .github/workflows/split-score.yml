@@ -8,6 +8,12 @@ permissions:
   contents: read
   pull-requests: write
 
+# A new push to the same PR supersedes the queued or running analysis of the
+# previous head; cancelling it keeps the runner queue for live heads.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   score:
     runs-on: ubuntu-latest

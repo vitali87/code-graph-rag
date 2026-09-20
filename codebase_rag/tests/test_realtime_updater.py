@@ -118,3 +118,24 @@ def test_read_only_events_are_ignored(
     event_handler._process_change(event)
 
     mock_updater.reingest.assert_not_called()
+
+
+def test_a_refused_path_is_logged_and_later_events_still_run(
+    event_handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+) -> None:
+    """reingest refuses a path outside the repo with ValueError; the callback
+    must log it and keep serving events rather than die on the timer thread."""
+    outside = temp_repo / "escape.py"
+    outside.touch()
+    inside = temp_repo / "kept.py"
+    inside.touch()
+    mock_updater.reingest.side_effect = [
+        ValueError("Path is outside the repository: escape.py"),
+        None,
+    ]
+
+    event_handler.dispatch(FileModifiedEvent(str(outside)))
+    event_handler.dispatch(FileModifiedEvent(str(inside)))
+
+    assert mock_updater.reingest.call_count == 2
+    mock_updater.reingest.assert_called_with((inside,))

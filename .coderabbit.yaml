@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# The docstring-coverage pre-merge check is off (issue #1617). The pull request
+# template requires "No new comments or docstrings (code should be
+# self-documenting)", and test functions here carry none by convention, so the
+# default 80% threshold warned on every PR that touched a test and could not be
+# cleared without breaking the template. One class of warning that is routinely
+# declined weakens the rule that every bot finding is cleared before merge.
+reviews:
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  auto_review:
+    # Auto-review defaults to the default branch only, so on a stacked chain
+    # every layer above the bottom is skipped and only the bottom PR is ever
+    # read (issue #1581: 14 of 18 open PRs had never been reviewed). The skip
+    # is easy to misread as a clean result -- the same "Review skipped"
+    # headline covers "already reviewed the last commit", which means the head
+    # IS covered, so the notice cannot be judged without opening its body.
+    #
+    # These patterns are anchored and cover the two prefixes stacks are cut
+    # from here. Deliberately not ".*": a base that is neither the default
+    # branch nor a recognised stack layer should keep the default behaviour
+    # rather than silently opting in.
+    base_branches:
+      - "^feat/.*"
+      - "^fix/.*"

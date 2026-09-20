@@ -119,6 +119,13 @@ CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
 PACKAGE_NAME = "code-graph-rag"
+# How a test spawns the CLI as a subprocess. Shared so the deadline gate in
+# test_cli_smoke can assert no other test file spawns it outside that gate
+# (issue #1655). Both spellings pay the same startup cost, so both need the
+# same deadline: `-m codebase_rag.cli`, and the console scripts in
+# [project.scripts].
+CLI_MODULE_INVOCATION = "codebase_rag.cli"
+CLI_ENTRY_POINT_NAMES: frozenset[str] = frozenset({"cgr", PACKAGE_NAME})
 CLI_MSG_VERSION = "{package} version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
@@ -136,6 +143,15 @@ CLI_STATS_UNKNOWN = "Unknown"
 CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
+CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"
+CHECK_BASE_NOT_A_COMMIT = (
+    "--base must name one commit to compare the working tree against, "
+    "not a range or an unknown revision: {base!r}"
+)
+CHECK_SCOPE_OF_OTHER_PROJECT = (
+    "The exclusion scope stamped in this repository belongs to project {other}, "
+    "not {project}; re-index {project} (or check {other}) before running the check"
+)
 CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
@@ -523,6 +539,10 @@ EDIT_RESERVED_PATH = "Path is cgr state, not part of the tree: {path}"
 EDIT_TRANSACTION_FINISHED = "This transaction has already been committed or rolled back"
 EDIT_CONFLICT = "File changed since it was staged; transaction refused: {path}"
 EDIT_NOTHING_STAGED = "Nothing staged; the working tree is untouched"
+EDIT_NOT_NEWEST = (
+    "Transaction {transaction_id} is not the newest recorded edit ({newest}); "
+    "undo the later edit first"
+)
 EDIT_VERIFICATION_FAILED = (
     "Verification failed; the working tree is untouched: {reason}"
 )
@@ -537,15 +557,53 @@ EDIT_SHOW_HEADER = "{tx}  {at}  {count} file(s)  verification={ok}"
 # Rename (issue #1532).
 RENAME_UNKNOWN = "No definition named {qn} in the graph"
 RENAME_NO_DEFINITION_TOKEN = "Could not locate the name of {qn} in {path}"
+RENAME_DEFINITION_UNREADABLE = (
+    "Cannot rename {qn}: its file {path} cannot be read ({error}). "
+    "The index names a file the tree no longer has; re-index and retry."
+)
 RENAME_BAD_NAME = "Not a valid identifier: {name}"
 RENAME_AMBIGUOUS = (
     "Refusing to rename {qn}: {count} site(s) were resolved heuristically, by overload "
     "fan-out, or only by a trace; pass allow_heuristic to rewrite through them"
 )
 RENAME_UNLOCATABLE_SITE = "{owner}: site cannot be located ({resolution})"
+RENAME_SITELESS = (
+    "Cannot rename {qn}: {count} graph-known site(s) carry no rewrite location, "
+    "so the rename would leave them under the old name"
+)
+RENAME_WRONG_ROOT = (
+    "Project {project} was not indexed from this server's repository; "
+    "rename it from the MCP server rooted at its source tree"
+)
+RENAME_STRUCTURAL_UNLOCATABLE = (
+    "Cannot rename {qn}: {count} structural edge(s) (inherits, accepts, returns) "
+    "carry no rewrite site, so the rename would leave them pointing at the old name"
+)
 RENAME_PLANNED = "{count} site(s) would be rewritten"
 RENAME_PARSE_FAILED = "Rename rolled back: {files} would no longer parse"
 RENAME_CONTRACT_FAILED = "Rename rolled back, postcondition failed: {reasons}"
+RENAME_ROLLBACK_REFUSED = (
+    "Rename failed its postcondition ({reasons}) and was not rolled back "
+    "({error}); renamed files may remain modified; check the working tree"
+)
+RENAME_ROLLBACK_UNKNOWN = (
+    "Rename kept: its postcondition failed ({reasons}) and its transaction is "
+    "no longer in the edit history, so whether it was already reversed cannot "
+    "be told from a truncated history; check the working tree"
+)
+RENAME_ROLLBACK_ALREADY_UNDONE = (
+    "Rename rolled back: its postcondition failed ({reasons}) and its "
+    "transaction had already been reversed by another actor, so the files "
+    "were restored without this rollback doing it"
+)
+RENAME_ROLLBACK_UNMEASURED = (
+    "Rename rolled back after its postcondition failed ({reasons}), but the "
+    "graph could not be re-ingested afterwards ({error}); rebuild the graph "
+    "before the next graph-backed operation"
+)
+RENAME_CONTRACT_UNMEASURED = (
+    "Rename applied, but its postcondition could not be measured: {error}"
+)
 # context slice (issue #1536).
 CONTEXT_WHY_TARGET = "target"
 CONTEXT_WHY_CALLER = "direct caller: the call line"
@@ -563,6 +621,18 @@ SIGNATURE_UNKNOWN = "No function or method named {qn} in the graph"
 SIGNATURE_NO_GRAMMAR = "No grammar for {path}; the signature cannot be rewritten"
 SIGNATURE_NO_DEFINITION_TOKEN = "Could not locate the definition of {qn} in {path}"
 SIGNATURE_DUPLICATE_PARAM = "Parameter {name} is listed twice"
+SIGNATURE_POSITIONAL_ONLY_MOVED = (
+    "The definition marks its leading parameters positional-only with `/`, "
+    "and this rewrite moves a parameter across that boundary. Rebuilding it "
+    "would change which arguments callers may pass by name. Rewrite the "
+    "parameters before `/` in place, or remove the marker first."
+)
+SIGNATURE_DUPLICATE_SOURCE = (
+    "Parameters {names} all map to {source}, which holds one value per "
+    "call site: mapping it to several would leave every caller short of "
+    "arguments. Map each new parameter to its own source, or give the "
+    "extras a literal default."
+)
 SIGNATURE_UNKNOWN_SOURCE = (
     "No old parameter {source!r}; the old parameters are: {names}"
 )
@@ -579,9 +649,14 @@ SIGNATURE_GUESSED = "resolved by {resolution}; pass allow_heuristic to rewrite"
 SIGNATURE_MISSING_FILE = "file is missing"
 SIGNATURE_NO_CALL = "no call with an argument list at the recorded site"
 SIGNATURE_SPLAT = "the site spreads its arguments"
+SIGNATURE_VARIADIC = (
+    "Cannot change the signature of {qn}: it takes *args or **kwargs, so its call "
+    "sites cannot be mapped one value per parameter"
+)
 SIGNATURE_UNKNOWN_KEYWORD = "the site passes an unknown keyword {name}"
 SIGNATURE_NEEDS_KEYWORDS = "the mapping needs keyword arguments this language lacks"
 SIGNATURE_UNMAPPED_PARAM = "the site passes no value for {name}"
+SIGNATURE_SURPLUS_ARGS = "the site passes more arguments than the definition declares"
 # extract and inline (issue #1535).
 EXTRACT_UNKNOWN = "No definition named {qn} in the graph"
 EXTRACT_NO_GRAMMAR = "No grammar for {path}; the span cannot be extracted"
@@ -621,12 +696,14 @@ CONTRACT_OP_MOVE = "move"
 CONTRACT_OP_EXTRACT = "extract"
 CONTRACT_OP_INLINE = "inline"
 CONTRACT_RENAME_MISSING = "{old} was not renamed to {new}"
+CONTRACT_RENAME_UNEXPECTED = "unexpected rename: {pairs}"
 CONTRACT_SYMBOLS_MOVED = "symbol set changed: added {added}; removed {removed}"
 CONTRACT_CALLERS_MOVED = "call site count changed: {before} before, {after} after"
 CONTRACT_DANGLING = "dangling callers: {sites}"
 CONTRACT_SITES_UNMAPPED = "call sites neither mapped nor listed as unmapped: {sites}"
 CONTRACT_HEURISTIC_REWRITTEN = "sites resolved by guesswork were rewritten: {sites}"
 CONTRACT_NEW_CYCLE = "new import cycle: {cycles}"
+CONTRACT_STALE_IMPORTER = "importers still target the old module: {sites}"
 CONTRACT_NEW_DUPLICATE = "new duplicate: {pairs}"
 CONTRACT_PARSE_FAILED = "files no longer parse: {files}"
 MSG_SURGICAL_FAILED = (

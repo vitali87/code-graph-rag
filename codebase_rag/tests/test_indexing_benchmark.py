@@ -157,8 +157,9 @@ def test_peak_memory_is_local_to_the_run_not_the_process(tmp_path: Path) -> None
 
     Allocating and releasing the buffer BETWEEN the two measurements is what
     gives the test its teeth: in-process `ru_maxrss` would raise the second
-    reading to at least the ballast, while a subprocess measurement is
-    unmoved.
+    reading to at least the ballast, while a subprocess measurement is not
+    raised by it (it still drifts either way with host load; the assertion
+    below is one-sided for that reason).
     """
     corpus = _write_corpus(tmp_path / "repo", files=1)
 
@@ -177,11 +178,18 @@ def test_peak_memory_is_local_to_the_run_not_the_process(tmp_path: Path) -> None
     after = measure_indexing(corpus, project_name="bench_fixture")
 
     # Same corpus, same work: the ballast must not show up in the second
-    # reading. Allow generous jitter for allocator noise between two real
-    # indexing runs, but far less than the ballast a leak would contribute.
-    drift = abs(after.peak_rss_bytes - before.peak_rss_bytes)
+    # reading. DIRECTIONAL, not absolute: a leak of the parent's history can
+    # only RAISE the second reading (the ballast was allocated between the
+    # two), while the noise between two real subprocess runs on a loaded host
+    # -- allocator behaviour, page-cache pressure, scheduling -- moves it
+    # either way. `abs()` made a second run that happened to peak LOWER fail
+    # for a reason that is not the defect this test exists to catch, and it
+    # did, on the same commit minutes apart under a load average above 30
+    # (issue #1643). Generous jitter is still allowed upward, but far less
+    # than the ballast a leak would contribute.
+    drift = after.peak_rss_bytes - before.peak_rss_bytes
     assert drift < ballast_size // 2, (
-        f"peak moved by {drift} bytes across a released {ballast_size}-byte "
+        f"peak rose by {drift} bytes across a released {ballast_size}-byte "
         "parent allocation; the reported peak is tracking the parent process "
         "rather than the indexing run"
     )

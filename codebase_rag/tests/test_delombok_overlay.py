@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag import constants as cs
 from codebase_rag.capture import ALL_ENABLED
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
@@ -213,13 +214,70 @@ def test_jar_appearing_after_a_raw_index_forces_the_reparse(
     _fake_delombok(monkeypatch)
     mock.reset_mock()
     updater.run()
-    # The reused updater re-registers the class under a duplicate-name
-    # suffix (Widget@N), so the assertion matches the METHOD name only.
-    assert any(".getName(" in qn for qn in _method_qns(mock))
+    # Under the bare class qn: the forced re-parse drops the raw parse's
+    # registry entries first (issue #1657), so the class is not re-registered
+    # as a `Widget@N` duplicate. The graph-side delete is covered by
+    # `test_a_forced_reparse_deletes_the_files_old_subtree_first`, which a
+    # MagicMock cannot observe.
+    assert "proj.src.main.java.com.app.Widget.Widget.getName()" in _method_qns(mock)
     monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
     mock.reset_mock()
     updater.run()
     assert not any(".getName(" in qn for qn in _method_qns(mock))
+
+
+def test_a_forced_reparse_deletes_the_files_old_subtree_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A file forced through re-parse by an overlay change is a RE-INDEX, not
+    # an addition: its previous subtree must be deleted before the parse, or
+    # the old parse's entities linger beside the fresh ones. Popping the
+    # forced key from `old_hashes` made `is_new` read it as new whenever the
+    # graph-backed path set was empty, so the delete AND the in-memory state
+    # drop were both skipped: the store kept the raw parse's Widget beside a
+    # second, `@N`-suffixed Widget from the expanded parse (issue #1657).
+    #
+    # The stateful evals store rather than a MagicMock: `_delete_module_entities`
+    # runs only for a `QueryProtocol` ingestor, which a MagicMock is not, so a
+    # mock cannot observe the delete in either state.
+    from evals.cgr_graph import _StatefulIngestor
+
+    repo = tmp_path / "proj"
+    _write_repo(repo)
+    _fake_java(monkeypatch)
+    monkeypatch.setattr(java_lombok, "find_lombok_jar", lambda: None)
+    parsers, queries = load_parsers()
+    # Default capture: the store models the graph, not the optional network
+    # resource pass ALL_ENABLED would switch on, and the Widget nodes this
+    # asserts on are in the default set.
+    store = _StatefulIngestor()
+    updater = GraphUpdater(
+        ingestor=store, repo_path=repo, parsers=parsers, queries=queries
+    )
+    updater.run()
+    widget_class = "proj.src.main.java.com.app.Widget.Widget"
+    assert (cs.NodeLabel.CLASS.value, widget_class) in store.nodes, (
+        "fixture guard: the raw parse did not register Widget"
+    )
+
+    # The jar appears: the checked-in bytes are unchanged, so only the overlay
+    # identity forces Widget.java back through the parser.
+    _fake_delombok(monkeypatch)
+    updater.run()
+
+    classes = sorted(
+        str(uid) for (label, uid) in store.nodes if label == cs.NodeLabel.CLASS.value
+    )
+    assert classes == [widget_class], (
+        "the forced re-parse did not delete the previous subtree first, so the "
+        f"old Widget survives beside the new parse's: {classes}"
+    )
+    methods = sorted(
+        str(uid) for (label, uid) in store.nodes if label == cs.NodeLabel.METHOD.value
+    )
+    assert f"{widget_class}.getName()" in methods, (
+        f"the expanded member did not land under the bare class qn: {methods}"
+    )
 
 
 def test_maven_cache_prefers_the_numerically_newest_jar(

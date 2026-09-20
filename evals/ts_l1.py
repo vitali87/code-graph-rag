@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_ts_graph
 from .l1_eval import run_l1_eval
-from .oracles import run_typescript_oracle, typescript_available
+from .oracles import run_typescript_oracle, typescript_available, typescript_skip_reason
 
 _TITLE = "cgr L1 structure eval (TypeScript vs tsc)"
 
@@ -28,6 +28,7 @@ def main(
         project_name,
         out_dir,
         available=typescript_available,
+        skip_reason=typescript_skip_reason,
         oracle_missing=ls.TS_ORACLE_MISSING,
         extract_cgr=extract_cgr_ts_graph,
         run_oracle=run_typescript_oracle,

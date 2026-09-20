@@ -180,7 +180,8 @@ def test_protobuf_export_preserves_flow_coverage(tmp_path: Path) -> None:
     raw = (tmp_path / cs.PROTOBUF_INDEX_FILE).read_bytes()
     index = pb.GraphCodeIndex.FromString(raw)
     modules = [n.module for n in index.nodes if n.WhichOneof("payload") == "module"]
-    assert modules and modules[0].flow_covered is True
+    assert modules
+    assert modules[0].flow_covered is True
 
 
 def test_inline_modules_are_never_spurious_coverage_gaps(

@@ -3,11 +3,13 @@ from __future__ import annotations
 import builtins
 import functools
 import os
+import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, Self
@@ -283,15 +285,26 @@ def _isolate_vector_store(
 @pytest.fixture(autouse=True)
 def _isolate_cgr_home(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Generator[Path, None, None]:
+) -> Path:
     from codebase_rag.config import settings
 
     home = tmp_path_factory.mktemp("cgr-home-iso")
     monkeypatch.setattr(settings, "CGR_HOME", home)
-    yield home
+    return home
 
 
-def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
+# What `shutil.rmtree` passes to `onexc` besides the removals. None of these
+# can be re-called with a single path argument: `os.open` needs `flags`,
+# `os.close` needs a descriptor, and `os.path.islink`/`os.scandir`/`os.lstat`
+# are queries that remove nothing (#1622).
+_NON_REMOVAL_FUNCS = frozenset(
+    {os.scandir, os.open, os.lstat, os.close, os.path.islink}
+)
+
+
+def _clear_readonly(
+    func: Any, path: Any, _exc: BaseException, _attempted: set[str] | None = None
+) -> None:
     """Retry a failed removal after clearing the read-only bit.
 
     On Windows `os.unlink` refuses a read-only file outright, so a tree
@@ -308,13 +321,374 @@ def _clear_readonly(func: Any, path: Any, _exc: BaseException) -> None:
     can delete, turning a recoverable error into a permanent one. That is the
     opposite of this handler's purpose, and it bites on POSIX, where the
     read-only case it exists for cannot even occur.
+
+    A path that VANISHED between the walk and the removal has already reached
+    the state the teardown wanted, so it is not an error to recover from. Git
+    runs background maintenance after `git commit` -- `git commit` spawns
+    `git maintenance run --auto --quiet --detach`, `git init` spawns nothing
+    (verified under `GIT_TRACE=1`, git 2.47.1) -- and that deletes its own
+    `.git/objects/maintenance.lock` asynchronously, so `rmtree` can list the
+    entry and find it gone by the time it unlinks -- a TOCTOU that surfaced
+    only under `pytest-xdist` on a CI runner, never on a developer machine.
     """
+    # A symlink has no mode of its own worth clearing, and every stat/chmod
+    # here FOLLOWS it: on a DANGLING link `os.stat` raises FileNotFoundError
+    # and the early return leaves the link in place, abandoning a removal the
+    # handler was asked to perform. On POSIX that costs nothing end-to-end
+    # (rmtree unlinks a dangling link unaided in a writable parent, and where
+    # it cannot the blocker is the parent's mode, not the link); the rescued
+    # platform is WINDOWS, where `os.unlink` refuses the link outright and the
+    # handler is the only removal path, so rmtree then fails on the parent.
+    # See the SCOPE block in test_temp_repo_readonly_cleanup.py. `os.lstat`
+    # alone does not fix it -- `os.chmod` follows links too, and
+    # `follow_symlinks=False` is unsupported for chmod on LINUX, one of the
+    # three unit-matrix platforms and the one this handler must survive.
+    # CPython is built without `lchmod` there (configure.ac forces it off for
+    # every Linux build: "Linux disallows changing the mode of symbolic links.
+    # Some libc implementations have a stub lchmod implementation that always
+    # returns an error." -- the kernel restriction is the reason; the stub is a
+    # secondary note and names no libc), and `os.py` gates chmod's entry into
+    # `os.supports_follow_symlinks` on HAVE_LCHMOD alone -- the HAVE_FCHMODAT
+    # line is deliberately commented out -- so the capability is absent from
+    # the support set -- advisory metadata about the build, not enforcement.
+    # Absent from the SET is not refused at the CALL: HAVE_FCHMODAT *is*
+    # defined on Linux, so posixmodule.c (v3.12.3) compiles out its early
+    # `follow_symlinks_specified` guard at :3348, the call reaches
+    # `fchmodat(AT_SYMLINK_NOFOLLOW)` at :3400, and NotImplementedError comes
+    # only from ENOTSUP/EOPNOTSUPP there (:3408) -- i.e. on a link. The refusal
+    # is FILE-TYPE dependent, not platform dependent. Measured on Ubuntu/glibc
+    # 2.39, x86_64, CPython 3.12.3 and 3.12.13 (musl not measured): HAVE_LCHMOD
+    # 0, `os.chmod not in os.supports_follow_symlinks`, `follow_symlinks=False`
+    # SUCCEEDS on a regular file and raises NotImplementedError("chmod:
+    # follow_symlinks unavailable on this platform") on a dangling link. macOS
+    # 3.12.7 is the mirror image: chmod IS in the set and both cases succeed.
+    #
+    # The set IS readable at runtime, so the skip is a deliberate choice rather
+    # than a workaround for an undetectable gap -- but branching on it would be
+    # branching on the wrong thing, since it does not predict the call.
+    # It also matters that NotImplementedError is a RuntimeError, NOT an
+    # OSError -- the `except FileNotFoundError` below would not catch it, so
+    # taking the chmod route would raise straight out of teardown on the Linux
+    # CI runners (the unit matrix also runs Windows and macOS, where it would
+    # not). Skipping the mode work is the portable answer.
+    # On Windows `os.path.islink` is true for both symlink kinds, so this keeps
+    # the handler platform-independent rather than trading one for another.
+    # Scoped to one top-level `rmtree`, not module-level: a module-level set
+    # would never be cleared and would suppress a legitimate second attempt on
+    # the same path in a later test. `functools.partial` carries it into the
+    # recursive call below.
+    if _attempted is None:
+        _attempted = set()
+    path_key = os.fspath(path)
+
+    if os.path.islink(path):
+        # Same vanished-path tolerance as the non-link path below: the link
+        # can be gone by the time this retry runs, and that is the state the
+        # teardown wanted. Without this the link branch would raise out of
+        # teardown for a case every other branch tolerates.
+        try:
+            func(path)
+        except FileNotFoundError:
+            pass
+        return
     try:
         mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return
     except OSError:
         mode = 0
-    os.chmod(path, mode | stat.S_IWRITE | (stat.S_IEXEC if os.path.isdir(path) else 0))
-    func(path)
+    try:
+        # S_IREAD as well as S_IEXEC on a directory: EXECUTE makes it
+        # traversable, READ makes it listable, and a removal needs both.
+        # Without READ a 0o000 directory becomes 0o300, which `rmtree` can
+        # enter but not enumerate, so the retry fails on the same directory
+        # this handler just "fixed" (#1622). Pytest's own `chmod_rw` adds
+        # S_IRUSR|S_IWUSR and no S_IXUSR, so it cannot repair that either.
+        extra = stat.S_IREAD | stat.S_IEXEC if os.path.isdir(path) else 0
+        os.chmod(path, mode | stat.S_IWRITE | extra)
+        # `func` is not always a one-argument removal, and the cases need
+        # different handling (#1622).
+        #
+        # The discriminator names the callables that must NOT be re-called
+        # with a bare path, and retries everything else. `rmtree` passes
+        # `os.scandir`, `os.open`, `os.lstat`, `os.close` and
+        # `os.path.islink` besides the removals, and each is wrong to call
+        # differently: `os.open` wants `flags` and `os.close` wants a
+        # descriptor (both raise TypeError out of teardown), while
+        # `os.path.islink` is a pure query that removes nothing while looking
+        # like a successful retry.
+        #
+        # Named exclusions rather than an `(os.unlink, os.rmdir)` whitelist
+        # because callers legitimately pass their own removal callable -- the
+        # handler's own tests pass `retried.append` and bare lambdas, and a
+        # whitelist silently skips the retry for every one of them, which is
+        # the same "looks like a retry, removes nothing" failure this branch
+        # exists to stop.
+        if func not in _NON_REMOVAL_FUNCS:
+            func(path)
+        elif os.path.isdir(path) and path_key not in _attempted:
+            # A LISTING failed. `rmtree` does NOT retry this directory after
+            # the handler returns -- it abandons the subtree, so the parent's
+            # `rmdir` then fails "Directory not empty" and nothing revisits
+            # the children. Recursing is what removes them.
+            #
+            # Guarded by `_attempted`: the recursive call re-enters this
+            # handler for the SAME path whenever a child cannot be removed
+            # (an immutable file, a read-only mount), and without the guard
+            # that is unbounded recursion ending in `RecursionError` raised
+            # from inside teardown -- strictly harder to attribute than the
+            # underlying `PermissionError`. Seen once, the path is left to
+            # report its own error.
+            _attempted.add(path_key)
+            shutil.rmtree(
+                path,
+                onexc=functools.partial(_clear_readonly, _attempted=_attempted),
+            )
+    except FileNotFoundError:
+        return
+
+
+def _make_tmp_path_removable(root: Path) -> None:
+    """Add the owner write bit to everything under `root`, bottom-up.
+
+    `_clear_readonly` rescues fixtures that tear themselves down through it.
+    Nothing rescues a test that runs `git init` under a bare `tmp_path` and
+    leaves the tree to pytest's own retention cleanup, which is what the
+    sweep on issue #1622 found in five places. Git writes loose objects
+    read-only, so on Windows that tree cannot be removed; pytest keeps the
+    last few basetemps and collects them in a LATER session with errors
+    ignored, so the failure never lands on the test that created it.
+
+    This runs for every test, so it must be cheap and total: it walks only
+    the test's own `tmp_path` (usually absent or tiny) and never raises.
+
+    Three constraints inherited from `_clear_readonly`, each load-bearing:
+
+    * The bit is ADDED to the existing mode, never assigned. `chmod(p, 0o200)`
+      sets a DIRECTORY untraversable for good, turning a recoverable state
+      into a permanent one.
+    * Symlinks are skipped. `os.chmod` follows links and `follow_symlinks`
+      is unsupported for chmod on Linux, one of the three matrix platforms.
+    * A path that vanishes mid-walk is already in the state teardown wanted;
+      git's background maintenance deletes its own lock asynchronously.
+    """
+    if not root.exists():
+        return
+
+    def widen(target: str) -> None:
+        if os.path.islink(target):
+            return
+        try:
+            mode = os.stat(target).st_mode
+            # A directory needs READ to be listed as well as EXECUTE to be
+            # entered: at 0o300 it is traversable but `os.walk` still cannot
+            # enumerate it, so its children stay unreachable and unremovable.
+            extra = stat.S_IREAD | stat.S_IEXEC if os.path.isdir(target) else 0
+            os.chmod(target, mode | stat.S_IWRITE | extra)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError:
+            # A mode we cannot widen is not worth failing teardown over: the
+            # removal that follows reports the real problem.
+            return
+
+    # The root FIRST: every walk below has to list it, so a restrictive mode
+    # on `tmp_path` itself blocks all of them and the retry re-walks a root
+    # that is still unreadable. Fixing it last cannot help the passes that
+    # already failed.
+    widen(str(root))
+    # Then top-down, widening each directory as it ARRIVES rather than its
+    # children afterwards. `os.walk` is lazy and lists a directory when it
+    # yields it, so fixing a mode on arrival fixes it before the listing for
+    # the level below. Bottom-up would fix only the ORDER of widening, never
+    # the reachability the listing itself needs.
+    #
+    # `dirnames` as well as `dirpath`, because a directory at mode 0o000 is
+    # never YIELDED at all -- `os.walk` raises while listing it and skips it
+    # silently -- so its name in its PARENT's listing is the only handle on
+    # it. `onerror` collects what would otherwise be swallowed, turning a
+    # silently empty subtree into a signal.
+    walk_errors: list[OSError] = []
+    for dirpath, dirnames, _filenames in os.walk(
+        root, topdown=True, followlinks=False, onerror=walk_errors.append
+    ):
+        widen(dirpath)
+        for name in dirnames:
+            widen(os.path.join(dirpath, name))
+    if walk_errors:
+        # A listing failed before its mode was fixed; the modes are fixed now,
+        # so a second walk reaches what the first could not. Bounded at one
+        # retry: anything still unlistable is a genuine failure, and the
+        # removal that follows reports it rather than this helper looping.
+        for dirpath, dirnames, _filenames in os.walk(
+            root, topdown=True, followlinks=False
+        ):
+            widen(dirpath)
+            for name in dirnames:
+                widen(os.path.join(dirpath, name))
+    # Finally the files, bottom-up, now that every directory holding one can
+    # actually be listed.
+    for dirpath, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
+        for name in (*filenames, *dirnames):
+            widen(os.path.join(dirpath, name))
+
+
+@pytest.fixture(autouse=True)
+def _tmp_path_stays_removable(request: pytest.FixtureRequest) -> Generator[None]:
+    """Leave no read-only object behind for pytest's cleanup to trip over.
+
+    Autouse and keyed on whether the test actually asked for `tmp_path`, so a
+    test that never used one does no work. This is the DEFAULT the issue asks
+    for: `git_repo` covers the fixtures that opt in, and this covers the ones
+    that build a repository by hand, including ones not yet written.
+    """
+    # Resolved BEFORE the yield: after the test, `tmp_path` may already be
+    # torn down and `getfixturevalue` then raises rather than returning it.
+    # Requesting it here does not create one for a test that never asked --
+    # the membership check gates that -- so an unrelated test still does no
+    # filesystem work.
+    root = (
+        request.getfixturevalue("tmp_path")
+        if "tmp_path" in request.fixturenames
+        else None
+    )
+    yield
+    if root is not None:
+        _make_tmp_path_removable(root)
+
+
+_FANOUT_DIR = re.compile(r"[0-9a-f]{2}")
+# 38 hex for sha1 object names, 62 for sha256; the leading two hex chars are
+# the fanout directory, so a basename is the remaining 38 or 62. Fixtures
+# here pin sha1, but the helper must not silently discard a sha256 repo.
+_LOOSE_OBJECT = re.compile(r"[0-9a-f]{38}|[0-9a-f]{62}")
+
+
+def collect_loose_objects(repo: Path) -> tuple[list[str], list[int]]:
+    """Return the loose objects under `repo`, and which of them are read-only.
+
+    Counts ONLY `objects/<2 hex>/<38 or 62 hex>` (sha1 or sha256 basenames).
+    Everything else under `objects/` is a different kind of file, and several
+    are mode 444: `pack/*.pack`, `*.idx`, `*.rev`, `commit-graph`. Walking all
+    of `objects/` would let those satisfy a "git wrote read-only loose
+    objects" assertion with zero loose objects present -- the exact state such
+    an assertion exists to reject. Git only packs at `gc.auto` (6700) loose
+    objects, so the fixture cannot reach that today, but the guard must not
+    depend on that staying true.
+    Shared by every test that asserts on git's loose objects (issue #1652):
+    a scan of all of `objects/` in test_temp_repo_readonly_cleanup passed on
+    pack files alone.
+    `test_the_loose_object_filter_rejects_a_packed_repo` pins the packed
+    difference; `test_the_loose_object_filter_accepts_a_sha256_repo` pins the
+    62-hex branch, which the sha1 pins in every other fixture would otherwise
+    leave uncovered.
+
+    Modes are read AT LISTING TIME, one `lstat` per entry, never a second
+    pass. `git commit` spawns `git maintenance run --auto --quiet --detach`,
+    which deletes its own `.git/objects/maintenance.lock` asynchronously, so a
+    list-then-stat pair races it: the entry is listed and gone by the time the
+    stat runs. That is the TOCTOU `_clear_readonly` documents, and it failed
+    exactly once, on macos/3.13 under xdist (#1622). A vanished entry is
+    skipped rather than tolerated after the fact: it cannot be the read-only
+    loose object callers assert on, because a loose object is permanent for
+    the life of the repo while the lock is transient.
+    """
+    listed: list[str] = []
+    readonly_modes: list[int] = []
+    for dirpath, _dirs, _files in os.walk(repo / ".git" / "objects"):
+        if not _FANOUT_DIR.fullmatch(os.path.basename(dirpath)):
+            continue
+        with os.scandir(dirpath) as entries:
+            for entry in entries:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                if not _LOOSE_OBJECT.fullmatch(entry.name):
+                    continue
+                try:
+                    mode = entry.stat(follow_symlinks=False).st_mode
+                except FileNotFoundError:
+                    continue
+                listed.append(entry.name)
+                if not mode & stat.S_IWUSR:
+                    readonly_modes.append(mode)
+    return listed, readonly_modes
+
+
+def force_mtime_after_cache(repo: Path, source: Path) -> None:
+    """Put `source` on a strictly later tick than the hash cache file.
+
+    An incremental run only re-hashes a cached file whose mtime is strictly
+    greater than the cache file's own (`if file_mtime <= cache_mtime`), so a
+    rewrite that lands on the same filesystem tick as the cache written by the
+    preceding run is SKIPPED and the run under test never reaches the code the
+    test is about. Since #1615 the cache file is restamped back to the instant
+    observed before the previous run's hashing loop, so on a fine-grained clock
+    the two differ by that run's own hashing and later passes; on a coarse one
+    they can still collide, which is why this failed on Windows py3.12.
+    Stating the precondition removes the dependency on clock resolution.
+
+    Shared by every test that rewrites a cached source right after a run and
+    needs the rewrite re-hashed (issue #1640); the margin such a test gets
+    otherwise is whatever the preceding run happened to cost.
+    """
+    cache_mtime = (repo / rag_cs.HASH_CACHE_FILENAME).stat().st_mtime
+    # Read back and advance until the STORED stamp is strictly later: a
+    # filesystem with coarse mtime resolution can round the requested value
+    # onto the cache's own tick, which is the collision this exists to
+    # remove (CodeRabbit, #1743).
+    stamp = cache_mtime + 1.0
+    for _ in range(8):
+        os.utime(source, (stamp, stamp))
+        if source.stat().st_mtime > cache_mtime:
+            return
+        stamp += 1.0
+    raise AssertionError(
+        f"could not stamp {source} later than the hash cache ({cache_mtime})"
+    )
+
+
+def git_env(**overrides: str) -> dict[str, str]:
+    """A Git environment with every inherited `GIT_*` routing variable gone.
+
+    `{**os.environ, ...}` is not enough. An inherited `GIT_DIR`,
+    `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_OBJECT_DIRECTORY` redirects a
+    `git init` away from the directory it names, so the repo under test is
+    never built where the test looks for it -- and `git init` still exits 0,
+    so `check=True` does not catch it. The caller is then handed a path with
+    no `.git` at all, or object counts describing some other repository. A
+    test asserting an object is ABSENT passes vacuously that way, which is
+    why this is stripped rather than merely overridden.
+
+    Dropping the whole prefix rather than a listed few keeps that true for
+    routing variables not enumerated here (#1648 review).
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")} | dict(
+        overrides
+    )
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Generator[Path, None, None]:
+    """A real git repository under `tmp_path`, torn down safely.
+
+    Prefer this over calling `git init` by hand: teardown goes through
+    `_clear_readonly`, so the read-only loose objects git writes cannot
+    strand the tree on Windows (issue #1622).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = git_env(
+        GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig-absent"),
+        GIT_CONFIG_SYSTEM=str(tmp_path / "gitconfig-absent"),
+        # Pinned for the same reason the config files are neutralised: the
+        # env is inherited, and an ambient GIT_DEFAULT_HASH=sha256 would give
+        # 62-hex loose-object basenames instead of 38-hex, changing what
+        # callers see.
+        GIT_DEFAULT_HASH="sha1",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
+    yield repo
+    shutil.rmtree(repo, onexc=_clear_readonly, ignore_errors=False)
 
 
 @pytest.fixture
@@ -494,3 +868,70 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
         vs.close_vector_store_client()
     except Exception:
         pass
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
+    """Report an unavailable node oracle as a SKIP, not an error (issue #1639).
+
+    A clean checkout cannot know whether the toolchain can run an oracle until
+    `ensure_node_deps` has installed the packages, which happens inside the
+    test. The runner raises `NodeOracleUnavailable` at that point; letting it
+    through reports a missing toolchain as a test ERROR, which is exactly the
+    misdiagnosis this issue is about. Translated here rather than at each of
+    the ~24 call sites, so a new call site cannot forget it.
+    """
+    # Imported lazily: `evals` is not on the path when conftest is loaded,
+    # only once a test that uses it has been collected.
+    from evals.oracles import NodeOracleUnavailable
+
+    outcome = yield
+    excinfo = getattr(outcome, "excinfo", None)
+    if excinfo is not None and isinstance(excinfo[1], NodeOracleUnavailable):
+        pytest.skip(str(excinfo[1]))
+
+
+def assert_fixture_covers(covered: set[str], required: set[str], *, what: str) -> None:
+    """Fail unless a fixture supplies every input the predicate under test reads.
+
+    The defect this exists for (#1859): a test asserting that a filter
+    returned NOTHING passes vacuously when the fixture contains none of the
+    values that filter inspects. Measured on `REAL_ROLLUP_ALL_CONCLUDED`,
+    which held two checks that were not members of `AGGREGATED_JOBS` -- so
+    "the aggregate is absent although every dependency concluded" was reached
+    because the rollup held no dependency at all. Flipping every conclusion
+    to unfinished left all 105 tests green.
+
+    An empty result and an empty INPUT read identically from the assertion's
+    side, and only one of them is evidence. This makes the fixture's adequacy
+    a checked precondition rather than a property nobody states.
+
+    Deliberately narrow. It cannot detect the sibling case where the fixture
+    is well-formed but every row is pinned at the one value that drives the
+    branch -- there the inputs are present and only varying them shows the
+    problem. That half stays a review convention (assert the verdict
+    CHANGES), because no assertion inside one test can observe what another
+    test failed to vary.
+
+    Args:
+        covered: the required values the fixture actually supplies.
+        required: every value the predicate under test reads.
+        what: named in the failure, e.g. "the all-concluded rollup".
+    """
+    missing = required - covered
+    # Two diagnoses, because they are different bugs. A fixture supplying
+    # NONE of the inputs makes the empty result vacuous outright; one
+    # supplying some makes it merely unreliable -- the filter may be
+    # examining the present values correctly and simply never seeing the
+    # absent ones. Saying "none" for the partial case is a false diagnosis
+    # that sends the reader looking for the wrong thing (#1862 review).
+    reason = (
+        "the fixture supplies none of its inputs"
+        if not covered & required
+        else "the fixture does not supply all of them"
+    )
+    assert not missing, (
+        f"{what} does not cover {sorted(missing)}, so an assertion that the "
+        f"filter returned nothing proves little: {reason} (#1859). Add the "
+        "missing values, or the test passes whatever the code does."
+    )

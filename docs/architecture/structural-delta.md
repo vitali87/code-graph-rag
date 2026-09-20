@@ -17,7 +17,7 @@ whole working tree, for CI and pre-commit.
 `codebase_rag.structural_delta` is the in-memory twin of
 `services/graph_diff.py`, which diffs exported indexes offline. It reads
 the touched files' subgraph twice, immediately before and after the
-re-ingest, with three fixed Cypher queries scoped to the project:
+re-ingest, with four fixed Cypher queries scoped to the project:
 
 | Read                    | What                                                                    |
 |-------------------------|-------------------------------------------------------------------------|
@@ -25,9 +25,10 @@ re-ingest, with three fixed Cypher queries scoped to the project:
 | sites                   | Every `CALLS` / `REFERENCES` / `INSTANTIATES` edge into or out of the touched files, with the per-site location and argument shape from [edge-site properties](graph-schema.md#edge-site-properties). Callees defined elsewhere are fetched by name so their signatures are known. |
 | module imports          | The project's `Module -IMPORTS-> Module` graph.                         |
 
-The two snapshots are diffed client-side; two further project-wide linear
-reads (the duplicate fingerprints and the dead-code call graph) serve the
-duplicate and test lookups. The reads and the re-ingest run under the same
+The two snapshots are diffed client-side; one further project-wide linear
+read (the duplicate fingerprints) serves the duplicate lookup, and the tests
+reaching a changed symbol are found by walking its callers one hop at a time
+(`CYPHER_DELTA_CALLERS_OF`). The reads and the re-ingest run under the same
 lock as every other MCP graph access, so the delta always describes one
 generation of the graph. Measured overhead on top of the re-ingest is
 reported per call as `delta_ms`; the benchmark (`benchmarks/bench_reingest.py`)

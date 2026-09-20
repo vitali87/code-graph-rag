@@ -52,8 +52,5 @@ def test_cgr_matches_jdk_oracle_on_inheritance_edges(tmp_path: Path) -> None:
     ):
         row = by_label.get(label)
         assert row is not None, (label, by_label, result.diff)
-        assert row["precision"] == 1.0 and row["recall"] == 1.0, (
-            label,
-            row,
-            result.diff,
-        )
+        assert row["precision"] == 1.0, (label, row, result.diff)
+        assert row["recall"] == 1.0, (label, row, result.diff)

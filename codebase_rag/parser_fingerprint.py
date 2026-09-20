@@ -10,11 +10,15 @@ import subprocess
 from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from . import constants as cs
 from . import logs as ls
+
+if TYPE_CHECKING:
+    from .capture import CaptureSelection
 
 _FILE_HASH_CHUNK_SIZE = 1024 * 1024
 
@@ -190,7 +194,9 @@ def _tool_versions(repo_path: Path | None = None) -> list[str]:
 
 
 def compute_parser_fingerprint(
-    package_root: Path | None = None, repo_path: Path | None = None
+    package_root: Path | None = None,
+    repo_path: Path | None = None,
+    capture: "CaptureSelection | None" = None,
 ) -> str:
     root = package_root if package_root is not None else Path(__file__).resolve().parent
     hasher = hashlib.md5(usedforsecurity=False)
@@ -213,7 +219,42 @@ def compute_parser_fingerprint(
     # (issue #1465).
     for entry in _tool_versions(repo_path):
         hasher.update(entry.encode())
+    # The capture selection decides which edges exist for unchanged sources,
+    # the same criterion the frontend mode above is hashed under: enabling a
+    # group must not leave an "already in sync" graph that predates it, and
+    # disabling one must not leave its edges behind (issue #1630).
+    for entry in _capture_entries(capture):
+        hasher.update(entry.encode())
     return hasher.hexdigest()
+
+
+def _capture_entries(capture: "CaptureSelection | None") -> list[str]:
+    """Stable identity of the resolved capture selection.
+
+    The RESOLVED selection is hashed rather than the raw `CGR_CAPTURE` spec,
+    so `io,io` and `io` are one identity and do not force a needless rebuild.
+    Sorted because the selection holds frozensets, whose iteration order is
+    not stable across processes and would otherwise make one selection hash
+    many ways.
+    """
+    from .capture import default_capture
+    from .config import settings
+
+    selection = capture if capture is not None else default_capture()
+    rels = sorted(rel.value for rel in selection.enabled_rels)
+    labels = sorted(label.value for label in selection.enabled_node_labels)
+    # Prefixed and counted so a relationship named like a node label cannot
+    # move between the two lists without changing the digest.
+    return [
+        f"capture-rel:{len(rels)}",
+        *rels,
+        f"capture-node:{len(labels)}",
+        *labels,
+        # Not part of CaptureSelection, but the same kind of input: it picks
+        # between two predicates for whether a nested definition becomes a
+        # method, so it changes which Method nodes unchanged sources produce.
+        f"capture-function-local-definitions:{settings.CAPTURE_FUNCTION_LOCAL_DEFINITIONS}",
+    ]
 
 
 def _repo_frontend_inputs(repo_path: Path | None) -> list[str]:

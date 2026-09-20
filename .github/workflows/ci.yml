@@ -14,7 +14,7 @@ concurrency:
   # Non-PR events (main push, version-bump push, dispatch) group by SHA so each
   # commit gets its own group and can neither cancel nor be cancelled, even in a
   # burst. A cancelled run is what makes the branch CI badge flash "failing".
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -67,6 +67,14 @@ jobs:
       - name: Validate labels.yml
         run: |
           uv run python scripts/validate_labels.py
+
+      # Neither check-yaml nor the vendor schema can catch a misspelt key
+      # nested under reviews.auto_review: additionalProperties is set on the
+      # root object only, so the typo validates clean and auto-review
+      # silently reverts to the default branch (issues #1581, #1823).
+      - name: Validate .coderabbit.yaml
+        run: |
+          uv run python scripts/validate_coderabbit_config.py
 
   typecheck:
     name: Type Check
@@ -129,7 +137,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --python ${{ matrix.python-version }} --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
 
       # Three unit tests embed for real. Without a cache each job pulled
       # microsoft/unixcoder-base from HuggingFace mid-suite, so a 429 or an
@@ -262,7 +270,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
 
       - name: Run integration tests
         env:
@@ -417,7 +425,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.23"
+          go-version: ">=1.26.6"
           cache-dependency-path: codebase_rag/parsers/go_frontend/gotypes/go.sum
 
       - name: Install uv

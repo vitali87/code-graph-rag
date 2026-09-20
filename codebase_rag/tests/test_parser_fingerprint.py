@@ -4,20 +4,25 @@
 # unchanged files. These tests pin the parser-fingerprint safeguard: full
 # syncs stamp the fingerprint of the parser that built the graph, and any
 # later sync against a different parser warns loudly until a clean rebuild.
+import ast
+import inspect
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as ls
+from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_fingerprint import compute_parser_fingerprint
 from codebase_rag.parser_loader import load_parsers
+from codebase_rag.utils.path_utils import base_module_qn
 
 STALE_FINGERPRINT = "0" * 32
 
@@ -38,13 +43,18 @@ def warnings_sink() -> Iterator[list[str]]:
     logger.remove(handler_id)
 
 
-def _make_updater(repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
+def _make_updater(
+    repo: Path,
+    mock_ingestor: MagicMock,
+    capture: "CaptureSelection | None" = None,
+) -> GraphUpdater:
     parsers, queries = load_parsers()
     return GraphUpdater(
         ingestor=mock_ingestor,
         repo_path=repo,
         parsers=parsers,
         queries=queries,
+        capture=capture,
     )
 
 
@@ -86,6 +96,79 @@ class TestComputeParserFingerprint:
         before = compute_parser_fingerprint(pkg)
         source.write_text("A = 2\n")
         assert compute_parser_fingerprint(pkg) != before
+
+    def test_changes_when_the_module_qn_rule_changes(self, tmp_path: Path) -> None:
+        """`base_module_qn` decides every module's identity, so a change to it
+        must re-key the graph.
+
+        It lives in `utils/path_utils.py`, which was in NEITHER the directory
+        globs (`parsers`, `constants`) nor the file list, so a change touching
+        only that file left existing indexes on their old module names with no
+        staleness warning — the graph silently disagreeing with the code that
+        built it (issue #1720 review).
+        """
+        assert "utils/path_utils.py" in cs.PARSER_FINGERPRINT_SOURCE_FILES
+        pkg = tmp_path / "pkg"
+        (pkg / "utils").mkdir(parents=True)
+        source = pkg / "utils" / "path_utils.py"
+        source.write_text("A = 1\n")
+        before = compute_parser_fingerprint(pkg)
+        source.write_text("A = 2\n")
+        assert compute_parser_fingerprint(pkg) != before
+
+    def test_every_module_qn_deriving_source_is_a_fingerprint_input(self) -> None:
+        """The forcing function the case above cannot provide.
+
+        That test names the file I already know about. This one asks the
+        question from the other end, and follows the rule rather than one
+        file: `base_module_qn` AND every package-internal module or callable
+        it references must be a fingerprint input.
+
+        Checking only the defining file would pass a SPLIT refactor -- the
+        wrapper stays in `utils/path_utils.py` while the arithmetic moves to
+        an unlisted helper, and edits to the helper then leave existing graphs
+        on stale identities with the guard still green (raised on #1722). The
+        property is "everything the identity rule depends on", not "the file
+        it currently lives in".
+        """
+        package_root = Path(cs.__file__).resolve().parent.parent
+
+        def _rel(obj: object) -> str | None:
+            try:
+                source = inspect.getsourcefile(obj)  # type: ignore[arg-type]
+            except TypeError:
+                return None
+            if not source:
+                return None
+            path = Path(source).resolve()
+            if not path.is_relative_to(package_root):
+                return None  # stdlib and third-party are not ours to fingerprint
+            return path.relative_to(package_root).as_posix()
+
+        def _covered(rel: str) -> bool:
+            return rel in cs.PARSER_FINGERPRINT_SOURCE_FILES or rel.startswith(
+                tuple(f"{d}/" for d in cs.PARSER_FINGERPRINT_SOURCE_DIRS)
+            )
+
+        defining_module = inspect.getmodule(base_module_qn)
+        assert defining_module is not None
+        tree = ast.parse(textwrap.dedent(inspect.getsource(base_module_qn)))
+        referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        # The definition itself, plus every package-internal name its body
+        # actually reaches for (`cs` resolves to the constants package, which
+        # the directory glob already covers).
+        subjects = {base_module_qn} | {
+            obj
+            for name in referenced
+            if (obj := getattr(defining_module, name, None)) is not None
+        }
+        uncovered = sorted(
+            rel for obj in subjects if (rel := _rel(obj)) and not _covered(rel)
+        )
+        assert not uncovered, (
+            "the module-qn rule depends on these files, and a change to any of "
+            f"them would not refresh the parser fingerprint: {uncovered}"
+        )
 
     def test_unchanged_tree_same_fingerprint(self, tmp_path: Path) -> None:
         pkg = tmp_path / "pkg"
@@ -215,6 +298,45 @@ class TestFingerprintStamping:
             compute_parser_fingerprint(repo_path=py_project)
         )
 
+    def test_a_full_build_that_dies_before_the_flush_leaves_no_stamp(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The stamp must not outlive a build whose writes never became durable.
+
+        Stamped inside `_process_files`, before the final flush, a full build
+        that died in between left a fingerprint claiming this parser's edges
+        were in the graph while the graph held none of them; the next run
+        compared equal and `_warn_if_parser_changed` stayed silent for exactly
+        the run that failed (issue #1634). The exclusion stamp, the hash cache
+        and the directory mtimes already commit after the flush; this pins the
+        fingerprint to the same point.
+
+        `_prune_orphan_nodes` sits between the old stamp site and the final
+        flush, so raising from it is a death in that window.
+        """
+        updater = _make_updater(py_project, mock_ingestor)
+        with (
+            patch.object(
+                updater,
+                "_prune_orphan_nodes",
+                side_effect=RuntimeError("died before the final flush"),
+            ),
+            pytest.raises(RuntimeError, match="died before the final flush"),
+        ):
+            updater.run()
+
+        assert not _fingerprint_path(py_project).exists(), (
+            "a full build that died before its final flush left a parser "
+            "fingerprint, so the next run will not warn that the graph was "
+            "built by different parser code"
+        )
+
+        # The control: the same build, allowed to reach its commit point,
+        # does stamp -- so the absence above is the deferral and not a stamp
+        # that never happens.
+        _make_updater(py_project, mock_ingestor).run()
+        assert _fingerprint_path(py_project).is_file()
+
     def test_incremental_sync_does_not_overwrite_stale_stamp(
         self, py_project: Path, mock_ingestor: MagicMock
     ) -> None:
@@ -298,6 +420,33 @@ class TestStalenessWarning:
         updater.run()
 
         assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
+    def test_enabling_a_capture_group_warns(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # The defect in #1630, end to end through the updater rather than
+        # against compute_parser_fingerprint directly: the stamp is written
+        # with the selection that built the graph and compared against the
+        # one running now, so dropping `capture=self.capture` at either call
+        # site brings the silent no-op back.
+        _make_updater(py_project, mock_ingestor).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
+
+    def test_same_capture_group_twice_does_not_warn(
+        self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
+    ) -> None:
+        # Control for the test above: it must warn because the selection
+        # CHANGED, not because a non-default selection warns unconditionally
+        # or because the entries hash differently each run. Without this, an
+        # unstable digest would look like a working fix.
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        _make_updater(py_project, mock_ingestor, resolve_capture(["io"])).run()
+
+        assert not any(ls.PARSER_FINGERPRINT_MISMATCH in m for m in warnings_sink)
 
     def test_missing_stamp_with_existing_cache_warns(
         self, py_project: Path, mock_ingestor: MagicMock, warnings_sink: list[str]
@@ -425,3 +574,62 @@ def test_changes_when_compile_database_content_changes(
     before = compute_parser_fingerprint(repo_path=repo)
     db.write_text('[{"arguments": ["c++", "-DFEATURE"]}]', encoding="utf-8")
     assert compute_parser_fingerprint(repo_path=repo) != before
+
+
+class TestCaptureSelectionIsParserIdentity:
+    # The capture selection decides which edges are produced for unchanged
+    # sources -- the same criterion the frontend selection is hashed under --
+    # so it belongs to the parser identity. Without it, enabling a capture
+    # group on an indexed project reports "already in sync" and emits
+    # nothing, and the only documented remedy wipes every project in the
+    # shared graph (issue #1630).
+
+    def test_changes_when_capture_env_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "")
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CGR_CAPTURE", "io")
+        assert compute_parser_fingerprint() != before
+
+    def test_changes_when_capture_passed_explicitly(self) -> None:
+        # The CLI resolves CGR_CAPTURE and --capture together and hands the
+        # GraphUpdater a CaptureSelection, so a fingerprint that consulted
+        # only the environment would stay blind to `--capture io`.
+        from codebase_rag.capture import resolve_capture
+
+        before = compute_parser_fingerprint(capture=resolve_capture([]))
+        after = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert after != before
+
+    def test_same_selection_same_fingerprint(self) -> None:
+        from codebase_rag.capture import resolve_capture
+
+        first = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        second = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        assert first == second
+
+    def test_repeated_token_is_the_same_identity(self) -> None:
+        # The RESOLVED selection is hashed, not the raw spec, so `io,io` and
+        # `io` are one identity and do not force a spurious rebuild.
+        from codebase_rag.capture import resolve_capture
+
+        once = compute_parser_fingerprint(capture=resolve_capture(["io"]))
+        twice = compute_parser_fingerprint(capture=resolve_capture(["io", "io"]))
+        assert once == twice
+
+    def test_changes_when_function_local_definitions_toggled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # CAPTURE_FUNCTION_LOCAL_DEFINITIONS picks between two predicates for
+        # whether a nested definition is ingested as a method, so flipping it
+        # changes which Method nodes exist for unchanged sources -- the same
+        # criterion as the frontend mode, and it was not hashed either.
+        from codebase_rag.config import settings as cfg
+
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", True)
+        before = compute_parser_fingerprint()
+        monkeypatch.setattr(cfg, "CAPTURE_FUNCTION_LOCAL_DEFINITIONS", False)
+        assert compute_parser_fingerprint() != before

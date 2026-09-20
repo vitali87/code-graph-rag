@@ -26,7 +26,8 @@ def test_csharp_frontend_is_registered() -> None:
 def test_empty_facts_are_fresh_and_empty() -> None:
     a = empty_facts()
     b = empty_facts()
-    assert a.is_empty() and b.is_empty()
+    assert a.is_empty()
+    assert b.is_empty()
     # Never a shared constant: mutating one must not affect a later fresh bundle.
     a.resolved_call_sites[("f.cs", 1, 2, "M")] = ResolvedCallSite("M", "g.cs", 3, 4)
     a.external_sites.add(("f.cs", 5, 6, "N"))

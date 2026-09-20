@@ -78,37 +78,51 @@ class _Rule:
         return self.pattern if self.pattern is not None else f"kind={self.kind}"
 
 
+def _require_exactly_one_selector(
+    pattern: object, kind: object, path_name: str, section: str
+) -> None:
+    # A rule selects nodes by `pattern` OR by `kind`, never both and never
+    # neither. Compared as bools so an empty string counts as absent.
+    if bool(pattern) == bool(kind):
+        raise ValueError(
+            f"{path_name}: each {section} rule needs exactly one of 'pattern' or 'kind'"
+        )
+
+
+def _require_selector_applies(
+    fields: Mapping[str, object], pattern: object, kind: object, path_name: str
+) -> None:
+    # Three modifiers are each meaningful for only one kind of selector.
+    for field, needs, needed_by in (
+        ("name_head", pattern, "pattern"),
+        ("has_child", kind, "kind"),
+        ("name_child", kind, "kind"),
+    ):
+        if fields.get(field) and not needs:
+            raise ValueError(
+                f"{path_name}: '{field}' applies to '{needed_by}' rules only"
+            )
+
+
 def _parse_rule(raw: object, path_name: str, section: str) -> _Rule:
     if isinstance(raw, str):
         return _Rule(pattern=raw)
-    if isinstance(raw, Mapping):
-        fields = cast("Mapping[str, object]", raw)
-        pattern = fields.get("pattern")
-        kind = fields.get("kind")
-        if bool(pattern) == bool(kind):
-            raise ValueError(
-                f"{path_name}: each {section} rule needs exactly one of "
-                f"'pattern' or 'kind'"
-            )
-        name_child = fields.get("name_child")
-        has_child = fields.get("has_child")
-        name_head = bool(fields.get("name_head"))
-        if name_head and not pattern:
-            raise ValueError(
-                f"{path_name}: 'name_head' applies to 'pattern' rules only"
-            )
-        if has_child and not kind:
-            raise ValueError(f"{path_name}: 'has_child' applies to 'kind' rules only")
-        if name_child and not kind:
-            raise ValueError(f"{path_name}: 'name_child' applies to 'kind' rules only")
-        return _Rule(
-            pattern=str(pattern) if pattern else None,
-            kind=str(kind) if kind else None,
-            name_child=str(name_child) if name_child else None,
-            has_child=str(has_child) if has_child else None,
-            name_head=name_head,
-        )
-    raise ValueError(f"{path_name}: {section} rules must be a string or a mapping")
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{path_name}: {section} rules must be a string or a mapping")
+    fields = cast("Mapping[str, object]", raw)
+    pattern = fields.get("pattern")
+    kind = fields.get("kind")
+    _require_exactly_one_selector(pattern, kind, path_name, section)
+    _require_selector_applies(fields, pattern, kind, path_name)
+    name_child = fields.get("name_child")
+    has_child = fields.get("has_child")
+    return _Rule(
+        pattern=str(pattern) if pattern else None,
+        kind=str(kind) if kind else None,
+        name_child=str(name_child) if name_child else None,
+        has_child=str(has_child) if has_child else None,
+        name_head=bool(fields.get("name_head")),
+    )
 
 
 def _parse_rules(raw: object, path_name: str, section: str) -> tuple[_Rule, ...]:

@@ -47,7 +47,8 @@ def test_replace_dry_run_produces_diff_without_writing(tmp_path: Path) -> None:
     target.write_text("print(x)\n")
     svc = AstGrepService(str(tmp_path))
     changes = svc.replace("print($A)", "log($A)", dry_run=True)
-    assert changes and changes[0]["applied"] is False
+    assert changes
+    assert changes[0]["applied"] is False
     assert "log(x)" in changes[0]["diff"]
     # file left untouched in dry-run.
     assert target.read_text() == "print(x)\n"
@@ -60,7 +61,8 @@ def test_replace_applies_and_interpolates_single_metavar(tmp_path: Path) -> None
     changes = svc.replace("print($A)", "log($A)", dry_run=False)
     assert changes[0]["applied"] is True
     txt = target.read_text()
-    assert "log(x)" in txt and "log(y)" in txt
+    assert "log(x)" in txt
+    assert "log(y)" in txt
     assert "print(" not in txt
 
 

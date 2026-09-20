@@ -7,7 +7,7 @@ from . import constants as ec
 from . import logs as ls
 from .cgr_graph import extract_cgr_lua_graph
 from .l1_eval import run_l1_eval
-from .oracles import lua_oracle_available, run_lua_oracle
+from .oracles import lua_oracle_available, lua_oracle_skip_reason, run_lua_oracle
 
 _TITLE = "cgr L1 structure eval (Lua vs luaparse)"
 
@@ -28,6 +28,7 @@ def main(
         project_name,
         out_dir,
         available=lua_oracle_available,
+        skip_reason=lua_oracle_skip_reason,
         oracle_missing=ls.LUA_ORACLE_MISSING,
         extract_cgr=extract_cgr_lua_graph,
         run_oracle=run_lua_oracle,

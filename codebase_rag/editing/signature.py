@@ -59,6 +59,15 @@ _SPLAT_TYPES = frozenset(
     }
 )
 _COMMENT_TYPES = frozenset({cs.TS_COMMENT})
+_SEPARATOR_TYPES = frozenset(
+    {cs.TS_PY_POSITIONAL_SEPARATOR, cs.TS_PY_KEYWORD_SEPARATOR}
+)
+# A definition that absorbs surplus arguments: its call sites cannot be
+# mapped one value per parameter, so the operation refuses rather than
+# silently dropping a caller's extra arguments.
+_VARIADIC_PARAM_TYPES = frozenset(
+    {cs.TS_PY_LIST_SPLAT_PATTERN, cs.TS_PY_DICTIONARY_SPLAT_PATTERN}
+)
 
 
 class ParamSpec(NamedTuple):
@@ -147,6 +156,9 @@ class _Param(NamedTuple):
     name: str
     node: Node
     receiver: bool
+    # After a bare `*`: bound by keyword only, so it has no positional index
+    # for a spec to map from and stays exactly as written.
+    keyword_only: bool = False
 
 
 def _text(node: Node | None) -> str:
@@ -191,6 +203,29 @@ def _definition_node(root: Node, line: int, col: int) -> Node | None:
     return None
 
 
+def _positional_only_count(definition: Node) -> int | None:
+    """How many leading parameters `/` makes positional-only, if it is there.
+
+    `/` neither takes a value nor shifts the positional indices callers map
+    through, so `_parameters` is right to leave it out of the mapping model.
+    It is still load-bearing when the signature is REBUILT: dropped, the
+    parameters before it become keyword-callable, and a call the original
+    rejected starts being accepted. The count is what `_rewrite_definition`
+    needs to put it back.
+    """
+    params = definition.child_by_field_name(cs.FIELD_PARAMETERS)
+    if params is None:
+        return None
+    seen = 0
+    for child in params.named_children:
+        if child.type == cs.TS_PY_POSITIONAL_SEPARATOR:
+            return seen
+        if child.type in _COMMENT_TYPES or child.type in _SEPARATOR_TYPES:
+            continue
+        seen += 1
+    return None
+
+
 def _parameters(
     definition: Node, language: cs.SupportedLanguage | None
 ) -> list[_Param]:
@@ -198,15 +233,80 @@ def _parameters(
     if params is None:
         return []
     out: list[_Param] = []
+    keyword_only = False
     for child in params.named_children:
-        if child.type in _COMMENT_TYPES:
+        if child.type == cs.TS_PY_KEYWORD_SEPARATOR:
+            keyword_only = True
+            continue
+        if child.type in _COMMENT_TYPES or child.type in _SEPARATOR_TYPES:
+            # `/` is a marker, not a parameter: it neither takes a value nor
+            # shifts the positional indices callers map through. It is put
+            # back on rebuild from `_positional_only_count`, which is where
+            # it matters.
             continue
         name = _identifier_in(child)
         receiver = (
             language == cs.SupportedLanguage.PYTHON and not out and name in _RECEIVERS
         ) or child.type == cs.TS_RS_SELF_PARAMETER
-        out.append(_Param(name, child, receiver))
+        out.append(_Param(name, child, receiver, keyword_only))
     return out
+
+
+def _refuse_duplicate_sources(resolved: list[ParamSpec]) -> None:
+    """Refuse two new parameters fed by one old one.
+
+    A call site holds a single value at each old position, and `_map_arguments`
+    consumes it: the first mapping takes the value and every later one reads as
+    omitted, so the rewritten definition gains a parameter that no caller
+    passes. The edit reports success and the callers raise `TypeError`.
+
+    Refusing rather than emitting the value twice follows the rest of this
+    layer: an ambiguous request is answered with a message, not with a
+    plausible guess the caller has to discover at runtime.
+    """
+    by_source: dict[int, list[str]] = {}
+    for spec in resolved:
+        if spec.from_index is not None:
+            by_source.setdefault(spec.from_index, []).append(spec.name)
+    for source, names in by_source.items():
+        if len(names) > 1:
+            raise SignatureRefused(
+                cs.SIGNATURE_DUPLICATE_SOURCE.format(
+                    names=", ".join(names), source=f"position {source}"
+                )
+            )
+
+
+def _restore_positional_only(
+    rendered: list[str],
+    node: Node,
+    old: list[_Param],
+    specs: list[ParamSpec],
+) -> None:
+    """Put `/` back, or refuse if the rewrite moved a parameter across it.
+
+    The separator says the parameters before it cannot be passed by name.
+    Dropping it widens the callable contract silently: `def f(a, b, /, c)`
+    rebuilt as `def f(a, b, c)` accepts `f(a=1, b=2, c=3)`, which the original
+    rejects. So it has to come back.
+
+    It can only come back where it still means the same thing. The marker
+    counts LEADING parameters, so it survives a rewrite that leaves the same
+    sources, in the same order, in front of it. A rewrite that reorders across
+    the boundary, or maps a new parameter into that region, changes which
+    arguments callers may name -- a question this operation is not asked to
+    answer, so it refuses rather than guessing.
+    """
+    boundary = _positional_only_count(node)
+    if boundary is None:
+        return
+    receivers = sum(1 for p in old if p.receiver)
+    kept = specs[:boundary]
+    if len(specs) < boundary or any(
+        spec.from_index != index for index, spec in enumerate(kept)
+    ):
+        raise SignatureRefused(cs.SIGNATURE_POSITIONAL_ONLY_MOVED)
+    rendered.insert(receivers + boundary, "/")
 
 
 def _render_param(spec: ParamSpec, language: cs.SupportedLanguage | None) -> str:
@@ -236,7 +336,24 @@ def _rendered_old(
         text = re.sub(rf"\b{re.escape(param.name)}\b", spec.name, text, count=1)
     if spec.annotation is None and spec.default is None:
         return text
-    return _render_param(spec, language)
+    # A spec that gives only one half keeps the other half from the old
+    # parameter: `b:str@1` over `b='x'` is `b: str = 'x'`, not `b: str`.
+    old_annotation, old_default = _split_old(param.node)
+    merged = spec._replace(
+        annotation=spec.annotation if spec.annotation is not None else old_annotation,
+        default=spec.default if spec.default is not None else old_default,
+    )
+    return _render_param(merged, language)
+
+
+def _split_old(node: Node) -> tuple[str | None, str | None]:
+    """The old parameter's annotation and default text, if it has them."""
+    annotation = node.child_by_field_name(cs.FIELD_TYPE)
+    default = node.child_by_field_name(cs.FIELD_VALUE)
+    return (
+        _text(annotation) if annotation is not None else None,
+        _text(default) if default is not None else None,
+    )
 
 
 # --- the operation -----------------------------------------------------------------
@@ -257,6 +374,8 @@ class SignatureChanger:
         self.verify = verify
         self.reingest = reingest
         self._parsers = load_parsers()[0]
+        self._allow_heuristic = False
+        self._keyword_only: frozenset[str] = frozenset()
 
     def _parse(
         self, path: str, source: bytes
@@ -296,7 +415,7 @@ class SignatureChanger:
     def _resolve_specs(
         self, specs: Iterable[ParamSpec], old: list[_Param]
     ) -> list[ParamSpec]:
-        names = [p.name for p in old if not p.receiver]
+        names = [p.name for p in old if not p.receiver and not p.keyword_only]
         resolved: list[ParamSpec] = []
         seen: set[str] = set()
         for spec in specs:
@@ -321,6 +440,7 @@ class SignatureChanger:
                     )
                 )
             resolved.append(spec._replace(from_index=index, from_name=None))
+        _refuse_duplicate_sources(resolved)
         return resolved
 
     def _check_literals(
@@ -377,32 +497,53 @@ class SignatureChanger:
         hierarchy = _hierarchy(self.fetch_all, self.project, qn)
         path, node, language, _source = self._definition(qn, patcher)
         old = _parameters(node, language)
-        old_names = [p.name for p in old if not p.receiver]
+        if any(p.node.type in _VARIADIC_PARAM_TYPES for p in old):
+            raise SignatureRefused(cs.SIGNATURE_VARIADIC.format(qn=qn))
+        old_names = [p.name for p in old if not p.receiver and not p.keyword_only]
+        self._keyword_only = frozenset(p.name for p in old if p.keyword_only)
         resolved = self._resolve_specs(specs, old)
         self._check_literals(qn, resolved, old_names)
-        # Definitions across the hierarchy.
+        # Definitions across the hierarchy. Each member's own pre-edit
+        # parameter names are kept: an override may spell them differently
+        # from the member the request names, and its callers bind by ITS
+        # names, not the selected definition's.
+        member_names: dict[str, list[str]] = {}
+        member_keyword_only: dict[str, frozenset[str]] = {}
         for member in hierarchy:
             m_path, m_node, m_language, _ = (
                 (path, node, language, _source)
                 if member == qn
                 else self._definition(member, patcher)
             )
+            m_old = _parameters(m_node, m_language)
+            member_names[member] = [
+                p.name for p in m_old if not p.receiver and not p.keyword_only
+            ]
+            member_keyword_only[member] = frozenset(
+                p.name for p in m_old if p.keyword_only
+            )
             self._rewrite_definition(patcher, m_path, m_node, m_language, resolved)
         # Every call site of every member.
         sites: list[RewrittenSite] = []
         unmapped: list[UnmappedSite] = []
         for member in hierarchy:
+            # `Square().area(factor=2)` is spelled with Square's parameter
+            # name; matching it against Base's would read as an unknown
+            # keyword and leave the call unrewritten against a rewritten
+            # definition.
+            self._keyword_only = member_keyword_only.get(member, frozenset())
             for row in graph_query.callers(self.fetch_all, self.project, member):
                 self._rewrite_site(
                     patcher,
                     row,
                     member,
-                    old_names,
+                    member_names.get(member, old_names),
                     resolved,
                     allow_heuristic,
                     sites,
                     unmapped,
                 )
+        self._keyword_only = frozenset(p.name for p in old if p.keyword_only)
         report = SignatureReport(
             qualified_name=qn,
             hierarchy=tuple(hierarchy),
@@ -431,10 +572,19 @@ class SignatureChanger:
         params_node = node.child_by_field_name(cs.FIELD_PARAMETERS)
         assert params_node is not None
         old = _parameters(node, language)
-        positional = [p for p in old if not p.receiver]
+        positional = [p for p in old if not p.receiver and not p.keyword_only]
         rendered = [_text(p.node) for p in old if p.receiver]
         for spec in specs:
             if spec.from_index is not None:
+                if spec.from_index >= len(positional):
+                    # An override with fewer parameters than the target
+                    # cannot supply the old value the spec maps from.
+                    raise SignatureRefused(
+                        cs.SIGNATURE_UNKNOWN_SOURCE.format(
+                            source=spec.from_index,
+                            names=", ".join(p.name for p in positional),
+                        )
+                    )
                 rendered.append(
                     _rendered_old(positional[spec.from_index], spec, language)
                 )
@@ -442,6 +592,13 @@ class SignatureChanger:
                 rendered.append(_render_param(spec, language))
         if language == cs.SupportedLanguage.PYTHON:
             _check_default_order(positional, specs)
+            _restore_positional_only(rendered, node, old, specs)
+        keyword_only = [p for p in old if p.keyword_only]
+        if keyword_only:
+            # The keyword-only section is not positional: it follows the
+            # rendered positionals behind its own `*`, exactly as written.
+            rendered.append("*")
+            rendered.extend(_text(p.node) for p in keyword_only)
         text = "(" + ", ".join(rendered) + ")"
         patcher.replace_span(path, (params_node.start_byte, params_node.end_byte), text)
 
@@ -494,12 +651,14 @@ class SignatureChanger:
             )
             return
         language, root = self._parse(path, source)
-        call = _call_at(root, line, col) if root is not None else None
+        call = _call_at(root, line, col, _site_end(row)) if root is not None else None
         args_node = _find_call_arguments_node(call) if call is not None else None
         if args_node is None:
             unmapped.append(UnmappedSite(path, line, col, caller, cs.SIGNATURE_NO_CALL))
             return
-        new_args = _map_arguments(args_node, old_names, specs, language)
+        new_args = _map_arguments(
+            args_node, old_names, specs, language, self._keyword_only
+        )
         if isinstance(new_args, str):
             unmapped.append(UnmappedSite(path, line, col, caller, new_args))
             return
@@ -518,6 +677,9 @@ class SignatureChanger:
     def apply(
         self, qn: str, specs: Iterable[ParamSpec], allow_heuristic: bool = False
     ) -> SignatureReport:
+        # The contract must know the caller waived the guess check, or it
+        # rolls back every rewrite of a heuristic site it was asked for.
+        self._allow_heuristic = allow_heuristic
         report, patcher = self.plan(qn, specs, allow_heuristic)
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
@@ -550,9 +712,16 @@ class SignatureChanger:
             self.fetch_all, self.project, self.repo_root, report.files, self.reingest
         )
         verdict = verify(
-            change_signature_expectation(f"{u.path}:{u.line}" for u in report.unmapped),
+            change_signature_expectation(
+                (f"{u.path}:{u.line}" for u in report.unmapped),
+                heuristic_allowed=self._allow_heuristic,
+            ),
             delta,
-            rewritten=[(f"{s.path}:{s.line}", s.resolution) for s in report.sites],
+            rewritten=[
+                (f"{s.path}:{s.line}", s.resolution)
+                for s in report.sites
+                if s.before != s.after
+            ],
         )
         if verdict.ok:
             return report._replace(verdict=verdict)
@@ -589,8 +758,23 @@ def _check_default_order(positional: list[_Param], specs: list[ParamSpec]) -> No
 # --- call-site mapping ----------------------------------------------------------
 
 
-def _call_at(root: Node, line: int, col: int) -> Node | None:
-    """The outermost node starting at (line, col) that carries arguments."""
+def _site_end(row: graph_query.CallSiteRow | ResultRow) -> tuple[int, int] | None:
+    """The site's recorded end point as tree-sitter counts it, if recorded."""
+    end_line, end_col = row.get("end_line"), row.get("end_col")
+    if isinstance(end_line, int) and isinstance(end_col, int):
+        return (end_line - 1, end_col)
+    return None
+
+
+def _call_at(
+    root: Node, line: int, col: int, end: tuple[int, int] | None = None
+) -> Node | None:
+    """The call node at (line, col) that carries arguments.
+
+    With the site's recorded end point the exact call is chosen, so a
+    chained `helper(2).upper()` rewrites `helper`'s arguments and not the
+    outer call's; without it the outermost call at that point is taken.
+    """
     stack = [root]
     found: Node | None = None
     while stack:
@@ -599,7 +783,10 @@ def _call_at(root: Node, line: int, col: int) -> Node | None:
             node.start_point == (line - 1, col)
             and _find_call_arguments_node(node) is not None
         ):
-            if found is None or node.end_byte > found.end_byte:
+            if end is not None:
+                if node.end_point == end:
+                    return node
+            elif found is None or node.end_byte > found.end_byte:
                 found = node
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
@@ -611,15 +798,24 @@ def _map_arguments(
     old_names: list[str],
     specs: list[ParamSpec],
     language: cs.SupportedLanguage | None,
+    keyword_only: frozenset[str] = frozenset(),
 ) -> list[str] | str:
-    """The site's new argument texts, or the reason it cannot be mapped."""
+    """The site's new argument texts, or the reason it cannot be mapped.
+
+    A keyword naming a keyword-only parameter is not part of the positional
+    mapping and is carried through exactly as written.
+    """
     positional, keyword = _split_call_arguments(args_node)
     if any(child.type in _SPLAT_TYPES for child in args_node.named_children):
         return cs.SIGNATURE_SPLAT
     values: dict[int, tuple[str, bool]] = {}
     for index, node in enumerate(positional):
         values[index] = (_text(node), False)
+    carried: list[str] = []
     for name, node in keyword.items():
+        if name in keyword_only:
+            carried.append(f"{name}={_text(node)}")
+            continue
         if name not in old_names:
             return cs.SIGNATURE_UNKNOWN_KEYWORD.format(name=name)
         values[old_names.index(name)] = (_text(node), True)
@@ -655,7 +851,14 @@ def _map_arguments(
                 out.append(spec.literal)
         else:
             return cs.SIGNATURE_UNMAPPED_PARAM.format(name=spec.name)
-    return out
+    # Every spec consumed what it named; anything still in `values` is an
+    # argument the new signature has no home for. Rewriting would drop it
+    # from the caller's source silently -- and the contract cannot catch
+    # that, because the argument is gone from the file before the delta is
+    # measured, so the `too_many` arity check sees nothing.
+    if values:
+        return cs.SIGNATURE_SURPLUS_ARGS
+    return out + carried
 
 
 def _keywords_already_fit(

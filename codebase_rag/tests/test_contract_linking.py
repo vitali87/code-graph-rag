@@ -329,7 +329,8 @@ class TestProjectIsolation:
             for query, params in ingestor.writes_with_params
             if "repo_prefix" in (params or {})
         ]
-        assert prefixes and all(p.endswith("/") for p in prefixes), prefixes
+        assert prefixes, prefixes
+        assert all(p.endswith("/") for p in prefixes), prefixes
 
 
 class TestCaptureGate:

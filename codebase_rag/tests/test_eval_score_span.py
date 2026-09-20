@@ -28,8 +28,11 @@ def test_span_exact_match_scores_perfect() -> None:
     oracle = _graph(("a.rs", 1, 5), ("a.rs", 10, 20))
     by_label = {row["label"]: row for row in score_span(cgr, oracle, _KINDS).rows}
     row = by_label[_FUNC]
-    assert row["precision"] == 1.0 and row["recall"] == 1.0
-    assert row["tp"] == 2 and row["fp"] == 0 and row["fn"] == 0
+    assert row["precision"] == 1.0
+    assert row["recall"] == 1.0
+    assert row["tp"] == 2
+    assert row["fp"] == 0
+    assert row["fn"] == 0
 
 
 def test_span_end_line_mismatch_is_penalized_and_surfaced() -> None:
@@ -38,8 +41,11 @@ def test_span_end_line_mismatch_is_penalized_and_surfaced() -> None:
     result = score_span(cgr, oracle, _KINDS)
     by_label = {row["label"]: row for row in result.rows}
     row = by_label[_FUNC]
-    assert row["tp"] == 1 and row["fp"] == 1 and row["fn"] == 1
-    assert row["precision"] == 0.5 and row["recall"] == 0.5
+    assert row["tp"] == 1
+    assert row["fp"] == 1
+    assert row["fn"] == 1
+    assert row["precision"] == 0.5
+    assert row["recall"] == 0.5
     bucket = result.diff[ec.DIFF_SPAN_PREFIX + _FUNC]
     assert any("10-20" in line for line in bucket["missing"]), bucket
     assert any("10-99" in line for line in bucket["extra"]), bucket
@@ -51,4 +57,6 @@ def test_span_only_grades_co_identified_nodes() -> None:
     oracle = _graph(("a.rs", 1, 5))
     by_label = {row["label"]: row for row in score_span(cgr, oracle, _KINDS).rows}
     row = by_label[_FUNC]
-    assert row["tp"] == 1 and row["fp"] == 0 and row["fn"] == 0
+    assert row["tp"] == 1
+    assert row["fp"] == 0
+    assert row["fn"] == 0

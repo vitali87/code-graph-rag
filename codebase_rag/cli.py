@@ -407,6 +407,7 @@ def _delete_hash_cache(repo_path: Path) -> None:
         cache_path.unlink(missing_ok=True)
     (repo_path / cs.DIR_MTIMES_FILENAME).unlink(missing_ok=True)
     (repo_path / cs.PARSER_FINGERPRINT_FILENAME).unlink(missing_ok=True)
+    (repo_path / cs.EXCLUSION_STATE_FILENAME).unlink(missing_ok=True)
 
 
 def _resolve_and_validate_repo(repo_path: str | None) -> Path:
@@ -1123,7 +1124,7 @@ def check_command(
         False, "--fail-on-found", help=ch.HELP_CHECK_FAIL_ON_FOUND
     ),
 ) -> None:
-    from .structural_check import CheckError, run_check
+    from .structural_check import CheckError, indexed_scope, run_check
     from .structural_delta import has_findings
     from .utils.path_utils import derive_project_name
 
@@ -1135,7 +1136,19 @@ def check_command(
             typer.echo(cs.CHECK_NOT_INDEXED.format(project=name), err=True)
             raise typer.Exit(code=1)
         try:
-            delta = run_check(root, base, name, ingestor, parsers, queries)
+            exclude_paths, unignore_paths = indexed_scope(
+                root, name, explicit=project is not None
+            )
+            delta = run_check(
+                root,
+                base,
+                name,
+                ingestor,
+                parsers,
+                queries,
+                exclude_paths=exclude_paths,
+                unignore_paths=unignore_paths,
+            )
         except CheckError as error:
             typer.echo(str(error), err=True)
             raise typer.Exit(code=1) from error
@@ -1423,7 +1436,7 @@ def context_command(
     rich_help_panel=ch.PANEL_USE,
 )
 def change_signature_command(
-    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    qualified_name: str = typer.Argument(..., help=ch.HELP_SIGNATURE_QN),
     param: list[str] = typer.Option([], "--param", "-p", help=ch.HELP_SIGNATURE_PARAM),
     repo_path: Path = typer.Option(
         Path(cs.MCP_DEFAULT_DIRECTORY),
@@ -1556,6 +1569,18 @@ def status_command() -> None:
         app_context.console.print(f"  - {project}: last sync {ts}")
 
 
+def _status_mark(passed: bool, encoding: str) -> str:
+    """The pass/fail mark the console's stream can encode.
+
+    Rich substitutes ASCII box characters on a non-UTF stream but leaves
+    text alone, so the glyph raised UnicodeEncodeError on a CP950 Windows
+    terminal before a single check was shown (issue #1910).
+    """
+    if encoding.lower().startswith(cs.ENCODING_UTF_PREFIX):
+        return cs.HEALTH_MARK_PASS if passed else cs.HEALTH_MARK_FAIL
+    return cs.HEALTH_MARK_PASS_ASCII if passed else cs.HEALTH_MARK_FAIL_ASCII
+
+
 @app.command(
     name=ch.CLICommandName.DOCTOR,
     help=ch.CMD_DOCTOR,
@@ -1571,8 +1596,9 @@ def doctor() -> None:
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column(style="cyan", no_wrap=False)
 
+    encoding = app_context.console.encoding
     for result in results:
-        status = "✓" if result.passed else "✗"
+        status = _status_mark(result.passed, encoding)
         status_color = cs.Color.GREEN if result.passed else cs.Color.RED
         status_text = style(status, status_color, cs.StyleModifier.NONE)
 

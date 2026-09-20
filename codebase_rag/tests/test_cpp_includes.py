@@ -858,7 +858,10 @@ void demonstrateAllIncludes() {
             f"Source module should contain test file name: {source_module}"
         )
 
-        assert isinstance(target_module, str) and target_module, (
+        assert isinstance(target_module, str), (
+            f"Target module should be non-empty string: {target_module}"
+        )
+        assert target_module, (
             f"Target module should be non-empty string: {target_module}"
         )
 

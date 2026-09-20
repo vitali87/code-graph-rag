@@ -3775,7 +3775,8 @@ def test_enum_discriminant_block_use_binds_the_blocks_own_call(
     assert (f"{base}.a.f", f"{base}.beta.helper") in calls, calls
     assert (f"{base}.a.f", f"{base}.gamma.helper") not in calls, calls
     mapping = updater.factory.import_processor.import_mapping.get(f"{base}.a")
-    assert mapping and mapping.get("helper") == f"{base}.beta.helper", mapping
+    assert mapping, mapping
+    assert mapping.get("helper") == f"{base}.beta.helper", mapping
 
 
 def test_initializer_block_use_binds_the_blocks_own_call_in_a_fn(

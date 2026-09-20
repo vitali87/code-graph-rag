@@ -111,4 +111,5 @@ void f() {
     # function-local `L`/`Inner` are never collected.
     assert aliases == {"Lock": "Mutex", "AliasT": "Lock"}, aliases
     assert "Handle" in conflicts
-    assert "L" not in aliases and "Inner" not in aliases
+    assert "L" not in aliases
+    assert "Inner" not in aliases

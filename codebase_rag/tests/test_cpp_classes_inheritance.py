@@ -1375,9 +1375,10 @@ void testTemplateInheritance() {
             f"Source class should contain test file name: {source_class}"
         )
 
-        assert isinstance(target_class, str) and target_class, (
+        assert isinstance(target_class, str), (
             f"Target should be non-empty string: {target_class}"
         )
+        assert target_class, f"Target should be non-empty string: {target_class}"
 
     assert defines_relationships, "Should still have DEFINES relationships"
 

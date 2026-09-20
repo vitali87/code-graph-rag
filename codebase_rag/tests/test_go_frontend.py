@@ -130,7 +130,8 @@ def test_find_go_module_discovers_gomod(tmp_path: Path) -> None:
     assert find_go_module(tmp_path) is None
     (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.23\n")
     found = find_go_module(tmp_path)
-    assert found is not None and found.name == "go.mod"
+    assert found is not None
+    assert found.name == "go.mod"
 
 
 def test_applies_requires_a_go_module(tmp_path: Path) -> None:

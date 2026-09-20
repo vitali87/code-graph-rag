@@ -195,8 +195,9 @@ class TestServiceLifecycle:
         mock_ingestor = MagicMock()
 
         with patch.object(srv, "close_qdrant_client") as mock_close:
+            lifecycle = srv._service_lifecycle(mock_ingestor)
             with pytest.raises(RuntimeError):
-                with srv._service_lifecycle(mock_ingestor):
+                with lifecycle:
                     raise RuntimeError("boom")
             mock_close.assert_called_once_with()
             mock_ingestor.__exit__.assert_called_once()

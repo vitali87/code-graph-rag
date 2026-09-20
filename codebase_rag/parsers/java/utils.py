@@ -90,8 +90,6 @@ def extract_import_path(import_node: ASTNode) -> dict[str, str]:
 
     for child in import_node.children:
         match child.type:
-            case cs.TS_STATIC:
-                pass
             case cs.TS_SCOPED_IDENTIFIER | cs.TS_IDENTIFIER:
                 imported_path = safe_decode_text(child)
             case cs.TS_ASTERISK:

@@ -140,8 +140,9 @@ class TestAsyncTimingDecorator:
             async def async_failing() -> None:
                 raise ValueError("async error")
 
+            failing = async_failing()
             with pytest.raises(ValueError, match="async error"):
-                asyncio.run(async_failing())
+                asyncio.run(failing)
 
     def test_preserves_function_metadata(self) -> None:
         @async_timing_decorator
@@ -507,21 +508,24 @@ class TestMcpTryExcept:
         async def handler_with_interrupt() -> str:
             raise KeyboardInterrupt()
 
+        handler = handler_with_interrupt()
         with pytest.raises(KeyboardInterrupt):
-            asyncio.run(handler_with_interrupt())
+            asyncio.run(handler)
 
     def test_reraises_system_exit(self) -> None:
         @mcp_try_except(lambda e: f"error: {e}")
         async def handler_with_exit() -> str:
             raise SystemExit(1)
 
+        handler = handler_with_exit()
         with pytest.raises(SystemExit):
-            asyncio.run(handler_with_exit())
+            asyncio.run(handler)
 
     def test_reraises_cancelled_error(self) -> None:
         @mcp_try_except(lambda e: f"error: {e}")
         async def handler_with_cancel() -> str:
             raise asyncio.CancelledError()
 
+        handler = handler_with_cancel()
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(handler_with_cancel())
+            asyncio.run(handler)

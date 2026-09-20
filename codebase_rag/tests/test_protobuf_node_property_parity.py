@@ -38,11 +38,37 @@ from codec import schema_pb2 as pb
 # adding one should be a deliberate decision with a reason.
 _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Project": frozenset({"root_path"}),
+    # `write_id` is the per-call nonce the write tool reads back to prove its
+    # statement ran; it means nothing outside that call. `mention_qns` is the
+    # note's own record of what it mentions, from which the MENTIONS edges are
+    # rebuilt after a sync; the edges themselves are exported, so the list is
+    # redundant on the wire (issue #1808). `candidate_qns` is the repair
+    # pass's record of where an AMBIGUOUS note could belong, recomputed from
+    # the graph after every sync, so exporting it would only freeze a verdict
+    # the next run replaces (stage four of #1808).
+    "Gloss": frozenset({"write_id", "mention_qns", "candidate_qns"}),
     "Package": frozenset({"absolute_path"}),
     "Folder": frozenset({"absolute_path"}),
     "File": frozenset({"absolute_path"}),
-    "Module": frozenset({"absolute_path", "end_line", "start_line"}),
+    # `unresolved_specifiers` (issue #1714) is the second entry added with a
+    # known cost rather than as a record of the past. It records the literal
+    # relative specifiers an importer is waiting on, so a file created later at
+    # that path can nominate it for re-parsing. A graph round-tripped through
+    # protobuf loses them, so a scoped re-ingest against an IMPORTED graph does
+    # not re-parse those waiters and diverges from a clean index exactly as
+    # #1714 describes -- for imported graphs only.
+    #
+    # The degradation is safe by construction and self-healing: an absent
+    # property reads as "no specifiers", which yields no nomination rather than
+    # a wrong one, and the next parse of the importing module rewrites the list.
+    # Exporting it needs a proto field plus regenerated bindings, which needs
+    # protoc; neither protoc nor grpc_tools is available in this environment,
+    # and #1490 carries that question for the whole set.
+    "Module": frozenset(
+        {"absolute_path", "end_line", "start_line", "unresolved_specifiers"}
+    ),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
+    "Field": frozenset({"absolute_path"}),
     # `positional_params` (issue #227) is the one entry here added with a
     # known cost rather than as a record of the past: a graph round-tripped
     # through protobuf loses it, so arity diagnosis on an IMPORTED graph
@@ -51,9 +77,14 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # as zero positional parameters, so no false mismatch is produced -- but it
     # is a real loss of capability, not a non-issue. Exporting it needs a proto
     # field plus regenerated bindings, which needs protoc; #1490 carries that.
+    # `anchor_hash` (issue #1808) grades whether a Gloss note is stale against
+    # the definition's current text; it is recomputed on every parse and a
+    # graph round-tripped through protobuf simply grades no note until the
+    # next parse, so it stays off the wire.
     "Function": frozenset(
         {
             "absolute_path",
+            "anchor_hash",
             "is_macro",
             "modifiers",
             "name_start_col",
@@ -66,6 +97,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Method": frozenset(
         {
             "absolute_path",
+            "anchor_hash",
             "is_exported",
             "is_property",
             "modifiers",
