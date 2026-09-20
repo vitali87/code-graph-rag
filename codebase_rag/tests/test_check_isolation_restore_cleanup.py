@@ -8,6 +8,7 @@ from check_isolation_helpers import (
     _check,
     _edit,
     _state,
+    indexed,
 )
 
 from codebase_rag import constants as cs
