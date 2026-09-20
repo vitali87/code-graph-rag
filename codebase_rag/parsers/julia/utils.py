@@ -168,6 +168,9 @@ def julia_function_head_name(node: Node) -> str | None:
         first = _first_named(signature)
         if first is None or not first.text:
             return None
+        if first.type == cs.TS_JULIA_ARGUMENT_LIST:
+            # `function (x) ... end` is anonymous: the argument list is not a name.
+            return None
         if first.type == cs.TS_JULIA_IDENTIFIER:
             # A parameterless macro: `macro build ... end`.
             return safe_decode_text(first)

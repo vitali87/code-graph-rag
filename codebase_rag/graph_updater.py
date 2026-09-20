@@ -5921,6 +5921,9 @@ class GraphUpdater:
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
+            # A deleted .jl file invalidates the same path caches reparse does.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897).

@@ -336,3 +336,185 @@ def test_excluded_module_not_in_discovery(
     }
     module_qn = f"{project.name}.main"
     assert not any(src == module_qn for src, _ in imports), imports
+
+
+def test_over_climb_relative_import_external(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using ....Sibling` from `a/b/c.jl` climbs above the project root: no
+    first-party file can live there, so the import stays external and must
+    not bind a root-level same-named decoy (issue #1882 review: the clamp to
+    the root base produced a false internal IMPORTS edge)."""
+    project = temp_repo / "julia_overclimb"
+    (project / "a" / "b").mkdir(parents=True)
+    (project / "a" / "b" / "c.jl").write_text("using ....Sibling\n", encoding="utf-8")
+    # The root-level decoy the old clamp bound.
+    (project / "Sibling.jl").write_text("x = 1\n", encoding="utf-8")
+
+    create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    module_qn = f"{project.name}.a.b.c"
+    prefix = f"{project.name}."
+    # An ExternalModule edge for the as-written name is fine; binding the
+    # root-level decoy as a first-party module is the bug.
+    assert not any(
+        src == module_qn and dst.startswith(prefix) for src, dst in imports
+    ), imports
+
+
+def test_nested_package_stem_not_matched(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A unique vendored file below a nested Project.toml is a SEPARATE
+    package: it must not satisfy a same-name stem lookup (issue #1882
+    review: the declared-module index skipped nested packages, the stem
+    index did not, so `using .Utils` mapped to an unreachable vendored
+    module)."""
+    project = temp_repo / "julia_nestedpkg"
+    (project / "dep").mkdir(parents=True)
+    (project / "dep" / "Project.toml").write_text('name = "Dep"\n', encoding="utf-8")
+    (project / "dep" / "Utils.jl").write_text("util_fn(x) = x\n", encoding="utf-8")
+    (project / "main.jl").write_text("using .Utils\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    index = updater.factory.import_processor._julia_file_stems or {}
+    assert "dep/Utils.jl" not in index.get("Utils", set()), index
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    module_qn = f"{project.name}.main"
+    prefix = f"{project.name}."
+    # No first-party target at all: neither the stem index nor the flush's
+    # suffix recovery may bind the vendored module.
+    assert not any(
+        src == module_qn and dst.startswith(prefix) for src, dst in imports
+    ), imports
+
+
+def test_dotted_absolute_import_stays_external(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using ExternalPkg.Models` names an external package: the repo-wide
+    stem/declared fallback must not rewrite it to a local `models.jl`
+    (issue #1882 review: the fallback ran for ANY dotted import)."""
+    project = temp_repo / "julia_absdotted"
+    project.mkdir()
+    (project / "models.jl").write_text("m_fn(x) = x\n", encoding="utf-8")
+    (project / "main.jl").write_text("using ExternalPkg.Models\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("Models") != f"{project.name}.models", mapping
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    # An ExternalModule edge for the as-written name is fine; the local
+    # `models.jl` must not be the target.
+    assert not any(
+        src == module_qn and dst == f"{project.name}.models" for src, dst in imports
+    ), imports
+
+
+def test_self_dotted_absolute_import_resolves(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A self-reference by the project's own name (`using <Pkg>.Sub`) must
+    still resolve first-party when the absolute-dotted fallback is gated on
+    the current-package prefix (issue #1882 review)."""
+    project = temp_repo / "julia_selfdotted"
+    project.mkdir()
+    (project / "Sub.jl").write_text("sub_fn(x) = x\n", encoding="utf-8")
+    (project / "main.jl").write_text(f"using {project.name}.Sub\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("Sub") == f"{project.name}.Sub", mapping
+
+
+def test_gone_julia_file_invalidates_stem_cache(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A DELETED .jl file must invalidate the stem/declared caches on a
+    retained-updater reingest: a later re-parse of the importer then selects
+    the now-unique surviving same-named file instead of the deleted path
+    (issue #1882 review: invalidation ran only for reparsed files)."""
+    from watchdog.events import FileDeletedEvent, FileModifiedEvent
+
+    import realtime_updater
+
+    project = temp_repo / "julia_gonecache"
+    (project / "old").mkdir(parents=True)
+    (project / "Utils.jl").write_text("util_fn(x) = x\n", encoding="utf-8")
+    (project / "old" / "Utils.jl").write_text("old_fn(x) = x\n", encoding="utf-8")
+    (project / "old" / "main.jl").write_text("using .Utils\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    key = f"{project.name}.old.main"
+    # Both files match the stem: the importer's own dir wins the proximity
+    # tie-break, so the committed mapping points at the nested file.
+    assert (
+        updater.factory.import_processor.import_mapping.get(key, {}).get("Utils")
+        == f"{project.name}.old.Utils"
+    )
+
+    handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+
+    (project / "old" / "Utils.jl").unlink()
+    handler.dispatch(FileDeletedEvent(str(project / "old" / "Utils.jl")))
+
+    # Touch the importer so it re-parses against the FRESH layout.
+    main_jl = project / "old" / "main.jl"
+    main_jl.write_text("using .Utils  # touched\n", encoding="utf-8")
+    handler.dispatch(FileModifiedEvent(str(main_jl)))
+
+    mapping = updater.factory.import_processor.import_mapping.get(key, {})
+    # The deleted path is gone from the (rebuilt) stem index; the now-unique
+    # survivor is the root-level file.
+    assert mapping.get("Utils") == f"{project.name}.Utils", mapping
+
+
+def test_selected_macro_import_mapping(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using .M: @foo` names the member as a `macro_identifier`, not an
+    `identifier`: the local mapping must use the name WITHOUT the `@` so
+    the invocation `@foo` reduces to the same local name as
+    julia_call_name (issue #1882 review: selected macro imports were
+    silently skipped)."""
+    project = temp_repo / "julia_selmacro"
+    project.mkdir()
+    (project / "M.jl").write_text("macro foo(x)\n    return x\nend\n", encoding="utf-8")
+    (project / "main.jl").write_text("using .M: @foo\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("foo") == f"{project.name}.M", mapping
+
+
+def test_selected_macro_import_alias(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """`using .M: @foo as f` keeps the alias on the `as` side while the
+    macro_identifier head is stripped of its `@`."""
+    project = temp_repo / "julia_selmacro_alias"
+    project.mkdir()
+    (project / "M.jl").write_text("macro foo(x)\n    return x\nend\n", encoding="utf-8")
+    (project / "main.jl").write_text("using .M: @foo as f\n", encoding="utf-8")
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    module_qn = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
+    assert mapping.get("f") == f"{project.name}.M", mapping

@@ -2702,10 +2702,19 @@ class CallProcessor:
                 if end_token is not None:
                     return named[0].end_byte, end_token.start_byte
         if func_node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
+            # An arrow has two named children (parameter, body); the body is last.
             named = func_node.named_children
-            if len(named) >= 3:
+            if len(named) >= 2:
                 body = named[-1]
                 return body.start_byte, body.end_byte
+        if (
+            func_node.type == cs.TS_JULIA_ASSIGNMENT
+            and func_node.named_children
+            and func_node.named_children[0].type == cs.TS_JULIA_CALL_EXPRESSION
+        ):
+            # A concise method `f(x) = ...`: the right side is the body.
+            body = func_node.named_children[-1]
+            return body.start_byte, body.end_byte
         return None
 
     def _process_calls_in_classes(
@@ -4384,6 +4393,38 @@ class CallProcessor:
                         cs.RelationshipType.INSTANTIATES,
                         (class_label, qn_key, class_variant),
                     )
+                if language == cs.SupportedLanguage.JULIA:
+                    # Call syntax dispatches in the FUNCTION namespace: a
+                    # shadowing free function wins, else the inner same-name
+                    # constructor (like Java/C#).
+                    fn_variants = [
+                        (node_type, variant)
+                        for variant in resolver.function_registry.variants(callee_qn)
+                        if (node_type := resolver.function_registry.get(variant))
+                        in (NodeType.FUNCTION, NodeType.METHOD)
+                    ]
+                    if len(fn_variants) > 1:
+                        self._resolution = cs.EdgeResolution.OVERLOAD
+                    if fn_variants:
+                        for node_type, variant in sorted(fn_variants):
+                            ensure_rel(
+                                caller_spec, calls_rel, (node_type, qn_key, variant)
+                            )
+                    else:
+                        ctor_edges = [
+                            (ctor_type, variant)
+                            for ctor_type, ctor_qn in sorted(
+                                resolver.java_constructor_targets(callee_qn)
+                            )
+                            for variant in resolver.function_registry.variants(ctor_qn)
+                        ]
+                        if len(ctor_edges) > 1:
+                            self._resolution = cs.EdgeResolution.OVERLOAD
+                        for ctor_type, variant in ctor_edges:
+                            ensure_rel(
+                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
+                            )
+                    continue
                 if language in (
                     cs.SupportedLanguage.JAVA,
                     cs.SupportedLanguage.CSHARP,
@@ -4445,6 +4486,22 @@ class CallProcessor:
                 callee_qn = init_qn
 
             targets = resolver.function_registry.variants(callee_qn)
+            if language in (
+                cs.SupportedLanguage.RUST,
+                cs.SupportedLanguage.JULIA,
+            ):
+                # Filter the fan-out by the macro registry: an invocation
+                # binds only macros, a plain call only non-macros.
+                is_macro_invocation = call_node.type in (
+                    cs.TS_RS_MACRO_INVOCATION,
+                    cs.TS_JULIA_MACROCALL_EXPRESSION,
+                )
+                if is_macro_invocation:
+                    targets = [t for t in targets if t in self.macro_qns]
+                else:
+                    targets = [t for t in targets if t not in self.macro_qns]
+                if not targets:
+                    continue
             if len(
                 targets
             ) > 1 and not resolver.import_processor.rust_block_item_qns.isdisjoint(
