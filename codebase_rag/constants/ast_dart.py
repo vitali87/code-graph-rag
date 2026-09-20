@@ -58,10 +58,12 @@ DART_CONSTRUCTION_NODE_TYPES = frozenset(
 # A bare call with ONE simple type argument (`Box<int>(1)`) is parsed as a
 # chained comparison: relational_expression(relational_expression(X < T),
 # >, parenthesized_expression). Dart forbids chaining relational operators,
-# so that shape can only be a generic invocation (issue #2010).
+# so that shape can only be a generic invocation (issues #2010, #2015).
 TS_DART_RELATIONAL_EXPRESSION = "relational_expression"
 TS_DART_RELATIONAL_OPERATOR = "relational_operator"
 TS_DART_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
+DART_ANGLE_OPEN = "<"
+DART_ANGLE_CLOSE = ">"
 
 DART_CALL_QUERY = """
 (selector (argument_part)) @call
