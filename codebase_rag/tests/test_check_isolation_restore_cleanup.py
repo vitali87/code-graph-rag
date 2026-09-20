@@ -16,6 +16,8 @@ from codebase_rag.check_isolation import IsolationGuard
 from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
 
+pytest_plugins = ("check_isolation_helpers",)
+
 # --- what the restore must not commit -----------------------------------------
 
 
