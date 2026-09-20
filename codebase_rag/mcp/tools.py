@@ -125,6 +125,11 @@ _NOT_GRAPH_READERS = frozenset(
         # result to the postcondition contract, so refusing up front on a
         # partial graph would block the operation that repairs it.
         cs.MCPToolName.CHANGE_SIGNATURE,
+        # An EDIT like RENAME and CHANGE_SIGNATURE above: it runs its own
+        # re-ingest behind the incomplete-run marker and holds the result to
+        # the postcondition contract, so refusing up front on a partial graph
+        # would block the operation that repairs it (issue #1534).
+        cs.MCPToolName.MOVE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -2733,7 +2738,7 @@ class MCPToolsRegistry:
                 target_module,
                 keep_alias=keep_alias,
                 dry_run=dry_run,
-                reingest=self._reingest_for_contract(),
+                reingest=self._reingest_for_contract(project_name),
             )
         except MoveRefused as refused:
             return {cs.DICT_KEY_ERROR: str(refused), cs.KEY_CYCLE: list(refused.cycle)}
