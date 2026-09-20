@@ -31,6 +31,12 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 _RS_TYPE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
+# Registry kinds a CONSTRUCTION hop may name. Same members as the Rust set
+# above, kept separate because that one is about Rust receiver types while
+# this gates the import-prefix fold for every language (issue #2033).
+_CONSTRUCTIBLE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
@@ -3369,17 +3375,24 @@ class CallResolver:
         target = import_map.get(prefix)
         if not target:
             return None
-        class_name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        if not class_name:
+        name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if not name:
             return None
-        # Only a class the imported module actually defines; a same-named
-        # class elsewhere must not be reached through this prefix.
-        if (
-            self.function_registry.get(f"{target}{cs.SEPARATOR_DOT}{class_name}")
-            is None
-        ):
+        # The hop must be a CONSTRUCTION, so the imported module must define
+        # that name as a CLASS. Accepting any registry entry bound a
+        # `mod.factory()` whose factory is a FUNCTION to a same-named class in
+        # an unrelated module: a confidently wrong edge where the resolver
+        # previously emitted none.
+        qn = f"{target}{cs.SEPARATOR_DOT}{name}"
+        kind = self.function_registry.get(qn)
+        if kind in _CONSTRUCTIBLE_NODE_TYPES:
+            return name, parts[1:]
+        if kind is None:
             return None
-        return class_name, parts[1:]
+        # A function hop types the chain by its RECORDED return type instead;
+        # with none recorded the chain stays unresolved rather than guessing.
+        returned = self.type_inference.method_return_types.get(qn)
+        return (returned, parts[1:]) if returned else None
 
     def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring
