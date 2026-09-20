@@ -216,6 +216,44 @@ class TestCypherFindByQualifiedNameIntegration:
         assert results[0]["end"] == 20
         assert results[0]["path"] == "src/mymodule.py"
 
+    def test_finds_module_with_no_path_to_another_module(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # `OPTIONAL MATCH (m:Module)-[*]-(n)` binds nothing here, so the
+        # projection has only the matched node's own path to read (issue
+        # #1934).
+        memgraph_ingestor._execute_query(
+            "CREATE (m:Module {qualified_name: 'lonely', name: 'lonely.py', "
+            "path: 'src/lonely.py', start_line: 1, end_line: 40})"
+        )
+
+        results = memgraph_ingestor._execute_query(
+            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "lonely"}
+        )
+
+        assert len(results) == 1
+        assert results[0]["path"] == "src/lonely.py"
+
+    def test_prefers_the_matched_nodes_own_path(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # The traversal is unbounded, so the Module it reaches need not be the
+        # file the matched node lives in.
+        memgraph_ingestor._execute_query(
+            "CREATE (a:Module {qualified_name: 'pkg.own', name: 'own.py', "
+            "path: 'src/own.py', start_line: 1, end_line: 40})"
+            "-[:IMPORTS]->"
+            "(b:Module {qualified_name: 'pkg.neighbour', name: 'neighbour.py', "
+            "path: 'src/neighbour.py', start_line: 1, end_line: 40})"
+        )
+
+        results = memgraph_ingestor._execute_query(
+            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "pkg.own"}
+        )
+
+        assert len(results) == 1
+        assert results[0]["path"] == "src/own.py"
+
     def test_returns_empty_for_nonexistent_name(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:

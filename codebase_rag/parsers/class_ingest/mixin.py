@@ -166,6 +166,7 @@ class ClassIngestMixin:
     class_owner_module: dict[str, str]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
+    dart_constructor_qns: set[str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -1607,6 +1608,8 @@ class ClassIngestMixin:
                 and (dart_return := dart_utils.dart_return_type_name(method_node))
             ):
                 self.method_return_types[ingested_qn] = dart_return
+                if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+                    self.dart_constructor_qns.add(ingested_qn)
             if ingested_qn is not None:
                 # Rust trait bodies reach here rather than the impl path above;
                 # a trait is no module either (issue #1086).

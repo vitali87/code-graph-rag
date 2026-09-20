@@ -32,10 +32,11 @@ Routine decisions (bug fixes, small features, dependency updates) are made throu
 
 ## Continuity
 
-The project is designed so that no local machine or personal key is required to keep it running:
+Release builds and publishing run through GitHub Actions rather than a maintainer's local machine. Release binaries use keyless Sigstore signing, and PyPI publishing uses trusted publishing.
 
-- The repository, the PyPI package, and release automation are all driven from GitHub; releases are built and signed by GitHub Actions using keyless Sigstore signing, and PyPI publishing uses trusted publishing rather than a maintainer-held token.
-- The automated version-bump pipeline uses repository-scoped secrets (a deploy key and a release-notes endpoint token); a repository admin can regenerate these, and releases can also be dispatched manually without them.
+Continuity depends on maintaining authorized access to the repository and publishing services. If release automation becomes unavailable, an authorized maintainer can restore the required access and configuration before resuming releases.
+
+Automated release-tag publishing depends on the [version-bump workflow's](.github/workflows/version-bump.yml) configured credentials. If that automation is unavailable, an authorized maintainer can manually dispatch the publishing workflows for a verified, existing release tag, provided the required publishing access remains available. The [PyPI workflow](.github/workflows/publish.yml) takes a `tag` input; the [Docker](.github/workflows/docker-publish.yml) and [binary](.github/workflows/build-binaries.yml) workflows must be dispatched with the release tag as their ref.
 
 An emergency contact with standby access to the repository and the PyPI project is being designated so that issues, merges, and releases can continue within a week if the lead maintainer becomes unavailable.
 

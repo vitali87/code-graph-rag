@@ -1041,6 +1041,9 @@ class CallResolver:
         # unnecessary for reachability and never fabricates a call to a
         # non-constructor. Only constructors DIRECTLY on the class match (a nested
         # class's constructor has an extra qn segment and is excluded).
+        # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
+        # Box`) declares its constructor under its natural name, so the
+        # marker is not part of the name to match (issue #2007).
         simple = strip_duplicate_qn_suffix(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
