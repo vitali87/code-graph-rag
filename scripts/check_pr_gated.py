@@ -401,6 +401,70 @@ def missing_aggregated_jobs(rollup: list[dict[str, object]]) -> list[str]:
     return [job for job in AGGREGATED_JOBS if not any(n.startswith(job) for n in names)]
 
 
+# A conclusion that is not a failure. SKIPPED and NEUTRAL are how a
+# conditional job reports "did not apply", and branch protection treats both
+# as satisfied, so counting them would fire the caveat below on almost every
+# PR and teach the reader to scroll past it.
+NON_FAILING_CONCLUSIONS = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
+
+# How many failing unrequired contexts to name before summarising the rest. An
+# Actions outage reds many at once (#1941 was filed during one), and a caveat
+# that prints thirty names is one nobody reads.
+UNREQUIRED_CAVEAT_LIMIT = 8
+
+
+def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
+    """Finished contexts that did not succeed and that THIS gate does not require.
+
+    The gate answers "is `REQUIRED_CONTEXT` present and satisfied", so a red
+    check outside it is correctly not a reason. It was not outside the
+    READER's question: the verdict read as "nothing is failing", and a red
+    check nobody was told about is the direction that produces a bad merge
+    (#1941).
+
+    "Unrequired" here means "not required BY THIS GATE", which is weaker than
+    "not required by the ruleset". `check` reads the branch rule's `type` only,
+    to answer whether any status-check rule covers the base; it never reads
+    that rule's required-context list. So a context the ruleset does require
+    would land in this set, and the caveat says so rather than calling it
+    unrequired.
+
+    `REQUIRED_CONTEXT` is excluded because a red one is already a reason, and
+    naming it twice reads as two problems. The jobs it AGGREGATES are not
+    excluded: `All Checks Pass` reports one verdict over all of them, and
+    naming the job that actually failed is the point.
+    """
+    names = {
+        name
+        for entry in rollup
+        if (name := context_name(entry))
+        and name != REQUIRED_CONTEXT
+        and entry_finished(entry)
+        and (
+            outcome := str(entry.get("conclusion") or entry.get("state") or "").upper()
+        )
+        and outcome not in NON_FAILING_CONCLUSIONS
+    }
+    return sorted(names)
+
+
+def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
+    """The caveat for `failing_unrequired_contexts`, or nothing."""
+    failing = failing_unrequired_contexts(rollup)
+    if not failing:
+        return []
+    shown = failing[:UNREQUIRED_CAVEAT_LIMIT]
+    rest = len(failing) - len(shown)
+    return [
+        f"{len(failing)} check(s) this gate does not require are failing at the "
+        f"head: {', '.join(shown)}" + (f" (+{rest} more)" if rest else "") + ". "
+        f"The gate requires only '{REQUIRED_CONTEXT}' and does not read the "
+        "ruleset's required-context list, so it cannot say whether these are "
+        "required. They do not block it, and they are not evidence the change "
+        "is sound"
+    ]
+
+
 def required_contexts_present(
     rollup: list[dict[str, object]], required: list[str]
 ) -> list[str]:
@@ -691,7 +755,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             "--repo",
             REPO,
             "--json",
-            "headRefOid,baseRefName,statusCheckRollup,comments,reviews",
+            "headRefOid,baseRefName,statusCheckRollup,comments,reviews,state",
         )
     )
     if not view:
@@ -716,25 +780,74 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         reasons.append(f"no CI run exists at the head SHA {head[:8]}")
     else:
         owners: set[str] = set()
+        # Whether every run's detail was actually READ. `_gh_stdout_or_empty`
+        # returns "" for a failed call and for an empty body alike, so an
+        # unreadable run and a genuinely empty `pull_requests` are otherwise
+        # indistinguishable -- and the closed-PR excuse below must never cover
+        # the first. A run whose detail did not parse leaves this False.
+        all_details_read = True
         for run in at_head:
             detail = _json_dict(
                 _gh_stdout_or_empty("api", f"repos/{REPO}/actions/runs/{run.get('id')}")
             )
+            associated = detail.get("pull_requests")
+            if not detail or not isinstance(associated, list):
+                # Unreadable, or readable but carrying no `pull_requests` FIELD.
+                # A truthy detail that omits the key entirely is missing data,
+                # not a cleared association: GitHub's own cleared form is
+                # `"pull_requests": []`, a present-but-empty list (verified on
+                # run 34874043546, a 35-key object). Treating an absent key as
+                # cleared would excuse incomplete evidence on a closed PR.
+                all_details_read = False
+                continue
             owners.update(
-                str(p.get("number"))
-                for p in detail.get("pull_requests", [])
-                if isinstance(p, dict)
+                str(p.get("number")) for p in associated if isinstance(p, dict)
             )
-        if pr not in owners:
-            # Empty is UNVERIFIED, not clean. A run whose detail fetch failed,
-            # or one reporting `pull_requests: []`, leaves `owners` empty; the
-            # earlier `if owners and ...` guard then never fired and scored the
-            # absence of an answer as a pass (Greptile on PR #1625) -- the same
-            # fail-open shape this checker exists to catch.
+        # GitHub CLEARS a run's `pull_requests` once its PR closes or merges
+        # (issue #1944), so on a closed PR an empty owner set is GitHub's own
+        # doing rather than an unanswered question. Reported as unverified it
+        # made every correctly gated merged PR read as ungated -- measured on
+        # #1930, whose merged head carries `pull_requests: []` while an open
+        # PR's carries one entry, same repo and workflow.
+        #
+        # Only the EMPTY case is excused, and only when closed. A populated
+        # set naming a different PR is the rebase collision the message
+        # describes and still fails, whatever the state.
+        state = str(view.get("state", "")).upper()
+        # Excused only when the runs were READ and reported no owner. A failed
+        # detail fetch keeps failing closed on a merged PR exactly as on an
+        # open one: that is the fail-open the empty-is-unverified rule closed.
+        cleared_by_close = (
+            not owners and all_details_read and state in ("MERGED", "CLOSED")
+        )
+        if not all_details_read:
+            # Checked BEFORE the owner match, not folded into it. A head can
+            # carry several CI runs: if one resolves to this PR and another is
+            # unreadable, `pr in owners` is true and the incomplete evidence
+            # would never be reported. Ownership is a claim about EVERY run at
+            # the head, so one unread run makes the answer unverified however
+            # good the others look.
+            reasons.append(
+                f"could not read every CI run detail at {head[:8]}, so run "
+                "ownership is unverified; an unread run may name another PR"
+            )
+        elif pr not in owners and not cleared_by_close:
+            # Empty is UNVERIFIED, not clean, on an OPEN PR. A run whose detail
+            # fetch failed, or one reporting `pull_requests: []`, leaves
+            # `owners` empty; the earlier `if owners and ...` guard then never
+            # fired and scored the absence of an answer as a pass (Greptile on
+            # PR #1625) -- the same fail-open shape this checker exists to
+            # catch.
             found = sorted(owners) if owners else "none (could not be determined)"
             reasons.append(
                 f"the CI run at {head[:8]} does not resolve to #{pr}; owners: {found}. "
                 "Branches sharing a head SHA after a rebase report each other's runs"
+            )
+        elif cleared_by_close:
+            caveats.append(
+                f"#{pr} is {state}, so GitHub has cleared its runs' "
+                "`pull_requests`; run ownership could not be re-checked and is "
+                "taken on trust here (issue #1944)"
             )
 
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
@@ -784,6 +897,8 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         if stale:
             reasons.append(stale)
 
+    caveats.extend(unrequired_failure_caveat(rollup))
+
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
         reasons.append(thread_error)
@@ -808,7 +923,8 @@ def main(argv: list[str]) -> int:
 
     if not reasons:
         sys.stdout.write(
-            f"PR #{pr}: gated (every check present and satisfied"
+            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied; no "
+            "other context was tested for being required"
             f"{'; see caveat(s) above' if caveats else ''})\n"
         )
         return 0

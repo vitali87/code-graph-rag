@@ -1,6 +1,33 @@
+"""Cypher query literals.
+
+Many of these are f-strings, so that a label set derived once from the
+`constants.graph` enums (`_SNIPPET_LABELS`, `_GLOSS`, ... -- defined below,
+from those enums) is interpolated rather than respelled per query. **In an
+f-string query every literal brace must be doubled**: `{{qualified_name:
+$qn}}`, not `{qualified_name: $qn}`.
+
+A missed doubling in Cypher's map syntax is loud, because the colon is parsed
+as a format spec: `{name: $x}` raises `NameError` at import, and `{id: $x}`
+(a builtin key) raises `TypeError`. The quiet case is a COLON-FREE brace whose
+contents resolve as a name -- usually a builtin, which is always in scope
+whatever this module defines. `f"RETURN {id}"` yields `RETURN <built-in
+function id>`, and Cypher's own quantifier is the shape that would bite here:
+`f"-[:CALLS*{2}]->"` yields `-[:CALLS*2]->`.
+
+Non-f-string literals split two ways. In a plain string a brace is inert; in a
+`.format()` template it is not, and a stray brace raises `KeyError` at CALL
+time rather than at import -- quieter still. The templates in THIS file are
+`CYPHER_AUDIT_MISSING_REQUIRED` and `CYPHER_AUDIT_IS_NULL`, both formatted in
+`graph_audit.py`. (`constants.graph` holds another,
+`CYPHER_MEMORY_LIMIT_SUFFIX`, formatted in `graph_dialects.py`; the same rule
+applies there.)
+"""
+
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
+    DEFINITION_NODE_LABELS,
+    SNIPPET_NODE_LABELS,
     GlossAnchorState,
     NodeLabel,
     RelationshipType,
@@ -282,15 +309,32 @@ RETURN n.qualified_name AS qualified_name, n.start_line AS start_line,
        n.end_line AS end_line, m.path AS path, n.absolute_path AS absolute_path
 """
 
+# One source for every definition lookup (issue #1925): see
+# DEFINITION_NODE_LABELS. Sorted so the generated Cypher is stable across runs
+# rather than varying with frozenset iteration order.
+_GRAPH_DEFINITION_LABELS = "|".join(
+    sorted(label.value for label in DEFINITION_NODE_LABELS)
+)
+_SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
+
+# A lookup keyed on qualified_name alone can match more than one node: identity
+# constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
+# LIMIT 1 without an ORDER BY then picks by storage order. Ordering by label and
+# path makes the pick total and stable across a re-index, since qualified_name
+# ties by definition in exactly the ambiguous case (issue #1925).
+_DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
+
 # Fields and Parameters share the `<owner>.<name>` key space with Methods (a
-# Python class may have a field and a method both called `total`), and this
-# lookup is label-less with LIMIT 1, so without the exclusion a Field row --
-# which has no `end` -- could win a definition lookup (local review of #1805).
-CYPHER_FIND_BY_QUALIFIED_NAME = """
-MATCH (n) WHERE n.qualified_name = $qn AND NOT n:Field AND NOT n:Parameter
+# Python class may have a field and a method both called `total`), and a Field
+# row carries no `end`, so one winning here made an indexed definition read as
+# not found. Matched against the definition allowlist rather than excluding
+# those two labels by name, which fails open as labels are added (issue #1925).
+CYPHER_FIND_BY_QUALIFIED_NAME = f"""
+MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
+ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line
 LIMIT 1
 """
 
@@ -472,18 +516,6 @@ def build_create_relationship_query(
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
-_GRAPH_DEFINITION_LABELS = "|".join(
-    (
-        NodeLabel.FUNCTION.value,
-        NodeLabel.METHOD.value,
-        NodeLabel.CLASS.value,
-        NodeLabel.INTERFACE.value,
-        NodeLabel.ENUM.value,
-        NodeLabel.TYPE.value,
-        NodeLabel.UNION.value,
-        NodeLabel.MODULE.value,
-    )
-)
 CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
   AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
@@ -499,6 +531,7 @@ WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.docstring AS docstring
+{_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # Gloss nodes (issue #1808). The node, its ANNOTATES edge and every MENTIONS
 # edge are ONE statement, so a write is all or nothing: the subject and every
@@ -525,6 +558,7 @@ _MENTIONS = RelationshipType.MENTIONS.value
 CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
 RETURN n.anchor_hash AS target_hash
+{_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # The key is deterministic in (subject, kind, body), so a repeat write of a
 # note that has since MOVED finds the same node still attached to the

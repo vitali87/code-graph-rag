@@ -3960,6 +3960,35 @@ class CallProcessor:
                 self._record_csharp_cross_module_use(module_qn, callee_qn)
 
             if (
+                language == cs.SupportedLanguage.DART
+                and callee_type != class_label
+                and callee_qn in resolver.type_inference.dart_constructor_qns
+            ):
+                # A named constructor (`Box.of(1)`) resolves to its own METHOD,
+                # never to the class, so the class branch below never records
+                # the construction: INSTANTIATES the owning class here and let
+                # the method path keep the CALLS edge (issue #2012).
+                owner_qn = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                owner_variants = [
+                    variant
+                    for variant in resolver.function_registry.variants(owner_qn)
+                    if resolver.function_registry.get(variant) == NodeType.CLASS
+                ]
+                # Twin classes take the same stamp the class branch gives a
+                # two-candidate construction (local review).
+                self._resolution = (
+                    cs.EdgeResolution.OVERLOAD
+                    if len(owner_variants) > 1
+                    else resolver.last_resolution
+                )
+                for class_variant in owner_variants:
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.INSTANTIATES,
+                        (class_label, qn_key, class_variant),
+                    )
+
+            if (
                 language == cs.SupportedLanguage.CPP
                 and call_node.type == cs.TS_NEW_EXPRESSION
                 and callee_type != class_label
@@ -4492,7 +4521,9 @@ class CallProcessor:
             # ... }`): it gets no caller pass, so its assignments would else be
             # scanned by nobody and the stored functions report dead. Named
             # nested scopes still own their own pass.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if rhs_field := _ASSIGNMENT_RHS_FIELDS.get(node.type):
                 right = node.child_by_field_name(rhs_field)
@@ -4732,7 +4763,9 @@ class CallProcessor:
             # (a `.map()`/`cell`/forwardRef callback): those are skipped as
             # callers, so their JSX, rendered on behalf of this scope, would
             # otherwise be scanned by nobody and report as dead.
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _JSX_NAMED_ELEMENT_TYPES:
                 name_node = node.child_by_field_name(cs.FIELD_NAME)
@@ -4830,7 +4863,7 @@ class CallProcessor:
         while stack:
             node = self._site_node = stack.pop()
             if node.type in boundary_types:
-                if not self._is_unowned_js_scope(node):
+                if not self._is_unowned_js_scope(node, module_qn):
                     continue
                 self._emit_expression_body_return(
                     node,
@@ -4974,7 +5007,9 @@ class CallProcessor:
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = self._site_node = stack.pop()
-            if node.type in boundary_types and not self._is_unowned_js_scope(node):
+            if node.type in boundary_types and not self._is_unowned_js_scope(
+                node, module_qn
+            ):
                 continue
             if node.type in _DICT_LIKE_COLLECTION_TYPES:
                 for pair in node.named_children:
@@ -6998,6 +7033,8 @@ class CallProcessor:
         # only when no in-scope local/parameter shadows it.
         node_type = node.type
         if node_type == cs.TS_DART_SELECTOR:
+            if self._dart_is_shadowed_construction(node, shadow_spans):
+                return None
             read_name = dart_utils.dart_member_read_name(node)
         elif node_type == cs.TS_DART_CASCADE_SECTION:
             read_name = dart_utils.dart_cascade_read_name(node)
@@ -7008,6 +7045,23 @@ class CallProcessor:
         if read_name and read_name.rsplit(cs.SEPARATOR_DOT, 1)[-1] in prop_names:
             return read_name
         return None
+
+    def _dart_is_shadowed_construction(
+        self,
+        node: Node,
+        shadow_spans: Callable[[], dict[str, list[tuple[int, int]]]],
+    ) -> bool:
+        # `X<int>(1).m` is token-for-token identical to the chained
+        # comparison `a < b > (1).m`, so reading the receiver as a
+        # construction is a guess (issue #2015). When a local or parameter
+        # of that name is in scope the operand is that variable, not a type,
+        # so the site is a comparison and must not bind its member: without
+        # this, a local named after a class emits a wrong REFERENCES edge.
+        base = dart_utils.dart_ambiguous_construction_base(node)
+        if base is None:
+            return False
+        pos = node.start_byte
+        return any(lo <= pos < hi for lo, hi in shadow_spans().get(base, ()))
 
     def _dart_unshadowed_name(
         self,
@@ -7543,7 +7597,7 @@ class CallProcessor:
             )
         ]
 
-    def _is_unowned_js_scope(self, node: Node) -> bool:
+    def _is_unowned_js_scope(self, node: Node, module_qn: str) -> bool:
         # An anonymous arrow/function/generator expression that gets no caller
         # node of its own (no name, no binding name): a `.map()`/`cell`/
         # forwardRef callback. Its calls bubble up to the enclosing named
@@ -7555,7 +7609,37 @@ class CallProcessor:
             cs.TS_GENERATOR_FUNCTION,
         ):
             return False
-        return not (self._get_node_name(node) or self._js_ts_arrow_binding_name(node))
+        if self._get_node_name(node) or self._js_ts_arrow_binding_name(node):
+            return False
+        # A nameless FUNCTION EXPRESSION the definition pass registered under
+        # a name (`x: function () {}`) has neither, but IS a node with its own
+        # walk, so a reference inside it belongs to that node alone. Without
+        # this the enclosing scope emitted a second copy of every REFERENCES
+        # edge (issue #1932).
+        #
+        # Deliberately NOT extended to arrows, and the reason is narrower
+        # than it looks. An arrow that is an object value in a config array
+        # (`{ cell: ({row}) => <CopyId/> }`, TanStack columns) is registered
+        # under its key too, so owning it would MOVE the edge to `cols.cell`
+        # rather than drop it -- the component stays reachable either way.
+        # What it would break is the edge's SOURCE, which
+        # test_jsx_component_in_config_callback_is_referenced asserts is the
+        # module. Changing that is a behaviour change for consumers, so
+        # arrows keep bubbling here.
+        #
+        # A generator expression has no such consumer and duplicates exactly
+        # as a function expression does, so it is included.
+        #
+        # All three types are identical on both underlying signals
+        # (_attributable_func_nodes says unattributable, the recorded name
+        # says is_named), so this split is an enumeration, not a property.
+        if node.type not in (
+            cs.TS_FUNCTION_EXPRESSION,
+            cs.TS_GENERATOR_FUNCTION,
+        ):
+            return True
+        recorded = self._recorded_caller(node, module_qn)
+        return recorded is None or not recorded.is_named
 
     def reset_js_receiver_bindings(self) -> None:
         # Despite the historical name this clears ALL per-run JS call-pass

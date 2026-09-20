@@ -26,6 +26,7 @@ fails loudly instead of quietly answering nothing.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,7 @@ from codebase_rag import constants as cs
 from codebase_rag import graph_updater as gu
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
+from evals import cgr_graph
 from evals.cgr_graph import _StatefulIngestor
 
 PREFIX = {cs.KEY_PROJECT_PREFIX: "proj."}
@@ -283,4 +285,124 @@ class TestTheDoubleRefusesWhatItDoesNotModel:
 
         assert (
             store.fetch_all(cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": "proj"}) == []
+        )
+
+
+class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
+    """`_MODULE_SUBTREE_RELS` claims to be "what CYPHER_DELETE_MODULE walks".
+
+    It is a hand-maintained copy of a list that lives in the query, so it
+    drifts silently: nothing reads both. It had already lost CONTAINS_SECTION
+    (issue #1938), which is how a document's headings hang off its Module, so
+    a re-parse dropped every Section in production and kept them in the
+    double. A test asserting on Section survival across a re-ingest would
+    have pinned the opposite of production behaviour.
+
+    Deriving the expectation FROM the query rather than restating it is the
+    point: a restated list is the same hand-maintained copy one layer down,
+    and would drift the same way the next time a relation joins the walk.
+    """
+
+    @staticmethod
+    def _rels_in_delete_walk() -> frozenset[str]:
+        """The relation names inside the delete query's variable-length walk.
+
+        Anchored on the bracket that follows `OPTIONAL MATCH (m)`, so an
+        unrelated relation mentioned elsewhere in the query cannot leak in.
+        """
+        match = re.search(
+            r"OPTIONAL MATCH \(m\)-\[:([A-Z_|]+)\*", cs.CYPHER_DELETE_MODULE
+        )
+        assert match is not None, (
+            "CYPHER_DELETE_MODULE no longer contains the walk this test reads; "
+            "the emulator's subtree set cannot be checked against it"
+        )
+        return frozenset(match.group(1).split("|"))
+
+    def test_the_double_walks_exactly_what_the_delete_query_walks(self) -> None:
+        walked = self._rels_in_delete_walk()
+
+        assert walked == cgr_graph._MODULE_SUBTREE_RELS, (
+            "the double's module subtree drifted from CYPHER_DELETE_MODULE: "
+            f"only in the query {sorted(walked - cgr_graph._MODULE_SUBTREE_RELS)}, "
+            f"only in the double {sorted(cgr_graph._MODULE_SUBTREE_RELS - walked)}"
+        )
+
+    def test_the_extractor_reads_a_real_walk(self) -> None:
+        """The control. If the regex matched nothing the assertion above would
+        raise rather than pass, but a regex that matched a SHORTER walk than
+        the real one would make the comparison vacuous in the quiet
+        direction, so pin two relations known to be in it by name."""
+        walked = self._rels_in_delete_walk()
+
+        assert cs.RelationshipType.DEFINES.value in walked
+        assert cs.RelationshipType.CONTAINS_SECTION.value in walked
+        assert len(walked) >= 5
+
+    def test_a_document_reparse_drops_its_sections(self) -> None:
+        """The behaviour the omission changed, driven through the double.
+
+        Without CONTAINS_SECTION in the walk the Section survives the
+        re-parse here while production deletes it (issue #1426's own
+        regression, seen from the emulator's side).
+        """
+        store = _StatefulIngestor()
+        store.ensure_node_batch(
+            cs.NodeLabel.MODULE.value,
+            {cs.KEY_QUALIFIED_NAME: "proj.doc", cs.KEY_PATH: "doc.md"},
+        )
+        store.ensure_node_batch(
+            cs.NodeLabel.SECTION.value,
+            {cs.KEY_QUALIFIED_NAME: "proj.doc.Heading", cs.KEY_PATH: "doc.md"},
+        )
+        store.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.doc"),
+            cs.RelationshipType.CONTAINS_SECTION.value,
+            (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Heading"),
+        )
+        assert store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md")
+
+        store._delete_module_subtree("doc.md")
+
+        assert not store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md"), (
+            "the Section outlived its Module's re-parse, which production's "
+            "CYPHER_DELETE_MODULE would not allow"
+        )
+
+    def test_a_nested_subsection_goes_with_its_parent(self) -> None:
+        """Sections nest: a Section CONTAINS_SECTION its subsections, and the
+        production walk is variable-length (`*0..`), so it reaches a
+        sub-heading through its parent. A single-level fixture passes even if
+        the double stops after one hop, so this drives the depth."""
+        store = _StatefulIngestor()
+        store.ensure_node_batch(
+            cs.NodeLabel.MODULE.value,
+            {cs.KEY_QUALIFIED_NAME: "proj.doc", cs.KEY_PATH: "doc.md"},
+        )
+        for qn in ("proj.doc.Top", "proj.doc.Top.Nested"):
+            store.ensure_node_batch(
+                cs.NodeLabel.SECTION.value,
+                {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: "doc.md"},
+            )
+        store.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.doc"),
+            cs.RelationshipType.CONTAINS_SECTION.value,
+            (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Top"),
+        )
+        store.ensure_relationship_batch(
+            (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Top"),
+            cs.RelationshipType.CONTAINS_SECTION.value,
+            (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Top.Nested"),
+        )
+
+        store._delete_module_subtree("doc.md")
+
+        survivors = {
+            uid
+            for _label, uid in store._nodes_at_path(
+                cs.NodeLabel.SECTION.value, "doc.md"
+            )
+        }
+        assert survivors == set(), (
+            f"subsections outlived the re-parse: {sorted(survivors)}"
         )

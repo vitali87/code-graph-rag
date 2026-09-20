@@ -433,6 +433,50 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
 # Node labels a group exclusively owns; the label is captured only while the
 # owning group has an enabled relationship. Labels owned by no group are always
 # captured.
+# The labels a "definition" lookup may return: things with a body a reader can
+# be shown, each carrying start_line/end_line. Sourced here rather than spelled
+# out per query so a new label joins every lookup at once.
+#
+# Deliberately an ALLOWLIST. The predecessor excluded Field and Parameter by
+# name, which fails OPEN: the next property-bearing label added would silently
+# start winning definition lookups again, returning a row with no end_line and
+# making an indexed definition read as not found (issue #1925).
+DEFINITION_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.FUNCTION,
+        NodeLabel.METHOD,
+        NodeLabel.CLASS,
+        NodeLabel.INTERFACE,
+        NodeLabel.ENUM,
+        NodeLabel.TYPE,
+        NodeLabel.UNION,
+        NodeLabel.MODULE,
+    }
+)
+
+
+# What `find_code_snippet` may return: a definition, plus every other node
+# that carries a readable span (start_line, end_line and a path), because the
+# retriever can read source for those and returned them before this lookup
+# was narrowed. Dropping one reproduces issue #1925's own symptom on another
+# label: a Markdown `Section`, and the three finding nodes, each resolved
+# successfully on `main`.
+#
+# Kept separate from DEFINITION_NODE_LABELS because none of these is a
+# definition for the graph-query and gloss lookups, which never matched one.
+SPAN_BEARING_NODE_LABELS: frozenset[NodeLabel] = frozenset(
+    {
+        NodeLabel.SECTION,
+        NodeLabel.PATTERN,
+        NodeLabel.CODE_SMELL,
+        NodeLabel.SECURITY_ISSUE,
+    }
+)
+SNIPPET_NODE_LABELS: frozenset[NodeLabel] = (
+    DEFINITION_NODE_LABELS | SPAN_BEARING_NODE_LABELS
+)
+
+
 CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.IO: frozenset({NodeLabel.RESOURCE}),
     CaptureGroup.FINDINGS: frozenset(
