@@ -824,6 +824,7 @@ class GraphUpdater:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
+        project_named: bool | None = None,
         capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
     ):
@@ -847,7 +848,11 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
-        self.project_named = bool(project_name and project_name.strip())
+        self.project_named = (
+            bool(project_name and project_name.strip())
+            if project_named is None
+            else project_named
+        )
         self.project_name = (
             project_name and project_name.strip()
         ) or repo_path.resolve().name

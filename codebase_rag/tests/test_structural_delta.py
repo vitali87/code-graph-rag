@@ -820,6 +820,7 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
+    default_project = derive_project_name(root)
     parsers, queries = __import__(
         "codebase_rag.parser_loader", fromlist=["load_parsers"]
     ).load_parsers()
@@ -830,9 +831,11 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
         repo_path=root,
         parsers=parsers,
         queries=queries,
+        project_name=default_project,
+        project_named=False,
         exclude_paths=frozenset({"generated_src"}),
     ).run(force=True)
-    assert indexed_scope(root, derive_project_name(root)) == (
+    assert indexed_scope(root, default_project) == (
         frozenset({"generated_src"}),
         None,
     )
