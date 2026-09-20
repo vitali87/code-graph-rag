@@ -539,12 +539,7 @@ def test_import_prefixed_construction_receiver_keeps_the_class_hop(
     # identifier(Box), and the mis-parsed generic's left spine leads with
     # the prefix identifier and carries `.Box` as a selector.
     files = {
-        "lib.dart": (
-            "class Box<T> {\n"
-            "  Box(T v);\n"
-            "  int get height => 2;\n"
-            "}\n"
-        ),
+        "lib.dart": ("class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n"),
         "app.dart": (
             "import 'lib.dart' as p;\n"
             "int genGet() { return p.Box<int>(1).height; }\n"

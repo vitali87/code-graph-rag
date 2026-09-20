@@ -3331,6 +3331,12 @@ class CallResolver:
                 language,
                 call_point,
             )
+        elif (folded := self._fold_import_prefix_hop(parts, module_qn)) is not None:
+            # `p.Box(1).height` under `import '...' as p;`: the base names an
+            # IMPORT, not a local, so the local lookup below would end the
+            # chain before the construction hop is seen (issue #2033). Fold
+            # the prefix into the next hop and type that hop instead.
+            current_type, parts = folded
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -3344,6 +3350,36 @@ class CallResolver:
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
         return current_type
+
+    def _fold_import_prefix_hop(
+        self, parts: list[str], module_qn: str
+    ) -> tuple[str, list[str]] | None:
+        # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
+        # collapses to that class: the prefix carries no type of its own, and
+        # the class is what the rest of the chain hangs off. Returns the
+        # constructed type and the remaining chain with the prefix removed, or
+        # None when the base is not a prefix or the next hop is not a
+        # construction the registry knows.
+        if len(parts) < 2:
+            return None
+        prefix, hop = parts[0], parts[1]
+        if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
+            return None
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        target = import_map.get(prefix)
+        if not target:
+            return None
+        class_name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        if not class_name:
+            return None
+        # Only a class the imported module actually defines; a same-named
+        # class elsewhere must not be reached through this prefix.
+        if (
+            self.function_registry.get(f"{target}{cs.SEPARATOR_DOT}{class_name}")
+            is None
+        ):
+            return None
+        return class_name, parts[1:]
 
     def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -130,10 +132,17 @@ def _construction_class_name(node: Node) -> str | None:
         cs.TS_DART_NEW_EXPRESSION,
         cs.TS_DART_CONST_OBJECT_EXPRESSION,
     ):
-        for child in node.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
-                return decode_node_text(child.text)
-        return None
+        # `new X(1)` is type_identifier(X); `new p.X(1)` is
+        # type_identifier(p) + identifier(X), so the PREFIX comes first and
+        # the class is the identifier after it (issue #2033). Join them, and
+        # the resolver folds the prefix away against the import map.
+        names = [
+            decode_node_text(child.text)
+            for child in node.named_children
+            if child.text
+            and child.type in (cs.TS_DART_TYPE_IDENTIFIER, cs.TS_DART_IDENTIFIER)
+        ]
+        return cs.SEPARATOR_DOT.join(names) if names else None
     if node.type != cs.TS_DART_RELATIONAL_EXPRESSION:
         return None
     # Match the mis-parsed-generic shape: exactly
@@ -157,12 +166,21 @@ def _construction_class_name(node: Node) -> str | None:
         return None
     if _relational_operator_text(node) != cs.DART_ANGLE_CLOSE:
         return None
-    # The left spine is `X < int`: the class is its leading identifier. Any
-    # other shape (a parenthesized or call left operand) is not a construction.
+    # The left spine is `X < int`, or `p.X < int` under an import prefix, so
+    # the class is the leading identifier plus any member selectors before
+    # the operator (issue #2033). Any other shape (a parenthesized or call
+    # left operand) is not a construction.
     spine = children[0].named_children
     if not spine or spine[0].type != cs.TS_DART_IDENTIFIER or not spine[0].text:
         return None
-    return decode_node_text(spine[0].text)
+    names = [decode_node_text(spine[0].text)]
+    for child in spine[1:]:
+        if child.type != cs.TS_DART_SELECTOR:
+            break
+        if (member := _selector_member_name(child)) is None:
+            return None
+        names.append(member)
+    return cs.SEPARATOR_DOT.join(names)
 
 
 def _construction_receiver_class(
@@ -416,6 +434,44 @@ def dart_local_name(uri: str) -> str:
     if segment.endswith(cs.DART_EXT):
         segment = segment[: -len(cs.DART_EXT)]
     return segment or uri
+
+
+def _walk_named(node: Node) -> Iterator[Node]:
+    # Depth-first over named descendants, the node itself first.
+    yield node
+    for child in node.named_children:
+        yield from _walk_named(child)
+
+
+def dart_import_prefix(import_node: Node) -> str | None:
+    """The `as` prefix of a Dart import, or None when it has none.
+
+    `import 'lib.dart' as p;` binds every name from that library under `p`,
+    so a member reached through it (`p.Box`) resolves only if the PREFIX is
+    registered as an import key; the file-derived key `lib` never appears in
+    the source. The grammar puts the prefix in an `identifier` child of the
+    `import_specification`, for the plain and the `deferred as` forms alike
+    (issue #2033).
+    """
+    # The capture is the whole `import_or_export`, so the specification sits
+    # a level or two down (import_or_export > library_import >
+    # import_specification); walk to it rather than assuming a direct child.
+    spec = next(
+        (
+            node
+            for node in _walk_named(import_node)
+            if node.type == cs.TS_DART_IMPORT_SPECIFICATION
+        ),
+        None,
+    )
+    if spec is None:
+        return None
+    # The prefix is the specification's own identifier child. Any identifier
+    # deeper down belongs to a `show`/`hide` combinator, not to `as`.
+    for child in spec.named_children:
+        if child.type == cs.TS_DART_IDENTIFIER and child.text:
+            return decode_node_text(child.text)
+    return None
 
 
 def dart_resolve_import(uri: str, module_qn: str, project_name: str) -> str:

@@ -25,7 +25,12 @@ from ..types_defs import (
 )
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
-from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
+from .dart import (
+    dart_extract_uri,
+    dart_import_prefix,
+    dart_local_name,
+    dart_resolve_import,
+)
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -4615,6 +4620,14 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                # `import 'lib.dart' as p;` binds the library's names under
+                # `p`, and the file-derived key never appears in the source,
+                # so a prefixed reference (`p.Box`) resolves only once the
+                # PREFIX is a key too (issue #2033). Both keys are kept: the
+                # file-derived one still serves an unprefixed import of the
+                # same file elsewhere in the module.
+                if prefix := dart_import_prefix(import_node):
+                    self.import_mapping[module_qn][prefix] = full_name
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
