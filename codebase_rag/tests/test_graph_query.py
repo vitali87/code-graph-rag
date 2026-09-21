@@ -55,6 +55,16 @@ NODES: list[ResultRow] = [
     _node("Function", f"{P}.tests.test_app.test_run", "tests/test_app.py", 1, 5),
     _node("Function", f"{P}.tests.test_app.test_main", "tests/test_app.py", 7, 12),
     _node("Function", f"{P}.tests.test_app.setup", "tests/test_app.py", 14, 16),
+    # Reaches `util.helper` ONLY through `proj.extra.app.run`, so it is
+    # absent exactly when a foreign row is refused as a HOP. Filtering
+    # foreign entries out of `nodes` alone would still report it (#1982).
+    _node(
+        "Function",
+        f"{P}.tests.test_app.test_via_foreign",
+        "tests/test_app.py",
+        18,
+        20,
+    ),
     # A SECOND registered project whose name extends this one (`proj.extra`):
     # its rows start with `proj.` too, so every prefix-scoped query returns
     # them, and the reader must drop them by ownership (issue #1982).
@@ -93,6 +103,17 @@ CALLS: list[
     (f"{P}.app.main", f"{EXTRA}.app.run", 13, 4, 13, 9, 0, []),
     (f"{EXTRA}.tests.test_x.test_helper", f"{P}.util.helper", 2, 4, 2, 12, 0, []),
     (f"{P}.tests.test_app.test_main", f"{P}.app.main", 9, 4, 9, 10, 0, []),
+    # Its sole outward edge is into the extending project's function.
+    (
+        f"{P}.tests.test_app.test_via_foreign",
+        f"{EXTRA}.app.run",
+        19,
+        4,
+        19,
+        9,
+        0,
+        [],
+    ),
     # An edge written without a site (a frontend fact).
     (
         f"{P}.tests.test_app.setup",
@@ -826,6 +847,11 @@ def test_rows_of_a_project_extending_the_name_are_not_this_projects(
     names = {r["qualified_name"] for r in reaching}
     assert not {qn for qn in names if qn.startswith(f"{EXTRA}.")}
     assert f"{P}.tests.test_app.setup" in names
+    # A foreign row is refused as a HOP, not merely dropped from the report:
+    # this owned test reaches `helper` only through `proj.extra.app.run`.
+    # Filtering `nodes` alone leaves it reachable, and the assertion above
+    # cannot see the difference (issue #1982).
+    assert f"{P}.tests.test_app.test_via_foreign" not in names
 
     monkeypatch.setattr(sys.modules[__name__], "PROJECTS", [P])
     resolved = {
