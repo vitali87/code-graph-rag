@@ -1006,6 +1006,14 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # The Dart prefix maps share the same invariant. Both are written
+        # only when the file HAS prefixed imports, so removing the last one
+        # left the previous parse's entries in place: a stale alias kept
+        # resolving a name the file no longer binds, and a stale shadow span
+        # kept suppressing a fold at a line that had moved (Copilot,
+        # PR #2040).
+        self.dart_prefix_shadows.pop(module_qn, None)
+        self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(

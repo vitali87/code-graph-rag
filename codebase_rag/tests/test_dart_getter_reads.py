@@ -624,8 +624,13 @@ def test_a_named_constructor_is_not_part_of_the_receiver_type(
     files = {
         "lib.dart": (
             "class Box {\n"
-            "  Box(int v);\n"
-            "  Box.named(int v);\n"
+            "  final int v;\n"
+            "  const Box(this.v);\n"
+            # `const Box.named(1)` below needs a CONST constructor; a plain
+            # one makes that a compile-time error, so the fixture would be
+            # invalid Dart and the test could pass on a parse failure rather
+            # than on resolution (CodeRabbit, PR #2040).
+            "  const Box.named(this.v);\n"
             "  int get height => 2;\n"
             "}\n"
         ),
@@ -789,3 +794,33 @@ def test_an_explicit_alias_beats_a_colliding_filename_key(tmp_path: Path) -> Non
 
     assert _has(rels, ".app.aliased", REFERENCES, ".other.Box.width"), rels
     assert not _has(rels, ".app.aliased", REFERENCES, ".helper.Box.height"), rels
+
+
+def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
+    """`_clear_module_import_state` must carry nothing the file no longer says.
+
+    Both Dart prefix maps are written only when the file HAS prefixed
+    imports, so removing the last one left the previous parse's entries in
+    place: a stale alias kept resolving a name the file no longer binds
+    (Copilot, PR #2040).
+    """
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    class _Probe(ImportProcessor):  # __slots__ forbids stubbing on instances
+        def _retract_import_sites(self, module_qn: str) -> None:
+            return None
+
+    processor = object.__new__(_Probe)
+    processor.import_mapping = {"m": {"p": "m.lib"}}
+    processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
+    processor.dart_import_aliases = {"m": {"p": "m.lib"}}
+    processor._cpp_shadowed_include_targets = set()
+    processor._cpp_declaration_mappings = set()
+
+    processor._clear_module_import_state("m")
+
+    assert processor.dart_prefix_shadows.get("m") is None
+    assert processor.dart_import_aliases.get("m") is None
+    # The control: the mapping it sits beside is emptied, not dropped, so
+    # this is the documented reset rather than a wholesale delete.
+    assert processor.import_mapping["m"] == {}
