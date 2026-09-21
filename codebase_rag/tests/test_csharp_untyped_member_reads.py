@@ -232,3 +232,33 @@ def test_a_qualified_type_argument_keeps_the_leaf_arity(tmp_path: Path) -> None:
         for t in targets
     ), sorted(targets)
     assert "proj.src.Lib.Lib.Helper.Run(string)" not in targets, sorted(targets)
+
+
+def test_the_duplicate_marker_strip_keeps_a_verbatim_identifier() -> None:
+    """The marker is `@<line>`; a verbatim identifier's `@` is part of the name.
+
+    `_dotted_type_path_qn` matches a candidate by its WHOLE path with the
+    registration marker removed. Splitting at the FIRST `@` truncated
+    `proj.src.Lib.Lib.@event@12` to `proj.src.Lib.Lib.`, so the written
+    path `Lib.@event` no longer matched and the real type was rejected
+    (Copilot, #1998). Driven directly: the end-to-end call resolves through
+    the name trie and never reaches this filter.
+    """
+    from codebase_rag.parsers.csharp.type_inference import _DUP_QN_MARKER_RE
+
+    written = "Lib.@event"
+    suffix = f".{written}"
+    # A verbatim-named type that is also a same-file twin, so BOTH the
+    # escape and a real registration marker are present.
+    qn = "proj.src.Lib.Lib.@event@12"
+
+    assert _DUP_QN_MARKER_RE.sub("", qn) == "proj.src.Lib.Lib.@event"
+    assert _DUP_QN_MARKER_RE.sub("", qn).endswith(suffix)
+    # The marker is still stripped where it really is one.
+    assert _DUP_QN_MARKER_RE.sub("", "proj.src.Lib.Lib.Helper@12_3") == (
+        "proj.src.Lib.Lib.Helper"
+    )
+    # ...and a plain name is untouched.
+    assert _DUP_QN_MARKER_RE.sub("", "proj.src.Lib.Lib.Helper") == (
+        "proj.src.Lib.Lib.Helper"
+    )

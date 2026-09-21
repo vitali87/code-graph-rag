@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import deque
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -28,6 +29,16 @@ from .utils import (
     leaf_type_segment,
     split_type_ref,
     strip_generic_arguments,
+)
+
+# Registration artifacts on a qualified name ("@<line>", optionally
+# "_<col>"), never part of the written name. A bare `@` is a verbatim
+# identifier's escape and must survive (issue #1998).
+_DUP_QN_MARKER_RE = re.compile(
+    re.escape(cs.DUP_QN_MARKER)
+    + r"\d+(?:"
+    + re.escape(cs.DUP_QN_COLUMN_MARKER)
+    + r"\d+)?"
 )
 
 if TYPE_CHECKING:
@@ -1440,7 +1451,11 @@ class CSharpTypeInferenceEngine:
             if self.function_registry.get(qn) in _TYPE_DECLS
             # A same-file twin carries a duplicate marker (`Helper@12`)
             # after the path; the leaf's arity then picks between them.
-            and qn.split(cs.DUP_QN_MARKER, 1)[0].endswith(suffix)
+            # Matched as `@<digits>`, never a bare `@`: a C# verbatim
+            # identifier (`Lib.@Helper`) carries a leading `@` that IS part
+            # of the name, and splitting at the first one truncated the
+            # candidate to `Lib.`, rejecting the real type (Copilot, #1998).
+            and _DUP_QN_MARKER_RE.sub("", qn).endswith(suffix)
         ]
         # The leaf's own arity picks between same-name twins; the leaf is
         # cut at the last dot outside generic arguments, so a qualified type
