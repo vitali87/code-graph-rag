@@ -54,7 +54,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .config import ModelConfig, load_ignore_patterns, settings
-from .context_pruning import prune_old_tool_results
+from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -727,11 +727,30 @@ async def _run_agent_response_loop(
         # whatever the session is talking to.
         _, _, context_pct = _token_usage()
         if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+            # Snapshot before the rewrite: `describe_prune` compares the two,
+            # and the slice assignment below overwrites what it would compare
+            # against. A shallow copy is enough because the pruner replaces
+            # parts rather than mutating them in place.
+            before_prune = list(message_history)
             # Assign THROUGH the slice: callers hold this same list and the
             # loop mutates it in place, so rebinding would prune a copy and
             # leave the conversation untouched -- a call site that satisfies a
             # reachability check while doing nothing.
-            message_history[:] = prune_old_tool_results(message_history)
+            message_history[:] = prune_old_tool_results(
+                message_history,
+                enabled=settings.CONTEXT_COMPACTION_ENABLED,
+            )
+            # Say so. Compaction that the user cannot see is indistinguishable
+            # from the agent forgetting, and they cannot report or work around
+            # what they were never told about (#1500).
+            prune_report = describe_prune(before_prune, message_history)
+            if prune_report.pruned:
+                app_context.console.print(
+                    cs.COMPACTION_NOTICE.format(
+                        parts=prune_report.dropped_parts,
+                        tokens=prune_report.recovered_tokens,
+                    )
+                )
 
         _spawn_context_refresh(list(message_history))
 

@@ -23,7 +23,7 @@ exists because that shape breaks a request.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .utils.token_utils import count_tokens
@@ -130,10 +130,64 @@ def _prunable_candidates(
     return candidates, recoverable_tokens
 
 
+@dataclass(frozen=True)
+class PruneReport:
+    """What a prune actually did, so the caller can say so.
+
+    `pruned=False` with zero counts is a DISTINCT outcome from a prune that
+    ran: a caller that cannot tell "declined, below the floor" from "dropped
+    nothing" would announce a compaction that never happened, which is worse
+    than staying silent.
+    """
+
+    pruned: bool
+    dropped_parts: int
+    recovered_tokens: int
+
+
+def describe_prune(
+    before: list[ModelMessage], after: list[ModelMessage]
+) -> PruneReport:
+    """Compare a history with its pruned form.
+
+    Deliberately NOT folded into `prune_old_tool_results`'s return value.
+    `main` assigns through `message_history[:]` because callers hold that same
+    list, and a test pins that exact form; returning a report instead would
+    force every one of its call sites to change and prune a copy if any were
+    missed. Adding a function beats redefining what an existing one returns.
+
+    The comparison, not the identity check, is what decides. `after is before`
+    short-circuits a DIRECT caller that passes the pruner's return value
+    straight back, but `main` assigns through `message_history[:]` against a
+    separate snapshot, so those two are never the same object and this always
+    walks. That is the correct outcome either way: a declined prune places no
+    new placeholders, so the walk reports `pruned=False` as surely as the
+    shortcut would. The notice cannot fire on a prune that did not happen.
+    """
+    if after is before:
+        return PruneReport(pruned=False, dropped_parts=0, recovered_tokens=0)
+
+    dropped = 0
+    recovered = 0
+    for old_message, new_message in zip(before, after, strict=False):
+        old_parts = getattr(old_message, "parts", None) or ()
+        new_parts = getattr(new_message, "parts", None) or ()
+        for old_part, new_part in zip(old_parts, new_parts, strict=False):
+            old_content = getattr(old_part, "content", None)
+            new_content = getattr(new_part, "content", None)
+            if new_content == PRUNED_PLACEHOLDER and old_content != PRUNED_PLACEHOLDER:
+                dropped += 1
+                recovered += _content_tokens(old_part) - _content_tokens(new_part)
+    return PruneReport(
+        pruned=dropped > 0, dropped_parts=dropped, recovered_tokens=recovered
+    )
+
+
 def prune_old_tool_results(
     messages: list[ModelMessage],
     protect_recent_tokens: int = DEFAULT_PROTECT_RECENT_TOKENS,
     minimum_recovered_tokens: int = DEFAULT_MINIMUM_RECOVERED_TOKENS,
+    enabled: bool = True,
 ) -> list[ModelMessage]:
     """Empty tool results outside the protected window, oldest first.
 
@@ -145,6 +199,11 @@ def prune_old_tool_results(
     be freed twice, and counting it would let a long session clear the floor
     every turn on tokens it cannot actually reclaim.
     """
+    # Checked BEFORE the floor and before any scanning: a user who turned
+    # compaction off has declined the mechanism, not asked for a cheaper one.
+    if not enabled:
+        return messages
+
     candidates, recoverable_tokens = _prunable_candidates(
         messages, protect_recent_tokens
     )
