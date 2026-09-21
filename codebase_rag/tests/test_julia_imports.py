@@ -370,10 +370,10 @@ def test_nested_package_stem_not_matched(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:
     """A unique vendored file below a nested Project.toml is a SEPARATE
-    package: it must not satisfy a same-name stem lookup (issue #1882
-    review: the declared-module index skipped nested packages, the stem
-    index did not, so `using .Utils` mapped to an unreachable vendored
-    module)."""
+    package: it may sit in the stem index, but a cross-package lookup must
+    reject it at the package-root boundary (issue #1882 review: the stem
+    index had no boundary, so `using .Utils` mapped to an unreachable
+    vendored module)."""
     project = temp_repo / "julia_nestedpkg"
     (project / "dep").mkdir(parents=True)
     (project / "dep" / "Project.toml").write_text('name = "Dep"\n', encoding="utf-8")
@@ -382,8 +382,6 @@ def test_nested_package_stem_not_matched(
 
     updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
-    index = updater.factory.import_processor._julia_file_stems or {}
-    assert "dep/Utils.jl" not in index.get("Utils", set()), index
     imports = {
         (c.args[0][2], c.args[2][2])
         for c in get_relationships(mock_ingestor, "IMPORTS")
@@ -565,6 +563,81 @@ def test_selected_macro_import_at_alias(
     module_qn = f"{project.name}.main"
     mapping = updater.factory.import_processor.import_mapping.get(module_qn, {})
     assert mapping.get("v") == f"{project.name}.M", mapping
+
+
+def test_scoped_nested_module_import(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """A `using .X` inside a nested `module` names a submodule declared in
+    the same file; two nested modules importing a same-named member must
+    keep separate bindings (issue #1882 review: both wrote the file-level
+    map and the last one won)."""
+    project = temp_repo / "julia_scoped_nested"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+module Outer
+module First
+alpha() = 1
+end
+using .First: alpha
+f() = alpha()
+end
+module Second
+module SecondFirst
+alpha() = 2
+end
+using .SecondFirst: alpha
+g() = alpha()
+end
+""",
+        encoding="utf-8",
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    prefix = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping
+    assert mapping.get(f"{prefix}.Outer", {}).get("alpha") == f"{prefix}.Outer.First"
+    assert mapping.get(f"{prefix}.Second", {}).get("alpha") == (
+        f"{prefix}.Second.SecondFirst"
+    )
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert (f"{prefix}.Outer.f", f"{prefix}.Outer.First.alpha") in calls, calls
+    assert (
+        f"{prefix}.Second.g",
+        f"{prefix}.Second.SecondFirst.alpha",
+    ) in calls, calls
+
+
+def test_nested_package_declared_module_import(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using .SimulationModels` in a nested package's file binds a module
+    declared in a sibling file of the SAME package; the declared-name index
+    must stay reachable for nested packages (issue #1882 review: the
+    index skipped every nested file and the edge was dropped)."""
+    project = temp_repo / "julia_np_declared"
+    dep = project / "dep"
+    dep.mkdir(parents=True)
+    (project / "Project.toml").write_text('name = "Root"\n', encoding="utf-8")
+    (dep / "Project.toml").write_text('name = "Dep"\n', encoding="utf-8")
+    (dep / "models.jl").write_text("module SimulationModels\nend\n", encoding="utf-8")
+    (dep / "foo.jl").write_text(
+        "module Foo\nusing .SimulationModels\nend\n", encoding="utf-8"
+    )
+
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    imports = {
+        (c.args[0][2], c.args[2][2])
+        for c in get_relationships(mock_ingestor, "IMPORTS")
+    }
+    prefix = f"{project.name}."
+    assert any(
+        src == f"{prefix}dep.foo" and dst == f"{prefix}dep.models"
+        for src, dst in imports
+    ), imports
 
 
 def test_absolute_external_path_not_captured(

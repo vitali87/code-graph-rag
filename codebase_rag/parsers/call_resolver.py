@@ -1324,7 +1324,14 @@ class CallResolver:
         # file-keyed cache would serve it another caller's answer. A file
         # holding initializer-block uses resolves SITE-dependently (the
         # block's use answers only calls inside its span), so no caller in
-        # it may share cached answers either.
+        # it may share cached answers either. A Julia caller inside a nested
+        # `module` block is caller-dependent for the same reason (the block's
+        # own `using` shadows the file-level bindings).
+        nested_caller = (
+            caller_qn is not None
+            and caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            and cs.SEPARATOR_DOT in caller_qn[len(module_qn) + 1 :]
+        )
         if (
             language == cs.SupportedLanguage.RUST
             and caller_qn
@@ -1339,7 +1346,7 @@ class CallResolver:
                     )
                 )
             )
-        ):
+        ) or (language == cs.SupportedLanguage.JULIA and nested_caller):
             use_cache = False
         if use_cache:
             # `new X()` and a bare `X()` in one module are different
@@ -1459,7 +1466,7 @@ class CallResolver:
         ):
             return self.function_registry[type_qn], type_qn
         if result := self._try_resolve_via_imports(
-            call_name, module_qn, local_var_types, language
+            call_name, module_qn, local_var_types, language, caller_qn
         ):
             if use_cache:
                 self._remember(cache_key, result)
@@ -1929,7 +1936,20 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
+        caller_qn: str | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.JULIA and caller_qn:
+            # A `using` inside a Julia `module` block binds only that block,
+            # so a nested module's imports shadow the file-level ones: walk
+            # the caller's module scopes innermost first.
+            for scope in self._julia_caller_scopes(caller_qn, module_qn):
+                import_map = self.import_processor.import_mapping.get(scope)
+                if not import_map:
+                    continue
+                if result := self._try_resolve_direct_import(
+                    call_name, import_map, language, scope
+                ):
+                    return result
         import_map = self.import_processor.import_mapping.get(module_qn)
         if import_map is None:
             # A module with no `use`/import statements can still resolve a member
@@ -2082,6 +2102,19 @@ class CallResolver:
         matches = [key for key in import_map if _php_fold(key) == folded]
         return matches[0] if len(matches) == 1 else None
 
+    @staticmethod
+    def _julia_caller_scopes(caller_qn: str, module_qn: str) -> list[str]:
+        # The caller's module scopes innermost first (the file module last).
+        if not caller_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
+            return [module_qn]
+        parts = caller_qn[len(module_qn) + 1 :].split(cs.SEPARATOR_DOT)
+        scopes = [module_qn]
+        prefix = module_qn
+        for part in parts[:-1]:
+            prefix = f"{prefix}{cs.SEPARATOR_DOT}{part}"
+            scopes.insert(0, prefix)
+        return scopes
+
     def _try_resolve_direct_import(
         self,
         call_name: str,
@@ -2135,6 +2168,17 @@ class CallResolver:
         if imported_qn in self.function_registry:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
+        if language == cs.SupportedLanguage.JULIA:
+            # A Julia selected import (`using .api: alpha`) records the local
+            # name bound to the source MODULE; the callable is the member
+            # inside it. Resolve the member exactly before the name trie, or
+            # a same-named function elsewhere soaks the edge (#1882 review).
+            for member in self.import_processor.julia_member_qn_candidates(
+                imported_qn, call_name
+            ):
+                if member in self.function_registry:
+                    logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=member)
+                    return self.function_registry[member], member
         # A whole-module require alias (`const f = require('./m'); f(x)`)
         # maps to the MODULE qn; when that module's entire export is one
         # function (`module.exports = function ... `), the call is a call to

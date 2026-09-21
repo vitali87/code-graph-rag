@@ -4414,11 +4414,16 @@ class CallProcessor:
                 if language == cs.SupportedLanguage.JULIA:
                     # Call syntax dispatches in the FUNCTION namespace: a
                     # shadowing free function wins, else the inner same-name
-                    # constructor (like Java/C#).
+                    # constructor (like Java/C#). The resolution describes the
+                    # FILTERED target set, not the pre-filter class_variants
+                    # bucket (#1882 review).
                     fn_variants = julia_fn_variants
-                    if len(fn_variants) > 1:
-                        self._resolution = cs.EdgeResolution.OVERLOAD
                     if fn_variants:
+                        self._resolution = (
+                            cs.EdgeResolution.OVERLOAD
+                            if len(fn_variants) > 1
+                            else resolver.last_resolution
+                        )
                         for node_type, variant in sorted(fn_variants):
                             ensure_rel(
                                 caller_spec, calls_rel, (node_type, qn_key, variant)
@@ -4431,8 +4436,11 @@ class CallProcessor:
                             )
                             for variant in resolver.function_registry.variants(ctor_qn)
                         ]
-                        if len(ctor_edges) > 1:
-                            self._resolution = cs.EdgeResolution.OVERLOAD
+                        self._resolution = (
+                            cs.EdgeResolution.OVERLOAD
+                            if len(ctor_edges) > 1
+                            else resolver.last_resolution
+                        )
                         for ctor_type, variant in ctor_edges:
                             ensure_rel(
                                 caller_spec, calls_rel, (ctor_type, qn_key, variant)
