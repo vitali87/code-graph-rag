@@ -4608,7 +4608,17 @@ class GraphUpdater:
         # A parser-changed project run re-parsed every file too, so it stamps
         # the fingerprint it parsed under; a single-file run did not, and
         # leaves the stale stamp for the next project run (issue #1977).
-        if is_full_build or (self._parser_changed and self._single_file is None):
+        # Only a run that actually covered the project may vouch for the
+        # parser it parsed under. A file this run could not read keeps its
+        # old subtree, and an unknown graph state means the delete-before-
+        # reingest could not be scoped; in both cases some old parser's
+        # edges survive. Stamping anyway makes the NEXT run read back a
+        # matching fingerprint, skip the staleness warning, and fast-path
+        # over exactly those rows -- permanently (bot review).
+        covered_the_project = not unreadable_keys and not self._graph_state_unknown
+        if covered_the_project and (
+            is_full_build or (self._parser_changed and self._single_file is None)
+        ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
                 repo_path=self.repo_path, capture=self.capture
             )

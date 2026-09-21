@@ -17,6 +17,7 @@ import pytest
 from loguru import logger
 
 from codebase_rag import constants as cs
+from codebase_rag import graph_updater
 from codebase_rag import logs as ls
 from codebase_rag.capture import CaptureSelection, resolve_capture
 from codebase_rag.cli import _delete_hash_cache
@@ -361,6 +362,40 @@ class TestFingerprintStamping:
         assert settled._is_already_in_sync() is True
         settled.run()
         assert settled._reparsed_file_keys == set()
+
+    def test_an_unreadable_file_holds_the_stamp_back(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A re-index that could not read every file has not covered the
+        project, so it must not vouch for the parser it ran under.
+
+        The unread file keeps the OLD parser's subtree. Stamping anyway
+        makes the next run read back a matching fingerprint, skip the
+        staleness warning and fast-path over exactly those rows, so the
+        stale subtree never gets re-parsed (bot review).
+        """
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+        _make_updater(py_project, mock_ingestor).run()
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+
+        real_hash = graph_updater._hash_file_with_bytes
+
+        def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
+            if filepath.name == "module_b.py":
+                return None
+            return real_hash(filepath)
+
+        updater = _make_updater(py_project, mock_ingestor)
+        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", refuse_module_b)
+        updater.run()
+
+        stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
+        assert stored == STALE_FINGERPRINT, (
+            "a run that could not read every file must not refresh the stamp"
+        )
 
     def test_a_stale_stamp_re_indexes_rather_than_rebuilds(
         self, py_project: Path
