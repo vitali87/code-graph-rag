@@ -905,16 +905,15 @@ class TestPyzArchiveIsActuallyRead:
         for call in reader_calls:
             assert call.args, "ZlibArchiveReader called with no argument"
             first = call.args[0]
-            assert (
-                isinstance(first, ast.Call)
-                and isinstance(first.func, ast.Name)
-                and first.func.id == "str"
-            ), (
+            why = (
                 "ZlibArchiveReader must be given `str(...)`; it parses a "
                 "`?offset` suffix off the name, so a Path raises "
                 "AttributeError before the archive is opened and the PYZ "
                 "half silently never runs"
             )
+            assert isinstance(first, ast.Call), why
+            assert isinstance(first.func, ast.Name), why
+            assert first.func.id == "str", why
 
     def test_a_dotted_module_matches_its_licence_directory(
         self, bundle: ModuleType, notices: ModuleType, tmp_path: Path
