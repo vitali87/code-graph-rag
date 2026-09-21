@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import TypedDict
 
@@ -120,11 +121,40 @@ def _execute_workflow_check(
 ) -> subprocess.CompletedProcess[str]:
     bash = shutil.which("bash")
     if bash is None or shutil.which("jq") is None:
+        # pytest.skip is not annotated NoReturn, so the checker cannot narrow
+        # `bash` to str across it on its own.
         pytest.skip("the Ubuntu workflow requires bash and jq")
+    assert bash is not None
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     step = workflow["jobs"]["require-ci-at-head"]["steps"][0]
+    # Hand the script to bash as a FILE, never as a `-c` argument. On Windows
+    # there is no execve: subprocess re-serialises argv into ONE command line,
+    # and this script serialises to ~10.8k characters, past the 8191-char
+    # limit. It is truncated mid-quote, so bash dies on an unbalanced quote
+    # ("line 165: unexpected EOF while looking for matching `\"'") without ever
+    # running a line of the step. A file path keeps the command line at a
+    # constant ~90 characters however large the script grows.
+    # newline="\n" pins LF endings so a CRLF checkout cannot leave a trailing
+    # CR inside a token; belt-and-braces, as PyYAML already normalises the
+    # block scalar's line breaks.
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / "step.sh"
+        script.write_text(
+            GH_STUB + step["run"], encoding=cs.ENCODING_UTF8, newline="\n"
+        )
+        return _run_script(bash, script, head_repo, env, pages, pr_pages)
+
+
+def _run_script(
+    bash: str,
+    script: Path,
+    head_repo: str,
+    env: dict[str, str] | None,
+    pages: list[list[WorkflowRun]],
+    pr_pages: list[list[SourcePullRequest]] | None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [bash, "--noprofile", "--norc", "-c", GH_STUB + step["run"]],
+        [bash, "--noprofile", "--norc", str(script)],
         env={
             **os.environ,
             "REPO": REPO,
