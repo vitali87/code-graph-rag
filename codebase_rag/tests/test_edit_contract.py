@@ -592,6 +592,9 @@ def test_real_rename_passes_longer_project_prefixes_to_contract_query(
 
     def fetch_all(query: str, params: PropertyDict | None) -> list[ResultRow]:
         if query == cq.CYPHER_DELTA_DEFINITIONS and params is not None:
+            assert params[cs.KEY_PROJECT_PREFIX] == f"{PROJECT}."
+            assert params[cs.KEY_LONGER_PROJECT_PREFIXES] == [f"{PROJECT}.extra"]
+            assert cs.CYPHER_PARAM_PATHS in params
             observed.append(params)
         return store.fetch_all(query, params)
 
