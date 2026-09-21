@@ -764,3 +764,28 @@ def test_an_untyped_local_shadowing_an_import_prefix_is_not_folded(
     assert _has(rels, ".app.scoped", REFERENCES, ".Box.height"), rels
     # Control: an unshadowed prefix in the same file still resolves.
     assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
+
+
+def test_an_explicit_alias_beats_a_colliding_filename_key(tmp_path: Path) -> None:
+    """An `as` prefix is the name the SOURCE binds, so it owns that key.
+
+    The file-derived key (`helper` for `helper.dart`) never appears in the
+    source; it exists so an UNPREFIXED import of that file resolves. When a
+    later import aliases a different library to the same name, Dart binds
+    the alias, so `helper.Box` is other.dart's `Box`. Registering the alias
+    only where the key was free dropped it silently and resolved the read
+    against the wrong library (Greptile, PR #2040).
+    """
+    files = {
+        "helper.dart": "class Box {\n  Box(int v);\n  int get height => 1;\n}\n",
+        "other.dart": "class Box {\n  Box(int v);\n  int get width => 2;\n}\n",
+        "app.dart": (
+            "import 'helper.dart';\n"
+            "import 'other.dart' as helper;\n"
+            "int aliased() { return helper.Box(1).width; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+
+    assert _has(rels, ".app.aliased", REFERENCES, ".other.Box.width"), rels
+    assert not _has(rels, ".app.aliased", REFERENCES, ".helper.Box.height"), rels

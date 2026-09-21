@@ -3449,8 +3449,14 @@ class CallResolver:
         # the resolver had emitted none.
         if local_var_types and prefix in local_var_types:
             return None
+        # An explicit `as` alias wins over the file-derived key: with
+        # `import 'helper.dart'; import 'other.dart' as helper;` the name
+        # `helper` in the source is other.dart, while import_mapping still
+        # holds helper.dart under that key so both IMPORTS edges survive
+        # (Greptile, PR #2040).
+        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        target = import_map.get(prefix)
+        target = aliases.get(prefix) or import_map.get(prefix)
         if not target:
             return None
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -3470,7 +3476,11 @@ class CallResolver:
         qn = f"{target}{cs.SEPARATOR_DOT}{name}"
         kind = self.function_registry.get(qn)
         if kind in _CONSTRUCTIBLE_NODE_TYPES:
-            return name, parts[1:]
+            # The QUALIFIED name, not the bare one: `qn` is the exact class
+            # the prefix names, and returning `name` sent the rest of the
+            # chain back through a suffix lookup that another module's
+            # same-named class could win (Copilot, PR #2040).
+            return qn, parts[1:]
         if kind is None:
             return None
         # A function hop types the chain by its RECORDED return type instead;

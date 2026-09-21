@@ -606,6 +606,7 @@ class ImportProcessor:
         "rust_block_items",
         "rust_block_item_qns",
         "dart_prefix_shadows",
+        "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -749,6 +750,12 @@ class ImportProcessor:
         # Dart: {module qn: {import prefix: [byte spans where a local or
         # parameter of that name shadows it]}} (issue #2033).
         self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
+        # `import 'other.dart' as helper;` binds `helper` to other.dart even
+        # when an unprefixed `import 'helper.dart';` already owns that key in
+        # import_mapping. Kept separately so BOTH imports keep their IMPORTS
+        # edge (those come from import_mapping's values) while the name the
+        # source writes resolves to the aliased library (Greptile, #2033).
+        self.dart_import_aliases: dict[str, dict[str, str]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -4641,9 +4648,17 @@ class ImportProcessor:
                 # name the source uses for THIS import, so it is only added
                 # where it is free.
                 prefix = dart_import_prefix(import_node)
-                if prefix and prefix not in self.import_mapping[module_qn]:
-                    self.import_mapping[module_qn][prefix] = full_name
                 if prefix:
+                    # An explicit `as` prefix is the name the SOURCE uses for
+                    # this import, so it owns that name outright. Recorded in
+                    # its own map rather than overwriting import_mapping,
+                    # whose values carry the IMPORTS edges: writing it there
+                    # dropped the colliding unprefixed import entirely.
+                    self.dart_import_aliases.setdefault(module_qn, {})[prefix] = (
+                        full_name
+                    )
+                    if prefix not in self.import_mapping[module_qn]:
+                        self.import_mapping[module_qn][prefix] = full_name
                     prefixes.add(prefix)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
