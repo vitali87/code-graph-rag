@@ -253,13 +253,15 @@ def _extract_formal_param_type(param_node: ASTNode) -> str | None:
     return None
 
 
-# Inside a `spread_parameter` the element type is the named child that is
-# neither the `modifiers` (`final`, an annotation) nor the declarator that
-# carries the name: a generic, array or primitive element is not a
+# Inside a `spread_parameter` the element type is the child that is neither
+# the `modifiers` (`final`, an annotation) nor the declarator that carries
+# the name: a generic, array or primitive element is not a
 # `type_identifier`, and matching that alone yielded no parameter at all
 # for `List<String>... xs`, `String[]... xs` and `int... xs` (issue #1974).
-# A comment between the modifiers and the type is a named child of the
-# spread parameter too, and is not the element type either.
+# A comment between the modifiers and the type is a child of the spread
+# parameter too, and is not the element type either. The walk below reads
+# `children` rather than `named_children`; the only anonymous child is the
+# `...` token, excluded by name.
 _JAVA_NOT_ELEMENT_TYPES = frozenset(
     {
         cs.TS_MODIFIERS,

@@ -189,6 +189,9 @@ class TestAnalyzeJavaParameters:
             ("String[]... ys", {"ys": "java.lang.String[][]"}),
             ("int... zs", {"zs": "int[]"}),
             ("final /* c */ String... vs", {"vs": "java.lang.String[]"}),
+            # An ANNOTATION in the modifiers, which the `modifiers` skip must
+            # cover as well as `final` and a comment (Copilot, #1974).
+            ("final @Deprecated String... ws", {"ws": "java.lang.String[]"}),
         ],
     )
     def test_spread_parameter_of_every_shape_binds_a_local(
