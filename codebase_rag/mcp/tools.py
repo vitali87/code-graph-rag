@@ -143,6 +143,12 @@ _READS_THE_GRAPH = frozenset(
         cs.MCPToolName.OVERRIDES,
         cs.MCPToolName.IMPORTERS,
         cs.MCPToolName.TESTS_REACHING,
+        # Routed through `_graph_query` exactly like the readers above (see
+        # `change_signature`), so the dispatcher supplies its refusal. Absent
+        # here it reads as an unguarded reader, because
+        # `test_every_graph_reader_is_guarded` only skips the dispatcher's
+        # members and cannot see the routing itself.
+        cs.MCPToolName.CHANGE_SIGNATURE,
     }
 )
 
