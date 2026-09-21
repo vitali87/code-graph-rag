@@ -1071,6 +1071,13 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
         (RelationshipType.FLOWS_TO,),
         "{kind: string, via: string?}",
     ),
+    # Declaration order of the variant within its enum, so a query can restore
+    # the source order the graph does not otherwise preserve. Always written
+    # (issue #1807), hence no `?`.
+    RelationshipPropertySchema(
+        (RelationshipType.HAS_VARIANT,),
+        "{index: int}",
+    ),
 )
 
 # What a return or parameter annotation can name (issue #1527).
