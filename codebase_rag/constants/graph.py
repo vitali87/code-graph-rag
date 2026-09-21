@@ -931,6 +931,15 @@ KEY_TARGET_QN = "target_qn"
 # Gloss nodes (issue #1808): the properties an agent-authored note carries and
 # the keys its read tools answer with.
 KEY_KIND = "kind"
+# Cross-service rows (issue #1603): the handler behind an endpoint, the
+# endpoint's identity (`GET /users/{id}`), the client URL, the direction of
+# the client's access and the count of call sites reaching the endpoint.
+KEY_HANDLER = "handler"
+KEY_ENDPOINT = "endpoint"
+KEY_URL = "url"
+KEY_DIRECTION = "direction"
+KEY_CALLERS = "callers"
+KEY_HANDLER_PROJECT = "handler_project"
 KEY_STATUS = "status"
 KEY_BODY = "body"
 KEY_CREATED_BY = "created_by"
