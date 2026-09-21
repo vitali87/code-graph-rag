@@ -296,21 +296,49 @@ class TestCallSite:
         tree = self._main_tree()
         call = self._prune_call(tree)
 
-        guards = [
+        # Two equivalent shapes gate the block, and pinning only the first
+        # fails a refactor that keeps the property (the block moved into
+        # `_compact_context_if_needed` to stay under SonarCloud's cognitive
+        # complexity limit, which inverted the guard into an early return):
+        #   1. the call sits INSIDE `if settings.CONTEXT_COMPACTION_ENABLED:`
+        #   2. an early `if not (settings.CONTEXT_COMPACTION_ENABLED ...):
+        #      return` precedes it in the same function
+        enclosing = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and call in list(ast.walk(node))
+        ]
+        assert enclosing, "no function contains the prune call"
+
+        def _tests_the_setting(test: ast.expr) -> bool:
+            return any(
+                isinstance(inner, ast.Attribute)
+                and inner.attr == "CONTEXT_COMPACTION_ENABLED"
+                for inner in ast.walk(test)
+            )
+
+        containing_ifs = [
             node
             for node in ast.walk(tree)
             if isinstance(node, ast.If)
-            and any(
-                isinstance(inner, ast.Attribute)
-                and inner.attr == "CONTEXT_COMPACTION_ENABLED"
-                for inner in ast.walk(node.test)
-            )
+            and _tests_the_setting(node.test)
             and call in list(ast.walk(node))
         ]
-        assert guards, (
-            "the prune call must sit inside an `if` that tests "
-            "CONTEXT_COMPACTION_ENABLED; gating only the pruner leaves the "
-            "snapshot and describe_prune running for users who opted out"
+        early_returns = [
+            node
+            for function in enclosing
+            for node in ast.walk(function)
+            if isinstance(node, ast.If)
+            and _tests_the_setting(node.test)
+            and any(isinstance(b, ast.Return) for b in node.body)
+            and node.lineno < call.lineno
+        ]
+        assert containing_ifs or early_returns, (
+            "the prune call must be gated on CONTEXT_COMPACTION_ENABLED, "
+            "either inside an `if` or behind an early return; gating only "
+            "the pruner leaves the snapshot and describe_prune running for "
+            "users who opted out"
         )
 
     def test_opt_out_is_passed_to_the_pruner(self) -> None:
