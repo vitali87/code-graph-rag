@@ -557,7 +557,7 @@ _VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
 
 
 def _header_is_variadic(header: str) -> bool:
-    """Whether a `def` header declares `*args` or keyword-only params.
+    """Whether a `def` header declares `*args`.
 
     Parsed, not scanned. Scanning got both directions wrong, and this is
     the sole suppressor of a too-many-arguments verdict, so each costs
