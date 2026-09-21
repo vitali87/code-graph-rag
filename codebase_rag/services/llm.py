@@ -199,7 +199,7 @@ def create_rag_orchestrator(
             tools,
             project_instructions=project_instructions,
             active_projects=active_projects,
-            backend=backend or settings.GRAPH_BACKEND,
+            backend=backend,
         )
 
         agent = Agent(

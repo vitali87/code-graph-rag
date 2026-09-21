@@ -178,12 +178,15 @@ The database contains information about a codebase, structured with the followin
 
 
 def _resolve_engine_display_name(backend: str | None = None) -> str:
-    chosen = backend if backend is not None else settings.GRAPH_BACKEND
+    chosen = (
+        (backend if backend is not None else settings.GRAPH_BACKEND).strip().lower()
+    )
     if chosen == DIALECT_MEMGRAPH:
         return "Memgraph"
     if chosen == DIALECT_NEO4J:
         return "Neo4j"
     raise ValueError(f"Unsupported graph backend: {chosen!r}")
+
 
 def _format_active_projects_block(
     active_projects: list[str] | None,
