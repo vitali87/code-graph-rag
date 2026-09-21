@@ -553,7 +553,9 @@ class CallResolver:
             return result
         if (
             language == cs.SupportedLanguage.CSHARP
-            and self._try_resolve_csharp_qualified_call(call_name, module_qn)
+            and self._try_resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
         ):
             return result
         if self._receiver_names_a_type_or_module(
@@ -1403,7 +1405,9 @@ class CallResolver:
         if language == cs.SupportedLanguage.CSHARP and (
             cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
         ):
-            result, decided = self._resolve_csharp_qualified_call(call_name, module_qn)
+            result, decided = self._resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
             if result is not None:
                 return result
             if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
@@ -1415,6 +1419,12 @@ class CallResolver:
             if use_cache:
                 self._remember(cache_key, result)
             return result
+
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and self._csharp_dotted_path_shadowed(call_name, local_var_types)
+        ):
+            return None
 
         if result := self._try_resolve_same_module(call_name, module_qn, call_point):
             if use_cache:
@@ -2103,7 +2113,9 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if language == cs.SupportedLanguage.CSHARP:
-            if result := self._try_resolve_csharp_qualified_call(call_name, module_qn):
+            if result := self._try_resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            ):
                 return result
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
@@ -2138,14 +2150,35 @@ class CallResolver:
         )
 
     def _try_resolve_csharp_qualified_call(
-        self, call_name: str, module_qn: str
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
-        result, _ = self._resolve_csharp_qualified_call(call_name, module_qn)
+        result, _ = self._resolve_csharp_qualified_call(
+            call_name, module_qn, local_var_types
+        )
         return result
 
+    def _csharp_dotted_path_shadowed(
+        self, call_name: str, local_var_types: dict[str, str] | None
+    ) -> bool:
+        return bool(
+            local_var_types
+            and cs.SEPARATOR_DOT in call_name
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and not call_name.startswith(f"global{cs.SEPARATOR_DOT}")
+            and call_name.split(cs.SEPARATOR_DOT, 1)[0] in local_var_types
+        )
+
     def _resolve_csharp_qualified_call(
-        self, call_name: str, module_qn: str
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
     ) -> tuple[tuple[str, str] | None, bool]:
+        if self._csharp_dotted_path_shadowed(call_name, local_var_types):
+            return None, False
         path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         global_prefix = f"global{cs.SEPARATOR_DOT}"
         is_global = path.startswith(global_prefix)

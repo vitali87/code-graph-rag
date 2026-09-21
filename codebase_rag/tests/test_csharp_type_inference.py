@@ -405,6 +405,52 @@ public class App { public void Run() { Helpers.Log(); } }
     )
 
 
+def test_generic_outer_nested_type_receiver_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Nested.cs").write_text(
+        """
+namespace N;
+public class Outer<T> {
+    public class Inner { public static void Ping() {} }
+}
+public class App { public void Run() { N.Outer<int>.Inner.Ping(); } }
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    assert any(
+        t.endswith("N.Outer.Inner.Ping") for t in _call_targets(mock_ingestor)
+    ), _call_targets(mock_ingestor)
+
+
+def test_local_value_shadows_dotted_type_receiver(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Shadow.cs").write_text(
+        """
+namespace Lib { public class Widget { public static void Ping() {} } }
+namespace N {
+    public class Widget { public void Ping() {} }
+    public class Holder { public N.Widget Widget; }
+    public class App { public void Run(Holder Lib) { Lib.Widget.Ping(); } }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("N.App.Run(Holder)") and target.endswith("N.Widget.Ping")
+        for source, target in calls
+    ), calls
+    assert not any(target.endswith("Lib.Widget.Ping") for _, target in calls), calls
+
+
 def test_overload_resolves_by_arity(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:

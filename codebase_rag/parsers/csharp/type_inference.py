@@ -1190,6 +1190,22 @@ class CSharpTypeInferenceEngine:
                     if ftype := self._field_type(class_qn, field):
                         return self._type_name_to_qn(ftype, module_qn)
             if raw := safe_decode_text(receiver):
+                head, separator, tail = raw.partition(cs.SEPARATOR_DOT)
+                if (
+                    separator
+                    and cs.SEPARATOR_DOUBLE_COLON not in raw
+                    and head in local_var_types
+                ):
+                    current_qn = self._type_name_to_qn(local_var_types[head], module_qn)
+                    for field_name in tail.split(cs.SEPARATOR_DOT):
+                        if current_qn is None:
+                            break
+                        field_type = self._field_type(current_qn, field_name)
+                        if field_type is None:
+                            current_qn = None
+                            break
+                        current_qn = self._type_name_to_qn(field_type, module_qn)
+                    return current_qn
                 if qualified := self._qualified_type_name_to_qn(raw, module_qn):
                     return qualified
             return None
