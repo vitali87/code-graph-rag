@@ -156,13 +156,17 @@ def describe_prune(
     force every one of its call sites to change and prune a copy if any were
     missed. Adding a function beats redefining what an existing one returns.
 
-    The comparison, not the identity check, is what decides. `after is before`
-    short-circuits a DIRECT caller that passes the pruner's return value
-    straight back, but `main` assigns through `message_history[:]` against a
-    separate snapshot, so those two are never the same object and this always
-    walks. That is the correct outcome either way: a declined prune places no
-    new placeholders, so the walk reports `pruned=False` as surely as the
-    shortcut would. The notice cannot fire on a prune that did not happen.
+    `after is before` short-circuits a caller that passes the pruner's return
+    value straight back. It cannot fire from `main`, which compares a `list()`
+    snapshot against the history it assigned through `message_history[:]`, and
+    those are never the same object. So `main` does not rely on it: it checks
+    whether the PRUNER returned its own argument and skips this call entirely
+    when it did, rather than paying for a walk that can only report
+    `pruned=False` (#2106).
+
+    Both routes are safe for any other caller. A declined prune places no new
+    placeholders, so the walk reports `pruned=False` as surely as the shortcut
+    would; the notice cannot fire on a prune that did not happen.
     """
     if after is before:
         return PruneReport(pruned=False, dropped_parts=0, recovered_tokens=0)

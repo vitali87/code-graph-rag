@@ -449,6 +449,14 @@ class TestDeclinedPruneCostsNothing:
             and isinstance(node.test, ast.Compare)
             and len(node.test.ops) == 1
             and isinstance(node.test.ops[0], ast.IsNot)
+            # The OPERANDS, not just the shape. `main.py` holds four unrelated
+            # `is not None` guards, so matching any `is not` lets
+            # `pruned_history is not None` -- always true, optimisation gone --
+            # keep both tests green (greptile-local).
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "pruned_history"
+            and isinstance(node.test.comparators[0], ast.Name)
+            and node.test.comparators[0].id == "message_history"
         ]
 
     def test_the_report_walk_is_behind_an_identity_guard(self) -> None:
