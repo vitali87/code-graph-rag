@@ -1236,13 +1236,29 @@ class CSharpTypeInferenceEngine:
         if self.function_registry.get(expanded) in _TYPE_DECLS:
             return expanded
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        suffix = f"{cs.SEPARATOR_DOT}{expanded}"
         candidates = [
             qn
             for qn in self.simple_name_lookup.get(leaf, set())
-            if self.function_registry.get(qn) in _TYPE_DECLS and qn.endswith(suffix)
+            if self.function_registry.get(qn) in _TYPE_DECLS
+            and self._csharp_qualified_qn_matches(qn, expanded, module_qn)
         ]
         return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def _csharp_qualified_qn_matches(
+        self, candidate_qn: str, expanded: str, module_qn: str
+    ) -> bool:
+        """Accept a complete type path rooted at a known repository module."""
+        natural_qn = candidate_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        if natural_qn == expanded:
+            return True
+        suffix = f"{cs.SEPARATOR_DOT}{expanded}"
+        if not natural_qn.endswith(suffix):
+            return False
+        prefix = natural_qn[: -len(suffix)]
+        return prefix in self.module_qn_to_file_path or prefix in (
+            self.project_name,
+            module_qn,
+        )
 
     def _containing_class_qn(self, caller_qn: str | None) -> str | None:
         if not caller_qn:

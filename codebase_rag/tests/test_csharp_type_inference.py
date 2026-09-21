@@ -51,6 +51,7 @@ public class Widget {
     public static void AliasS() {}
     public static void DottedS() {}
     public static void GlobalS() {}
+    public static void MissingQualifiedDecoy() {}
 }
 public class GenericWidget<T> {
     public static void GenericS() {}
@@ -66,6 +67,15 @@ public class Widget {
     public static void AliasS() {}
     public static void DottedOnlyInOther() {}
     public static void GlobalS() {}
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "OtherZeta.cs").write_text(
+        """
+namespace Other.Zeta;
+public class Widget {
+    public static void ShadowS() {}
 }
 """,
         encoding="utf-8",
@@ -95,7 +105,7 @@ public class Q {
         Z.Widget.DottedOnlyInOther();
     }
     public void RunMissing() {
-        Missing::NeverBoundS();
+        Missing::MissingQualifiedDecoy();
     }
 }
 """,
@@ -148,12 +158,19 @@ public class Q {
         instantiates
     )
     assert not any(
+        target.endswith("Other.Zeta.Widget") for _, target in instantiates
+    ), instantiates
+    assert not any(
         target.endswith("Other.Widget.AliasS")
         or target.endswith("Other.Widget.DottedS")
         or target.endswith("Other.Widget.GlobalS")
         for _, target in calls
     ), calls
-    assert not any(target.endswith("NeverBoundS") for _, target in calls), calls
+    assert not any(
+        source.endswith("Q.RunMissing")
+        and target.endswith("Zeta.Widget.MissingQualifiedDecoy")
+        for source, target in calls
+    ), calls
 
 
 def test_parameter_typed_receiver_resolves(
