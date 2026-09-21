@@ -19,6 +19,16 @@ def _calls_to(mock_ingestor: MagicMock, suffix: str) -> list[tuple[str, str]]:
     return [(src, dst) for (src, dst) in _calls(mock_ingestor) if dst.endswith(suffix)]
 
 
+def _calls_with_resolution(
+    mock_ingestor: MagicMock,
+) -> set[tuple[str, str, str]]:
+    out = set()
+    for c in get_relationships(mock_ingestor, "CALLS"):
+        props = c.kwargs.get("properties") or {}
+        out.add((c.args[0][2], c.args[2][2], props.get("resolution", "")))
+    return out
+
+
 def test_intra_file_calls(temp_repo: Path, mock_ingestor: MagicMock) -> None:
     project = temp_repo / "julia_calls"
     project.mkdir()
@@ -687,6 +697,72 @@ end
         for c in get_relationships(mock_ingestor, "INSTANTIATES")
     }
     assert (src, f"{module_qn}.Point") not in inst, inst
+
+
+def test_selected_import_exact_member(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`using .api: alpha` binds the member inside the selected module;
+    a same-named function in another imported module must not soak the
+    edge through the name trie (issue #1882 review: the trie tie-break
+    picked the decoy)."""
+    project = temp_repo / "julia_selected_member"
+    project.mkdir()
+    (project / "aaa.jl").write_text("module aaa\nalpha() = 9\nend\n", encoding="utf-8")
+    (project / "api.jl").write_text("module api\nalpha() = 7\nend\n", encoding="utf-8")
+    (project / "main.jl").write_text(
+        "using .aaa\nusing .api: alpha\nf() = alpha()\n", encoding="utf-8"
+    )
+
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    prefix = f"{project.name}."
+    edges = _calls_with_resolution(mock_ingestor)
+    assert (
+        f"{prefix}main.f",
+        f"{prefix}api.api.alpha",
+        "exact",
+    ) in edges, edges
+
+
+def test_struct_macro_collision_single_ctor_not_overload(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`struct Point` plus `macro Point` leaves ONE callable constructor
+    target; the edge resolution must not inherit `overload` from the
+    pre-filter duplicate bucket (issue #1882 review: consumers of exact
+    edges discarded the unambiguous edge)."""
+    project = temp_repo / "julia_macro_ctor"
+    project.mkdir()
+    (project / "point.jl").write_text(
+        """
+module P
+struct Point
+    x::Int
+    Point(x::Int) = new(x)
+end
+macro Point()
+    :();
+end
+f() = Point(1)
+end
+""",
+        encoding="utf-8",
+    )
+
+    run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    prefix = f"{project.name}.point"
+    target = f"{prefix}.P.Point.Point"
+    edges = {
+        (src, dst, res)
+        for (src, dst, res) in _calls_with_resolution(mock_ingestor)
+        if dst == target
+    }
+    assert len(edges) == 1, edges
+    src, _, resolution = next(iter(edges))
+    assert src == f"{prefix}.P.f", edges
+    assert resolution != "overload", edges
 
 
 def test_plain_call_not_linked_to_same_name_macro(
