@@ -189,6 +189,19 @@ def test_successful_ci_releases_the_pushed_bump() -> None:
     assert "wait:" not in result.stdout
 
 
+@pytest.mark.parametrize("name", ["Continuous integration", None])
+def test_workflow_display_name_does_not_affect_identity(name: str | None) -> None:
+    workflow = dict(id=WORKFLOW_ID, path=".github/workflows/ci.yml", state="active")
+    if name is not None:
+        workflow["name"] = name
+    run = _make_ci_run()
+    run.pop("name")
+    result = _execute(_pages([run]), env={"GH_WORKFLOW": json.dumps(workflow)})
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "git: push origin v0.0.951" in result.stdout
+
+
 def test_interim_tag_does_not_wait_for_ci() -> None:
     result = _execute(_pages([]), release=False, env={"GH_RUNS_EXIT": "1"})
 
@@ -295,8 +308,9 @@ def test_missing_run_identity_fails_closed(field: str) -> None:
     "status, conclusion", [("completed", "failure"), ("in_progress", None)]
 )
 @pytest.mark.parametrize("rerun", [False, True])
+@pytest.mark.parametrize("newer_first", [False, True])
 def test_newer_run_or_attempt_overrides_old_success(
-    status: str, conclusion: str | None, rerun: bool
+    status: str, conclusion: str | None, rerun: bool, newer_first: bool
 ) -> None:
     newer = _make_ci_run(
         id=34741154226 if rerun else 34741154227,
@@ -305,7 +319,10 @@ def test_newer_run_or_attempt_overrides_old_success(
         conclusion=conclusion,
     )
 
-    _assert_blocked(_execute(_pages([newer], [_make_ci_run()])))
+    pages = [[newer], [_make_ci_run()]]
+    if not newer_first:
+        pages.reverse()
+    _assert_blocked(_execute(_pages(*pages)))
 
 
 def test_success_on_later_page_is_accepted() -> None:
@@ -335,7 +352,14 @@ def test_ci_that_fails_after_waiting_blocks_the_tag() -> None:
 def test_incomplete_pagination_cannot_authorize_a_release() -> None:
     pages = json.dumps([dict(total_count=2, workflow_runs=[_make_ci_run()])])
 
-    _assert_blocked(_execute(pages))
+    result = _execute(pages)
+
+    _assert_blocked(result)
+    assert (
+        f"::error::Could not validate complete CI run evidence for {SHA}"
+        in result.stdout
+    )
+    assert "Incomplete CI workflow runs response" in result.stderr
 
 
 @pytest.mark.parametrize("field", ["GH_WORKFLOW_EXIT", "GH_RUNS_EXIT"])
@@ -357,7 +381,14 @@ def test_api_failure_cannot_authorize_a_release_even_with_success_output(
     ],
 )
 def test_malformed_responses_fail_closed(pages: str) -> None:
-    _assert_blocked(_execute(pages))
+    result = _execute(pages)
+
+    _assert_blocked(result)
+    assert (
+        f"::error::Could not validate complete CI run evidence for {SHA}"
+        in result.stdout
+    )
+    assert "jq:" in result.stderr
 
 
 @pytest.mark.parametrize(

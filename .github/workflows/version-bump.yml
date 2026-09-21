@@ -429,7 +429,7 @@ jobs:
             exit 1
           fi
           WORKFLOW_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml" \
-            --jq 'select(.path == ".github/workflows/ci.yml" and .name == "CI" and .state == "active") | .id')
+            --jq 'select(.path == ".github/workflows/ci.yml" and .state == "active") | .id')
           if [[ ! "$WORKFLOW_ID" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::Could not identify the active CI workflow"
             exit 1
@@ -437,7 +437,7 @@ jobs:
           for ((attempt=1; attempt<=CI_WAIT_ATTEMPTS; attempt++)); do
             RUNS=$(gh api --paginate --slurp \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?head_sha=${GITHUB_SHA}&event=push&branch=main&per_page=100")
-            STATE=$(jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" \
+            if ! STATE=$(jq -er --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" \
               --argjson workflow "$WORKFLOW_ID" '
               if type != "array" or length == 0 or
                  any(.[]; (.workflow_runs | type) != "array" or
@@ -461,7 +461,10 @@ jobs:
                 elif .status == "queued" or .status == "in_progress" or
                      .status == "pending" or .status == "waiting" or
                      .status == "requested" then "pending"
-                else "invalid" end' <<< "$RUNS")
+                else "invalid" end' <<< "$RUNS"); then
+              echo "::error::Could not validate complete CI run evidence for ${GITHUB_SHA}; refusing release (see jq error above)"
+              exit 1
+            fi
             case "$STATE" in
               success)
                 echo "CI succeeded for release source ${GITHUB_SHA}"
