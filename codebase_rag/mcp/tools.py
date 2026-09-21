@@ -843,6 +843,19 @@ class MCPToolsRegistry:
         if self.workspace is None:
             return self._query_tool
         default, scope_error = self._workspace_scope(None)
+        # The workspace allow-list says which projects are SERVED, not which
+        # are INDEXED. Every other project-taking tool meets the graph's own
+        # unknown-project check later; this one binds the query tool up
+        # front, so a served-but-unindexed default produced an empty answer
+        # where the others refuse (Copilot, PR #1972).
+        if scope_error is None and default is not None:
+            indexed = self.ingestor.list_projects()
+            if default not in indexed:
+                scope_error = cs.MCP_UNKNOWN_PROJECT.format(
+                    project=default,
+                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(indexed)),
+                )
+                default = None
         if scope_error is None and default is not None:
             return create_query_tool(
                 ingestor=self.ingestor,

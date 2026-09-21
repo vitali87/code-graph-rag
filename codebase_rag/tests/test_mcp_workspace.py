@@ -433,3 +433,40 @@ async def test_a_fixed_root_handler_without_a_workspace_is_unchanged(
 
     assert refusal is None
     assert project is not None
+
+
+@pytest.mark.anyio
+async def test_the_agent_query_tool_refuses_an_unindexed_default(
+    tmp_path: Path,
+) -> None:
+    """The allow-list says which projects are SERVED, not which are INDEXED.
+
+    Every other project-taking tool meets the graph's own unknown-project
+    check later; `ask_agent` binds its query tool up front, so a
+    served-but-unindexed default answered emptily where the others refuse
+    (Copilot, PR #1972).
+    """
+    (tmp_path / "g").mkdir()
+    ws = _workspace(tmp_path, ("g", GAMMA))
+    registry = _registry(tmp_path, ws, root="g")
+
+    tool = registry._agent_query_tool()
+
+    assert GAMMA in str(tool.function("anything"))
+
+
+@pytest.mark.anyio
+async def test_the_agent_query_tool_binds_an_indexed_default(
+    tmp_path: Path,
+) -> None:
+    """The control: an INDEXED default still binds a real query tool, so the
+    refusal above cannot be satisfied by refusing every workspace."""
+    (tmp_path / "b").mkdir()
+    ws = _workspace(tmp_path, ("b", BETA))
+    registry = _registry(tmp_path, ws, root="b")
+
+    tool = registry._agent_query_tool()
+
+    # A bound tool answers without naming the project as unknown; the
+    # refusal stub returns the unknown-project message verbatim.
+    assert "Unknown project" not in str(tool.function("anything"))
