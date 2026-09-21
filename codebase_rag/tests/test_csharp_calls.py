@@ -849,3 +849,71 @@ public class A {
 
     targets = _call_targets(mock_ingestor)
     assert any(t.endswith("Helpers.MathHelpers.Twice(int)") for t in targets), targets
+
+
+def test_enclosing_delegate_field_beats_a_static_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A member of the enclosing type beats a static import in C#, so
+    # `Callback()` on a delegate-typed field is Delegate.Invoke (external),
+    # not the statically imported `Callback` (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static void Callback() { }
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using System;
+using static Helpers.H;
+namespace App;
+public class A {
+    private Action Callback;
+    public void Run() { Callback(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any("Helpers.H.Callback" in t for t in targets), targets
+
+
+def test_ambiguous_static_imports_emit_no_edge(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two statically imported types declaring the same-name same-arity member
+    # is CS0121 in C#. Picking one would emit a different edge per run, since
+    # the stored imports are a set, so refuse instead (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class First {
+    public static int Twice(int x) => x * 2;
+}
+public static class Second {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.First;
+using static Helpers.Second;
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any("Twice" in t for t in targets), targets
