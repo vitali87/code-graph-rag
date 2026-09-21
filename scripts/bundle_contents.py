@@ -28,15 +28,30 @@ import tempfile
 from pathlib import Path
 
 
-def _top_level(entry: str) -> str:
-    """The component an archive entry belongs to.
+def _top_level(entry: str, *, dotted: bool) -> set[str]:
+    """The component name(s) an archive entry can be matched by.
 
-    TOC entries are paths with the platform's separator (`win32\\win32api.pyd`
-    on the binary this was measured against, even when generated elsewhere);
-    PYZ entries are dotted module names (`anyio.abc`). Both reduce to their
-    first segment, which is the directory a package-data licence sits in.
+    The two archives name things differently, and a dot means opposite things
+    in each, so they cannot be reduced the same way:
+
+    * TOC entries are PATHS (`win32\\win32api.pyd`, `base_library/LICENSE`).
+      A dot is a file extension, so the component is the first path segment
+      kept WHOLE -- `ruamel.yaml/LICENSE` belongs to `ruamel.yaml`.
+    * PYZ entries are DOTTED MODULE NAMES (`anyio.abc`, `ruamel.yaml.main`).
+      A dot is a package separator, and nothing in the name says where the
+      DISTRIBUTION boundary falls: `ruamel.yaml` ships its licence under
+      `ruamel.yaml/`, while `anyio` ships under `anyio/`.
+
+    So a PYZ module yields every dotted prefix (`ruamel`, `ruamel.yaml`) and
+    the licence directory matches whichever one it is named for. Reducing to
+    the first segment instead drops `ruamel.yaml/LICENSE`, a licence the
+    binary carries -- the licence-losing direction.
     """
-    return entry.replace("\\", "/").split("/")[0].split(".")[0].lower()
+    head = entry.replace("\\", "/").split("/")[0].lower()
+    if not dotted:
+        return {head}
+    parts = head.split(".")
+    return {".".join(parts[: i + 1]) for i in range(len(parts))}
 
 
 def bundled_components(binary: Path) -> frozenset[str]:
@@ -47,21 +62,37 @@ def bundled_components(binary: Path) -> frozenset[str]:
     bundled": a filter that removed every licence on an unreadable binary
     would silently ship a notices file with no licences in it.
     """
-    from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
-
     try:
-        outer = CArchiveReader(str(binary))
-        entries = list(outer.toc)
+        return _read_archives(binary)
     except Exception:  # noqa: BLE001 - any unreadable binary means "unknown"
+        # Deliberately covers the PYZ read too. A binary whose TOC parses but
+        # whose PYZ does not is a BROKEN INSTRUMENT, and the TOC alone reports
+        # every pure-Python package absent -- so degrading to it would filter
+        # out licences the binary genuinely owes, which is the one outcome
+        # this module exists to prevent. "Unknown" disables filtering and the
+        # caller warns; a partial answer would be silently wrong.
         return frozenset()
 
-    components = {_top_level(entry) for entry in entries}
+
+def _read_archives(binary: Path) -> frozenset[str]:
+    """Both archives, or raise. See `bundled_components` for the policy."""
+    from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
+
+    outer = CArchiveReader(str(binary))
+    entries = list(outer.toc)
+    components: set[str] = set()
+    for entry in entries:
+        components |= _top_level(entry, dotted=False)
 
     # Pure-Python modules live only in the PYZ sub-archive. Its absence is not
     # an error (a binary may legitimately have none), so the TOC result stands.
     payload = None
     for name in entries:
-        if _top_level(name) == "pyz":
+        # Matched on the entry NAME, not through `_top_level`: that reduces to
+        # a component (`PYZ.pyz` -> `pyz.pyz`, since a TOC dot is an
+        # extension), which would never equal "pyz" and would silently leave
+        # the sub-archive unread.
+        if Path(name.replace("\\", "/")).name.lower() == "pyz.pyz":
             extracted = outer.extract(name)
             # `extract` returns bytes on some PyInstaller versions and
             # `(flag, bytes)` on others; take the payload either way.
@@ -73,8 +104,12 @@ def bundled_components(binary: Path) -> frozenset[str]:
     with tempfile.TemporaryDirectory() as tmp:
         pyz_path = Path(tmp) / "PYZ.pyz"
         pyz_path.write_bytes(payload)
-        try:
-            components.update(_top_level(m) for m in ZlibArchiveReader(pyz_path).toc)
-        except Exception:  # noqa: BLE001 - keep the TOC answer rather than none
-            pass
+        # `str`, not the `Path`. `ZlibArchiveReader` parses a `?offset` suffix
+        # off the name with `filename.rfind('?')`, so a `Path` raises
+        # `AttributeError` before the file is ever opened. That failure used
+        # to be swallowed below, leaving a TOC-only answer that reported every
+        # pure-Python package absent -- 96 components instead of 109 on the
+        # macOS binary, with `anyio` and `click` among the missing.
+        for module in ZlibArchiveReader(str(pyz_path)).toc:
+            components |= _top_level(module, dotted=True)
     return frozenset(components)

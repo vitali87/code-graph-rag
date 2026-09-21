@@ -569,15 +569,12 @@ class TestBundleFilteredLicences:
     def test_an_unknown_bundle_keeps_licences_a_partial_match_would_drop(
         self, notices: ModuleType, tmp_path: Path
     ) -> None:
-        """Unknown must short-circuit, not fall through the `or` guard.
+        """An empty `bundled` matches nothing, so the full set is restored.
 
-        With an empty `bundled` the filter keeps nothing, so `kept or
-        package_data` restores everything and the early return looks
-        redundant -- it survives being deleted. It is not redundant: this
-        distribution has one component the filter WOULD match, so without the
-        short-circuit an unreadable binary silently drops the other licence
-        instead of keeping both. Mutation-checked; the all-or-nothing fixture
-        above cannot see this.
+        There is deliberately no `if not bundled` short-circuit: deleting one
+        changed no behaviour under mutation, because an empty set matches
+        nothing and falls through `kept or package_data` anyway. This pins the
+        OUTCOME rather than the mechanism, so the guard stays unnecessary.
         """
         dist = _fake_dist(
             tmp_path,
@@ -735,18 +732,39 @@ class TestBundleContents:
     @pytest.mark.parametrize(
         ("entry", "expected"),
         [
-            ("win32\\win32api.pyd", "win32"),
-            ("win32/win32api.pyd", "win32"),
-            ("anyio.abc", "anyio"),
-            ("PYZ.pyz", "pyz"),
-            ("pywintypes", "pywintypes"),
+            ("win32\\win32api.pyd", {"win32"}),
+            ("win32/win32api.pyd", {"win32"}),
+            ("PYZ.pyz", {"pyz.pyz"}),
+            ("base_library/LICENSE", {"base_library"}),
+            # A dot in a TOC path is an extension, so the directory is kept
+            # whole -- this is the key a package-data licence is matched by.
+            ("ruamel.yaml/LICENSE", {"ruamel.yaml"}),
         ],
     )
-    def test_entries_reduce_to_their_component(
-        self, bundle: ModuleType, entry: str, expected: str
+    def test_toc_entries_reduce_to_their_directory(
+        self, bundle: ModuleType, entry: str, expected: set[str]
     ) -> None:
-        """TOC entries are paths, PYZ entries are dotted modules; both reduce."""
-        assert bundle._top_level(entry) == expected
+        assert bundle._top_level(entry, dotted=False) == expected
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("anyio", {"anyio"}),
+            ("anyio.abc", {"anyio", "anyio.abc"}),
+            ("pywintypes", {"pywintypes"}),
+            # Every prefix, because nothing in the module name says where the
+            # DISTRIBUTION boundary falls: `ruamel.yaml` ships its licence
+            # under `ruamel.yaml/`, so that key must be offered.
+            (
+                "ruamel.yaml.main",
+                {"ruamel", "ruamel.yaml", "ruamel.yaml.main"},
+            ),
+        ],
+    )
+    def test_pyz_modules_offer_every_dotted_prefix(
+        self, bundle: ModuleType, entry: str, expected: set[str]
+    ) -> None:
+        assert bundle._top_level(entry, dotted=True) == expected
 
 
 class TestBundleWorkflowWiring:
@@ -775,3 +793,139 @@ class TestBundleWorkflowWiring:
         workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
         assert "scripts/bundle_contents.py" in workflow[True]["pull_request"]["paths"]
+
+
+class TestPyzArchiveIsActuallyRead:
+    """The PYZ half must run, and only a real archive proves it does.
+
+    Every other test here uses synthetic component sets, so all of them pass
+    against a `bundled_components` that never opens the sub-archive at all.
+    That is not hypothetical: `ZlibArchiveReader` parses a `?offset` suffix
+    with `filename.rfind('?')`, so passing a `Path` raises `AttributeError`
+    before the file is opened. Under a `try/except` that returned the TOC-only
+    answer, 47 tests stayed green while the binary reported every pure-Python
+    package absent -- 96 components instead of 294 on the macOS binary, with
+    `anyio` and `click` among the missing, which drops licences the binary
+    owes.
+
+    These build a genuine PYZ with PyInstaller's own writer (a few hundred
+    bytes, no binary build) so the reader is exercised for real.
+    """
+
+    @staticmethod
+    def _write_pyz(path: Path, names: list[str]) -> None:
+        from PyInstaller.archive.writers import ZlibArchiveWriter
+
+        code_dict = {name: compile("X = 1\n", name, "exec") for name in names}
+        ZlibArchiveWriter(
+            str(path),
+            [(name, "/nonexistent", "PYMODULE") for name in names],
+            code_dict=code_dict,
+        )
+
+    @classmethod
+    def _write_binary(cls, root: Path, modules: list[str], data: list[str]) -> Path:
+        """A real one-file archive: a PYZ inside a CArchive, ~600 bytes."""
+        from PyInstaller.archive.writers import CArchiveWriter
+
+        pyz = root / "PYZ.pyz"
+        cls._write_pyz(pyz, modules)
+        entries = [("PYZ.pyz", str(pyz), 0, "z")]
+        for name in data:
+            blob = root / name.replace("/", "_")
+            blob.write_text("licence text")
+            entries.append((name, str(blob), 0, "x"))
+
+        binary = root / "fake_binary"
+        CArchiveWriter(str(binary), entries, pylib_name="libpython3.12.so")
+        return binary
+
+    def test_pure_python_modules_reach_bundled_components(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        """End to end, through the module's own entry point.
+
+        This is the assertion that catches the `Path`/`str` defect. Reading
+        the archive directly in a test would exercise PyInstaller rather than
+        `bundled_components`, and passes either way -- measured: with the
+        defect reintroduced, a direct-read version of this test stayed green
+        while the shipped function reported every pure-Python package absent.
+        """
+        binary = self._write_binary(
+            tmp_path, ["anyio.abc", "click.core"], ["win32/license.txt"]
+        )
+
+        components = bundle.bundled_components(binary)
+
+        # From the PYZ. Absent entirely when the sub-archive is not read.
+        assert "anyio" in components
+        assert "click" in components
+        # From the TOC, which a broken PYZ read would still return -- so this
+        # one alone cannot tell the two apart.
+        assert "win32" in components
+
+    def test_a_dotted_distribution_matches_end_to_end(
+        self, bundle: ModuleType, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """`ruamel.yaml/LICENSE` must match a bundled `ruamel.yaml.*` module."""
+        binary = self._write_binary(tmp_path, ["ruamel.yaml.main"], [])
+
+        components = bundle.bundled_components(binary)
+
+        assert notices._component_of("ruamel.yaml/LICENSE") in components
+
+    def test_a_path_argument_is_rejected_by_the_reader(self, tmp_path: Path) -> None:
+        """Pins the reason `str()` is not decorative, so nobody 'tidies' it.
+
+        If a future PyInstaller accepts a `Path`, this test fails and the
+        comment in `bundle_contents.py` can be revisited deliberately.
+        """
+        from PyInstaller.archive.readers import ZlibArchiveReader
+
+        pyz = tmp_path / "PYZ.pyz"
+        self._write_pyz(pyz, ["anyio.abc"])
+
+        with pytest.raises(AttributeError):
+            ZlibArchiveReader(pyz)
+
+    def test_a_dotted_module_matches_its_licence_directory(
+        self, bundle: ModuleType, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """`ruamel.yaml` ships its licence under `ruamel.yaml/`, not `ruamel/`.
+
+        Reducing a PYZ module to its first segment yields `ruamel`, which
+        matches no licence directory, so the filter drops a licence the binary
+        carries. The two sides must agree on the key.
+        """
+        keys = bundle._top_level("ruamel.yaml.main", dotted=True)
+
+        assert notices._component_of("ruamel.yaml/LICENSE") in keys
+        # The single-segment case must keep working.
+        assert notices._component_of("anyio/LICENSE") in bundle._top_level(
+            "anyio.abc", dotted=True
+        )
+
+    def test_a_toc_path_keeps_its_dotted_directory(self, bundle: ModuleType) -> None:
+        """A dot in a TOC entry is an extension, not a package separator."""
+        assert bundle._top_level("ruamel.yaml/LICENSE", dotted=False) == {"ruamel.yaml"}
+        assert bundle._top_level("win32\\win32api.pyd", dotted=False) == {"win32"}
+
+    def test_an_unreadable_pyz_reports_unknown_not_the_toc_answer(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        """Degrading to TOC-only is the licence-dropping direction.
+
+        A binary whose TOC parses but whose PYZ does not is a broken
+        instrument. Returning its TOC would filter against a set that omits
+        every pure-Python package, so the whole read must report "unknown"
+        and let the caller disable filtering.
+        """
+        from unittest import mock
+
+        binary = tmp_path / "fake"
+        binary.write_bytes(b"x")
+
+        with mock.patch.object(
+            bundle, "_read_archives", side_effect=RuntimeError("pyz unreadable")
+        ):
+            assert bundle.bundled_components(binary) == frozenset()
