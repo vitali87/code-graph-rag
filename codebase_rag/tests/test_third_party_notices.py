@@ -20,6 +20,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "build-binaries.yml"
 SCRIPT_PATH = REPO_ROOT / "scripts" / "generate_third_party_notices.py"
+BUNDLE_PATH = REPO_ROOT / "scripts" / "bundle_contents.py"
 
 BUILD_JOB_ID = "build"
 NOTICES_STEP_NAME = "Generate third-party notices"
@@ -38,6 +39,18 @@ def notices() -> ModuleType:
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["generate_third_party_notices"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def bundle() -> ModuleType:
+    """Load `scripts/bundle_contents.py` by path; `scripts/` is not a package."""
+    spec = importlib.util.spec_from_file_location("bundle_contents", BUNDLE_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["bundle_contents"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -499,3 +512,266 @@ class TestWorkflowStep:
             "scripts/generate_third_party_notices.py"
             in (workflow[True]["pull_request"]["paths"])
         )
+
+
+class TestBundleFilteredLicences:
+    """A notice must not reproduce licences for code the binary excludes.
+
+    pywin32 vendors an LGPL-2.1 `adodbapi` that nothing imports, so
+    PyInstaller leaves it out. Reproducing its text asserts copyleft terms
+    over a binary carrying no copyleft code -- an inaccuracy in the file whose
+    whole purpose is stating licensing accurately.
+    """
+
+    def test_excluded_component_licence_is_dropped(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "winkit",
+            ["License: PSF"],
+            {},
+            package_files={
+                "adodbapi/license.txt": "LGPL text",
+                "win32/license.txt": "BSD text",
+            },
+        )
+
+        paths = notices._license_paths(dist, frozenset({"win32"}))
+
+        assert paths == ["win32/license.txt"]
+        assert "LGPL text" not in "\n".join(
+            notices._license_texts(dist, frozenset({"win32"}))
+        )
+
+    def test_unfiltered_without_a_bundle_keeps_every_licence(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """The control. An empty set means "unknown", never "nothing shipped".
+
+        Without this the filtered assertion above passes just as well against
+        a generator that drops package-data licences unconditionally.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "winkit",
+            ["License: PSF"],
+            {},
+            package_files={
+                "adodbapi/license.txt": "LGPL text",
+                "win32/license.txt": "BSD text",
+            },
+        )
+
+        assert len(notices._license_paths(dist)) == 2
+        assert len(notices._license_paths(dist, frozenset())) == 2
+
+    def test_an_unknown_bundle_keeps_licences_a_partial_match_would_drop(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """Unknown must short-circuit, not fall through the `or` guard.
+
+        With an empty `bundled` the filter keeps nothing, so `kept or
+        package_data` restores everything and the early return looks
+        redundant -- it survives being deleted. It is not redundant: this
+        distribution has one component the filter WOULD match, so without the
+        short-circuit an unreadable binary silently drops the other licence
+        instead of keeping both. Mutation-checked; the all-or-nothing fixture
+        above cannot see this.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "mixed",
+            ["License: PSF"],
+            {},
+            package_files={
+                "shipped/LICENSE": "kept text",
+                "excluded/LICENSE": "dropped text",
+            },
+        )
+
+        # A readable bundle naming only one component filters to that one.
+        assert notices._license_paths(dist, frozenset({"shipped"})) == [
+            "shipped/LICENSE"
+        ]
+        # An unreadable one must keep BOTH, not just the matching one.
+        assert len(notices._license_paths(dist, frozenset())) == 2
+
+    def test_a_package_with_no_bundled_component_keeps_its_licences(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """Filtering must never empty a notice.
+
+        The distribution is in the runtime closure, so it owes something. A
+        package contributing only data files would otherwise match no
+        component and lose every licence it ships.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "dataonly",
+            ["License: MIT"],
+            {},
+            package_files={"dataonly/LICENSE": "MIT text"},
+        )
+
+        assert notices._license_paths(dist, frozenset({"something-else"})) == [
+            "dataonly/LICENSE"
+        ]
+
+    def test_dist_info_licences_are_never_filtered(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """A distribution always owes its own declared licence."""
+        dist = _fake_dist(
+            tmp_path,
+            "normal",
+            ["License-File: LICENSE"],
+            {"LICENSE": "MIT text"},
+        )
+
+        assert notices._license_texts(dist, frozenset({"unrelated"})) == ("MIT text",)
+
+
+class TestLicenceHeaderProvenance:
+    """`License:` can contradict the text beneath it (issue #2105).
+
+    pywin32 declares PSF and ships BSD-3-Clause, so the header asserts a
+    licence that appears nowhere in the body. The header names the file the
+    text came from rather than guessing a licence from the text: licence texts
+    quote other licences, and detecting by phrase relabelled PSF-2.0
+    `typing-extensions` as GPL in testing.
+    """
+
+    def test_package_data_licence_is_named_in_the_header(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        dist = _fake_dist(
+            tmp_path,
+            "winkit",
+            ["License: PSF"],
+            {},
+            package_files={"win32/license.txt": "BSD text"},
+        )
+
+        line = notices._notice(dist).license_line()
+
+        assert line.startswith("PSF"), "the declared string is kept, not replaced"
+        assert "win32/license.txt" in line
+
+    def test_a_declared_licence_file_needs_no_qualifier(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """The control: a normal wheel's header is unchanged.
+
+        Without this, a `license_line` that appended provenance to everything
+        would satisfy the assertion above.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "normal",
+            ["License-Expression: MIT", "License-File: LICENSE"],
+            {"LICENSE": "MIT text"},
+        )
+
+        notice = notices._notice(dist)
+
+        assert notice.sources == ()
+        assert notice.license_line() == "MIT"
+
+    def test_a_template_licence_needs_no_qualifier(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """A template IS the declared licence's text, so nothing contradicts."""
+        dist = _fake_dist(tmp_path, "nofile", ["License: MIT"], {})
+
+        notice = notices._notice(dist)
+
+        assert notice.texts, "the template should have supplied the text"
+        assert notice.license_line() == "MIT"
+
+    def test_the_qualifier_reaches_the_rendered_entry(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """A header that never renders fixes nothing the reader can see."""
+        dist = _fake_dist(
+            tmp_path,
+            "winkit",
+            ["License: PSF"],
+            {},
+            package_files={"win32/license.txt": "BSD text"},
+        )
+
+        rendered = notices.render([notices._notice(dist)])
+
+        assert "License: PSF (text as shipped in win32/license.txt)" in rendered
+
+
+class TestBundleContents:
+    """Reading what the binary carries. Both archives, or the answer is wrong.
+
+    A TOC-only scan reports 86 of 136 shipped packages absent, because
+    PyInstaller keeps pure-Python modules in a `PYZ.pyz` sub-archive. Deriving
+    notices from that would drop licences the binary genuinely owes.
+    """
+
+    def test_unreadable_binary_reports_unknown_not_empty(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        """The consequential direction.
+
+        An unreadable binary must not read as "nothing is bundled": that would
+        filter every package-data licence out of the notices file.
+        """
+        not_a_binary = tmp_path / "broken.exe"
+        not_a_binary.write_bytes(b"not a pyinstaller archive")
+
+        assert bundle.bundled_components(not_a_binary) == frozenset()
+
+    def test_missing_binary_does_not_raise(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        assert bundle.bundled_components(tmp_path / "absent.exe") == frozenset()
+
+    @pytest.mark.parametrize(
+        ("entry", "expected"),
+        [
+            ("win32\\win32api.pyd", "win32"),
+            ("win32/win32api.pyd", "win32"),
+            ("anyio.abc", "anyio"),
+            ("PYZ.pyz", "pyz"),
+            ("pywintypes", "pywintypes"),
+        ],
+    )
+    def test_entries_reduce_to_their_component(
+        self, bundle: ModuleType, entry: str, expected: str
+    ) -> None:
+        """TOC entries are paths, PYZ entries are dotted modules; both reduce."""
+        assert bundle._top_level(entry) == expected
+
+
+class TestBundleWorkflowWiring:
+    """The filter only works if the build actually passes the binary."""
+
+    def _steps(self) -> list[dict]:
+        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+        return workflow["jobs"][BUILD_JOB_ID]["steps"]
+
+    def test_notices_step_passes_the_built_binary(self) -> None:
+        step = next(s for s in self._steps() if s.get("name") == NOTICES_STEP_NAME)
+
+        assert "--binary" in step["run"], (
+            "without --binary the generator falls back to the installed wheel "
+            "and reproduces licences for components the build excluded"
+        )
+
+    def test_notices_step_uses_the_windows_suffix(self) -> None:
+        """The Windows binary is `.exe`; a missing suffix silently unfilters it."""
+        step = next(s for s in self._steps() if s.get("name") == NOTICES_STEP_NAME)
+
+        assert ".exe" in step["run"]
+
+    def test_pr_trigger_covers_the_bundle_reader(self) -> None:
+        """The generator imports it, so a change there can break the build."""
+        workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+        assert "scripts/bundle_contents.py" in workflow[True]["pull_request"]["paths"]
