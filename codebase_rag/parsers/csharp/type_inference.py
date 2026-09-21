@@ -620,6 +620,22 @@ class CSharpTypeInferenceEngine:
                     if (m in self.csharp_generic_methods) == generic_call
                 ]
                 return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
+        # `using static N.T;` puts T's members in bare-call scope. Probed
+        # AFTER local functions and the enclosing type, matching C#'s own
+        # precedence, and by the same arity matcher, so a static import
+        # cannot fabricate an edge the enclosing-type path would not (#2005).
+        for static_type in self.import_processor.csharp_static_imports.get(
+            module_qn, ()
+        ):
+            # The directive stores the C# type path (`Helpers.MathHelpers`);
+            # the registry keys types by project-qualified qn, so resolve it
+            # the same way a written type reference is resolved.
+            type_qn = self._type_name_to_qn(static_type, module_qn)
+            if not type_qn:
+                continue
+            matches = self._find_arity_matches_across_parts(type_qn, name, arg_count)
+            if matches:
+                return cs.NodeLabel.METHOD.value, matches[0]
         # A bare object-virtual with no local declaration is
         # `this.GetType()` -> System.Object (Polly's PolicyBase.PolicyKey);
         # a bare name that IS a delegate-typed member of the enclosing type

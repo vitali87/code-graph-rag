@@ -817,3 +817,35 @@ public class Factory {
     refs = _reference_targets(mock_ingestor)
     assert any(t.endswith("N.Factory.Make.Cleanup") for t in refs), refs
     assert not any(t.endswith("N.Decoy.Cleanup") for t in refs), refs
+
+
+def test_static_import_member_call_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `using static` brings the TYPE's members into bare-call scope. Dropping
+    # the name-trie fallback for bare calls must not take this with it: the
+    # call is unambiguous (one `Twice` in the project) and first-party, so the
+    # edge is real, not a name-wide guess (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class MathHelpers {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.MathHelpers;
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("Helpers.MathHelpers.Twice(int)") for t in targets), targets

@@ -557,6 +557,7 @@ class ImportProcessor:
         "exclude_paths",
         "unignore_paths",
         "import_mapping",
+        "csharp_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
@@ -625,6 +626,12 @@ class ImportProcessor:
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # `using static N.T;` brings T's MEMBERS into bare-call scope, which
+        # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
+        # bare `Member()` has no entry to resolve through. Module qn -> the set
+        # of statically imported type paths, probed as an extra bare-call scope
+        # (issue #2005).
+        self.csharp_static_imports: dict[str, set[str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -1334,6 +1341,7 @@ class ImportProcessor:
         self._csharp_module_identifiers.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
+        self.csharp_static_imports.pop(module_qn, None)
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.
@@ -3637,6 +3645,14 @@ class ImportProcessor:
             else:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
+            # `using static` is marked by a literal `static` child; an alias
+            # form (`using static X = N.T;`) is not a member import.
+            if alias_node is None and any(
+                child.type == cs.TS_CSHARP_STATIC for child in import_node.children
+            ):
+                self.csharp_static_imports.setdefault(module_qn, set()).add(
+                    imported_path
+                )
             self._record_import_site(
                 module_qn,
                 local_name,
