@@ -76,6 +76,12 @@ TEMPLATE_NOTE = (
     "(This distribution ships no licence file; the canonical {spdx} text is "
     "reproduced from the SPDX License List.)"
 )
+# A wheel that ships its licences as package data may carry several, one per
+# vendored sub-component under a different licence (pywin32 ships BSD-3-Clause
+# for win32/pythonwin/win32com and LGPL-2.1 for the vendored adodbapi). Naming
+# the file each text came from keeps the reader able to tell which component a
+# licence governs.
+COMPONENT_NOTE = "(Licence shipped at {path}.)"
 COPYRIGHT_LINE = "Copyright (c) {holder}"
 METADATA_AUTHOR = "Author"
 METADATA_AUTHOR_EMAIL = "Author-email"
@@ -176,15 +182,54 @@ def _license_paths(dist: Distribution) -> list[str]:
         if path.startswith(f"{dist_info}/")
         and any(hint in Path(path).name.upper() for hint in LICENSE_FILE_HINTS)
     )
-    return found + [path for path in conventional if path not in found]
+    resolved = found + [path for path in conventional if path not in found]
+    if resolved:
+        return resolved
+
+    # Some wheels install their licence as package data rather than metadata
+    # (pywin32 ships `win32/license.txt` and declares no `License-File`), so
+    # fall back to conventional names anywhere the distribution installs.
+    # Only reached when the `.dist-info` scan found nothing, so a wheel with
+    # proper metadata never picks up a vendored dependency's licence.
+    return sorted(
+        path
+        for path in installed
+        if not path.startswith(f"{dist_info}/")
+        and Path(path).name.upper().removesuffix(".TXT") in LICENSE_FILE_HINTS
+    )
+
+
+def _read_installed(dist: Distribution, path: str) -> str | None:
+    """Read an installed file named relative to the install root."""
+    dist_info = _dist_info_dir(dist)
+    if dist_info is not None and path.startswith(f"{dist_info}/"):
+        return dist.read_text(path.split("/", 1)[1])
+    try:
+        located = Path(str(dist.locate_file(path)))
+        return located.read_text(encoding=ENCODING)
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _license_texts(dist: Distribution) -> tuple[str, ...]:
     texts: list[str] = []
-    for path in _license_paths(dist):
-        text = dist.read_text(path.split("/", 1)[1]) if "/" in path else None
-        if text and text.strip():
-            texts.append(text.strip())
+    dist_info = _dist_info_dir(dist)
+    paths = _license_paths(dist)
+    for path in paths:
+        # `read_text` resolves against the `.dist-info` directory, so a
+        # licence installed as package data is reached through the install
+        # root instead.
+        text = _read_installed(dist, path)
+        if not (text and text.strip()):
+            continue
+        body = text.strip()
+        # Only package-data licences need provenance, and only when the
+        # distribution ships more than one: a single file governs the whole
+        # package and naming it adds nothing.
+        outside = dist_info is None or not path.startswith(f"{dist_info}/")
+        if outside and len(paths) > 1:
+            body = f"{COMPONENT_NOTE.format(path=path)}\n\n{body}"
+        texts.append(body)
     if texts:
         return tuple(texts)
 

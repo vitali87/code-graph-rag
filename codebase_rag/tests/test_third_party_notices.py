@@ -47,8 +47,13 @@ def _fake_dist(
     name: str,
     metadata_lines: list[str],
     files: dict[str, str],
+    package_files: dict[str, str] | None = None,
 ) -> PathDistribution:
-    """Lay out `<name>-1.0.dist-info` the way an installed wheel does."""
+    """Lay out `<name>-1.0.dist-info` the way an installed wheel does.
+
+    `files` are installed under the `.dist-info` directory; `package_files`
+    are installed beside it, the way pywin32 ships `win32/license.txt`.
+    """
     dist_info = root / f"{name}-1.0.dist-info"
     dist_info.mkdir()
     metadata = ["Metadata-Version: 2.4", f"Name: {name}", "Version: 1.0"]
@@ -58,8 +63,13 @@ def _fake_dist(
         target = dist_info / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
+    for relative, text in (package_files or {}).items():
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
     record_entries = [f"{dist_info.name}/METADATA,,", f"{dist_info.name}/RECORD,,"]
     record_entries.extend(f"{dist_info.name}/{relative},," for relative in files)
+    record_entries.extend(f"{relative},," for relative in (package_files or {}))
     (dist_info / "RECORD").write_text(
         "\n".join(record_entries) + "\n", encoding="utf-8"
     )
@@ -148,6 +158,117 @@ class TestLicenseDiscovery:
         assert notices._license_expression(dist) == "BSD License"
         assert notices._license_texts(dist) == ("BSD text",)
 
+    def test_finds_licence_file_installed_outside_dist_info(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """pywin32 ships its licence as package data, not `.dist-info` metadata."""
+        dist = _fake_dist(
+            tmp_path,
+            "packagedata",
+            ["License: BSD-3-Clause"],
+            {},
+            package_files={"packagedata/license.txt": "Shipped BSD text"},
+        )
+
+        assert notices._license_texts(dist) == ("Shipped BSD text",)
+
+    def test_package_data_licence_is_preferred_over_a_mislabelled_template(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """pywin32 declares `License: PSF` but ships BSD-3-Clause text.
+
+        Reproducing a template keyed off the declared string would ship the
+        wrong licence, so the text the wheel actually installs must win.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "mislabelled",
+            ["License: PSF", "Author: Mark Hammond (et al)"],
+            {},
+            package_files={
+                "mislabelled/license.txt": "Redistribution and use ... BSD-3-Clause",
+            },
+        )
+
+        texts = notices._license_texts(dist)
+        assert texts == ("Redistribution and use ... BSD-3-Clause",)
+        assert not any(notices.TEMPLATE_NOTE[:20] in text for text in texts)
+
+    def test_multiple_package_data_licences_name_their_component(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """pywin32 ships BSD-3-Clause per component plus LGPL for adodbapi.
+
+        Without provenance the reader cannot tell which licence governs which
+        sub-component, so each text names the file it came from.
+        """
+        dist = _fake_dist(
+            tmp_path,
+            "multi",
+            ["License: PSF"],
+            {},
+            package_files={
+                "vendored/license.txt": "LGPL text",
+                "multi/license.txt": "BSD text",
+            },
+        )
+
+        texts = notices._license_texts(dist)
+        assert len(texts) == 2
+        assert "multi/license.txt" in "\n".join(texts)
+        assert "vendored/license.txt" in "\n".join(texts)
+        assert "LGPL text" in "\n".join(texts)
+        assert "BSD text" in "\n".join(texts)
+
+    def test_single_package_data_licence_needs_no_provenance(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """One file governs the whole package, so naming it adds nothing."""
+        dist = _fake_dist(
+            tmp_path,
+            "solo",
+            ["License: MIT"],
+            {},
+            package_files={"solo/LICENSE": "only text"},
+        )
+
+        assert notices._license_texts(dist) == ("only text",)
+
+    def test_package_data_scan_ignores_unrelated_files(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """Only conventional licence names are collected, not every shipped file."""
+        dist = _fake_dist(
+            tmp_path,
+            "noisy",
+            ["License: MIT"],
+            {},
+            package_files={
+                "noisy/__init__.py": "raise SystemExit",
+                "noisy/README.md": "not a licence",
+                "noisy/LICENSE": "the real text",
+            },
+        )
+
+        assert notices._license_texts(dist) == ("the real text",)
+
+    def test_undecodable_package_data_licence_refuses_rather_than_crashes(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """An unreadable licence must reach the refusal, not abort the build."""
+        dist = _fake_dist(tmp_path, "binary", ["License: MIT"], {})
+        target = tmp_path / "binary" / "LICENSE"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"Copyright \xa9 2020 Some\xff Holder")
+        (tmp_path / "binary-1.0.dist-info" / "RECORD").write_text(
+            "binary-1.0.dist-info/METADATA,,\n"
+            "binary-1.0.dist-info/RECORD,,\n"
+            "binary/LICENSE,,\n",
+            encoding="utf-8",
+        )
+
+        assert notices._license_texts(dist) == ()
+
     def test_includes_undeclared_notice_with_declared_license(
         self, notices: ModuleType, tmp_path: Path
     ) -> None:
@@ -207,7 +328,8 @@ class TestTemplateFallback:
         assert text.startswith(notices.TEMPLATE_NOTE.format(spdx="MIT"))
         assert "Copyright (c) Jane Doe" in text
         assert text.count("Copyright (c)") == 1, "template already carries the prefix"
-        assert "<year>" not in text and "<copyright holders>" not in text
+        assert "<year>" not in text
+        assert "<copyright holders>" not in text
         assert "Permission is hereby granted, free of charge" in text
 
     def test_classifier_alias_reaches_the_template(
@@ -227,7 +349,8 @@ class TestTemplateFallback:
 
         # Apache-2.0 carries no holder placeholder, so the line is prepended.
         assert text.splitlines()[2] == "Copyright (c) ACME Corp"
-        assert "Apache License" in text and "Version 2.0" in text
+        assert "Apache License" in text
+        assert "Version 2.0" in text
 
     def test_shipped_file_wins_over_the_template(
         self, notices: ModuleType, tmp_path: Path
