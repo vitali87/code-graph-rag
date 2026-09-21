@@ -1000,7 +1000,9 @@ class MCPToolsRegistry:
     ) -> dict:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if workspace_refusal is not None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         # The edge scan and coverage read must see one consistent graph:
         # index/update handlers hold this lock while they delete and
         # rebuild, and an interleaved read would mix generations. The guard
@@ -1028,7 +1030,9 @@ class MCPToolsRegistry:
     async def explain_traceback(self, traceback_text: str) -> dict:
         from codebase_rag.crash_correlation import explain_traceback
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if workspace_refusal is not None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
@@ -1058,7 +1062,9 @@ class MCPToolsRegistry:
     async def rank_root_causes(self, traceback_text: str) -> dict:
         from codebase_rag.crash_correlation import rank_root_causes
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if workspace_refusal is not None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
@@ -2603,6 +2609,29 @@ class MCPToolsRegistry:
                 known=cs.SEPARATOR_COMMA_SPACE.join(names),
             )
         return default, None
+
+    def _fixed_root_project(self) -> tuple[str | None, str | None]:
+        """(project, refusal) for a handler that takes no `project` argument.
+
+        flow_verdict, explain_traceback and rank_root_causes derive their
+        project from this server's directory. Without a workspace that is
+        the whole world and the derivation stands. UNDER a workspace it is
+        not: `TARGET_REPO_PATH` may point at an indexed repo the workspace
+        does not serve, and a bare call would then answer from outside the
+        boundary. The workspace default applies, and an ambiguous one
+        refuses rather than guessing (Copilot, PR #1972).
+        """
+        if self.workspace is None:
+            return derive_project_name(Path(self.project_root)), None
+        default = self._workspace_default_project()
+        if default is not None:
+            return default, None
+        names = self.workspace.project_names()
+        return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+            workspace=self.workspace.name,
+            count=len(names),
+            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
 
     def _workspace_default_project(self) -> str | None:
         """The workspace project a request without `project` means.

@@ -388,3 +388,48 @@ def test_without_a_default_the_agents_graph_query_refuses(tmp_path: Path) -> Non
     assert registry._agent_query_tool() is not registry._query_tool
     plain = _registry(tmp_path, None)
     assert plain._agent_query_tool() is plain._query_tool
+
+
+@pytest.mark.anyio
+async def test_a_fixed_root_handler_takes_the_workspace_default(
+    tmp_path: Path,
+) -> None:
+    """flow_verdict and friends take no `project`, so they derived one from
+    this server's directory and answered from outside the workspace.
+
+    `TARGET_REPO_PATH` can point at an indexed repo the workspace does not
+    serve; a bare call then bypassed the boundary entirely (Copilot,
+    PR #1972).
+    """
+    (tmp_path / "b").mkdir()
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+
+    project, refusal = _registry(tmp_path, ws, root="b")._fixed_root_project()
+
+    assert refusal is None
+    assert project == BETA
+
+
+@pytest.mark.anyio
+async def test_a_fixed_root_handler_refuses_an_ambiguous_workspace(
+    tmp_path: Path,
+) -> None:
+    """Several served projects and none rooted here: refuse, never guess."""
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+
+    project, refusal = _registry(tmp_path, ws, root="elsewhere")._fixed_root_project()
+
+    assert project is None
+    assert refusal is not None and "ws" in refusal
+
+
+@pytest.mark.anyio
+async def test_a_fixed_root_handler_without_a_workspace_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    """The control: with no workspace the server's own directory IS the
+    world, so the derivation stands and nothing is refused."""
+    project, refusal = _registry(tmp_path, None)._fixed_root_project()
+
+    assert refusal is None
+    assert project is not None
