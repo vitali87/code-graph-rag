@@ -5957,7 +5957,14 @@ class GraphUpdater:
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
-                if stale_kind or not (self.repo_path / path).exists():
+                # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
+                # re-raises PermissionError instead of reading it as
+                # absence, so a link whose target sits behind an
+                # unreadable directory aborted the whole run HERE -- after
+                # the unreadable branch had marked it for retry but before
+                # that marker could commit, so the retry this PR adds never
+                # landed (bot review on PR #1993).
+                if stale_kind or _vanished(self.repo_path / path):
                     # File/Folder deletes key on the absolute path: a sibling
                     # project's node can share the relative path (issue #897).
                     key = (

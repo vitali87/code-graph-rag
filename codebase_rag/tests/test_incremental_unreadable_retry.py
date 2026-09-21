@@ -261,3 +261,44 @@ def test_a_link_whose_target_cannot_be_reached_is_not_gone(
 
     monkeypatch.setattr(gu.os, "stat", denied)
     assert gu._vanished(link) is False
+
+
+def test_the_orphan_prune_does_not_raise_on_an_unreachable_link(
+    tmp_path: Path,
+) -> None:
+    """The prune asked `Path.exists()`, which since 3.12 RE-RAISES a
+    PermissionError instead of reading it as absence.
+
+    A link whose target sits behind an unreadable directory therefore
+    aborted the whole run at the prune -- after the unreadable branch had
+    marked the file for retry but before that marker could commit, so the
+    retry this change adds never landed (bot review on PR #1993).
+
+    Drives the PREDICATE, not the prune: reaching that line end to end
+    needs a link the structure walk itself can stat, and `is_dir()` in
+    `structure_processor` raises on this shape first. So this pins the
+    contract the prune depends on -- answer for every shape, never raise --
+    and the control below shows the old spelling violating it.
+    """
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "t.py").write_text("x = 1\n", encoding="utf-8")
+    link = tmp_path / "link.py"
+    link.symlink_to(secret / "t.py")
+    absent = tmp_path / "gone.py"
+    present = tmp_path / "real.py"
+    present.write_text("y = 1\n", encoding="utf-8")
+
+    os.chmod(secret, 0o000)
+    try:
+        # The predicate the prune uses must ANSWER for all three, never raise.
+        assert gu._vanished(link) is False
+        assert gu._vanished(absent) is True
+        assert gu._vanished(present) is False
+        # The control: the old spelling really does raise on this shape, so
+        # the assertions above are not passing on a fixture that never had
+        # the problem.
+        with pytest.raises(PermissionError):
+            link.exists()
+    finally:
+        os.chmod(secret, 0o755)
