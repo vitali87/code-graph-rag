@@ -1342,6 +1342,46 @@ def test_dropping_a_parameter_the_body_ignores_still_applies(
     assert "return f()" in app, app
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "def f(a):\n    return obj.a\n",
+        "def f(a):\n    return helper(a=1)\n",
+    ],
+    ids=["attribute-name", "keyword-label"],
+)
+def test_a_same_named_attribute_or_keyword_is_not_a_read(
+    temp_repo: Path, body: str
+) -> None:
+    """`obj.a` and `helper(a=1)` spell `a` without reading the parameter.
+
+    The drop guard matched any identifier, so both refused a removal that
+    is perfectly legal -- the guard has to use the same `_is_a_reference`
+    test the body rewrite does (CodeRabbit, #1533).
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": body + "\n\ndef call():\n    return f(1)\n",
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.f",
+        [],
+        None,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert "def f():" in _read(root, "pkg/app.py")
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 

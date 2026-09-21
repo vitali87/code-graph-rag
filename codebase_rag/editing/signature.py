@@ -499,7 +499,13 @@ def _comprehension_binds(node: Node, name: bytes) -> bool:
 
 
 def _body_reads(header: _Header, name: str) -> bool:
-    """Whether `name` appears as an identifier in the body."""
+    """Whether the body READS `name`.
+
+    Through `_is_a_reference`, so `obj.a` and `helper(a=1)` do not count:
+    an attribute's name and a keyword argument's label are identifiers
+    spelled the same as the parameter but are not uses of it, and
+    refusing on those blocked legitimate removals (CodeRabbit, PR #1533).
+    """
     body = header.function.child_by_field_name(cs.FIELD_BODY)
     if body is None:
         return False
@@ -507,7 +513,11 @@ def _body_reads(header: _Header, name: str) -> bool:
     stack = [body]
     while stack:
         node = stack.pop()
-        if node.type == cs.TS_PY_IDENTIFIER and node.text == wanted:
+        if (
+            node.type == cs.TS_PY_IDENTIFIER
+            and node.text == wanted
+            and _is_a_reference(node)
+        ):
             return True
         stack.extend(node.children)
     return False
