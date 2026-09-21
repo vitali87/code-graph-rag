@@ -46,7 +46,10 @@ jobs:
       # Extras, not just the dev group: the grammars live in treesitter-full and
       # the fixtures need the test extra. Without them the parser tests skip
       # rather than fail, so a reviewer checking "would this fail without the
-      # fix?" gets a green that means nothing. Mirrors ci.yml's unit-test job.
+      # fix?" gets a green that means nothing. The extra set is kept identical
+      # to ci.yml's Unit Tests job, so a reviewer running a targeted test sees
+      # what CI sees; semantic, milvus and neo4j gate real imports, and
+      # omitting them turns their coverage into silent skips.
       - name: Install dependencies
         run: |
-          uv sync --extra treesitter-full --extra test --group dev
+          uv sync --extra treesitter-full --extra test --extra semantic --extra milvus --extra neo4j --group dev
