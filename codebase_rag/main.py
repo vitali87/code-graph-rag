@@ -726,7 +726,16 @@ async def _run_agent_response_loop(
         # falls back to a local estimate, so the threshold is reachable
         # whatever the session is talking to.
         _, _, context_pct = _token_usage()
-        if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
+        # The setting gates the whole block, not just the pruner. Passing
+        # `enabled=False` further down still costs a full `list()` copy and a
+        # `describe_prune` walk of the entire history on EVERY turn above the
+        # threshold -- measured at 2.5ms per turn on an 8000-message history,
+        # paid only by users who turned the feature off, and growing with the
+        # history that opting out leaves unbounded (Copilot, #2106).
+        if (
+            settings.CONTEXT_COMPACTION_ENABLED
+            and context_pct >= cs.TOKEN_THRESHOLD_CRITICAL
+        ):
             # Snapshot before the rewrite: `describe_prune` compares the two,
             # and the slice assignment below overwrites what it would compare
             # against. A shallow copy is enough because the pruner replaces
@@ -736,6 +745,10 @@ async def _run_agent_response_loop(
             # loop mutates it in place, so rebinding would prune a copy and
             # leave the conversation untouched -- a call site that satisfies a
             # reachability check while doing nothing.
+            # `enabled=` is redundant under the guard above and kept
+            # deliberately: the pruner must refuse on its own, so a future
+            # edit to the guard cannot silently re-enable compaction for a
+            # user who declined it.
             message_history[:] = prune_old_tool_results(
                 message_history,
                 enabled=settings.CONTEXT_COMPACTION_ENABLED,

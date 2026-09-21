@@ -283,6 +283,35 @@ class TestCallSite:
                 f"{keyword.arg}= reads {keyword.value.attr}, not a report field"
             )
 
+    def test_opt_out_gates_the_whole_block_not_just_the_pruner(self) -> None:
+        """Opting out must cost nothing per turn, not just skip the prune.
+
+        Passing `enabled=False` to the pruner alone still runs
+        `list(message_history)` and a full `describe_prune` walk on every
+        turn above the threshold -- 2.5ms per turn on an 8000-message
+        history, paid only by users who turned the feature off, and growing
+        with the history that opting out leaves unbounded (Copilot, #2106).
+        """
+        tree = self._main_tree()
+        call = self._prune_call(tree)
+
+        guards = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and any(
+                isinstance(inner, ast.Attribute)
+                and inner.attr == "CONTEXT_COMPACTION_ENABLED"
+                for inner in ast.walk(node.test)
+            )
+            and call in list(ast.walk(node))
+        ]
+        assert guards, (
+            "the prune call must sit inside an `if` that tests "
+            "CONTEXT_COMPACTION_ENABLED; gating only the pruner leaves the "
+            "snapshot and describe_prune running for users who opted out"
+        )
+
     def test_opt_out_is_passed_to_the_pruner(self) -> None:
         """Reading the setting is not honouring it.
 
