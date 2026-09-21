@@ -18,7 +18,6 @@ found by walking its callers one hop at a time.
 from __future__ import annotations
 
 import ast
-import re
 import textwrap
 import time
 from collections.abc import Callable, Iterable
@@ -549,11 +548,6 @@ def _dangling(
 
 
 # --- signature changes --------------------------------------------------------
-
-
-# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
-# and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
 
 
 def _header_is_variadic(header: str) -> bool:
