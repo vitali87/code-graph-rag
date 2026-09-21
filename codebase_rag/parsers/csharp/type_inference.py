@@ -1262,10 +1262,10 @@ class CSharpTypeInferenceEngine:
         # Stored type refs carry their written generic arity CLR-style
         # (`Options`0` is implicit: plain means arity 0); parse it so twin
         # filtering works for every map-sourced reference.
-        if generic_arity is None:
-            type_name, generic_arity = split_type_ref(type_name)
         if "::" in type_name or cs.SEPARATOR_DOT in type_name:
             return self._qualified_type_name_to_qn(type_name, module_qn, generic_arity)
+        if generic_arity is None:
+            type_name, generic_arity = split_type_ref(type_name)
         # An already-qualified name that IS a registered type resolves directly,
         # skipping the ambiguous simple-name sweep.
         if self.function_registry.get(type_name) in _TYPE_DECLS:
