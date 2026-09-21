@@ -58,25 +58,26 @@ public:
 };
 class Derived : public Base {
 public:
-    Derived() {}
+    Derived(int) {}
     ~Derived() {}
 };
 class Derived : public Base {
 public:
-    Derived() {}
+    Derived(int) {}
     ~Derived() {}
 };
-void use() { Derived d; }
+void use() { Derived d(1); }
 }
 """,
         encoding="utf-8",
     )
     run_updater(project, mock_ingestor)
 
-    pairs = {
+    call_edges = [
         (str(call.args[0][2]), str(call.args[2][2]))
         for call in get_relationships(mock_ingestor, "CALLS")
-    }
+    ]
+    pairs = set(call_edges)
     derived_variants = {
         caller.rsplit(".", 1)[0]
         for caller, target in pairs
@@ -94,3 +95,11 @@ void use() { Derived d; }
             f"{class_qn}.~Derived",
             f"{base_qn}.~Base",
         ) in pairs, pairs
+    assert (
+        sum(
+            target == f"{base_qn}.~Base"
+            for caller, target in call_edges
+            if caller.endswith(".use")
+        )
+        == 1
+    ), call_edges
