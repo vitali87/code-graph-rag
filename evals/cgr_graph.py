@@ -11,6 +11,7 @@ from codebase_rag.types_defs import (
     ResultRow,
     ResultValue,
 )
+from codebase_rag.utils import qn_markers
 
 from . import constants as ec
 from .ignore_rules import ignore_rules
@@ -1284,9 +1285,9 @@ def extract_cgr_lang_graph(
                 # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
                 # grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                    cs.DUP_QN_MARKER, 1
-                )[0]
+                target_name = qn_markers.strip_dup_marker(
+                    flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                )
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
@@ -1513,10 +1514,8 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if rel_type == cs.RelationshipType.INHERITS.value:
             # Same DUP_QN_MARKER strip as the multi-language reducer: a base
             # registered as a duplicate variant grades by its written name.
-            target = (
-                str(to_val)
-                .rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                .split(cs.DUP_QN_MARKER, 1)[0]
+            target = qn_markers.strip_dup_marker(
+                str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
             )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:
