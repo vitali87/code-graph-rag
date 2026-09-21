@@ -269,6 +269,64 @@ def _link_remote_callers(store: _StatefulIngestor) -> None:
         )
 
 
+def _link_non_remote_kinds(store: _StatefulIngestor) -> None:
+    """The same two shapes, built from kinds that are NOT service boundaries:
+    a DATABASE resource resolving to the endpoint, and a plain ENDPOINT
+    exposed directly. Neither is a remote call site (bot review on PR #1978).
+    """
+    resource = cs.NodeLabel.RESOURCE.value
+    function = cs.NodeLabel.FUNCTION.value
+    qn = cs.KEY_QUALIFIED_NAME
+    rel = cs.RelationshipType
+    store.ensure_node_batch(
+        resource,
+        {qn: "svc.plain", cs.KEY_NAME: "GET /plain", cs.KEY_KIND: "ENDPOINT"},
+    )
+    store.ensure_node_batch(
+        resource, {qn: "client.db", cs.KEY_NAME: "pg://svc", cs.KEY_KIND: "DATABASE"}
+    )
+    store.ensure_node_batch(
+        function, {qn: "client.dbapp.go", cs.KEY_PATH: "db.py", cs.KEY_NAME: "go"}
+    )
+    helper = (function, qn, _qn("pkg.util.helper"))
+    store.ensure_relationship_batch(
+        helper, rel.EXPOSES.value, (resource, qn, "svc.plain")
+    )
+    store.ensure_relationship_batch(
+        (resource, qn, "client.db"), rel.RESOLVES_TO.value, (resource, qn, "svc.plain")
+    )
+    for target in ("client.db", "svc.plain"):
+        store.ensure_relationship_batch(
+            (function, qn, "client.dbapp.go"),
+            rel.READS_FROM.value,
+            (resource, qn, target),
+        )
+
+
+def test_only_network_rpc_and_dispatch_kinds_are_remote_callers(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A DATABASE resource resolving to an endpoint, and a plain ENDPOINT
+    read directly, are not service boundaries. Without the kind filters both
+    shapes were reported as remote callers, overstating the blast radius of
+    a signature change (bot review on PR #1978)."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+
+    def apply() -> None:
+        updater.reingest(["pkg/util.py"], deleted=[])
+        _link_non_remote_kinds(store)
+
+    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert change["remote_callers"] == [], change["remote_callers"]
+
+
 def test_signature_change_lists_the_remote_callers_of_its_endpoint(
     indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:

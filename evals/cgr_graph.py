@@ -220,6 +220,10 @@ def _int(value: PropertyValue) -> int | None:
     return value if isinstance(value, int) else None
 
 
+_REMOTE_NETWORK_KIND = "NETWORK"
+_REMOTE_DIRECT_KINDS = frozenset({"RPC", "DISPATCH"})
+
+
 class _StatefulIngestor:
     # A faithful in-memory stand-in for the persistent graph store. Unlike
     # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
@@ -432,17 +436,32 @@ class _StatefulIngestor:
                 endpoint = _str(self.nodes.get(resource, {}).get(cs.KEY_NAME))
                 sources: list[tuple[_NodeId, str]] = []
                 if direct:
-                    sources.append((resource, endpoint))
+                    # The direct shape is the RPC and dispatch kinds only, the
+                    # way the query filters them: an ordinary endpoint reached
+                    # without a NETWORK hop is not a remote call site.
+                    if (
+                        _str(self.nodes.get(resource, {}).get(cs.KEY_KIND))
+                        in _REMOTE_DIRECT_KINDS
+                    ):
+                        sources.append((resource, endpoint))
                 else:
                     for inbound in self._in.get(resource, ()):
-                        if inbound[2] == cs.RelationshipType.RESOLVES_TO.value:
-                            network = (inbound[0], inbound[1])
-                            sources.append(
-                                (
-                                    network,
-                                    _str(self.nodes.get(network, {}).get(cs.KEY_NAME)),
-                                )
+                        if inbound[2] != cs.RelationshipType.RESOLVES_TO.value:
+                            continue
+                        network = (inbound[0], inbound[1])
+                        # Only a NETWORK resource resolves to an endpoint the
+                        # way the query means it.
+                        if (
+                            _str(self.nodes.get(network, {}).get(cs.KEY_KIND))
+                            != _REMOTE_NETWORK_KIND
+                        ):
+                            continue
+                        sources.append(
+                            (
+                                network,
+                                _str(self.nodes.get(network, {}).get(cs.KEY_NAME)),
                             )
+                        )
                 for node, url in sources:
                     for inbound in self._in.get(node, ()):
                         if inbound[2] not in access:
