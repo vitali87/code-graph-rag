@@ -1282,6 +1282,66 @@ def test_a_bare_name_keeps_each_overrides_own_spelling(temp_repo: Path) -> None:
     assert "def f(self, a: str, n: int) -> int:" in app, app
 
 
+def test_dropping_a_parameter_the_body_reads_refuses(temp_repo: Path) -> None:
+    """`def f(a): return a` emptied writes `def f(): return a`.
+
+    That PARSES, so the syntax postcondition passes, and the arity
+    contract only checks call sites -- the NameError surfaces when the
+    function is finally called (Copilot, #1533).
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": "def f(a):\n    return a\n\n\ndef call():\n    return f(1)\n",
+        },
+    )
+    store, updater = _index(root)
+
+    with pytest.raises(SignatureRefused, match="still reads"):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.app.f",
+            [],
+            None,
+            reingest=updater.reingest,
+        )
+
+    assert "def f(a):" in _read(root, "pkg/app.py")
+
+
+def test_dropping_a_parameter_the_body_ignores_still_applies(
+    temp_repo: Path,
+) -> None:
+    """The control: a parameter the body never reads drops cleanly, so the
+    refusal cannot be satisfied by refusing every removal."""
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": "def f(a):\n    return 1\n\n\ndef call():\n    return f(2)\n",
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.f",
+        [],
+        None,
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    app = _read(root, "pkg/app.py")
+    assert "def f():" in app, app
+    assert "return f()" in app, app
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 

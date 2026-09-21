@@ -498,6 +498,21 @@ def _comprehension_binds(node: Node, name: bytes) -> bool:
     )
 
 
+def _body_reads(header: _Header, name: str) -> bool:
+    """Whether `name` appears as an identifier in the body."""
+    body = header.function.child_by_field_name(cs.FIELD_BODY)
+    if body is None:
+        return False
+    wanted = name.encode(cs.ENCODING_UTF8)
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        if node.type == cs.TS_PY_IDENTIFIER and node.text == wanted:
+            return True
+        stack.extend(node.children)
+    return False
+
+
 def _body_references(
     header: _Header, old: str, new: str, renamed_away: Iterable[str]
 ) -> list[tuple[int, int]]:
@@ -878,6 +893,20 @@ class SignatureChanger:
             and source.index is not None
             and old_names[source.index] != spec.name
         ]
+        # A dropped parameter the body still reads leaves an unresolved
+        # name: `def f(a): return a` emptied writes `def f(): return a`,
+        # which PARSES and raises NameError only when called, so neither
+        # the syntax nor the arity postcondition catches it. Renamed names
+        # are excluded: the body rewrite follows those (Copilot, PR #1533).
+        kept = {spec.name for spec in new} | {old for old, _new in renamed}
+        for header in headers:
+            for dropped in (name for name in old_names if name not in kept):
+                if _body_reads(header, dropped):
+                    raise SignatureRefused(
+                        cs.SIGNATURE_DROPPED_STILL_READ.format(
+                            name=dropped, qn=header.qn
+                        )
+                    )
         sites: list[SignatureSite] = []
         edits: list[_Edit] = []
         for header in headers:

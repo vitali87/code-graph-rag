@@ -644,6 +644,10 @@ SIGNATURE_DEFAULT_REFERENCES_RENAMED = (
     "reads `{old}`, which is evaluated at definition time and would raise "
     "NameError; rewrite that default by hand first"
 )
+SIGNATURE_DROPPED_STILL_READ = (
+    "Cannot drop parameter {name} of {qn}: its body still reads `{name}`, "
+    "which would raise NameError when called; remove that use by hand first"
+)
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"
