@@ -59,11 +59,17 @@ def test_a_cached_file_that_became_unreadable_does_not_end_the_run(
     updater.run()  # completes: the batch pass counts b.py unreadable
     assert "b.py" not in updater._reparsed_file_keys
     assert updater.skipped_because_in_sync is False
-    # The persisted cache records no real hash for the unreadable file:
-    # neither the stale one nor the edit it could not read (bot review).
+    # The persisted cache drops the unreadable file's entry outright. The
+    # earlier `not in {old, new}` form passed for a MISSING key and for any
+    # unexpected third digest alike, so it could not tell removal from a
+    # wrong hash (bot review).
     cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text())
+    assert "b.py" not in cache, cache
+    # The readable sibling is still cached, so the absence above is the
+    # unreadable file being dropped and not an empty cache.
     old_digest = hashlib.md5(
         b"def b():\n    return 2\n", usedforsecurity=False
     ).hexdigest()
     new_digest = hashlib.md5(edited.read_bytes(), usedforsecurity=False).hexdigest()
-    assert cache.get("b.py") not in {old_digest, new_digest}
+    assert set(cache) == {"a.py"}, cache
+    assert cache["a.py"] not in {old_digest, new_digest}, cache
