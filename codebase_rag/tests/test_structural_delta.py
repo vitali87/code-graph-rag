@@ -963,6 +963,7 @@ def test_snapshot_uses_the_longest_registered_project_owner() -> None:
         ("proj.pkg.util", "pkg/util.py"),
         ("proj.extra.pkg.app", "pkg/app.py"),
         ("proj.extra.pkg.util", "pkg/util.py"),
+        ("proj.extra", "lib.rs"),
     ):
         store.ensure_node_batch(
             cs.NodeLabel.MODULE.value,
@@ -989,6 +990,11 @@ def test_snapshot_uses_the_longest_registered_project_owner() -> None:
             cs.KEY_QUALIFIED_NAME,
             "proj.extra.pkg.util",
         ),
+    )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.extra"),
+        cs.RelationshipType.IMPORTS.value,
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.pkg.util"),
     )
 
     taken = snapshot(store.fetch_all, "proj", ["pkg/app.py"])

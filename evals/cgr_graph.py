@@ -215,7 +215,11 @@ def _text(value: PropertyValue) -> str | None:
 def _shadowed_by_longer_owner(
     qualified_name: str, longer_project_prefixes: set[str]
 ) -> bool:
-    return any(qualified_name.startswith(prefix) for prefix in longer_project_prefixes)
+    return any(
+        qualified_name == project_name
+        or qualified_name.startswith(f"{project_name}{cs.SEPARATOR_DOT}")
+        for project_name in longer_project_prefixes
+    )
 
 
 def _int(value: PropertyValue) -> int | None:

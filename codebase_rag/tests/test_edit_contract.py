@@ -608,7 +608,7 @@ def test_real_rename_passes_longer_project_prefixes_to_contract_query(
     assert report.verdict is not None
     assert report.verdict.ok, report.verdict
     assert any(
-        params.get(cs.KEY_LONGER_PROJECT_PREFIXES) == [f"{PROJECT}.extra."]
+        params.get(cs.KEY_LONGER_PROJECT_PREFIXES) == [f"{PROJECT}.extra"]
         for params in observed
     )
 

@@ -160,7 +160,7 @@ def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str
         if isinstance(name := row.get(cs.KEY_NAME), str)
         and name.startswith(requested_prefix)
     }
-    return tuple(sorted(f"{name}{cs.SEPARATOR_DOT}" for name in names))
+    return tuple(sorted(names))
 
 
 def _name_token(

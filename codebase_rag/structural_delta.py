@@ -244,7 +244,7 @@ def _site(row: ResultRow) -> CallSite:
 
 
 def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
-    """Return registered project prefixes that can own a longer qualified name."""
+    """Return registered project names that can own a longer qualified name."""
     requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
     names = {
         name
@@ -252,13 +252,17 @@ def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str
         if isinstance(name := row.get(cs.KEY_NAME), str)
         and name.startswith(requested_prefix)
     }
-    return tuple(sorted(f"{name}{cs.SEPARATOR_DOT}" for name in names))
+    return tuple(sorted(names))
 
 
 def _has_longer_project_owner(
     qualified_name: str, longer_project_prefixes: Iterable[str]
 ) -> bool:
-    return any(qualified_name.startswith(prefix) for prefix in longer_project_prefixes)
+    return any(
+        qualified_name == project_name
+        or qualified_name.startswith(f"{project_name}{cs.SEPARATOR_DOT}")
+        for project_name in longer_project_prefixes
+    )
 
 
 def snapshot(
