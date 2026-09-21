@@ -639,6 +639,11 @@ SIGNATURE_BODY_REBINDS = (
     "nested scope, or re-bound by a global, nonlocal or import statement, in "
     "its body; rename it by hand first"
 )
+SIGNATURE_DEFAULT_REFERENCES_RENAMED = (
+    "Cannot rename parameter {old} of {qn} to {new}: the default of `{param}` "
+    "reads `{old}`, which is evaluated at definition time and would raise "
+    "NameError; rewrite that default by hand first"
+)
 SIGNATURE_BODY_NAME_TAKEN = (
     "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
     "in its body"

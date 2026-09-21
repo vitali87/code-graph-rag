@@ -1152,6 +1152,65 @@ def test_a_bare_generator_argument_is_unmapped_not_rewritten(
     assert "helper(x for x in xs)" in _read(root, "pkg/app.py")
 
 
+def test_a_default_reading_a_renamed_parameter_refuses(temp_repo: Path) -> None:
+    """`def f(a, b=a)` renamed a->x would write `def f(x, b=a)`.
+
+    A default is evaluated at DEFINITION time in the enclosing scope, so
+    that file raises NameError the moment it is imported -- and it PARSES,
+    so the syntax postcondition cannot catch it. `_body_references` walks
+    the body only and never saw the reference (Copilot, #1533).
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": "def f(a, b=a):\n    return b\n",
+        },
+    )
+    store, updater = _index(root)
+
+    with pytest.raises(SignatureRefused, match="evaluated at definition time"):
+        change_signature(
+            root,
+            store.fetch_all,
+            PROJECT,
+            f"{PROJECT}.pkg.app.f",
+            ["x", "b=a"],
+            {"x": "a"},
+            reingest=updater.reingest,
+        )
+
+    assert "def f(a, b=a):" in _read(root, "pkg/app.py")
+
+
+def test_a_default_not_reading_the_renamed_parameter_still_renames(
+    temp_repo: Path,
+) -> None:
+    """The control: a default that does NOT read the renamed name is fine,
+    so the refusal cannot be satisfied by refusing every default."""
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": "def f(a, b=1):\n    return a + b\n",
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.f",
+        ["x", "b=1"],
+        {"x": "a"},
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    assert "def f(x, b=1):" in _read(root, "pkg/app.py")
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 

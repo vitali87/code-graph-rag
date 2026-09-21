@@ -744,11 +744,32 @@ def _definition_edits(
     ]
     renamed_away = {old for old, _new in renamed}
     for old_name, new_name in renamed:
+        # A default is evaluated at DEFINITION time, in the enclosing scope,
+        # so `def f(a, b=a)` renamed a->x writes `def f(x, b=a)` and raises
+        # NameError the moment the module loads. `_body_references` walks the
+        # body only, so it cannot see the reference (Copilot, PR #1533).
+        _refuse_default_reading(header, texts, old_name, new_name)
         edits.extend(
             _Edit(header.path, span, new_name)
             for span in _body_references(header, old_name, new_name, renamed_away)
         )
     return edits
+
+
+def _refuse_default_reading(
+    header: _Header, texts: Sequence[str], old: str, new: str
+) -> None:
+    """Refuse when a parameter's default reads the name being renamed."""
+    pattern = re.compile(rf"\b{re.escape(old)}\b")
+    for text in texts:
+        name, sep, default = text.partition(_LITERAL_PREFIX)
+        if not sep or not pattern.search(default):
+            continue
+        raise SignatureRefused(
+            cs.SIGNATURE_DEFAULT_REFERENCES_RENAMED.format(
+                old=old, qn=header.qn, new=new, param=name.strip()
+            )
+        )
 
 
 def _params_of(params: Node, source: bytes, qn: str) -> list[ParamSpec]:
