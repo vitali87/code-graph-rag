@@ -857,9 +857,18 @@ class SignatureChanger:
                 _check_literal(spec, source.literal)
         # A bare old name carries that parameter's own spelling over (each
         # override keeps its own); spelling a kept parameter out again
-        # re-annotates it, so only an unchanged spec counts as carried.
-        by_name = {spec.name: spec for spec in old}
-        carried = {spec.name for spec in new if by_name.get(spec.name) == spec}
+        # re-annotates it.
+        #
+        # Read from the WRITTEN text, not from spec equality: a bare name
+        # resolves to the PRIMARY's spec, so an explicitly spelled `a: int`
+        # that happens to match the primary compared equal and counted as
+        # carried -- leaving an override declaring `a: str` un-annotated,
+        # which is the opposite of what was asked (Copilot, PR #1533).
+        carried = {
+            text.strip()
+            for text in new_params
+            if _IDENTIFIER_RE.fullmatch(text.strip()) and text.strip() in old_names
+        }
         # An old parameter fed to a new one of another name is renamed, and
         # the body must follow or the definition would be broken.
         renamed = [

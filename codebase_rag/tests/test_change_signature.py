@@ -1211,6 +1211,77 @@ def test_a_default_not_reading_the_renamed_parameter_still_renames(
     assert "def f(x, b=1):" in _read(root, "pkg/app.py")
 
 
+def test_an_explicit_spelling_re_annotates_every_override(
+    temp_repo: Path,
+) -> None:
+    """Spelling a kept parameter out again re-annotates it everywhere.
+
+    `carried` was inferred by comparing each new spec with the primary's,
+    and a bare name resolves TO the primary's spec -- so an explicit
+    `a: int` that matched the primary compared equal, counted as carried,
+    and left an override declaring `a: str` untouched (Copilot, #1533).
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": (
+                "class Base:\n    def f(self, a: int) -> int:\n        return a\n\n\n"
+                "class Sub(Base):\n    def f(self, a: str) -> int:\n"
+                "        return len(a)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.Base.f",
+        ["a: int", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    app = _read(root, "pkg/app.py")
+    assert "def f(self, a: int, n: int) -> int:" in app, app
+    assert "a: str" not in app, app
+
+
+def test_a_bare_name_keeps_each_overrides_own_spelling(temp_repo: Path) -> None:
+    """The control: a BARE name carries each override's own annotation, so
+    the fix above cannot be satisfied by re-annotating unconditionally."""
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": (
+                "class Base:\n    def f(self, a: int) -> int:\n        return a\n\n\n"
+                "class Sub(Base):\n    def f(self, a: str) -> int:\n"
+                "        return len(a)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.Base.f",
+        ["a", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+
+    assert report.applied, report.message
+    app = _read(root, "pkg/app.py")
+    assert "def f(self, a: int, n: int) -> int:" in app, app
+    assert "def f(self, a: str, n: int) -> int:" in app, app
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 
