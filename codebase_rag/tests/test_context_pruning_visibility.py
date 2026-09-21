@@ -417,3 +417,90 @@ class TestOptOutSettingIsWiredToTheEnvironment:
         assert alias in cs.COMPACTION_NOTICE, (
             "the notice must name the alias users actually set"
         )
+
+
+class TestDeclinedPruneCostsNothing:
+    """A refused prune must not pay for a comparison that cannot find anything.
+
+    `prune_old_tool_results` returns its ARGUMENT unchanged when the recovery
+    floor is not met, so the caller already knows nothing changed. Walking the
+    whole history to rediscover that costs 2.27ms per turn on an 8000-message
+    history, and it is paid on EVERY turn above the threshold until the floor
+    is finally met -- which is most of them, since the floor is what holds
+    compaction back (Copilot, #2106).
+
+    `describe_prune`'s own `after is before` shortcut cannot help here: the
+    snapshot is built with `list()`, which is always a new object.
+    """
+
+    @staticmethod
+    def _main_tree() -> ast.Module:
+        return ast.parse(
+            (Path(__file__).resolve().parents[1] / "main.py").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def _identity_guards(self) -> list[ast.If]:
+        return [
+            node
+            for node in ast.walk(self._main_tree())
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.IsNot)
+        ]
+
+    def test_the_report_walk_is_behind_an_identity_guard(self) -> None:
+        """Red if `describe_prune` moves back out to the unconditional path."""
+        guarded = [
+            guard
+            for guard in self._identity_guards()
+            if any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "describe_prune"
+                for call in ast.walk(guard)
+            )
+        ]
+
+        assert guarded, (
+            "describe_prune must sit behind `pruned_history is not "
+            "message_history`; unguarded it walks the entire history on every "
+            "turn above the threshold to rediscover that nothing changed"
+        )
+
+    def test_the_snapshot_is_taken_inside_the_guard(self) -> None:
+        """The `list()` copy is part of the cost, so it moves too."""
+        guarded = [
+            guard
+            for guard in self._identity_guards()
+            if any(
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "before_prune"
+                for node in ast.walk(guard)
+            )
+        ]
+
+        assert guarded, (
+            "the `before_prune` snapshot must be taken inside the identity "
+            "guard; outside it, a declined prune still copies the history"
+        )
+
+    def test_a_declined_prune_returns_the_same_object(self) -> None:
+        """The premise the guard rests on, pinned against the real pruner.
+
+        Without this, the two structural tests above would keep passing if
+        the pruner started returning a copy -- the guard would then always be
+        true and skip nothing, with no test noticing.
+        """
+        history = _history(turns=4, output_tokens=10)
+
+        result = prune_old_tool_results(history)
+
+        assert result is history, (
+            "a prune below the floor must return the caller's own list, "
+            "which is what lets the call site skip the comparison"
+        )

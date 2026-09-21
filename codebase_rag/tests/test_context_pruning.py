@@ -602,6 +602,23 @@ def test_the_call_site_prunes_the_callers_list_and_precedes_the_counter() -> Non
         "and bounds nothing"
     )
 
+    # The prune result must reach the CALLER'S list. It may be assigned
+    # straight through the slice, or captured in a local that is then assigned
+    # through the slice -- the latter lets the call site skip a redundant
+    # `describe_prune` walk when the pruner declines and returns its argument
+    # unchanged (Copilot, #2106). Both forms are checked, because pinning only
+    # the inline shape fails a refactor that preserves the property.
+    prune_result_names = {
+        node.targets[0].id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "prune_old_tool_results"
+    }
+
     slice_assignments = [
         node
         for node in ast.walk(tree)
@@ -613,9 +630,16 @@ def test_the_call_site_prunes_the_callers_list_and_precedes_the_counter() -> Non
             and isinstance(t.slice, ast.Slice)
             for t in node.targets
         )
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Name)
-        and node.value.func.id == "prune_old_tool_results"
+        and (
+            (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "prune_old_tool_results"
+            )
+            or (
+                isinstance(node.value, ast.Name) and node.value.id in prune_result_names
+            )
+        )
     ]
     assert slice_assignments, (
         "the prune result is not assigned through `message_history[:]`; "
