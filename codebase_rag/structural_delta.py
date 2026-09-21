@@ -594,7 +594,7 @@ def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -
 
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
-    header is read back so a variadic callee is never reported as
+    header is read back so a `*args` callee is never reported as
     receiving too many arguments.
     """
     if repo_root is None or not definition.path or definition.start_line < 1:

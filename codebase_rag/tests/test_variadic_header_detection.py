@@ -1,6 +1,7 @@
 """Surplus-positional absorption must parse the header, not scan it.
 
-`_is_variadic` is the SOLE suppressor of a too-many-arguments verdict, so
+`_header_absorbs_extra_positionals` is the SOLE suppressor of a
+too-many-arguments verdict, so
 both error directions do damage: a false positive hides a real arity
 error, and a false negative makes a CORRECT edit fail its own
 postcondition and roll back.
@@ -95,7 +96,7 @@ def test_a_multibyte_identifier_is_handled() -> None:
     assert _header_absorbs_extra_positionals("def café(a):") is False
 
 
-def test_an_unparseable_header_is_not_variadic() -> None:
+def test_an_unparseable_header_absorbs_nothing() -> None:
     # Refuse to guess: not-variadic keeps the arity check ACTIVE, which
     # is the safe direction for a suppressor.
     assert _header_absorbs_extra_positionals("def f(a, ") is False
