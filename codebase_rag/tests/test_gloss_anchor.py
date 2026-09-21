@@ -227,3 +227,36 @@ def test_the_quote_parse_recovers_from_preprocessor_directives() -> None:
     # working and not a fixture that never needed it.
     assert _count_error_nodes(plain.root_node) > 0
     assert _count_error_nodes(recovered.root_node) == 0
+
+
+def _js_quote(source: str, name: str) -> str:
+    parsed = ParsedSource(source, parse_source(_PARSERS, Path("mod.js"), source))
+    anchor = text_anchor(parsed, name, 1, 1)
+    assert anchor is not None
+    return anchor.quote
+
+
+_TWO_ON_A_LINE = "function alpha(){return 1} function beta(){return 2}\n"
+
+
+def test_a_sibling_on_the_same_line_does_not_change_the_quote() -> None:
+    """Two declarations can share a line in JS, TS and C++.
+
+    Selecting the quote's leaves by LINE RANGE alone put each one's leaves
+    into the other's quote, so editing `beta` made the unchanged `alpha`
+    look changed and its note would be re-graded (Copilot, #1808).
+    """
+    edited_sibling = _TWO_ON_A_LINE.replace("return 2", "return 99")
+
+    assert _js_quote(_TWO_ON_A_LINE, "alpha") == _js_quote(edited_sibling, "alpha")
+
+
+def test_the_definitions_own_edit_still_changes_its_quote() -> None:
+    """The control: narrowing to the definition must not narrow past its
+    body, or nothing would ever register as a change."""
+    edited_self = _TWO_ON_A_LINE.replace("return 1", "return 42")
+
+    assert _js_quote(_TWO_ON_A_LINE, "alpha") != _js_quote(edited_self, "alpha")
+    assert _js_quote(_TWO_ON_A_LINE, "beta") != _js_quote(
+        _TWO_ON_A_LINE.replace("return 2", "return 99"), "beta"
+    )

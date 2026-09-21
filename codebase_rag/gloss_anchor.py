@@ -88,10 +88,45 @@ def _normalised_context(text: str) -> str:
     return " ".join(text.split())
 
 
-def _leaves_in_rows(tree: Tree, first_row: int, last_row: int) -> Iterator[Node]:
+def _definition_root(
+    tree: Tree, name: str | None, first_row: int, last_row: int
+) -> Node:
+    """The smallest node covering the rows that declares `name`.
+
+    The span alone does not identify a definition: two declarations can
+    share a line (valid in JavaScript, TypeScript and C++), and selecting
+    by rows alone let each one's leaves into the other's quote, so editing
+    a sibling made an unchanged definition look changed (Copilot, #1808).
+    Falls back to the whole tree when no named node fits, which is the
+    previous behaviour.
+    """
+    if not name:
+        return tree.root_node
+    wanted = name.encode(cs.ENCODING_UTF8)
+    best: Node | None = None
+    stack: list[Node] = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.end_point[0] < first_row or node.start_point[0] > last_row:
+            continue
+        named = node.child_by_field_name(cs.FIELD_NAME)
+        # Must COVER the recorded span: a signature node carries the name
+        # too, and taking the smallest match dropped the body, so a body
+        # edit stopped changing the quote.
+        covers = node.start_point[0] <= first_row and node.end_point[0] >= last_row
+        if named is not None and named.text == wanted and covers:
+            if best is None or (node.end_byte - node.start_byte) < (
+                best.end_byte - best.start_byte
+            ):
+                best = node
+        stack.extend(node.children)
+    return best if best is not None else tree.root_node
+
+
+def _leaves_in_rows(root: Node, first_row: int, last_row: int) -> Iterator[Node]:
     # Iterative, deep trees overflow recursion; pruned by row so a large
     # file costs its size once, not per definition.
-    stack: list[Node] = [tree.root_node]
+    stack: list[Node] = [root]
     while stack:
         node = stack.pop()
         if node.end_point[0] < first_row or node.start_point[0] > last_row:
@@ -123,7 +158,8 @@ def _quote_tokens(
     tree: Tree, name: str | None, first_row: int, last_row: int
 ) -> list[str]:
     tokens: list[str] = []
-    for leaf in _leaves_in_rows(tree, first_row, last_row):
+    root = _definition_root(tree, name, first_row, last_row)
+    for leaf in _leaves_in_rows(root, first_row, last_row):
         kind = _leaf_kind(leaf, tree.root_node)
         if kind == "comment":
             continue
