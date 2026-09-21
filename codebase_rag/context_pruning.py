@@ -177,7 +177,15 @@ def describe_prune(
             new_content = getattr(new_part, "content", None)
             if new_content == PRUNED_PLACEHOLDER and old_content != PRUNED_PLACEHOLDER:
                 dropped += 1
-                recovered += _content_tokens(old_part) - _content_tokens(new_part)
+                # Clamp per part, matching `_prunable_candidates`. The
+                # placeholder is 17 tokens, so a result shorter than that
+                # COSTS tokens to prune ('ok' -> -16). Summing raw deltas
+                # lets enough short results swamp the genuine saving and the
+                # total goes negative: "freeing ~-320 tokens" reached the
+                # user on a 5000-short-result history (greptile-local).
+                recovered += max(
+                    0, _content_tokens(old_part) - _content_tokens(new_part)
+                )
     return PruneReport(
         pruned=dropped > 0, dropped_parts=dropped, recovered_tokens=recovered
     )

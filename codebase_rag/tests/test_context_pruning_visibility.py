@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from pydantic_ai.messages import (
@@ -138,6 +139,31 @@ class TestPruneReport:
         )
         assert report.recovered_tokens == before - after
 
+    def test_recovered_tokens_is_never_negative(self) -> None:
+        """A result shorter than the placeholder costs tokens to prune.
+
+        The placeholder is ~17 tokens, so pruning `'ok'` (1 token) LOSES 16.
+        Summing raw deltas let enough short results swamp the genuine saving:
+        a history of 5000 short results plus 30 large ones reported
+        `recovered_tokens=-320`, and the notice read "freeing ~-320 tokens".
+        Clamping per part matches how `_prunable_candidates` already counts.
+        """
+        messages: list[ModelRequest | ModelResponse] = []
+        for index in range(5_000):
+            messages.extend(_turn(f"tiny{index}", "ok"))
+        for index in range(30):
+            messages.extend(_turn(f"big{index}", "result " * 4_000))
+
+        pruned = prune_old_tool_results(messages)
+        report = describe_prune(messages, pruned)
+
+        assert report.pruned is True
+        assert report.recovered_tokens >= 0
+        # And it must still report the real saving from the large results,
+        # not collapse to zero: a clamp that zeroed everything would also
+        # satisfy `>= 0`.
+        assert report.recovered_tokens > 50_000
+
     def test_dropped_parts_counts_parts_not_messages(self) -> None:
         """Two results in one message are two drops, not one."""
         messages = _prunable_history()
@@ -185,33 +211,116 @@ class TestOptOut:
 class TestCallSite:
     """`main.py` must announce a prune and honour the setting.
 
-    Parsed from the shipped source rather than mocked: the value of this
-    feature is that the user SEES compaction, and a test that drives the
-    pruner directly proves nothing about whether `main` ever tells them.
+    Parsed as an AST, not grepped. Substring presence is satisfied by code
+    that never runs and by a setting that is read and discarded -- the two
+    ways this feature actually dies. The earlier string-grep version of these
+    tests passed with `if prune_report.pruned:` rewritten to `if False:`
+    (greptile-local), which is exactly the regression they exist to catch.
     """
 
     @staticmethod
-    def _main_source() -> str:
-        return (Path(__file__).resolve().parents[1] / "main.py").read_text()
+    def _main_tree() -> ast.Module:
+        return ast.parse((Path(__file__).resolve().parents[1] / "main.py").read_text())
 
-    def test_call_site_describes_the_prune(self) -> None:
-        """Without `describe_prune`, `main` has nothing to announce."""
-        source = self._main_source()
+    @staticmethod
+    def _prune_call(tree: ast.Module) -> ast.Call:
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "prune_old_tool_results"
+        ]
+        assert len(calls) == 1, (
+            f"expected exactly one prune call site in main.py, found {len(calls)}"
+        )
+        return calls[0]
 
-        assert "describe_prune" in source, (
-            "main.py must call describe_prune to learn what was dropped"
+    def test_notice_is_printed_under_the_pruned_guard(self) -> None:
+        """The print must be reachable, and only when a prune happened."""
+        tree = self._main_tree()
+
+        guarded = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Attribute)
+            and node.test.attr == "pruned"
+            and any(
+                isinstance(inner, ast.Attribute) and inner.attr == "COMPACTION_NOTICE"
+                for inner in ast.walk(node)
+            )
+        ]
+        assert guarded, (
+            "COMPACTION_NOTICE must be printed inside `if <report>.pruned:`; "
+            "a constant-false guard or an unguarded print both fail this"
         )
 
-    def test_call_site_announces_the_prune(self) -> None:
-        source = self._main_source()
+    def test_notice_reports_the_report_s_own_numbers(self) -> None:
+        """Hard-coded or mismatched numbers would misinform the user."""
+        tree = self._main_tree()
 
-        assert "COMPACTION_NOTICE" in source, (
-            "main.py must print a notice when it compacts the history"
+        formats = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "COMPACTION_NOTICE"
+        ]
+        assert formats, "COMPACTION_NOTICE must be formatted with real values"
+
+        keywords = {kw.arg for kw in formats[0].keywords}
+        assert keywords == {"parts", "tokens"}, (
+            f"expected parts= and tokens= keywords, got {keywords}"
+        )
+        for keyword in formats[0].keywords:
+            assert isinstance(keyword.value, ast.Attribute), (
+                f"{keyword.arg}= must come from the PruneReport, not a literal"
+            )
+            assert keyword.value.attr in {"dropped_parts", "recovered_tokens"}, (
+                f"{keyword.arg}= reads {keyword.value.attr}, not a report field"
+            )
+
+    def test_opt_out_is_passed_to_the_pruner(self) -> None:
+        """Reading the setting is not honouring it.
+
+        `_ = settings.CONTEXT_COMPACTION_ENABLED` next to an unchanged call
+        satisfies a substring check while leaving compaction always on.
+        """
+        call = self._prune_call(self._main_tree())
+
+        enabled = [kw for kw in call.keywords if kw.arg == "enabled"]
+        assert enabled, (
+            "prune_old_tool_results must be called with enabled=; without it "
+            "the setting cannot turn compaction off"
+        )
+        value = enabled[0].value
+        assert isinstance(value, ast.Attribute), (
+            "enabled= must read the setting, not a literal"
+        )
+        assert value.attr == "CONTEXT_COMPACTION_ENABLED", (
+            f"enabled= reads {value.attr}, not the opt-out setting"
         )
 
-    def test_call_site_reads_the_opt_out_setting(self) -> None:
-        source = self._main_source()
+    def test_describe_prune_compares_a_pre_prune_snapshot(self) -> None:
+        """Comparing the history with itself would report nothing dropped."""
+        tree = self._main_tree()
 
-        assert "CONTEXT_COMPACTION_ENABLED" in source, (
-            "main.py must pass the opt-out setting to the pruner"
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "describe_prune"
+        ]
+        assert len(calls) == 1, "expected exactly one describe_prune call"
+
+        args = calls[0].args
+        assert len(args) == 2, "describe_prune takes (before, after)"
+        assert isinstance(args[0], ast.Name), "first argument must be the snapshot"
+        assert args[0].id != "message_history", (
+            "describe_prune must compare a pre-prune SNAPSHOT against the "
+            "pruned history; passing message_history twice reports nothing"
         )
