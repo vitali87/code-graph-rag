@@ -232,16 +232,37 @@ class TestEveryRoutedReaderUsesTheHelper:
 
     @pytest.mark.parametrize("module_name", MODULES)
     def test_no_module_still_cuts_at_the_first_marker(self, module_name: str) -> None:
+        """Any `.split(<marker>, 1)` — the constant OR a bare `"@"` literal.
+
+        Matched by AST rather than by text: a reimplementation that spells the
+        marker inline (`qn.split("@", 1)[0]`) is the same defect and a
+        substring check keyed to `cs.DUP_QN_MARKER` cannot see it. Verified by
+        mutating a call site to each spelling in turn.
+        """
+        import ast
         import importlib
         import inspect
 
-        source = inspect.getsource(importlib.import_module(module_name))
-        # Written without the string itself appearing as code, so this test
-        # cannot match its own assertion text.
-        broken = f"split(cs.{'DUP_QN_MARKER'}, 1)[0]"
-        assert broken not in source, (
-            f"{module_name} still cuts at the first `@`, which empties a C# "
-            "verbatim identifier (issue #2017)"
+        tree = ast.parse(inspect.getsource(importlib.import_module(module_name)))
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr != "split":
+                continue
+            if not node.args:
+                continue
+            first = node.args[0]
+            names_marker = (
+                isinstance(first, ast.Attribute) and first.attr == "DUP_QN_MARKER"
+            ) or (isinstance(first, ast.Constant) and first.value == "@")
+            if names_marker:
+                offenders.append(getattr(node, "lineno", "?"))
+        assert not offenders, (
+            f"{module_name} splits on the duplicate marker at line(s) "
+            f"{offenders}; cutting at the first `@` empties a C# verbatim "
+            "identifier (issue #2017) -- use `qn_markers` instead"
         )
 
     @pytest.mark.parametrize("module_name", MODULES)
@@ -254,3 +275,36 @@ class TestEveryRoutedReaderUsesTheHelper:
             f"{module_name} does not route through the shared helper, so its "
             "marker grammar can drift from the producer's"
         )
+
+
+class TestVariantSpanSuffixReader:
+    """`call_processor._go_variant_spans`, which reads the marker's SUFFIX.
+
+    The mirror of every other reader here: it takes `[1]` rather than `[0]`,
+    so a `split(MARKER, 1)[0]` grep could not see it -- the AST check above
+    found it. Splitting at the FIRST `@` made `@event@12` yield the line text
+    `'event@12'`, which fails `isdigit()` and drops the whole variant set's
+    correspondence. It failed SAFE (no corruption, lost precision), which is
+    why it survived longer than the others.
+    """
+
+    def test_a_marked_variant_still_resolves_its_line(self) -> None:
+        from codebase_rag.parsers.call_processor import _go_variant_spans
+
+        spans = _go_variant_spans(["pkg.Box", "pkg.Box@12"], [(0, None), (12, (12, 4))])
+        assert spans == [None, (12, 4)]
+
+    def test_a_marked_verbatim_variant_resolves_its_line(self) -> None:
+        """Was `None` before the fix: `'event@12'` is not a digit string."""
+        from codebase_rag.parsers.call_processor import _go_variant_spans
+
+        spans = _go_variant_spans(
+            ["pkg.@event", "pkg.@event@12"], [(0, None), (12, (12, 4))]
+        )
+        assert spans == [None, (12, 4)]
+
+    def test_a_bare_verbatim_name_takes_the_no_marker_branch(self) -> None:
+        """`@event` carries no marker, so it is the natural declaration."""
+        from codebase_rag.parsers.call_processor import _go_variant_spans
+
+        assert _go_variant_spans(["pkg.@event"], [(0, (3, 0))]) == [(3, 0)]

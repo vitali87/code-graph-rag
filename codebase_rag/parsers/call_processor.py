@@ -788,12 +788,16 @@ def _go_variant_spans(
     spans: list[_Span | None] = []
     for index, variant in enumerate(variants):
         marker = variant.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if cs.DUP_QN_MARKER not in marker:
+        # The LAST `@`, not the first: a C# verbatim identifier opens with
+        # one that is part of the name, so `@event@12` names line 12 while
+        # a first-`@` split reads `event@12` and gives up (issue #2017).
+        # The no-marker branch tests the stripped form for the same reason.
+        if qn_markers.strip_dup_marker(marker) == marker:
             if index != 0:
                 return None
             spans.append(declarations[0][1])
             continue
-        suffix = marker.split(cs.DUP_QN_MARKER, 1)[1]
+        suffix = marker.rpartition(cs.DUP_QN_MARKER)[2]
         line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
         if not line_text.isdigit() or int(line_text) not in by_line:
             return None
