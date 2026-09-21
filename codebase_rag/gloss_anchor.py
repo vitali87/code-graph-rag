@@ -35,6 +35,7 @@ from tree_sitter import Node, Parser, Tree
 
 from . import constants as cs
 from .language_spec import get_language_for_extension
+from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 
 
 class ParsedSource(NamedTuple):
@@ -165,12 +166,22 @@ def is_comparable_quote(value: object) -> bool:
 def parse_source(
     parsers: Mapping[cs.SupportedLanguage, Parser], path: Path, text: str
 ) -> Tree | None:
-    """`text` parsed with the grammar for `path`'s extension, or None."""
+    """`text` parsed with the grammar for `path`'s extension, or None.
+
+    Through the same recovery parser the indexer uses, not `Parser.parse`
+    directly: a C/C++/C# file whose preprocessor directives shatter the
+    tree is re-parsed with those lines blanked, and the indexed definition
+    spans come from THAT tree. Parsing it plainly here produced different
+    leaves for the same source, so a quote could disagree with the spans
+    it was selected by (Copilot, PR #1966).
+    """
     language = get_language_for_extension(path.suffix)
     parser = parsers.get(language) if language is not None else None
-    if parser is None:
+    if parser is None or language is None:
         return None
     try:
-        return parser.parse(text.encode(cs.ENCODING_UTF8))
+        return parse_with_preproc_recovery(
+            parser, text.encode(cs.ENCODING_UTF8), language
+        )
     except (ValueError, TypeError):
         return None

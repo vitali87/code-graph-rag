@@ -199,3 +199,31 @@ def test_a_templated_cpp_body_edit_still_flips_the_quote() -> None:
     edited = _CPP_TEMPLATE.replace("return a;", "return a + 1;")
 
     assert _cpp_anchor(edited, "run", 1, 4).quote != before.quote
+
+
+def test_the_quote_parse_recovers_from_preprocessor_directives() -> None:
+    """The auxiliary parse must use the same recovery the indexer uses.
+
+    A C# conditional directive interleaved with declaration syntax
+    shatters the tree, and `parse_with_preproc_recovery` re-parses it with
+    those lines blanked. The indexed definition spans come from THAT tree,
+    so parsing plainly here gave different leaves for the same source and
+    a quote could disagree with the spans it was selected by
+    (Copilot, #1808).
+    """
+    from codebase_rag.parsers.cpp.preproc_recovery import _count_error_nodes
+
+    source = (
+        "class K\n{\n    public int P =>\n#if A\n        1;\n"
+        "#else\n        2;\n#endif\n}\n"
+    )
+    parser = _PARSERS[cs.SupportedLanguage.CSHARP]
+
+    plain = parser.parse(source.encode(cs.ENCODING_UTF8))
+    recovered = parse_source(_PARSERS, Path("mod.cs"), source)
+
+    assert recovered is not None
+    # The plain parse really is shattered, so a zero below is the recovery
+    # working and not a fixture that never needed it.
+    assert _count_error_nodes(plain.root_node) > 0
+    assert _count_error_nodes(recovered.root_node) == 0
