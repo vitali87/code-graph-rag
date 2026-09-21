@@ -227,6 +227,11 @@ def _save_delombok_state(state_path: Path, state: dict) -> None:
         return None
 
 
+# Keys of the exclusion stamp that describe WHOSE scope it holds, for
+# readers; the sync comparison is over the scope alone (issue #1981).
+_EXCLUSION_READER_KEYS = frozenset({"project", "named"})
+
+
 def _exclusion_state(
     exclude_paths: frozenset[str] | None,
     unignore_paths: frozenset[str] | None,
@@ -3990,10 +3995,14 @@ class GraphUpdater:
             return self._exclusion_match
         stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
         current = _exclusion_state(self.exclude_paths, self.unignore_paths)
-        # The project key is informational for readers such as `cgr check`;
-        # the sync decision compares the scope itself, as it always has.
+        # The project and named keys are informational for readers such as
+        # `cgr check`; the sync decision compares the scope itself, as it
+        # always has. Leaving `named` in the comparison made every run with
+        # --project-name miss the in-sync fast path (issue #1981).
         if stored is not None:
-            stored = {k: v for k, v in stored.items() if k != "project"}
+            stored = {
+                k: v for k, v in stored.items() if k not in _EXCLUSION_READER_KEYS
+            }
         if stored == current:
             self._exclusion_match = True
             return True
