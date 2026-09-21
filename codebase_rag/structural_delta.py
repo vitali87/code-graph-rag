@@ -18,7 +18,6 @@ found by walking its callers one hop at a time.
 from __future__ import annotations
 
 import ast
-import re
 import textwrap
 import time
 from collections.abc import Callable, Iterable
@@ -553,11 +552,8 @@ def _dangling(
 
 # `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
 # and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
-
-
-def _header_is_variadic(header: str) -> bool:
-    """Whether a `def` header declares `*args` or keyword-only params.
+def _header_absorbs_extra_positionals(header: str) -> bool:
+    """Whether a `def` header declares `*args`.
 
     Parsed, not scanned. Scanning got both directions wrong, and this is
     the sole suppressor of a too-many-arguments verdict, so each costs
@@ -570,6 +566,12 @@ def _header_is_variadic(header: str) -> bool:
     a `)` -- which the old first-`)` cut discarded. `ast` is the right
     oracle because it is the same parser that decides whether the call
     raises at runtime.
+
+    Only `*args` absorbs a surplus POSITIONAL argument, which is the one
+    branch that consults this. Keyword-only parameters do not: CPython
+    rejects `helper(1, 2, b=3)` against `def helper(a, *, b=1)` with
+    "takes 1 positional argument but 2 ... were given". Treating them as
+    a suppressor silently dropped a real TOO_MANY verdict.
 
     An unparseable header answers False, keeping the arity check ACTIVE:
     for a suppressor, refusing to suppress is the safe direction.
@@ -584,10 +586,10 @@ def _header_is_variadic(header: str) -> bool:
     node = tree.body[0] if tree.body else None
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return False
-    return node.args.vararg is not None or bool(node.args.kwonlyargs)
+    return node.args.vararg is not None
 
 
-def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
+def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -> bool:
     """Whether the Python definition's header declares `*args`.
 
     `positional_params` ends at the star (CPython counts nothing after it),
@@ -610,7 +612,7 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
         header.append(line)
         if ")" in line:
             break
-    return _header_is_variadic("\n".join(header))
+    return _header_absorbs_extra_positionals("\n".join(header))
 
 
 def _arity_verdict(
@@ -641,7 +643,7 @@ def _arity_verdict(
     if verdict.confirmed:
         return declared_count, cs.DELTA_ARITY_OK
     if positional + (1 if is_method else 0) > verdict.declared_count:
-        if _is_variadic(definition, repo_root):
+        if _absorbs_extra_positionals(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
     if passed > verdict.declared_count:
