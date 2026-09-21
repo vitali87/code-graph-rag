@@ -92,6 +92,10 @@ METADATA_NAME = "Name"
 MISSING_TEXT_ERROR = (
     "{count} package(s) ship no licence text and have no SPDX template: {names}"
 )
+UNREADABLE_LICENSE_ERROR = (
+    "{name} installs a licence at {path} that could not be read; the notice "
+    "would be missing a licence the binary must reproduce"
+)
 
 HEADER = """\
 THIRD-PARTY SOFTWARE NOTICES
@@ -113,6 +117,10 @@ License: {license}
 {text}
 """
 ENCODING = "utf-8"
+
+
+class UnreadableLicenseError(RuntimeError):
+    """A licence file resolved but could not be read."""
 
 
 @dataclass(frozen=True)
@@ -221,7 +229,15 @@ def _license_texts(dist: Distribution) -> tuple[str, ...]:
         # root instead.
         text = _read_installed(dist, path)
         if not (text and text.strip()):
-            continue
+            # A path resolved but could not be read. Dropping it would ship a
+            # notice missing a licence the binary is obliged to reproduce, and
+            # the refusal in `main` only fires when NO text was found at all,
+            # so refuse here instead of continuing.
+            raise UnreadableLicenseError(
+                UNREADABLE_LICENSE_ERROR.format(
+                    name=dist.metadata[METADATA_NAME], path=path
+                )
+            )
         body = text.strip()
         # Only package-data licences need provenance, and only when the
         # distribution ships more than one: a single file governs the whole
@@ -380,7 +396,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    notices = collect_notices(runtime_closure().values())
+    try:
+        notices = collect_notices(runtime_closure().values())
+    except UnreadableLicenseError as error:
+        print(error, file=sys.stderr)  # noqa: T201
+        return 1
 
     # A notice without its licence text does not satisfy the licence it is
     # meant to satisfy, so refuse to produce the file rather than ship it.

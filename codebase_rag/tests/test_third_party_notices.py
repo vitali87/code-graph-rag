@@ -246,6 +246,9 @@ class TestLicenseDiscovery:
             package_files={
                 "noisy/__init__.py": "raise SystemExit",
                 "noisy/README.md": "not a licence",
+                # A real shape: `identify/vendor/licenses.py` exists in this
+                # venv. A substring rule would collect it as licence text.
+                "noisy/vendor/licenses.py": "SOURCE CODE, NOT A LICENCE",
                 "noisy/LICENSE": "the real text",
             },
         )
@@ -267,7 +270,34 @@ class TestLicenseDiscovery:
             encoding="utf-8",
         )
 
-        assert notices._license_texts(dist) == ()
+        with pytest.raises(notices.UnreadableLicenseError) as excinfo:
+            notices._license_texts(dist)
+        assert "binary/LICENSE" in str(excinfo.value)
+
+    def test_partial_read_failure_refuses_rather_than_dropping_a_licence(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """One unreadable licence among several must not be silently dropped.
+
+        Dropping it leaves `texts` truthy, so the refusal in `main` never
+        fires and the binary ships missing a licence it must reproduce.
+        """
+        dist = _fake_dist(tmp_path, "partial", ["License: MIT"], {})
+        for sub, data in (("a", b"\xff\xfe bad \xff"), ("b", b"good text")):
+            target = tmp_path / sub / "LICENSE"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        (tmp_path / "partial-1.0.dist-info" / "RECORD").write_text(
+            "partial-1.0.dist-info/METADATA,,\n"
+            "partial-1.0.dist-info/RECORD,,\n"
+            "a/LICENSE,,\n"
+            "b/LICENSE,,\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(notices.UnreadableLicenseError) as excinfo:
+            notices._license_texts(dist)
+        assert "a/LICENSE" in str(excinfo.value)
 
     def test_includes_undeclared_notice_with_declared_license(
         self, notices: ModuleType, tmp_path: Path
