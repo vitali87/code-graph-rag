@@ -3591,8 +3591,10 @@ class GraphUpdater:
             # without this a re-parse appended the part again and a deleted
             # part kept typing its siblings' members (issue #2016).
             if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
-                while qn in group:
-                    group.remove(qn)
+                # One pass, and IN PLACE: the list is the very object
+                # `_csharp_partial_index` holds, so rebinding a new list
+                # would leave that view holding the old one (bot review).
+                group[:] = [part for part in group if part != qn]
             owner_module.pop(qn, None)
 
     @staticmethod
