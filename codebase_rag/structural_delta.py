@@ -584,7 +584,7 @@ def _header_is_variadic(header: str) -> bool:
     node = tree.body[0] if tree.body else None
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return False
-    return node.args.vararg is not None or bool(node.args.kwonlyargs)
+    return node.args.vararg is not None
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
