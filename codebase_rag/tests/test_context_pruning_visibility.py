@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -352,4 +353,55 @@ class TestCallSite:
         assert args[0].id != "message_history", (
             "describe_prune must compare a pre-prune SNAPSHOT against the "
             "pruned history; passing message_history twice reports nothing"
+        )
+
+
+class TestOptOutSettingIsWiredToTheEnvironment:
+    """The opt-out the user is told about is an env var, not a parameter.
+
+    Every other test here either passes `enabled=False` to the pruner directly
+    or inspects `main`'s AST. Both hold just as well when the SETTING is
+    broken: a renamed alias or a boolean that parses "false" as truthy leaves
+    `CGR_CONTEXT_COMPACTION_ENABLED` inert while the suite stays green, and
+    the documented switch does nothing. Copilot raised this on #2106.
+    """
+
+    @staticmethod
+    def _config(monkeypatch, value: str | None):
+        from codebase_rag.config import AppConfig
+
+        # `AppConfig` reads a `.env`; clear the var so the default case is the
+        # default rather than whatever the developer's environment holds.
+        monkeypatch.delenv("CGR_CONTEXT_COMPACTION_ENABLED", raising=False)
+        if value is not None:
+            monkeypatch.setenv("CGR_CONTEXT_COMPACTION_ENABLED", value)
+        return AppConfig(_env_file=None)
+
+    def test_defaults_to_enabled(self, monkeypatch) -> None:
+        assert self._config(monkeypatch, None).CONTEXT_COMPACTION_ENABLED is True
+
+    @pytest.mark.parametrize("value", ["false", "False", "0", "no"])
+    def test_the_documented_variable_turns_it_off(self, monkeypatch, value) -> None:
+        """The alias in the constant string is the one that must work."""
+        config = self._config(monkeypatch, value)
+
+        assert config.CONTEXT_COMPACTION_ENABLED is False, (
+            f"CGR_CONTEXT_COMPACTION_ENABLED={value!r} left compaction on; the "
+            "opt-out advertised in COMPACTION_NOTICE does nothing"
+        )
+
+    @pytest.mark.parametrize("value", ["true", "True", "1", "yes"])
+    def test_truthy_values_keep_it_on(self, monkeypatch, value) -> None:
+        """The control: a parse that returned False for everything would pass above."""
+        assert self._config(monkeypatch, value).CONTEXT_COMPACTION_ENABLED is True
+
+    def test_the_advertised_variable_name_matches_the_alias(self) -> None:
+        """The notice names the variable; a rename must break here, not silently."""
+        from codebase_rag.config import AppConfig
+        from codebase_rag.constants import cli as cs
+
+        alias = AppConfig.model_fields["CONTEXT_COMPACTION_ENABLED"].validation_alias
+
+        assert alias in cs.COMPACTION_NOTICE, (
+            "the notice must name the alias users actually set"
         )
