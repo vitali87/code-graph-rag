@@ -154,6 +154,7 @@ TS_CSHARP_PARAMETER_LIST = "parameter_list"
 # implicit_type, inferred from the initializer. A field_declaration wraps a
 # variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
+TS_CSHARP_FOREACH_STATEMENT = "foreach_statement"
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
 TS_CSHARP_FIELD_DECLARATION = "field_declaration"

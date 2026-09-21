@@ -262,3 +262,47 @@ def test_the_duplicate_marker_strip_keeps_a_verbatim_identifier() -> None:
     assert _DUP_QN_MARKER_RE.sub("", "proj.src.Lib.Lib.Helper") == (
         "proj.src.Lib.Lib.Helper"
     )
+
+
+FOREACH_SHADOW = {
+    "src/Lib.cs": (
+        "namespace Lib;\n\n"
+        "public class Config { public static void Each() { } }\n\n"
+        "public class Item { public void Ping() { } }\n"
+    ),
+    "src/App.cs": (
+        "using System.Collections.Generic;\nusing Lib;\n\nnamespace App;\n\n"
+        "public class Bench\n{\n"
+        # Both loops live in Run: the edge helper filters on `.Bench.Run`,
+        # so a second method's edges would be invisible to the control.
+        "    public void Run(List<string> items, List<Item> typed)\n    {\n"
+        "        foreach (var Config in items) { Config.Each(); }\n"
+        "        foreach (Item it in typed) { it.Ping(); }\n"
+        "    }\n}\n"
+    ),
+}
+
+
+def test_a_foreach_var_shadowing_a_class_is_not_that_class(tmp_path: Path) -> None:
+    """`foreach (var Config in items)` binds a LOCAL, not the class `Config`.
+
+    Its element type is never inferred, so the name reached neither
+    `local_var_types` nor any type check and fell through to the name trie,
+    which bound `Config.Each()` to the registered `Lib.Config.Each` -- a
+    confident edge onto a class the loop variable has nothing to do with
+    (Copilot, #1998).
+    """
+    edges = _edges(tmp_path / "proj", FOREACH_SHADOW)
+
+    assert not any(target.endswith("Config.Each") for _kind, target in edges), sorted(
+        edges
+    )
+
+
+def test_a_typed_foreach_var_still_resolves_its_own_method(tmp_path: Path) -> None:
+    """The control: an EXPLICITLY typed binding declares its type and must
+    keep resolving, so the refusal cannot be satisfied by suppressing every
+    foreach receiver."""
+    edges = _edges(tmp_path / "proj", FOREACH_SHADOW)
+
+    assert any(target.endswith("Item.Ping") for _kind, target in edges), sorted(edges)

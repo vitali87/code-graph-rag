@@ -257,6 +257,25 @@ class CSharpTypeInferenceEngine:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
 
+    def _foreach_binds_var(self, node: Node, name: str) -> bool:
+        """Whether an enclosing `foreach (var name in ...)` binds `name`.
+
+        Only the IMPLICIT form: an explicitly typed binding declares its
+        type, reaches `local_var_types`, and must keep resolving normally.
+        """
+        current: Node | None = node
+        while current is not None:
+            if current.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+                bound = current.child_by_field_name(cs.FIELD_LEFT)
+                declared = current.child_by_field_name(cs.FIELD_TYPE)
+                implicit = declared is None or (
+                    declared.type == cs.TS_CSHARP_IMPLICIT_TYPE
+                )
+                if bound is not None and implicit and safe_decode_text(bound) == name:
+                    return True
+            current = current.parent
+        return False
+
     def _declared_type_name(self, decl: Node) -> str | None:
         type_node = decl.child_by_field_name(cs.FIELD_TYPE)
         if type_node is None or type_node.type == cs.TS_CSHARP_IMPLICIT_TYPE:
@@ -534,6 +553,27 @@ class CSharpTypeInferenceEngine:
         # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
+        # A `foreach (var x in ...)` binding is a LOCAL whose element type is
+        # not inferred, so it never reaches `local_var_types`. Left to the
+        # checks below it read as an external TYPE when PascalCase and fell
+        # to the name trie otherwise, which bound the call to a registered
+        # class of the same name: `foreach (var Config in items) {
+        # Config.Each(); }` emitted an edge to `N.Config.Each` (Copilot,
+        # PR #1998). A local owns the name whatever its type, so the call is
+        # external to this graph, not a static call on that class.
+        bound = self._unwrap_receiver(receiver)
+        if bound is not None and bound.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(bound)
+            # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
+            # type, reaches local_var_types, and resolves normally -- this
+            # branch is never reached for it. Guarding on the `var` form
+            # keeps that path working.
+            if (
+                name
+                and name not in local_var_types
+                and self._foreach_binds_var(bound, name)
+            ):
+                return True
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return False
@@ -1213,6 +1253,15 @@ class CSharpTypeInferenceEngine:
             type_name = local_var_types.get(name)
             if type_name is not None:
                 return self._type_name_to_qn(type_name, module_qn)
+            # A `foreach (var x in ...)` binding is a LOCAL whose type comes
+            # from the sequence and is not inferred, so it never reaches
+            # `local_var_types`. Falling through to the static branch below
+            # read the name as a TYPE: `foreach (var Config in items) {
+            # Config.Each(); }` emitted an edge to the registered class
+            # `N.Config` (Copilot, PR #1998). A local owns the name here
+            # whatever its type, so the receiver is unresolved, not static.
+            if self._foreach_binds_var(receiver, name):
+                return None
             if class_qn := self._containing_class_qn(caller_qn):
                 if ftype := self._field_type(class_qn, name):
                     return self._type_name_to_qn(ftype, module_qn)
