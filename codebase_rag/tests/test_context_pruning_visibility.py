@@ -370,9 +370,21 @@ class TestOptOutSettingIsWiredToTheEnvironment:
     def _config(monkeypatch, value: str | None):
         from codebase_rag.config import AppConfig
 
-        # `AppConfig` reads a `.env`; clear the var so the default case is the
-        # default rather than whatever the developer's environment holds.
-        monkeypatch.delenv("CGR_CONTEXT_COMPACTION_ENABLED", raising=False)
+        # `delenv` is what isolates this, NOT `_env_file=None`: `config.py`
+        # calls `load_dotenv()` at import time, which copies `.env` into
+        # `os.environ` before pydantic is involved at all, so suppressing the
+        # settings loader's own file reading comes far too late.
+        #
+        # Both spellings must go. `model_config` sets `case_sensitive=False`,
+        # so pydantic still reads a lowercase `cgr_...` from the environment
+        # while an uppercase-only `delenv` leaves it in place -- measured: it
+        # turns `test_defaults_to_enabled` red for a reason that has nothing
+        # to do with the code under test.
+        for name in (
+            "CGR_CONTEXT_COMPACTION_ENABLED",
+            "cgr_context_compaction_enabled",
+        ):
+            monkeypatch.delenv(name, raising=False)
         if value is not None:
             monkeypatch.setenv("CGR_CONTEXT_COMPACTION_ENABLED", value)
         return AppConfig(_env_file=None)
