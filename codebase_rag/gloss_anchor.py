@@ -55,7 +55,13 @@ _MASK = "\x00"
 # verbatim and never masked. Substrings, because every grammar spells its
 # literals differently (`string`, `string_literal`, `template_string`,
 # `interpreted_string_literal`, `encapsed_string`, `char_literal`).
-_LITERAL_KINDS = ("string", "char", "template", "heredoc", "encapsed")
+# Matched as substrings against a node type, so each entry must not appear
+# in a NON-literal type: `template` alone also matched C++'s
+# `template_declaration`, which made every leaf of a templated function
+# literal -- including its name, so a rename changed the quote and the
+# anchor could not follow it. The JS literal is `template_string`
+# (Copilot, PR #1966).
+_LITERAL_KINDS = ("string", "char", "template_string", "heredoc", "encapsed")
 # An expression inside a string (`f"{run()}"`, `${run()}`) is code, not
 # literal text: the walk up from a leaf meets the interpolation node before
 # the string node, and stops there. A BARE substitution (Dart's `"$run"`)

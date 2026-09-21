@@ -163,3 +163,39 @@ def test_a_bare_dart_substitution_is_literal_text() -> None:
     assert dart(bare, "run") != dart(bare_renamed, "execute")
     braced = 'String run() {\n  return "value: ${run()}";\n}\n'
     assert dart(braced, "run") == dart(braced.replace("run()", "execute()"), "execute")
+
+
+_CPP_TEMPLATE = """template <typename T>
+T run(T a) {
+    return a;
+}
+"""
+
+
+def _cpp_anchor(source: str, name: str | None, start: int, end: int):
+    parsed = ParsedSource(source, parse_source(_PARSERS, Path("mod.cpp"), source))
+    anchor = text_anchor(parsed, name, start, end)
+    assert anchor is not None
+    return anchor
+
+
+def test_a_templated_cpp_rename_keeps_the_quote() -> None:
+    """`template` matched C++'s `template_declaration` as a literal kind.
+
+    Every leaf of a templated definition was then classified literal, so
+    the definition's own name was never masked and a pure rename changed
+    the quote -- the anchor could not follow it. The JS literal this entry
+    exists for is `template_string` (Copilot, #1966).
+    """
+    before = _cpp_anchor(_CPP_TEMPLATE, "run", 1, 4)
+    renamed = _CPP_TEMPLATE.replace("T run(T a)", "T execute(T a)")
+
+    assert _cpp_anchor(renamed, "execute", 1, 4).quote == before.quote
+
+
+def test_a_templated_cpp_body_edit_still_flips_the_quote() -> None:
+    """The control: masking the name must not mask the body as well."""
+    before = _cpp_anchor(_CPP_TEMPLATE, "run", 1, 4)
+    edited = _CPP_TEMPLATE.replace("return a;", "return a + 1;")
+
+    assert _cpp_anchor(edited, "run", 1, 4).quote != before.quote
