@@ -1106,6 +1106,52 @@ def test_a_static_methods_self_is_an_ordinary_parameter(temp_repo: Path) -> None
     assert "    def helper(self, a):" in shapes, shapes
 
 
+def test_a_bare_generator_argument_is_unmapped_not_rewritten(
+    temp_repo: Path,
+) -> None:
+    """`helper(x for x in xs)` passes a GENERATOR, not a list of values.
+
+    tree-sitter gives the call a `generator_expression` as its arguments
+    node rather than an `argument_list`, so binding it positionally would
+    rewrite a generator as if it were an ordinary value and change what
+    the call means. It must be listed unmapped instead (Copilot, #1533).
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/app.py": (
+                "def helper(a):\n"
+                "    return sum(a)\n\n\n"
+                "def run(xs):\n"
+                "    return helper(x for x in xs)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.app.helper",
+        ["a", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+
+    (skipped,) = report.unmapped
+    assert skipped.path == "pkg/app.py"
+    # The REASON matters, not just the refusal: without the argument-list
+    # check the call is still skipped, but by an arity miscount that counts
+    # the generator's own children as two positional arguments. That is the
+    # right answer for the wrong reason, and it would stop being right for
+    # a one-parameter generator call.
+    assert cs.SIGNATURE_SITE_UNREADABLE.split("{")[0] in skipped.reason, skipped.reason
+    # The generator survives verbatim: it was never bound as a value.
+    assert "helper(x for x in xs)" in _read(root, "pkg/app.py")
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 
