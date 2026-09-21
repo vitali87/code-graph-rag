@@ -125,8 +125,15 @@ def _prunable_candidates(
             if protected_tokens < protect_recent_tokens:
                 protected_tokens += part_tokens
                 continue
+            # A part no larger than the placeholder GROWS the context when
+            # rewritten, so it is not a candidate at all. Clamping its
+            # contribution to zero instead would still rewrite it, and the
+            # reported recovery would then overstate the net change by the
+            # difference (Greptile, #2106).
+            if part_tokens <= placeholder_tokens:
+                continue
             candidates.append((message_index, part_index))
-            recoverable_tokens += max(0, part_tokens - placeholder_tokens)
+            recoverable_tokens += part_tokens - placeholder_tokens
     return candidates, recoverable_tokens
 
 

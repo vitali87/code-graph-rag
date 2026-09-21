@@ -540,3 +540,76 @@ class TestDeclinedPruneCostsNothing:
             "a prune below the floor must return the caller's own list, "
             "which is what lets the call site skip the comparison"
         )
+
+
+class TestATinyResultIsNotWorthPruning:
+    """A part no larger than the placeholder must not be rewritten.
+
+    Replacing a 3-token tool result with the 17-token placeholder GROWS the
+    context. The selection used to clamp such a part's contribution to zero
+    (`max(0, part_tokens - placeholder_tokens)`) while still adding it to the
+    candidate list, so it was rewritten anyway and the reported recovery
+    overstated the net change by the difference (Greptile, #2106).
+    """
+
+    @staticmethod
+    def _placeholder_tokens() -> int:
+        from codebase_rag.context_pruning import PRUNED_PLACEHOLDER
+        from codebase_rag.utils.token_utils import count_tokens
+
+        return count_tokens(PRUNED_PLACEHOLDER)
+
+    def test_the_placeholder_is_not_free(self) -> None:
+        """The premise. If this is ever 0, the whole class is moot."""
+        assert self._placeholder_tokens() > 0
+
+    def test_a_tiny_old_result_is_left_alone(self) -> None:
+        """It sits outside the protected window and is still not pruned."""
+        from codebase_rag.context_pruning import (
+            PRUNED_PLACEHOLDER,
+            prune_old_tool_results,
+        )
+
+        history = [*_turn("tiny", "ok"), *_history(3, 30_000)]
+        pruned = prune_old_tool_results(history)
+        tiny = pruned[2].parts[0]
+        assert tiny.content == "ok", (
+            "a 1-token result was replaced by the longer placeholder, which "
+            "adds tokens rather than recovering any"
+        )
+        assert tiny.content != PRUNED_PLACEHOLDER
+
+    def test_the_large_results_around_it_still_prune(self) -> None:
+        """The control: without this, a pruner that did nothing would pass."""
+        from codebase_rag.context_pruning import (
+            PRUNED_PLACEHOLDER,
+            prune_old_tool_results,
+        )
+
+        history = [*_turn("tiny", "ok"), *_history(3, 30_000)]
+        pruned = prune_old_tool_results(history)
+        replaced = sum(
+            1
+            for message in pruned
+            for part in getattr(message, "parts", [])
+            if getattr(part, "content", None) == PRUNED_PLACEHOLDER
+        )
+        assert replaced >= 1, "nothing was pruned at all, so the test is inert"
+
+    def test_recoverable_never_counts_a_part_it_will_not_prune(self) -> None:
+        """Selection and accounting agree: every candidate frees real tokens."""
+        from codebase_rag.context_pruning import _prunable_candidates
+
+        history = [*_turn("tiny", "ok"), *_history(3, 30_000)]
+        candidates, recoverable = _prunable_candidates(history, 40_000)
+        floor = self._placeholder_tokens()
+        for message_index, part_index in candidates:
+            part = history[message_index].parts[part_index]
+            from codebase_rag.context_pruning import _content_tokens
+
+            assert _content_tokens(part) > floor, (
+                f"candidate at {message_index},{part_index} has "
+                f"{_content_tokens(part)} tokens, not more than the "
+                f"{floor}-token placeholder, so rewriting it adds context"
+            )
+        assert recoverable > 0
