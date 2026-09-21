@@ -650,6 +650,10 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         queries=queries,
         project_name="project_a",
     ).run(force=True)
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.helper"
+        for properties in store.nodes.values()
+    )
     assert indexed_scope(root, "project_a", explicit=True) == (None, None)
     assert not has_findings(
         run_check(
@@ -663,6 +667,11 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         )
     )
 
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def assist(a):"),
+    )
     second = GraphUpdater(
         ingestor=store,
         repo_path=root,
@@ -695,6 +704,14 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
     third.run()
 
     assert third.skipped_because_in_sync is False
+    assert not any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.helper"
+        for properties in store.nodes.values()
+    )
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.assist"
+        for properties in store.nodes.values()
+    )
     assert any(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_a.")
         for properties in store.nodes.values()
