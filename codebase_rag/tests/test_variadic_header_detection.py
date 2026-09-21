@@ -18,10 +18,16 @@ whether the call actually raises at runtime.
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 
 import pytest
 
-from codebase_rag.structural_delta import _header_absorbs_extra_positionals
+from codebase_rag.structural_delta import (
+    Definition,
+    _absorbs_extra_positionals,
+    _closes_the_parameter_list,
+    _header_absorbs_extra_positionals,
+)
 
 
 def _truth(header: str) -> bool:
@@ -114,3 +120,70 @@ def test_keyword_only_params_do_not_absorb_an_extra_positional() -> None:
     assert _header_absorbs_extra_positionals("def f(a, *, k):") is False
     # `*args` still suppresses, and still does so alongside keyword-only.
     assert _header_absorbs_extra_positionals("def f(a, *rest, k=1):") is True
+
+
+def test_a_multiline_header_is_not_cut_at_a_paren_in_a_default(
+    tmp_path: Path,
+) -> None:
+    """The read-back must reach the `)` that ends the PARAMETER LIST.
+
+    Drives `_absorbs_extra_positionals`, not the string helper, because the
+    truncation lives in that function's line loop: a test of the helper
+    alone stays green with the loop broken. The loop used to stop at the
+    first line containing `)`, cutting
+
+        def f(
+            a=g(),
+            *rest,
+        ):
+
+    after `a=g(),`. The fragment does not parse, so the answer was False and
+    a genuine `*rest` callee was reported as receiving too many arguments --
+    the false negative this function exists to prevent.
+    """
+    source = (
+        "def g():\n    return 1\n\n\ndef f(\n    a=g(),\n    *rest,\n):\n    pass\n"
+    )
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    definition = Definition(
+        label="Function",
+        qualified_name="m.f",
+        name="f",
+        path="m.py",
+        start_line=5,
+        end_line=9,
+        positional_params=("a",),
+        fingerprint="",
+        fingerprint_nodes=0,
+        branches=frozenset(),
+    )
+
+    assert _absorbs_extra_positionals(definition, tmp_path) is True
+
+
+@pytest.mark.parametrize(
+    ("header", "closes"),
+    [
+        ("def f(a):", True),
+        ("def f(\n    a=g(),\n", False),
+        ("def f(\n    a=g(),\n    *rest,\n):", True),
+        ("def f(a=(1, 2), *rest):", True),
+        ("def f(", False),
+    ],
+)
+def test_the_header_cut_follows_the_brackets(header: str, closes: bool) -> None:
+    """A `)` inside a default must not end the header.
+
+    The read-back loop used to stop at the FIRST line containing `)`. For
+
+        def f(
+            a=g(),
+            *rest,
+        ):
+
+    that cut after `a=g(),`, leaving an unparseable fragment that answers
+    False -- so a genuine `*rest` callee was reported as receiving too many
+    arguments, which is the false negative the docstring says this function
+    exists to avoid.
+    """
+    assert _closes_the_parameter_list(header) is closes

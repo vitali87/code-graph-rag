@@ -589,6 +589,25 @@ def _header_absorbs_extra_positionals(header: str) -> bool:
     return node.args.vararg is not None
 
 
+def _closes_the_parameter_list(header: str) -> bool:
+    """Whether `header` reaches the `)` that ends the parameter list.
+
+    True once an opening `(` has been seen and brackets balance again, so a
+    `)` inside a default does not end the header early.
+    """
+    depth = 0
+    seen_open = False
+    for ch in header:
+        if ch in "([{":
+            depth += 1
+            seen_open = True
+        elif ch in ")]}":
+            depth -= 1
+            if seen_open and depth <= 0:
+                return True
+    return False
+
+
 def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -> bool:
     """Whether the Python definition's header declares `*args`.
 
@@ -610,7 +629,15 @@ def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -
     header: list[str] = []
     for line in lines[definition.start_line - 1 : definition.end_line or None]:
         header.append(line)
-        if ")" in line:
+        # Stop where the parameter list CLOSES, not at the first `)`. A
+        # default can contain one (`a=g()`, `a=(1, 2)`), and cutting there
+        # drops a `*rest` that follows it -- the header then fails to parse
+        # and answers False, which suppresses nothing and reports a
+        # variadic callee as receiving too many arguments. Counting
+        # brackets is enough here: a `)` inside a string or comment would
+        # need the tokeniser, and an unbalanced count simply keeps reading
+        # to `end_line`, which is the safe direction.
+        if _closes_the_parameter_list("\n".join(header)):
             break
     return _header_absorbs_extra_positionals("\n".join(header))
 
