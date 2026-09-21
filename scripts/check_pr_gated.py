@@ -222,14 +222,15 @@ def _gh_stdout_or_empty(*args: str) -> str:
     Failures are returned as empty rather than raised so one unavailable
     endpoint reports as its own named reason instead of aborting the run
     and leaving the other checks unreported.
+
+    Delegates to `_gh_result` so both helpers share ONE subprocess call
+    site. A second `subprocess.run` here would be a second I/O path that
+    the tests stubbing this function do not intercept, and those tests
+    would then reach the network and pass or fail on the developer's `gh`
+    auth rather than on the code (local review on #1957).
     """
-    try:
-        done = subprocess.run(
-            ["gh", *args], capture_output=True, text=True, check=False, timeout=60
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return done.stdout if done.returncode == 0 else ""
+    stdout, _stderr, code = _gh_result(*args)
+    return stdout if code == 0 else ""
 
 
 def context_name(entry: dict[str, object]) -> str:
