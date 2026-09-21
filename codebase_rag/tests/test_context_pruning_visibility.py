@@ -325,10 +325,14 @@ class TestCallSite:
             and _tests_the_setting(node.test)
             and call in list(ast.walk(node))
         ]
+        # Direct body statements only. `ast.walk` would also match a guard
+        # nested under an unrelated conditional, which does NOT dominate the
+        # prune call -- the call stays reachable with compaction disabled
+        # while the assertion passes (CodeRabbit, #2106).
         early_returns = [
             node
             for function in enclosing
-            for node in ast.walk(function)
+            for node in function.body
             if isinstance(node, ast.If)
             and _tests_the_setting(node.test)
             and any(isinstance(b, ast.Return) for b in node.body)
