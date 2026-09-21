@@ -209,3 +209,25 @@ def test_a_failed_module_read_degrades_on_a_full_build_and_aborts_an_incremental
     updater._is_full_build = False
     with pytest.raises(RuntimeError):
         updater._recorded_module_qn("settings.py")
+
+
+def test_a_real_file_named_like_an_inline_module_is_not_synthetic() -> None:
+    """The synthetic path is `inline_module_<name>` with NO extension.
+
+    Both owner reads skipped any path starting with that prefix, so a real
+    file legitimately called `inline_module_widget.py` was dropped from the
+    owner map and its type facts requeued under the derived name instead of
+    the one the graph records (Copilot, #1935).
+    """
+    from codebase_rag.graph_updater import _is_inline_module_path
+
+    # Synthetic: the producer writes no extension.
+    assert _is_inline_module_path("inline_module_widget") is True
+    assert _is_inline_module_path("inline_module_my_mod") is True
+    # Real files carrying the same prefix are not synthetic.
+    assert _is_inline_module_path("inline_module_widget.py") is False
+    assert _is_inline_module_path("pkg/inline_module_a.py") is False
+    # The control: an ordinary path is unaffected either way, so the
+    # assertions above are not passing on a predicate that always answers
+    # False.
+    assert _is_inline_module_path("src/lib.rs") is False

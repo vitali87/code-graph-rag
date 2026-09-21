@@ -119,6 +119,18 @@ from .utils.path_utils import (
 from .utils.source_extraction import extract_source_with_fallback
 
 
+def _is_inline_module_path(path: str) -> bool:
+    """Whether `path` is the SYNTHETIC path of a bodied inline module.
+
+    Those are written as `inline_module_<name>` with no extension
+    (class_ingest/mixin.py), so the prefix alone is not the test: a real
+    file may legitimately be called `inline_module_widget.py`, and
+    treating it as synthetic drops it from the owner map (Copilot,
+    PR #1935).
+    """
+    return path.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(path).suffix
+
+
 def _persisted_int(value: object) -> int | None:
     # bool is an int subclass; a stray True would key as 1 and shadow a real
     # entry, so it is rejected explicitly (same discipline as the C# path).
@@ -2298,7 +2310,7 @@ class GraphUpdater:
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
                 continue
-            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+            if _is_inline_module_path(path):
                 continue
             if path not in found or len(qn) < len(found[path]):
                 found[path] = qn
@@ -2546,7 +2558,7 @@ class GraphUpdater:
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
                 continue
-            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+            if _is_inline_module_path(path):
                 continue
             # Only seed modules whose file survives this run (still eligible).
             # A file deleted OR newly excluded this cycle is gone from
