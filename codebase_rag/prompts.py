@@ -20,7 +20,7 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_SECURITY_ISSUES,
     CYPHER_EXAMPLE_TASKS,
 )
-from .graph_dialects import DIALECT_MEMGRAPH
+from .graph_dialects import DIALECT_MEMGRAPH, DIALECT_NEO4J
 from .schema_builder import GRAPH_SCHEMA_DEFINITION
 from .tools.tool_descriptions import AgenticToolName
 from .types_defs import ToolNames
@@ -177,13 +177,13 @@ The database contains information about a codebase, structured with the followin
 """
 
 
-GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
-
-
 def _resolve_engine_display_name(backend: str | None = None) -> str:
-    chosen = backend or settings.GRAPH_BACKEND
-    return "Neo4j" if "neo4j" in chosen.lower() else "Memgraph"
-
+    chosen = backend if backend is not None else settings.GRAPH_BACKEND
+    if chosen == DIALECT_MEMGRAPH:
+        return "Memgraph"
+    if chosen == DIALECT_NEO4J:
+        return "Neo4j"
+    raise ValueError(f"Unsupported graph backend: {chosen!r}")
 
 def _format_active_projects_block(
     active_projects: list[str] | None,

@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 
 from codebase_rag.prompts import (
@@ -34,8 +36,13 @@ def test_format_active_projects_block_engine_name(
 def test_orchestrator_prompt_reflects_configured_backend(
     backend: str, expected_engine: str
 ) -> None:
-    # Use empty tool list or minimal mock
-    prompt = build_rag_orchestrator_prompt(
-        tools=[], active_projects=None, backend=backend
-    )
+    with patch("codebase_rag.prompts.logger.warning"):
+        prompt = build_rag_orchestrator_prompt(
+            tools=[], active_projects=None, backend=backend
+        )
     assert f"This {expected_engine} database may contain multiple" in prompt
+
+
+def test_unknown_backend_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported graph backend"):
+        _format_active_projects_block(active_projects=None, backend="unknown")
