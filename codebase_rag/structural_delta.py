@@ -18,7 +18,6 @@ found by walking its callers one hop at a time.
 from __future__ import annotations
 
 import ast
-import re
 import textwrap
 import time
 from collections.abc import Callable, Iterable
@@ -551,13 +550,8 @@ def _dangling(
 # --- signature changes --------------------------------------------------------
 
 
-# `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
-# and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
-
-
 def _header_is_variadic(header: str) -> bool:
-    """Whether a `def` header declares `*args` or keyword-only params.
+    """Whether a `def` header declares `*args`.
 
     Parsed, not scanned. Scanning got both directions wrong, and this is
     the sole suppressor of a too-many-arguments verdict, so each costs
@@ -584,7 +578,7 @@ def _header_is_variadic(header: str) -> bool:
     node = tree.body[0] if tree.body else None
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return False
-    return node.args.vararg is not None or bool(node.args.kwonlyargs)
+    return node.args.vararg is not None
 
 
 def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:

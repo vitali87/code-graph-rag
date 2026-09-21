@@ -125,6 +125,11 @@ _NOT_GRAPH_READERS = frozenset(
         # result to the postcondition contract, so refusing up front on a
         # partial graph would block the operation that repairs it.
         cs.MCPToolName.CHANGE_SIGNATURE,
+        # Same shape again: `move` is a graph-driven EDIT. The enum member
+        # lands on this layer ahead of its MCP handler, so nothing dispatches
+        # it yet; classifying it here keeps the fail-closed inventory honest
+        # rather than leaving it to read as an unguarded reader.
+        cs.MCPToolName.MOVE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
