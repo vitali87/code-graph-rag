@@ -5,10 +5,16 @@ definitions that share a qualified name. C# spells a keyword-colliding name
 with a leading `@` -- `@event`, `@lock` -- so a reader that cuts at the first
 `@` destroys the name instead of stripping a marker.
 
-Every test here drives a SHIPPED reader rather than the helper, because a
+The tests prefer driving a SHIPPED reader over driving the helper, because a
 helper that is correct in isolation says nothing about a caller that never
-invokes it. The helper's own behaviour is pinned once, in
-`TestHelperGrammar`, and everything else goes through production entry points.
+invokes it -- the gap that let this bug survive #2014's partial fix.
+
+Three of the ten routed readers are reachable without graph fixtures and are
+tested behaviourally (`graph_updater._natural_qn`,
+`call_processor._scope_qn_candidates`, `dead_code._is_root`). The remaining
+five are methods on parser classes whose fixtures would cost far more than
+the assertion is worth; `TestEveryRoutedReaderUsesTheHelper` is a structural
+backstop for those, and is deliberately the weakest thing here.
 """
 
 from __future__ import annotations
@@ -100,7 +106,7 @@ class TestGraphUpdaterNaturalQn:
 
         assert _natural_qn("pkg.@event@12") == "pkg.@event"
 
-    def test_the_reader_delegates_to_the_shared_helper(self) -> None:
+    def test_the_reader_delegates_to_the_shared_helper_by_result(self) -> None:
         """Pins the PROPERTY (same answer as the helper), not the call shape.
 
         A reader that reimplemented the grammar correctly would pass; one
@@ -111,3 +117,140 @@ class TestGraphUpdaterNaturalQn:
 
         for qn in (MARKED, VERBATIM, VERBATIM_MARKED, "pkg.@event", "pkg.T.M@3"):
             assert _natural_qn(qn) == natural_qn(qn), qn
+
+
+class TestScopeCandidateReaders:
+    """`call_processor._scope_qn_candidates`, driven directly.
+
+    The early-exit guard these sites used (`MARKER not in last`) is TRUE for a
+    verbatim identifier, so before the fix a verbatim scope produced a second
+    candidate that was the corrupted name. Observable in the return value.
+    """
+
+    def test_a_verbatim_scope_yields_no_second_candidate(self) -> None:
+        """Was `['pkg.@event', 'pkg.']`: the extra candidate was corrupt."""
+        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+
+        assert _scope_qn_candidates("pkg.@event") == ["pkg.@event"]
+
+    def test_a_marked_scope_still_yields_its_natural_form(self) -> None:
+        """The behaviour the guard exists for must survive the fix."""
+        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+
+        assert _scope_qn_candidates("pkg.useStore@7") == [
+            "pkg.useStore@7",
+            "pkg.useStore",
+        ]
+
+    def test_a_marked_verbatim_scope_yields_the_written_name(self) -> None:
+        """Both at once: the marker goes, the verbatim name stays."""
+        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+
+        assert _scope_qn_candidates("pkg.@event@12") == [
+            "pkg.@event@12",
+            "pkg.@event",
+        ]
+
+    def test_an_unmarked_scope_is_unchanged(self) -> None:
+        from codebase_rag.parsers.call_processor import _scope_qn_candidates
+
+        assert _scope_qn_candidates("pkg.plain") == ["pkg.plain"]
+
+
+class TestDeadCodeRootLeaf:
+    """`dead_code._is_root`, whose name-scoped rules read the stripped leaf.
+
+    The issue's own provenance case: a SECOND Go `init()` in one file
+    registers as `init@51` and was reported dead because the leaf no longer
+    matched `GO_ROOT_FUNCTION_NAMES`.
+    """
+
+    @staticmethod
+    def _is_root(qn: str) -> bool:
+        from codebase_rag import constants as cs
+        from codebase_rag.dead_code import DeadCodeConfig, _is_root
+
+        config = DeadCodeConfig(
+            include_tests=False,
+            include_classes=False,
+            root_decorators=frozenset(),
+            entry_points=(),
+            test_patterns=(),
+            exclude_patterns=(),
+            min_resolution=None,
+            endpoint_roots=False,
+        )
+        return _is_root(
+            qn,
+            {cs.KEY_PATH: "pkg/register.go"},
+            config,
+            set(),
+            set(),
+            {},
+            {},
+            set(),
+            set(),
+            set(),
+            {},
+            "proj",
+            None,
+        )
+
+    def test_a_duplicate_go_init_is_still_a_root(self) -> None:
+        """The pre-existing behaviour, pinned so the fix cannot regress it."""
+        assert self._is_root("pkg.init@51") is True
+
+    def test_an_unduplicated_go_init_is_a_root(self) -> None:
+        assert self._is_root("pkg.init") is True
+
+    def test_an_ordinary_function_is_not_a_root(self) -> None:
+        """The control: without it, a rule that returned True for everything
+        would satisfy both assertions above."""
+        assert self._is_root("pkg.other") is False
+
+
+class TestEveryRoutedReaderUsesTheHelper:
+    """A structural backstop for the readers that need real graph state.
+
+    Five of the routed sites are methods on parser classes whose fixtures
+    cost far more than the assertion is worth. This pins the property that
+    matters for those: the module reaches the shared grammar and no longer
+    carries the broken spelling. It is deliberately weaker than the
+    behavioural tests above and does not replace them.
+    """
+
+    MODULES = (
+        "codebase_rag.graph_updater",
+        "codebase_rag.dead_code",
+        "codebase_rag.parsers.call_processor",
+        "codebase_rag.parsers.call_resolver",
+        "codebase_rag.parsers.class_ingest.method_override",
+        "codebase_rag.parsers.class_ingest.mixin",
+        "codebase_rag.parsers.function_ingest",
+        "evals.cgr_graph",
+    )
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_no_module_still_cuts_at_the_first_marker(self, module_name: str) -> None:
+        import importlib
+        import inspect
+
+        source = inspect.getsource(importlib.import_module(module_name))
+        # Written without the string itself appearing as code, so this test
+        # cannot match its own assertion text.
+        broken = f"split(cs.{'DUP_QN_MARKER'}, 1)[0]"
+        assert broken not in source, (
+            f"{module_name} still cuts at the first `@`, which empties a C# "
+            "verbatim identifier (issue #2017)"
+        )
+
+    @pytest.mark.parametrize("module_name", MODULES)
+    def test_every_module_reaches_the_shared_grammar(self, module_name: str) -> None:
+        import importlib
+        import inspect
+
+        source = inspect.getsource(importlib.import_module(module_name))
+        assert "qn_markers." in source, (
+            f"{module_name} does not route through the shared helper, so its "
+            "marker grammar can drift from the producer's"
+        )
