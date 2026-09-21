@@ -45,12 +45,36 @@ def _load_bundle_contents() -> ModuleType:
     true when run as a script, false when the tests load this module by file
     path, and invisible to a type checker either way.
     """
+    # One authoritative module object. `setdefault` used to keep an already
+    # registered module while this function executed and returned a DIFFERENT
+    # one, so a reload or a monkeypatch reached the registered object while
+    # the generator went on using its own copy -- measured: with a sentinel
+    # installed, `sys.modules['bundle_contents'] is <returned>` was False and
+    # the two carried different attributes (Greptile, #2110). The tests load
+    # this module by path and register it themselves, which is exactly the
+    # condition that splits them.
+    existing = sys.modules.get("bundle_contents")
+    if existing is not None:
+        if not hasattr(existing, "bundled_components"):
+            # Something registered a different module under this name. Say so
+            # rather than failing later with an AttributeError on a name that
+            # gives no hint where the wrong module came from.
+            # Message inlined: this runs at module level, ABOVE the
+            # constants block, so a name defined there is not yet bound and
+            # the raise would be a NameError instead (measured).
+            raise ImportError(
+                f"sys.modules['bundle_contents'] is {existing!r}, which has "
+                "no `bundled_components`; something registered a different "
+                "module under that name"
+            )
+        return existing
+
     path = Path(__file__).resolve().parent / "bundle_contents.py"
     spec = importlib.util.spec_from_file_location("bundle_contents", path)
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("bundle_contents", module)
+    sys.modules["bundle_contents"] = module
     spec.loader.exec_module(module)
     return module
 

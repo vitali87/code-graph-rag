@@ -8,6 +8,7 @@ runs it are the only thing producing that notice, so both are pinned here.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import sys
 from importlib.metadata import PathDistribution
@@ -874,19 +875,46 @@ class TestPyzArchiveIsActuallyRead:
 
         assert notices._component_of("ruamel.yaml/LICENSE") in components
 
-    def test_a_path_argument_is_rejected_by_the_reader(self, tmp_path: Path) -> None:
-        """Pins the reason `str()` is not decorative, so nobody 'tidies' it.
+    def test_the_reader_is_given_a_string(self, bundle: ModuleType) -> None:
+        """Pins OUR call, not PyInstaller's tolerance of a `Path`.
 
-        If a future PyInstaller accepts a `Path`, this test fails and the
-        comment in `bundle_contents.py` can be revisited deliberately.
+        Asserting that `ZlibArchiveReader` REJECTS a `Path` would make a
+        third-party limitation a CI requirement: if PyInstaller becomes
+        Path-compatible the assertion fails with no product regression
+        (Greptile, #2110). What matters is that this module passes a string,
+        which is true whatever the library later accepts.
+
+        The end-to-end test above is what proves the archive is really read;
+        this one names the argument type so a "tidy-up" that drops `str()`
+        has a test to answer to rather than only a comment.
         """
-        from PyInstaller.archive.readers import ZlibArchiveReader
+        source = (
+            Path(bundle.__file__).read_text(encoding="utf-8") if bundle.__file__ else ""
+        )
+        tree = ast.parse(source)
 
-        pyz = tmp_path / "PYZ.pyz"
-        self._write_pyz(pyz, ["anyio.abc"])
+        reader_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ZlibArchiveReader"
+        ]
 
-        with pytest.raises(AttributeError):
-            ZlibArchiveReader(pyz)
+        assert reader_calls, "bundle_contents never constructs a ZlibArchiveReader"
+        for call in reader_calls:
+            assert call.args, "ZlibArchiveReader called with no argument"
+            first = call.args[0]
+            assert (
+                isinstance(first, ast.Call)
+                and isinstance(first.func, ast.Name)
+                and first.func.id == "str"
+            ), (
+                "ZlibArchiveReader must be given `str(...)`; it parses a "
+                "`?offset` suffix off the name, so a Path raises "
+                "AttributeError before the archive is opened and the PYZ "
+                "half silently never runs"
+            )
 
     def test_a_dotted_module_matches_its_licence_directory(
         self, bundle: ModuleType, notices: ModuleType, tmp_path: Path
