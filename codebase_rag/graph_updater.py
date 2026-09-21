@@ -824,9 +824,9 @@ class GraphUpdater:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
         project_name: str | None = None,
-        project_named: bool | None = None,
         capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
+        project_named: bool | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
         # `ingestor` stays the raw object for DB queries (QueryProtocol),

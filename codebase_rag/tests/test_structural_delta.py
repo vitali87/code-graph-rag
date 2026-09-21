@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import (
@@ -107,6 +110,31 @@ def _observe(
 
 def _qn(rel: str) -> str:
     return f"{PROJECT}.{rel}"
+
+
+def _assert_cli_check_accepts(
+    root: Path,
+    store: _StatefulIngestor,
+    project_name: str,
+    projects: list[str],
+) -> None:
+    cli_store = MagicMock(wraps=store)
+    cli_store.list_projects = MagicMock(return_value=projects)
+    context = MagicMock()
+    context.__enter__.return_value = cli_store
+    context.__exit__.return_value = False
+    with patch("codebase_rag.cli.connect_memgraph", return_value=context):
+        result = CliRunner().invoke(
+            app,
+            [
+                "check",
+                "--repo-path",
+                str(root),
+                "--project",
+                project_name,
+            ],
+        )
+    assert result.exit_code == 0, result.output
 
 
 # --- acceptance ---------------------------------------------------------------
@@ -654,6 +682,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
         str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.helper"
         for properties in store.nodes.values()
     )
+    _assert_cli_check_accepts(root, store, "project_a", ["project_a"])
     assert indexed_scope(root, "project_a", explicit=True) == (None, None)
     assert not has_findings(
         run_check(
@@ -681,6 +710,7 @@ def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
     )
     second.run(force=True)
     assert second.skipped_because_in_sync is False
+    _assert_cli_check_accepts(root, store, "project_b", ["project_a", "project_b"])
     assert indexed_scope(root, "project_b", explicit=True) == (None, None)
     assert not has_findings(
         run_check(

@@ -214,7 +214,7 @@ def _sync_workspace(
         _run_graph_sync(
             repo=repo_path,
             project_name=repo.project_name,
-            project_named=True,
+            project_named=repo.project_named,
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
