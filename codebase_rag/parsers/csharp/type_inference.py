@@ -1219,6 +1219,10 @@ class CSharpTypeInferenceEngine:
         module_qn: str,
         generic_arity: int | None = None,
     ) -> str | None:
+        type_name, annotated_arity = split_type_ref(type_name)
+        if generic_arity is None:
+            generic_arity = annotated_arity or generic_arity_of_type_text(type_name)
+        type_name = _normalize_type_name(type_name)
         expanded = type_name.replace("::", cs.SEPARATOR_DOT)
         global_prefix = f"global{cs.SEPARATOR_DOT}"
         is_global = expanded.startswith(global_prefix)
@@ -1260,7 +1264,7 @@ class CSharpTypeInferenceEngine:
         # filtering works for every map-sourced reference.
         if generic_arity is None:
             type_name, generic_arity = split_type_ref(type_name)
-        if "::" in type_name:
+        if "::" in type_name or cs.SEPARATOR_DOT in type_name:
             return self._qualified_type_name_to_qn(type_name, module_qn, generic_arity)
         # An already-qualified name that IS a registered type resolves directly,
         # skipping the ambiguous simple-name sweep.

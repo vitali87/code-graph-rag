@@ -1403,9 +1403,10 @@ class CallResolver:
         if language == cs.SupportedLanguage.CSHARP and (
             cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
         ):
-            if result := self._try_resolve_csharp_qualified_call(call_name, module_qn):
+            result, decided = self._resolve_csharp_qualified_call(call_name, module_qn)
+            if result is not None:
                 return result
-            if cs.SEPARATOR_DOUBLE_COLON in call_name:
+            if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
                 return None
 
         if result := self._try_resolve_via_imports(
@@ -2139,6 +2140,12 @@ class CallResolver:
     def _try_resolve_csharp_qualified_call(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        result, _ = self._resolve_csharp_qualified_call(call_name, module_qn)
+        return result
+
+    def _resolve_csharp_qualified_call(
+        self, call_name: str, module_qn: str
+    ) -> tuple[tuple[str, str] | None, bool]:
         path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
         global_prefix = f"global{cs.SEPARATOR_DOT}"
         is_global = path.startswith(global_prefix)
@@ -2146,7 +2153,7 @@ class CallResolver:
             path = path[len(global_prefix) :]
         parts = path.split(cs.SEPARATOR_DOT)
         if len(parts) < 2 or any(not part for part in parts):
-            return None
+            return None, False
 
         type_inference = self.type_inference.csharp_type_inference
         for cut in range(len(parts), 0, -1):
@@ -2157,17 +2164,18 @@ class CallResolver:
             if class_qn is None:
                 continue
             if cut == len(parts):
-                return cs.NodeLabel.CLASS, class_qn
+                return (cs.NodeLabel.CLASS, class_qn), True
             member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
                 cs.CHAR_ANGLE_OPEN, 1
             )[0]
             method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
             if method_qn in self.function_registry:
-                return self.function_registry[method_qn], method_qn
+                return (self.function_registry[method_qn], method_qn), True
             if cs.SEPARATOR_DOT not in member_name:
                 if inherited := self._resolve_inherited_method(class_qn, member_name):
-                    return inherited
-        return None
+                    return inherited, True
+            return None, True
+        return None, False
 
     def _has_separator(self, call_name: str) -> bool:
         return (

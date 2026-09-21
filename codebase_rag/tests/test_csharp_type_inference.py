@@ -52,6 +52,9 @@ public class Widget {
     public static void DottedS() {}
     public static void GlobalS() {}
 }
+public class GenericWidget<T> {
+    public static void GenericS() {}
+}
 """,
         encoding="utf-8",
     )
@@ -61,6 +64,7 @@ namespace Other;
 public class Widget {
     public Widget(int n) {}
     public static void AliasS() {}
+    public static void DottedOnlyInOther() {}
     public static void GlobalS() {}
 }
 """,
@@ -83,6 +87,12 @@ public class Q {
     public void RunGlobal() {
         var w = new global::Zeta.Widget(3);
         global::Zeta.Widget.GlobalS();
+    }
+    public void RunGeneric() {
+        Z::GenericWidget<int>.GenericS();
+    }
+    public void RunDottedMissing() {
+        Z.Widget.DottedOnlyInOther();
     }
     public void RunMissing() {
         Missing::NeverBoundS();
@@ -122,6 +132,16 @@ public class Q {
     ), calls
     assert any(
         source.endswith("Q.RunGlobal") and target.endswith("Zeta.Widget.GlobalS")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunGeneric")
+        and target.endswith("Zeta.GenericWidget.GenericS")
+        for source, target in calls
+    ), calls
+    assert not any(
+        source.endswith("Q.RunDottedMissing")
+        and target.endswith("Other.Widget.DottedOnlyInOther")
         for source, target in calls
     ), calls
     assert not any(target.endswith("Other.Widget") for _, target in instantiates), (
