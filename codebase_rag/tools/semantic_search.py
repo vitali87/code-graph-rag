@@ -153,8 +153,11 @@ def get_function_source_code(
             owner_root = project_root_for_qualified_name(qualified_name, project_roots)
             if owner_root is not None:
                 file_path_obj = (owner_root / file_path_obj).resolve()
-            if not absolute_path_within_project_root(
-                qualified_name, str(file_path_obj), project_roots
+            if (
+                not absolute_path_within_project_root(
+                    qualified_name, str(file_path_obj), project_roots
+                )
+                or not file_path_obj.is_file()
             ):
                 logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
                 return None

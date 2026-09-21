@@ -1,12 +1,18 @@
 from pathlib import Path
 from typing import Literal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from codebase_rag import logs as ls
 from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.tools.code_retrieval import CodeRetriever
 from codebase_rag.tools.semantic_search import get_function_source_code
+from codebase_rag.utils.path_utils import (
+    absolute_path_within_project_root,
+    project_root_for_qualified_name,
+)
+from codebase_rag.utils.source_extraction import extract_source_lines
 
 SOURCE = "def get_user(user_id):\n    return user_id\n"
 QUALIFIED_NAME = "service.users.src.handlers.get_user"
@@ -278,3 +284,63 @@ class TestFallbackOwnership:
             if call.args[0] == CYPHER_LIST_PROJECTS
         ]
         assert len(roots_calls) == 1
+
+
+@pytest.mark.parametrize("include_parent", [False, True])
+def test_exact_project_name_uses_its_own_root(
+    tmp_path: Path, include_parent: bool
+) -> None:
+    owner_root = tmp_path / "users"
+    roots = {"service.users": str(owner_root)}
+    if include_parent:
+        roots["service"] = str(tmp_path)
+
+    assert project_root_for_qualified_name("service.users", roots) == owner_root
+    assert absolute_path_within_project_root(
+        "service.users", str(owner_root / RELATIVE_PATH), roots
+    )
+    assert not absolute_path_within_project_root(
+        "service.users", str(tmp_path / RELATIVE_PATH), roots
+    )
+
+
+def test_exact_project_name_without_root_keeps_legacy_behavior(tmp_path: Path) -> None:
+    roots = {"service": str(tmp_path / "parent"), "service.users": None}
+
+    assert project_root_for_qualified_name("service.users", roots) is None
+    assert absolute_path_within_project_root(
+        "service.users", str(tmp_path / RELATIVE_PATH), roots
+    )
+
+
+def test_project_name_requires_a_segment_boundary(tmp_path: Path) -> None:
+    roots = {"service.users": str(tmp_path / "users")}
+
+    assert project_root_for_qualified_name("service.users2", roots) is None
+    roots["service"] = str(tmp_path)
+    assert project_root_for_qualified_name("service.users2", roots) == tmp_path
+
+
+@pytest.mark.parametrize("fallback_kind", ["missing", "directory"])
+def test_function_source_rejects_non_file_fallback(
+    tmp_path: Path, fallback_kind: str
+) -> None:
+    target = tmp_path / RELATIVE_PATH
+    if fallback_kind == "directory":
+        target.mkdir(parents=True)
+    ingestor = _make_source_ingestor(None, {"service.users": str(tmp_path)})
+
+    with (
+        patch("codebase_rag.tools.semantic_search.logger") as mock_logger,
+        patch(
+            "codebase_rag.utils.source_extraction.extract_source_lines",
+            wraps=extract_source_lines,
+        ) as mock_extract,
+    ):
+        assert get_function_source_code(ingestor, node_id=1) is None
+
+    mock_extract.assert_not_called()
+    mock_logger.warning.assert_called_once_with(
+        ls.SEMANTIC_INVALID_LOCATION.format(id=1)
+    )
+    mock_logger.error.assert_not_called()

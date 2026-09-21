@@ -476,7 +476,11 @@ def project_roots_from_rows(
 def project_root_for_qualified_name(
     qualified_name: str, roots: dict[str, str | None]
 ) -> Path | None:
-    matches = [name for name in roots if qualified_name.startswith(name + ".")]
+    matches = [
+        name
+        for name in roots
+        if qualified_name == name or qualified_name.startswith(name + ".")
+    ]
     if not matches:
         return None
     owner = matches[0]
