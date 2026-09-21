@@ -613,3 +613,118 @@ class TestATinyResultIsNotWorthPruning:
                 f"{floor}-token placeholder, so rewriting it adds context"
             )
         assert recoverable > 0
+
+
+class TestTwoResultsInOneMessage:
+    """A message carrying TWO prunable parts, which no other fixture builds.
+
+    `_turn` emits exactly one `ToolReturnPart` per message, so every existing
+    assertion about counts is satisfied by a message-counting implementation
+    as well as a part-counting one. The documented behaviour is per PART
+    (Copilot, #2106).
+    """
+
+    @staticmethod
+    def _two_part_history() -> list[ModelRequest | ModelResponse]:
+        blob = "result " * 4_000
+        pair = ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="query", content=blob, tool_call_id="a"),
+                ToolReturnPart(tool_name="query", content=blob, tool_call_id="b"),
+            ]
+        )
+        # The pair is OLD, so the protected window covers the tail instead.
+        return [pair, *_history(turns=30, output_tokens=4_000)]
+
+    def test_both_parts_of_one_message_are_pruned(self) -> None:
+        from codebase_rag.context_pruning import (
+            PRUNED_PLACEHOLDER,
+            prune_old_tool_results,
+        )
+
+        history = self._two_part_history()
+        pruned = prune_old_tool_results(history)
+        first = pruned[0]
+        replaced = [
+            part
+            for part in first.parts
+            if getattr(part, "content", None) == PRUNED_PLACEHOLDER
+        ]
+        assert len(replaced) == 2, (
+            "a message with two prunable parts had "
+            f"{len(replaced)} replaced; a message-counting implementation "
+            "stops at one and every single-part fixture hides it"
+        )
+
+    def test_the_report_counts_parts_not_messages(self) -> None:
+        """`dropped_parts` must see 2 for one message, or the notice lies."""
+        from codebase_rag.context_pruning import prune_old_tool_results
+
+        history = self._two_part_history()
+        pruned = prune_old_tool_results(history)
+        report = describe_prune(history, pruned)
+        first_message_drops = sum(
+            1
+            for before, after in zip(history[0].parts, pruned[0].parts, strict=True)
+            if getattr(before, "content", None) != getattr(after, "content", None)
+        )
+        assert first_message_drops == 2
+        assert report.dropped_parts >= 2
+
+
+class TestTheCompactionGuardActuallyRuns:
+    """`_compact_context_if_needed` executed, not merely parsed.
+
+    Every other test of this guard inspects its AST. A mutation that moved the
+    `return` into the enabled branch, or dropped the threshold while keeping a
+    setting-dependent early return, satisfies those structural checks while
+    disabling compaction or running it below the critical threshold
+    (Copilot, #2106).
+    """
+
+    @staticmethod
+    def _critical() -> float:
+        from codebase_rag.constants import cli
+
+        return cli.TOKEN_THRESHOLD_CRITICAL
+
+    @staticmethod
+    def _run(pct: float, *, enabled: bool, monkeypatch) -> tuple[list, str]:
+        from codebase_rag import main as main_module
+        from codebase_rag.models import AppContext
+
+        monkeypatch.setattr(
+            main_module.settings, "CONTEXT_COMPACTION_ENABLED", enabled, raising=False
+        )
+        history = _prunable_history()
+        app_context = AppContext()
+        printed: list[str] = []
+        monkeypatch.setattr(
+            app_context.console, "print", lambda *a, **k: printed.append(str(a[0]))
+        )
+        before = [getattr(p, "content", None) for m in history for p in m.parts]
+        main_module._compact_context_if_needed(history, pct, app_context)
+        after = [getattr(p, "content", None) for m in history for p in m.parts]
+        return [b != a for b, a in zip(before, after, strict=True)], "\n".join(printed)
+
+    def test_below_the_threshold_nothing_is_touched(self, monkeypatch) -> None:
+        changed, printed = self._run(
+            self._critical() - 1, enabled=True, monkeypatch=monkeypatch
+        )
+        assert not any(changed), "compaction ran below the critical threshold"
+        assert printed == ""
+
+    def test_at_the_threshold_it_prunes_and_says_so(self, monkeypatch) -> None:
+        """The control: without this, a guard that never runs would pass above."""
+        changed, printed = self._run(
+            self._critical(), enabled=True, monkeypatch=monkeypatch
+        )
+        assert any(changed), "compaction did not run at the critical threshold"
+        assert printed, "pruned without telling the user"
+
+    def test_opted_out_nothing_is_touched_even_when_critical(self, monkeypatch) -> None:
+        changed, printed = self._run(
+            self._critical() + 10, enabled=False, monkeypatch=monkeypatch
+        )
+        assert not any(changed), "compaction ran for a user who opted out"
+        assert printed == ""
