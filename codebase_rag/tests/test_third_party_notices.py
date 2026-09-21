@@ -274,6 +274,28 @@ class TestLicenseDiscovery:
             notices._license_texts(dist)
         assert "binary/LICENSE" in str(excinfo.value)
 
+    def test_undecodable_dist_info_licence_refuses_rather_than_crashing(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        """`read_text` suppresses missing/permission errors but not decode ones.
+
+        An escaping `UnicodeDecodeError` would abort the release build with a
+        traceback, bypassing the refusal path entirely.
+        """
+        dist = _fake_dist(tmp_path, "badmeta", ["License: MIT"], {})
+        dist_info = tmp_path / "badmeta-1.0.dist-info"
+        (dist_info / "LICENSE").write_bytes(b"Copyright \xff\xfe bad")
+        (dist_info / "RECORD").write_text(
+            "badmeta-1.0.dist-info/METADATA,,\n"
+            "badmeta-1.0.dist-info/RECORD,,\n"
+            "badmeta-1.0.dist-info/LICENSE,,\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(notices.UnreadableLicenseError) as excinfo:
+            notices._license_texts(dist)
+        assert "badmeta-1.0.dist-info/LICENSE" in str(excinfo.value)
+
     def test_partial_read_failure_refuses_rather_than_dropping_a_licence(
         self, notices: ModuleType, tmp_path: Path
     ) -> None:

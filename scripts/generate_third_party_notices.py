@@ -210,9 +210,12 @@ def _license_paths(dist: Distribution) -> list[str]:
 def _read_installed(dist: Distribution, path: str) -> str | None:
     """Read an installed file named relative to the install root."""
     dist_info = _dist_info_dir(dist)
-    if dist_info is not None and path.startswith(f"{dist_info}/"):
-        return dist.read_text(path.split("/", 1)[1])
+    # `read_text` suppresses `FileNotFoundError` and `PermissionError` but not
+    # a decode failure, so both branches share one guard: an unreadable file
+    # must reach the caller's refusal rather than abort the build.
     try:
+        if dist_info is not None and path.startswith(f"{dist_info}/"):
+            return dist.read_text(path.split("/", 1)[1])
         located = Path(str(dist.locate_file(path)))
         return located.read_text(encoding=ENCODING)
     except (OSError, UnicodeDecodeError):
