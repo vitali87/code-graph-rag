@@ -1058,6 +1058,54 @@ def test_a_static_method_has_no_receiver(temp_repo: Path, decorator: str) -> Non
     )
 
 
+def test_a_static_methods_self_is_an_ordinary_parameter(temp_repo: Path) -> None:
+    """`@staticmethod def f(self, x)` is legal and `self` is NOT a receiver.
+
+    The receiver was popped by NAME before staticness was decided, so
+    `self` was treated as the receiver AND re-added from `new_params`,
+    writing `def helper(self, self, a, n: int)` -- a duplicate parameter,
+    and a SyntaxError in the file the tool had just edited (Copilot,
+    #1533). Deciding staticness first makes the operation refuse and roll
+    back instead, leaving the source untouched.
+    """
+    root = _project(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/shapes.py": (
+                "class K:\n"
+                "    @staticmethod\n"
+                "    def helper(self, a):\n"
+                "        return self + a\n\n\n"
+                "def on_class():\n"
+                "    return K.helper(1, 2)\n"
+            ),
+        },
+    )
+    store, updater = _index(root)
+
+    report = change_signature(
+        root,
+        store.fetch_all,
+        PROJECT,
+        f"{PROJECT}.pkg.shapes.K.helper",
+        ["self", "a", "n: int"],
+        {"n": "=1"},
+        reingest=updater.reingest,
+    )
+
+    # The call-site binding still counts a receiver for a static method, so
+    # the operation cannot map `K.helper(1, 2)` and ROLLS BACK. That is the
+    # correct outcome: before the reorder it wrote
+    # `def helper(self, self, a, n: int)` -- a duplicate parameter, and a
+    # SyntaxError in the file it had just edited.
+    assert not report.applied
+    assert "too_many" in report.message, report.message
+    shapes = _read(root, "pkg/shapes.py")
+    assert "def helper(self, self" not in shapes, shapes
+    assert "    def helper(self, a):" in shapes, shapes
+
+
 # --- transaction and contract ---------------------------------------------------------
 
 

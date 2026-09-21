@@ -772,13 +772,18 @@ def _take_receiver(
     A method whose first parameter is named anything else refuses: `this`
     would be remapped as a parameter and every bound call would lose its
     receiver.
+
+    Staticness is decided BEFORE the name: `@staticmethod def f(self, x)`
+    is legal Python and its `self` is an ordinary parameter, so popping it
+    by name dropped a real one from the header and every call site's
+    binding shifted by one (Copilot, PR #1912).
     """
     if label != cs.NodeLabel.METHOD or not specs:
         return None
-    if specs[0].name in cs.PY_RECEIVER_NAMES:
-        return specs.pop(0).text
     if _is_static(node, source):
         return None
+    if specs[0].name in cs.PY_RECEIVER_NAMES:
+        return specs.pop(0).text
     raise SignatureRefused(
         cs.SIGNATURE_UNUSUAL_RECEIVER.format(qn=qn, name=specs[0].name)
     )
