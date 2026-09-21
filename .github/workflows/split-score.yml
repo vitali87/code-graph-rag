@@ -23,6 +23,6 @@ jobs:
           fetch-depth: 0
 
       - name: pr-split score
-        uses: vitali87/pr-split@95cdcd9748109351b2aa7129ede2269989d8f61c # main 2026-09-21; v1.0.0 never posts (reads plan groups at the wrong nesting)
+        uses: vitali87/pr-split@95cdcd9748109351b2aa7129ede2269989d8f61c # v1.0.1
         with:
           max-loc: "400"
