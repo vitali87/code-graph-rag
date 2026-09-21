@@ -957,3 +957,71 @@ class TestPyzArchiveIsActuallyRead:
             bundle, "_read_archives", side_effect=RuntimeError("pyz unreadable")
         ):
             assert bundle.bundled_components(binary) == frozenset()
+
+
+class TestPyzEntryLookup:
+    """Finding the PYZ must not hinge on a build-time filename.
+
+    Copilot raised (#2110) that one-file archives can name the embedded
+    archive `PYZ-00.pyz` with an indexed suffix. On this project's PyInstaller
+    the embedded name is always `PYZ.pyz` -- the build overrides it ("Override
+    PYZ name in the PKG archive into PYZ.pyz, regardless of what the original
+    name was", `building/api.py:345`), and all three CI binaries confirm it --
+    so the concrete claim did not hold. The underlying point does: the name is
+    a build detail, while the TYPECODE is the contract the bootloader matches
+    on, so the typecode leads and the name is only a fallback.
+    """
+
+    def test_the_typecode_finds_an_indexed_pyz(self, bundle: ModuleType) -> None:
+        """The case raised: a name the literal check would miss."""
+
+        class _Archive:
+            toc = {
+                "PYZ-00.pyz": (0, 0, 0, 0, "z"),
+                "win32/win32api.pyd": (0, 0, 0, 0, "m"),
+            }
+
+        assert bundle._pyz_entry_names(_Archive()) == ["PYZ-00.pyz"]
+
+    def test_the_typecode_is_preferred_over_the_name(self, bundle: ModuleType) -> None:
+        """A `.pyz`-named entry without the typecode is not the sub-archive."""
+
+        class _Archive:
+            toc = {
+                "PYZ.pyz": (0, 0, 0, 0, "z"),
+                "vendored/decoy.pyz": (0, 0, 0, 0, "m"),
+            }
+
+        assert bundle._pyz_entry_names(_Archive()) == ["PYZ.pyz"]
+
+    @pytest.mark.parametrize("name", ["PYZ.pyz", "PYZ-00.pyz", "pyz-12.pyz"])
+    def test_the_name_fallback_covers_both_conventions(
+        self, bundle: ModuleType, name: str
+    ) -> None:
+        """Used only when the TOC is not the dict shape carrying typecodes."""
+
+        class _Archive:
+            toc = [name, "win32/win32api.pyd"]
+
+        assert bundle._pyz_entry_names(_Archive()) == [name]
+
+    def test_an_archive_with_no_pyz_yields_nothing(self, bundle: ModuleType) -> None:
+        """A binary may legitimately have none; the TOC answer then stands."""
+
+        class _Archive:
+            toc = {"win32/win32api.pyd": (0, 0, 0, 0, "m")}
+
+        assert bundle._pyz_entry_names(_Archive()) == []
+
+    def test_a_real_binary_resolves_through_the_typecode(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        """End to end on an archive built here, not a hand-made TOC."""
+        binary = TestPyzArchiveIsActuallyRead._write_binary(tmp_path, ["anyio.abc"], [])
+
+        from PyInstaller.archive.readers import CArchiveReader
+
+        names = bundle._pyz_entry_names(CArchiveReader(str(binary)))
+
+        assert names, "the PYZ was not found in a real one-file archive"
+        assert "anyio" in bundle.bundled_components(binary)

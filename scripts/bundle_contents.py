@@ -24,6 +24,7 @@ genuinely owes, which is a far worse defect than the over-inclusion it fixes.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -52,6 +53,41 @@ def _top_level(entry: str, *, dotted: bool) -> set[str]:
         return {head}
     parts = head.split(".")
     return {".".join(parts[: i + 1]) for i in range(len(parts))}
+
+
+# PyInstaller's typecode for the embedded PYZ archive (`building/api.py`
+# maps 'PYZ' -> 'z'), and what the bootloader itself matches on.
+PYZ_TYPECODE = "z"
+# Fallback only. The build OVERRIDES the embedded name to `PYZ.pyz` whatever
+# the intermediate was called ("Override PYZ name in the PKG archive into
+# PYZ.pyz, regardless of what the original name was", api.py:345), so the
+# on-disk `PYZ-00.pyz` never reaches the TOC. Verified on the Windows, macOS
+# and Linux CI binaries: each has exactly one entry, named `PYZ.pyz`.
+PYZ_FALLBACK_PATTERN = re.compile(r"^pyz(-\d+)?\.pyz$")
+
+
+def _pyz_entry_names(outer: object) -> list[str]:
+    """TOC entries holding the PYZ sub-archive, typecode first.
+
+    Matching the NAME alone is fragile: it is a build detail, whereas the
+    typecode is the contract the bootloader relies on (Copilot, #2110). The
+    reader exposes the TOC as a dict of `name -> (..., typecode)` here, but
+    that shape is not guaranteed across versions, so the name check remains as
+    a fallback rather than the primary test.
+    """
+    toc = getattr(outer, "toc", None)
+    by_typecode: list[str] = []
+    if isinstance(toc, dict):
+        for name, entry in toc.items():
+            if isinstance(entry, tuple) and entry and entry[-1] == PYZ_TYPECODE:
+                by_typecode.append(name)
+    if by_typecode:
+        return by_typecode
+    return [
+        name
+        for name in (toc or ())
+        if PYZ_FALLBACK_PATTERN.match(Path(str(name).replace("\\", "/")).name.lower())
+    ]
 
 
 def bundled_components(binary: Path) -> frozenset[str]:
@@ -87,17 +123,12 @@ def _read_archives(binary: Path) -> frozenset[str]:
     # Pure-Python modules live only in the PYZ sub-archive. Its absence is not
     # an error (a binary may legitimately have none), so the TOC result stands.
     payload = None
-    for name in entries:
-        # Matched on the entry NAME, not through `_top_level`: that reduces to
-        # a component (`PYZ.pyz` -> `pyz.pyz`, since a TOC dot is an
-        # extension), which would never equal "pyz" and would silently leave
-        # the sub-archive unread.
-        if Path(name.replace("\\", "/")).name.lower() == "pyz.pyz":
-            extracted = outer.extract(name)
-            # `extract` returns bytes on some PyInstaller versions and
-            # `(flag, bytes)` on others; take the payload either way.
-            payload = extracted[1] if isinstance(extracted, tuple) else extracted
-            break
+    for name in _pyz_entry_names(outer):
+        extracted = outer.extract(name)
+        # `extract` returns bytes on some PyInstaller versions and
+        # `(flag, bytes)` on others; take the payload either way.
+        payload = extracted[1] if isinstance(extracted, tuple) else extracted
+        break
     if payload is None:
         return frozenset(components)
 
