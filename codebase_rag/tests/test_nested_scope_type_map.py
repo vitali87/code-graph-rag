@@ -268,3 +268,59 @@ def test_a_mixed_nonlocal_unpacking_binds_only_the_declared_name(
 
     assert types["a"] == "Widget"
     assert "b" not in types
+
+
+_THREE_LEVEL = (
+    "def outer() -> int:\n"
+    "    v = Widget()\n"
+    "    def middle() -> None:\n"
+    "        v = Banner()\n"
+    "        def inner() -> None:\n"
+    "            nonlocal v\n"
+    "            v = Splash()\n"
+    "        inner()\n"
+    "    middle()\n"
+    "    return v.render()\n"
+)
+
+
+def test_a_nonlocal_binds_the_nearest_enclosing_binder(tmp_path: Path) -> None:
+    """With three levels, `nonlocal` rebinds the NEAREST enclosing function
+    that binds the name, not every ancestor.
+
+    `middle` binds `v`, so `inner`'s `nonlocal v` rebinds middle's `v` and
+    outer's `v` is untouched. Collecting every descendant's declarations
+    flat let inner's `Gamma()` overwrite outer's inferred type, so the
+    outer name reported the wrong class (Greptile, PR #1928).
+    """
+    assert _local_types(tmp_path, _THREE_LEVEL, "outer")["v"] == "Widget"
+
+
+def test_the_nearest_binder_still_receives_the_nonlocal(tmp_path: Path) -> None:
+    """The other half of the rule: middle OWNS the rebinding, so its own
+    map must hold the innermost type. Asserting only outer's value would
+    pass for an implementation that dropped the declaration entirely."""
+    assert _local_types(tmp_path, _THREE_LEVEL, "middle")["v"] == "Splash"
+
+
+def test_a_nonlocal_still_reaches_past_a_scope_that_does_not_bind_it(
+    tmp_path: Path,
+) -> None:
+    """The control for the test above: when the intervening function does
+    NOT bind the name, the declaration reaches the outer one as before, so
+    the ownership rule cannot be satisfied by refusing every nested case."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    def middle() -> None:\n"
+        "        def inner() -> None:\n"
+        "            nonlocal v\n"
+        "            v = Banner()\n"
+        "        inner()\n"
+        "    middle()\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Banner"

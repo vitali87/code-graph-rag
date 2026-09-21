@@ -448,25 +448,71 @@ def _annotates(binder: Node) -> bool:
     )
 
 
+def _enclosing_functions(node: Node, stop: Node) -> Iterator[Node]:
+    """Function scopes ENCLOSING `node`'s own, innermost first, up to `stop`.
+
+    The function `node` sits directly inside is skipped: a `nonlocal` never
+    binds in the scope that declares it.
+    """
+    current = node.parent
+    own_scope_seen = False
+    while current is not None:
+        if current.type == cs.TS_PY_FUNCTION_DEFINITION:
+            if own_scope_seen:
+                yield current
+            own_scope_seen = True
+        if current.id == stop.id:
+            return
+        current = current.parent
+
+
+def _binds_name(scope: Node, name: str) -> bool:
+    """Whether `scope`'s own body binds `name`, ignoring nested scopes."""
+    return any(
+        safe_decode_text(identifier) == name
+        for _node, identifier in _bindings_in(scope)
+    )
+
+
 def _nonlocal_names(scope: Node) -> frozenset[str]:
-    """Names any nested body in `scope` declares `nonlocal`.
+    """Names a nested body declares `nonlocal` that `scope` itself owns.
 
     A `nonlocal x` makes an assignment to `x` in that body rebind the
     enclosing function's `x`, so the binding belongs to the enclosing map
     even though it sits in a nested scope (#1922). `global` is different:
     it binds the module's name, leaving the enclosing local alone.
+
+    Which enclosing function it rebinds matters once there are three
+    levels: Python binds the NEAREST enclosing function scope that already
+    binds the name, so an `inner` declaring `nonlocal v` under a `middle`
+    that binds `v` rebinds middle's `v`, and outer's `v` must be left
+    alone. Collecting every descendant's declarations flat let that
+    innermost assignment overwrite outer's inferred type (Greptile,
+    PR #1928).
     """
     names: set[str] = set()
     stack: list[Node] = [scope]
     while stack:
         current = stack.pop()
         if current.type == cs.TS_PY_NONLOCAL_STATEMENT:
-            names.update(
-                text
-                for child in current.named_children
-                if child.type == cs.TS_PY_IDENTIFIER
-                and (text := safe_decode_text(child))
-            )
+            for child in current.named_children:
+                if child.type != cs.TS_PY_IDENTIFIER:
+                    continue
+                if not (text := safe_decode_text(child)):
+                    continue
+                owner = next(
+                    (
+                        fn
+                        for fn in _enclosing_functions(current, scope)
+                        if _binds_name(fn, text)
+                    ),
+                    None,
+                )
+                # No enclosing binder found: the declaration is unresolved
+                # (or `scope` is the only candidate), so keep the previous
+                # behaviour and let `scope` own it.
+                if owner is None or owner.id == scope.id:
+                    names.add(text)
         stack.extend(current.children)
     return frozenset(names)
 
