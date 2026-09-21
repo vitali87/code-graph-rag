@@ -25,6 +25,7 @@ from ..types_defs import (
     NodeType,
     PropertyDict,
 )
+from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -451,10 +452,13 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     # -> `useStore`): the def pass registers nested/anon members under the
     # NATURAL qn while the caller may carry the variant suffix. Registry-guarded,
     # so a scope without a twin adds nothing.
-    last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-    if cs.DUP_QN_MARKER not in last:
+    # Compare against the STRIPPED form rather than testing for the marker
+    # character: a C# verbatim identifier (`@event`) contains it without
+    # carrying a marker, and would otherwise add a duplicate candidate that
+    # is merely the scope again (issue #2017).
+    natural = qn_markers.natural_qn(scope_qn)
+    if natural == scope_qn:
         return [scope_qn]
-    natural = scope_qn[: len(scope_qn) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
     return [scope_qn, natural]
 
 

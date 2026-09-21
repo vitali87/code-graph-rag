@@ -21,6 +21,7 @@ from .types_defs import (
     ResultRow,
     ResultValue,
 )
+from .utils import qn_markers
 
 _MODULE = cs.NodeLabel.MODULE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
@@ -569,7 +570,7 @@ def _is_root(
     # is a registration artifact, never part of the written name; strip it
     # so every name-scoped root rule sees the real leaf (kubernetes
     # pkg.apis.abac register.init@51 reported dead).
-    leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+    leaf = qn_markers.strip_dup_marker(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
     path = str(props.get(cs.KEY_PATH, ""))
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -579,13 +580,15 @@ def _is_root(
         # site reaches the endpoint (issue #1603). Other decorators (a
         # fixture, a CLI command) keep rooting as before, on the same
         # definition too.
-        lambda: _has_root_decorator(props, config.root_decorators)
-        and (
-            config.endpoint_roots
-            or endpoint_links is None
-            or qn not in endpoint_links
-            or endpoint_links[qn] > 0
-            or _has_non_route_root_decorator(props, config.root_decorators)
+        lambda: (
+            _has_root_decorator(props, config.root_decorators)
+            and (
+                config.endpoint_roots
+                or endpoint_links is None
+                or qn not in endpoint_links
+                or endpoint_links[qn] > 0
+                or _has_non_route_root_decorator(props, config.root_decorators)
+            )
         ),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's

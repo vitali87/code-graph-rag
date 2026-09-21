@@ -104,6 +104,7 @@ from .types_defs import (
     ResultRow,
     SimpleNameLookup,
 )
+from .utils import qn_markers
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
@@ -739,9 +740,12 @@ def _touch_empty_json(cache_path: Path) -> None:
 
 
 def _natural_qn(qualified_name: str) -> str:
-    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment."""
-    head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
-    return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
+    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
+
+    Delegates so the marker grammar has one definition. Cutting at the first
+    `@` destroys a C# verbatim identifier (`@event` -> ``), issue #2017.
+    """
+    return qn_markers.natural_qn(qualified_name)
 
 
 _GLOSS_RELS = frozenset(
