@@ -120,3 +120,21 @@ def test_ownership_degrades_to_the_prefix_when_the_project_list_fails(
     assert updater._owns("svc.api.helper") is True
     assert updater._owns("svc.v2.api.helper") is True
     assert updater._owns("other.api.helper") is False
+
+
+def test_the_qn_seed_skips_a_sibling_projects_module(tmp_path: Path) -> None:
+    """The seed read is unscoped, and paths are RELATIVE.
+
+    `svc` and `svc.v2` both hold `api.py`, so the sibling's row passes the
+    eligible-paths guard and would seed `svc.v2.api` onto THIS project's
+    `api.py`, putting a qn another project owns into the disambiguator's map
+    (issue #1970).
+    """
+    store, root = _two_projects(tmp_path)
+    (root / "caller.py").write_text("def caller():\n    return 1\n", encoding="utf-8")
+    updater = _updater(root, store, "svc")
+    updater.run()
+
+    seeded = updater.factory.definition_processor.module_qn_to_file_path
+    assert "svc.api" in seeded, seeded
+    assert not [qn for qn in seeded if qn.startswith("svc.v2.")], seeded

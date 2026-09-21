@@ -2549,6 +2549,13 @@ class GraphUpdater:
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
                 continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
+                continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
             # Only seed modules whose file survives this run (still eligible).
