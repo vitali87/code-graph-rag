@@ -13,6 +13,7 @@ on:
       - ".github/workflows/build-binaries.yml"
       - "build_binary.py"
       - "scripts/generate_third_party_notices.py"
+      - "scripts/bundle_contents.py"
       - "scripts/license_texts/**"
       - "main.py"
       - "codebase_rag/constants/build.py"
@@ -101,7 +102,18 @@ jobs:
       - name: Generate third-party notices
         shell: bash
         run: |
+          BINARY="dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}"
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            BINARY="$BINARY.exe"
+          fi
+          # `--binary` filters a package's package-data licences to the
+          # components PyInstaller actually bundled. Without it the notice
+          # reproduces licences for excluded code: pywin32 vendors an
+          # LGPL-2.1 `adodbapi` that nothing imports, and the notice asserted
+          # copyleft terms over a binary carrying none. This step already runs
+          # after `Build binary`, so the file is there on every platform.
           uv run python scripts/generate_third_party_notices.py \
+            --binary "$BINARY" \
             --output "dist/code-graph-rag-${{ matrix.platform }}-${{ matrix.arch }}.THIRD_PARTY_NOTICES.txt"
 
       - name: Test binary
