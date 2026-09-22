@@ -47,6 +47,8 @@ Every top-level command, from the CLI's own help registry:
 | `cgr status` | Show stack state and the last sync time for each project |
 | `cgr doctor` | Check dependencies, services, and configuration |
 | `cgr help` | Show help for a command |
+| `cgr verify-index` | Verify a protobuf index against its provenance manifest |
+| `cgr diff-index` | Structural diff between two protobuf index snapshots |
 <!-- /SECTION:cli_commands -->
 
 ## Core Commands
