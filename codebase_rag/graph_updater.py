@@ -933,6 +933,9 @@ class GraphUpdater:
         self._rehydrated_module_qns: set[str] = set()
         # Registered project names, read once per run (issue #1970).
         self._registered_projects: list[str] | None = None
+        # Whether that read failed: the list then holds this project alone,
+        # which cannot tell a nested project's rows from this one's.
+        self._registry_unread = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1642,6 +1645,7 @@ class GraphUpdater:
         self._cache_discarded_in_memory = False
         self._parser_changed = False
         self._registered_projects = None
+        self._registry_unread = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2171,6 +2175,12 @@ class GraphUpdater:
             # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
             if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
+        # These modules feed the EXPOSES cleanup, a DELETE. With the registry
+        # unread, ownership degrades to the prefix rule and `svc.v2`'s
+        # modules pass as `svc`'s, so read nothing, as a failed module read
+        # does; the next healthy run cleans up (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return []
         return out
 
     def _rehydrated_route_handlers(
@@ -2375,6 +2385,7 @@ class GraphUpdater:
             rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            self._registry_unread = True
             rows = []
         for row in rows:
             name = row.get(cs.KEY_NAME)
@@ -5690,6 +5701,7 @@ class GraphUpdater:
         self._is_full_build = False
         # A project registered since the last run must not read as owned.
         self._registered_projects = None
+        self._registry_unread = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False

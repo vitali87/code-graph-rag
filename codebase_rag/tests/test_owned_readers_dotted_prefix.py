@@ -91,3 +91,29 @@ def test_route_handlers_are_this_projects_own(tmp_path: Path) -> None:
     }
     assert "svc.api.items" in qns
     assert _foreign(qns) == set()
+
+
+class _RegistryDown(_StatefulIngestor):
+    def fetch_all(self, query, params=None):  # type: ignore[override]
+        from codebase_rag import cypher_queries as cq
+
+        if query == cq.CYPHER_LIST_PROJECTS:
+            raise RuntimeError("registry unreadable")
+        return super().fetch_all(query, params)
+
+
+def test_route_modules_read_nothing_when_the_registry_is_unread(
+    tmp_path: Path,
+) -> None:
+    """Route modules feed the EXPOSES cleanup, a delete. With the project
+    registry unreadable, ownership falls back to the prefix rule and would
+    pass `svc.v2`'s modules as `svc`'s, so the reader returns nothing, as it
+    does when its own read fails (CodeRabbit, PR #2129)."""
+    updater = _svc_after_both_indexed(tmp_path)
+    healthy = {qn for qn, _path in updater._graph_route_module_paths()}
+    assert "svc.routes" in healthy
+
+    down = _RegistryDown()
+    down.__dict__.update(updater.ingestor.__dict__)
+    blind = _updater(tmp_path / "svc", down, "svc")
+    assert blind._graph_route_module_paths() == []
