@@ -1229,7 +1229,7 @@ def rename_command(
     rich_help_panel=ch.PANEL_USE,
 )
 def move_command(
-    qualified_name: str = typer.Argument(..., help=ch.HELP_RENAME_QN),
+    qualified_name: str = typer.Argument(..., help=ch.HELP_MOVE_QN),
     target_module: str = typer.Argument(..., help=ch.HELP_MOVE_TARGET),
     repo_path: Path = typer.Option(
         Path(cs.MCP_DEFAULT_DIRECTORY),
@@ -1242,13 +1242,22 @@ def move_command(
     keep_alias: bool = typer.Option(
         False, "--keep-alias", help=ch.HELP_MOVE_KEEP_ALIAS
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_RENAME_DRY_RUN),
+    dry_run: bool = typer.Option(False, "--dry-run", help=ch.HELP_MOVE_DRY_RUN),
 ) -> None:
     from .editing.move import MoveRefused, move
     from .graph_cli import _project_and_fetch
+    from .graph_query import source_root_for
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:  # type: ignore[attr-defined]
+        # An explicit --project may name a graph indexed from another
+        # checkout; its repo-relative paths must not be edited under this one.
+        if source_root_for(fetch_all, name, repo_path) is None:
+            typer.echo(
+                cs.MOVE_CLI_WRONG_ROOT.format(project=name, root=repo_path.resolve()),
+                err=True,
+            )
+            raise typer.Exit(code=1)
         parsers, queries = load_parsers()
         updater = GraphUpdater(
             ingestor=ingestor,  # type: ignore[arg-type]

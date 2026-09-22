@@ -658,6 +658,14 @@ MOVE_CYCLE = "Refusing to move: it would create the import cycle {cycle}"
 MOVE_PLANNED = "{importers} importer(s) would be rewritten, {unchanged} left unchanged"
 MOVE_PARSE_FAILED = "Move rolled back: {files} would no longer parse"
 MOVE_CONTRACT_FAILED = "Move rolled back, postcondition failed: {reasons}"
+MOVE_WRONG_ROOT = (
+    "Project {project} was not indexed from this server's repository; "
+    "move from the MCP server rooted at its source tree"
+)
+MOVE_CLI_WRONG_ROOT = (
+    "Project {project} was not indexed from {root}; "
+    "pass the --repo-path it was indexed from"
+)
 SIGNATURE_DEFAULT_ORDER = "Parameter {name} has no default but follows one that does"
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"

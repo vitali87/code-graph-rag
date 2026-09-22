@@ -164,6 +164,10 @@ EXAMPLES_MOVE = (
     "Examples:\n  cgr move myproj.pkg.util.helper pkg.core --dry-run\n"
     "  cgr move myproj.pkg.util.helper pkg/core.py --keep-alias"
 )
+HELP_MOVE_QN = "Qualified name of the module-level definition to move."
+HELP_MOVE_DRY_RUN = (
+    "Print the plan (files, importers, copied imports) without writing anything."
+)
 HELP_MOVE_TARGET = "Destination module: dotted name (pkg.core) or repo-relative path."
 HELP_MOVE_KEEP_ALIAS = (
     "Leave a re-export at the old location so the old import path still works."
