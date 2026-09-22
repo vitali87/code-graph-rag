@@ -2043,6 +2043,47 @@ class TestReviewAnchor:
 
         assert review_anchor(body) == self.HEAD
 
+    def test_an_uppercase_commit_url_is_read(self) -> None:
+        """The URL pattern needs re.I like the other two, or an uppercase
+        sha in a link reads as no anchor and blocks a current review
+        (CodeRabbit, Copilot, #1939)."""
+        body = (
+            "Confidence Score: 5/5\n"
+            f"[diff](https://github.com/o/r/commit/{self.HEAD.upper()})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_a_clean_coderabbit_review_of_the_head_is_current(self) -> None:
+        """CodeRabbit names its range as "between <from> and <to>" in the
+        review details, with no label and no commit URL. Without a reader
+        for that form, a clean CodeRabbit review of the exact head failed
+        closed as anchor-absent (Greptile, #1939). The body is CodeRabbit's
+        own wording, taken from a review on this PR."""
+        body = (
+            "**Actionable comments posted: 0**\n\n"
+            "<details>\n<summary>📜 Review details</summary>\n\n"
+            "Reviewing files that changed from the base of the PR and "
+            f"between {self.OLDER} and {self.HEAD}.\n</details>"
+        )
+
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "coderabbitai[bot]")], self.HEAD) is None
+
+    def test_a_coderabbit_range_is_read_by_its_end_not_its_start(self) -> None:
+        """The range's END is the commit reviewed. Here the START is the
+        head, so reading the first sha would call a stale review fresh."""
+        body = (
+            "**Actionable comments posted: 0**\n\n"
+            "Reviewing files that changed from the base of the PR and "
+            f"between {self.HEAD} and {self.OLDER}."
+        )
+
+        assert review_anchor(body) == self.OLDER
+        reason = stale_review_reason([(body, "coderabbitai[bot]")], self.HEAD)
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+
     def test_an_unknown_head_does_not_manufacture_a_reason(self) -> None:
         """If the head could not be read, staleness is unknown. Other
         reasons already cover an unreadable PR; inventing one here would

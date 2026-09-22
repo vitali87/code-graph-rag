@@ -508,8 +508,12 @@ _ANCHOR_PATTERNS = (
     # read as fresh -- the very bug this check exists to catch, restored
     # through pattern ordering alone (CodeRabbit, #1936).
     re.compile(r"last reviewed commit[^0-9a-f]{0,20}([0-9a-f]{40})", re.I),
+    # CodeRabbit's review details: "... between <from> and <to>." The END
+    # of the range is the commit reviewed; the start is the base or the
+    # previous review, and reading it would call a stale review fresh.
+    re.compile(r"between\s+`?[0-9a-f]{40}`?\s+and\s+`?([0-9a-f]{40})\b", re.I),
     re.compile(r"reviewed[^.\n]{0,40}?\b([0-9a-f]{40})\b", re.I),
-    re.compile(r"commit/([0-9a-f]{40})"),
+    re.compile(r"commit/([0-9a-f]{40})", re.I),
 )
 
 
