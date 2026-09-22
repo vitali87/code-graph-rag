@@ -121,6 +121,10 @@ KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
+# The `$id` a per-node query addresses its node by.
+KEY_ID = "id"
+# A shared node's inbound-edge count in the isolated check's snapshot.
+KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
@@ -935,6 +939,9 @@ KEY_FAR_LABEL = FAR_END_PREFIX + KEY_LABEL
 KEY_FAR_PROPS = FAR_END_PREFIX + KEY_PROPS
 CYPHER_PARAM_ABSOLUTE_PATHS = "absolute_paths"
 CYPHER_PARAM_KEEP = "keep"
+# The isolated check's created shared nodes, as parallel label / name lists.
+CYPHER_PARAM_LABELS = "labels"
+CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 

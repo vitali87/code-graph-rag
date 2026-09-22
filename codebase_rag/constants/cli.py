@@ -161,6 +161,16 @@ CHECK_NOT_INDEXED = (
 # and the endpoint pass deletes every network RESOLVES_TO edge repo-wide
 # before rebuilding them from the edited tree, so those edges cannot be put
 # back. Refused rather than silently lost (greptile-local, #1718).
+CHECK_ISOLATED_GRAPH_HAS_IO = (
+    "--isolated cannot restore the IO resource links this graph already "
+    "holds ({groups}): cutting a changed file's subtree can leave a resource "
+    "chain unanchored, and the re-ingest's repo-wide resource prune would "
+    "delete it. Re-run without --isolated on a graph you can rebuild."
+)
+CHECK_ISOLATED_CACHE_UNREADABLE = (
+    "--isolated cannot run: the hash cache {path} exists but cannot be read, "
+    "so it could not be put back after the re-ingest rewrites it."
+)
 CHECK_ISOLATED_WITH_IO = (
     "--isolated cannot restore IO resource links, which the current capture "
     "({groups}) enables: the endpoint pass rewrites them across the whole "
