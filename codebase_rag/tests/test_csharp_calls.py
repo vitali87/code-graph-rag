@@ -64,7 +64,13 @@ public class Use {
         if caller.endswith("N.Use.Run") and target.endswith(".@event")
     }
     assert len(constructor_targets) == 2, pairs
-    assert any("N.@event@" in target for target in constructor_targets), pairs
+    suffixed_target = next(
+        target for target in constructor_targets if "N.@event@" in target
+    )
+    assert any(
+        caller.endswith("N.Use.Run") and target == suffixed_target
+        for caller, target in pairs
+    ), pairs
 
 
 def test_static_method_call_resolves(
