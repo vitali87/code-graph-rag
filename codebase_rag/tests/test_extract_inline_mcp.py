@@ -10,7 +10,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.extract_inline_helpers import (
     PROJECT,
     _extract_inline_repo,  # noqa: F401 - pytest fixture
-    _qn,
+    _project_qn,
 )
 from evals.cgr_graph import _StatefulIngestor
 
@@ -35,14 +35,14 @@ def test_mcp_extract_and_inline_tools(
 
     async def run() -> tuple[object, object]:
         refused = await registry.extract(
-            qualified_name=_qn("pkg.report.build"),
+            qualified_name=_project_qn("pkg.report.build"),
             start_line=12,
             end_line=15,
             new_name="tail",
             project=PROJECT,
         )
         payload = await registry.inline(
-            qualified_name=_qn("pkg.util.wrapper"), project=PROJECT
+            qualified_name=_project_qn("pkg.util.wrapper"), project=PROJECT
         )
         return refused, payload
 

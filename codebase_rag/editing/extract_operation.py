@@ -367,7 +367,16 @@ def _js_helper_and_call(
     annotations = _js_param_annotations(definition)
     params = [f"{name}{annotations.get(name, '')}" for name in inputs]
     header = f"{method.modifier}{new_name}" if method else f"function {new_name}"
-    lines = [f"{header}({', '.join(params)}) {{", _reindent(body_text, "  ")]
+    lines = [f"{header}({', '.join(params)}) {{"]
+    # A name the span assigns without declaring it is the enclosing
+    # function's local; moved into the helper it would be an undeclared
+    # global, which strict code rejects. Once overwrites stopped counting as
+    # reads such a name is no longer a parameter either, so declare it here.
+    if undeclared := [
+        name for name in _assigned_names(parts.statements) if name not in inputs
+    ]:
+        lines.append(f"  let {', '.join(undeclared)};")
+    lines.append(_reindent(body_text, "  "))
     if len(outputs) == 1:
         lines.append(f"  return {outputs[0]};")
     elif outputs:
@@ -397,6 +406,39 @@ def _js_helper_and_call(
         declare = f"let {', '.join(fresh)};\n{body_indent}" if fresh else ""
         text = f"{declare}({{ {', '.join(outputs)} }} = {call});"
     return function_text, f"{body_indent}{text}\n"
+
+
+_JS_ASSIGNMENTS = frozenset(
+    {
+        cs.TS_JS_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_AUGMENTED_ASSIGNMENT_EXPRESSION,
+        cs.TS_JS_UPDATE_EXPRESSION,
+    }
+)
+
+
+def _assigned_names(statements: list[Node]) -> list[str]:
+    """Plain names the span assigns but does not declare, in order.
+
+    Nested functions are skipped: their assignments run in their own scope
+    or, for a closure over an outer name, are not the helper's to declare.
+    """
+    found: list[str] = []
+    stack = list(reversed(statements))
+    while stack:
+        current = stack.pop()
+        if current.type in cs.JS_TS_FUNCTION_NODES:
+            continue
+        if current.type in _JS_ASSIGNMENTS:
+            target = current.child_by_field_name(
+                cs.FIELD_LEFT
+            ) or current.child_by_field_name(cs.TS_JS_FIELD_ARGUMENT)
+            if target is not None and target.type == cs.TS_IDENTIFIER:
+                name = _text(target)
+                if name not in found and not _declared_here(statements, name):
+                    found.append(name)
+        stack.extend(reversed(current.children))
+    return found
 
 
 def _declared_here(statements: list[Node], name: str) -> bool:

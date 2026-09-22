@@ -20,7 +20,7 @@ from codebase_rag.tests.extract_inline_helpers import PROJECT, _index, _write
 from evals.cgr_graph import _StatefulIngestor
 
 
-def _qn(rel: str) -> str:
+def _project_qn(rel: str) -> str:
     return f"{PROJECT}.{rel}"
 
 
@@ -35,7 +35,7 @@ def _build(temp_repo: Path, files: dict[str, str]) -> tuple[Path, _StatefulInges
 
 def _inline(root: Path, store: _StatefulIngestor, rel: str) -> InlineReport | None:
     try:
-        return inline(root, store.fetch_all, PROJECT, _qn(rel))
+        return inline(root, store.fetch_all, PROJECT, _project_qn(rel))
     except InlineRefused:
         return None
 
@@ -87,7 +87,7 @@ def test_inline_refuses_async_and_generator_definitions(
 ) -> None:
     root, store = _build(temp_repo, _ASYNC_FILES)
     with pytest.raises(InlineRefused, match="async|generator"):
-        inline(root, store.fetch_all, PROJECT, _qn(rel))
+        inline(root, store.fetch_all, PROJECT, _project_qn(rel))
     assert (root / "pkg/defs.py").read_text() == _ASYNC_FILES["pkg/defs.py"]
     assert (root / "web/defs.js").read_text() == _ASYNC_FILES["web/defs.js"]
 

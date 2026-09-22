@@ -87,7 +87,7 @@ def _extract_inline_repo(
     return root, store, updater
 
 
-def _qn(rel: str) -> str:
+def _project_qn(rel: str) -> str:
     return f"{PROJECT}.{rel}"
 
 

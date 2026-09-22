@@ -13,7 +13,7 @@ from codebase_rag.tests.extract_inline_helpers import (
     PROJECT,
     REPORT_PY,
     _index,
-    _qn,
+    _project_qn,
     _write,
 )
 
@@ -50,7 +50,7 @@ def test_extract_refuses_a_class_body(temp_repo: Path) -> None:
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.config.Config"),
+            _project_qn("pkg.config.Config"),
             (3, 3),
             "derive",
             dry_run=True,
@@ -86,7 +86,7 @@ def test_extract_from_a_js_class_method_makes_a_method(temp_repo: Path) -> None:
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.counter.Counter.total"),
+        _project_qn("src.counter.Counter.total"),
         (7, 10),
         "sumScaled",
         reingest=updater.reingest,
@@ -101,7 +101,7 @@ def test_extract_from_a_js_class_method_makes_a_method(temp_repo: Path) -> None:
         "    }\n    return result;\n  }\n"
     ) in text
     assert "function sumScaled" not in text
-    assert report.new_qualified_name == _qn("src.counter.Counter.sumScaled")
+    assert report.new_qualified_name == _project_qn("src.counter.Counter.sumScaled")
     assert _run_node(root / "src/counter.js") == "12"
 
 
@@ -124,7 +124,7 @@ def test_extract_from_a_static_js_method_calls_through_the_class(
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.box.MathBox.twice"),
+        _project_qn("src.box.MathBox.twice"),
         (3, 3),
         "double",
         reingest=updater.reingest,
@@ -165,7 +165,7 @@ def test_extract_refuses_this_or_arguments_in_a_standalone_js_function(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("src.scaled.scaled"),
+            _project_qn("src.scaled.scaled"),
             span,
             "part",
             dry_run=True,
@@ -182,7 +182,7 @@ def test_extract_allows_this_inside_a_nested_js_function(temp_repo: Path) -> Non
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.scaled.scaled"),
+        _project_qn("src.scaled.scaled"),
         (4, 4),
         "makeG",
         dry_run=True,
@@ -206,7 +206,7 @@ def test_extract_refuses_arguments_in_a_js_method(temp_repo: Path) -> None:
             root,
             store.fetch_all,
             PROJECT,
-            _qn("src.args.Args.count"),
+            _project_qn("src.args.Args.count"),
             (3, 3),
             "part",
             dry_run=True,
@@ -263,7 +263,9 @@ def test_extract_refuses_a_span_that_awaits(
     root = _repo(temp_repo, {"pkg/__init__.py": "", rel: source})
     store, _updater = _index(root)
     with pytest.raises(ExtractRefused, match="await"):
-        extract(root, store.fetch_all, PROJECT, _qn(qn), span, "part", dry_run=True)
+        extract(
+            root, store.fetch_all, PROJECT, _project_qn(qn), span, "part", dry_run=True
+        )
 
 
 def test_extract_allows_await_inside_a_nested_async_arrow(temp_repo: Path) -> None:
@@ -274,7 +276,7 @@ def test_extract_allows_await_inside_a_nested_async_arrow(temp_repo: Path) -> No
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.run.run"),
+        _project_qn("src.run.run"),
         (12, 12),
         "makeLater",
         dry_run=True,
@@ -307,7 +309,7 @@ def test_extract_js_declares_fresh_outputs_beside_reassigned_ones(
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.mixed.build"),
+        _project_qn("src.mixed.build"),
         (5, 6),
         "compute",
         reingest=updater.reingest,
@@ -371,7 +373,7 @@ def test_extract_keeps_crlf_newlines(
         root,
         store.fetch_all,
         PROJECT,
-        _qn(qn),
+        _project_qn(qn),
         span,
         "accumulate",
         reingest=updater.reingest,

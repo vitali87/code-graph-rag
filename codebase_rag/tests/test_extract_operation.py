@@ -2,36 +2,40 @@
 
 from __future__ import annotations
 
+import runpy
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from codebase_rag.editing import ExtractRefused, extract
+from codebase_rag.editing.extract_types import ExtractReport
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.tests.extract_inline_helpers import (
     PROJECT,
     REPORT_PY,
     _extract_inline_repo,  # noqa: F401 - pytest fixture
     _index,
-    _qn,
+    _project_qn,
     _smoke,
     _write,
 )
 from evals.cgr_graph import _StatefulIngestor
 
 
-def test_extract_ten_lines_with_two_inputs_and_one_output_in_python(
+def test_extract_nine_lines_with_two_inputs_and_two_outputs_in_python(
     extract_inline_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
     root, store, updater = extract_inline_repo
-    # Lines 3-12: the accumulation. It reads `items` and `factor` from the
+    # Lines 3-11: the accumulation. It reads `items` and `factor` from the
     # parameters and binds `total`, `count`, `average`; only `total` and
     # `average` are read afterwards.
     report = extract(
         root,
         store.fetch_all,
         PROJECT,
-        _qn("pkg.report.build"),
+        _project_qn("pkg.report.build"),
         (3, 11),
         "accumulate",
         reingest=updater.reingest,
@@ -50,40 +54,46 @@ def test_extract_ten_lines_with_two_inputs_and_one_output_in_python(
         "        scaled = item * factor\n        total += scaled\n        count += 1\n"
         "    average = total / count if count else 0\n    return total, average\n"
     ) in text
-    assert report.new_qualified_name == _qn("pkg.report.accumulate")
+    assert report.new_qualified_name == _project_qn("pkg.report.accumulate")
     assert report.verdict is not None and report.verdict.ok
     _smoke(root)
 
 
-def test_extract_in_typescript(temp_repo: Path) -> None:
+REPORT_TS = (
+    "export function build(items: number[], factor: number): string {\n"
+    "  const header = 'report';\n"
+    "  let total = 0;\n"
+    "  let count = 0;\n"
+    "  for (const item of items) {\n"
+    "    const scaled = item * factor;\n"
+    "    total += scaled;\n"
+    "    count += 1;\n"
+    "  }\n"
+    "  const average = count ? total / count : 0;\n"
+    "  return `${header} ${total} ${average}`;\n"
+    "}\n"
+)
+
+
+def _extract_typescript_report(temp_repo: Path) -> tuple[Path, ExtractReport]:
     root = temp_repo / PROJECT
     root.mkdir()
-    _write(
-        root,
-        "src/report.ts",
-        "export function build(items: number[], factor: number): string {\n"
-        "  const header = 'report';\n"
-        "  let total = 0;\n"
-        "  let count = 0;\n"
-        "  for (const item of items) {\n"
-        "    const scaled = item * factor;\n"
-        "    total += scaled;\n"
-        "    count += 1;\n"
-        "  }\n"
-        "  const average = count ? total / count : 0;\n"
-        "  return `${header} ${total} ${average}`;\n"
-        "}\n",
-    )
+    _write(root, "src/report.ts", REPORT_TS)
     store, updater = _index(root)
     report = extract(
         root,
         store.fetch_all,
         PROJECT,
-        _qn("src.report.build"),
+        _project_qn("src.report.build"),
         (3, 10),
         "accumulate",
         reingest=updater.reingest,
     )
+    return root, report
+
+
+def test_extract_in_typescript(temp_repo: Path) -> None:
+    root, report = _extract_typescript_report(temp_repo)
     assert report.applied, report.message
     assert report.inputs == ("items", "factor")
     assert report.outputs == ("total", "average")
@@ -99,6 +109,28 @@ def test_extract_in_typescript(temp_repo: Path) -> None:
     ) in text
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_extracted_typescript_still_runs(temp_repo: Path) -> None:
+    """The source assertions above see two fragments only; running the
+    rewritten module catches an error anywhere else in it (Greptile,
+    PR #2059). Node strips the types, so no compiler is needed."""
+    root, report = _extract_typescript_report(temp_repo)
+    assert report.applied, report.message
+    runner = root / "run.mts"
+    runner.write_text(
+        (root / "src/report.ts").read_text() + "\nconsole.log(build([1, 2, 3], 2));\n",
+        encoding="utf-8",
+    )
+    done = subprocess.run(
+        ["node", "--experimental-strip-types", "--no-warnings", str(runner)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "report 12 4"
+
+
 def test_extract_refuses_early_exits_and_split_statements(
     extract_inline_repo: tuple[Path, _StatefulIngestor, GraphUpdater],
 ) -> None:
@@ -111,7 +143,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.report.build"),
+            _project_qn("pkg.report.build"),
             (12, 15),
             "tail",
             dry_run=True,
@@ -121,7 +153,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.report.build"),
+            _project_qn("pkg.report.build"),
             (3, 6),
             "part",
             dry_run=True,
@@ -131,7 +163,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.report.build"),
+            _project_qn("pkg.report.build"),
             (40, 45),
             "none",
             dry_run=True,
@@ -141,7 +173,7 @@ def test_extract_refuses_early_exits_and_split_statements(
             root,
             store.fetch_all,
             PROJECT,
-            _qn("pkg.report.nothing"),
+            _project_qn("pkg.report.nothing"),
             (3, 4),
             "x",
             dry_run=True,
@@ -166,7 +198,7 @@ def test_extract_from_a_method_makes_a_method(temp_repo: Path) -> None:
         root,
         store.fetch_all,
         PROJECT,
-        _qn("pkg.store.Store.total"),
+        _project_qn("pkg.store.Store.total"),
         (6, 8),
         "sum_scaled",
         reingest=updater.reingest,
@@ -180,6 +212,10 @@ def test_extract_from_a_method_makes_a_method(temp_repo: Path) -> None:
         "        return result\n"
     ) in text
     assert report.inputs == ("factor",)
+    # The rewrite reads right; run it too, so broken dispatch or a lost
+    # receiver cannot pass on the text alone (Greptile, PR #2059).
+    namespace = runpy.run_path(str(root / "pkg/store.py"))
+    assert namespace["Store"]().total(3) == 9
 
 
 # --- inline ----------------------------------------------------------------------
