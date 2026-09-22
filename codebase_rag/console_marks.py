@@ -8,8 +8,9 @@ lacks it raises ``UnicodeEncodeError`` instead of printing (#1910 on
 CP950 Windows terminal).
 
 Shared rather than private to one caller, because the two sites must not
-drift: a reader who learns that ``OK``/``NO`` means pass/fail in one table
-should not meet a different pair in the next.
+drift: a reader who learns that ``PASS``/``FAIL`` means pass/fail in one
+table should not meet a different pair in the next. The marks themselves
+live in ``constants/health.py``, defined once for both tables.
 """
 
 from __future__ import annotations
@@ -43,8 +44,8 @@ def _can_encode(text: str, encoding: str | None) -> bool:
 
 
 def status_mark(passed: bool, encoding: str | None) -> str:
-    """``✓``/``✗`` when `encoding` can carry them, ``OK``/``NO`` when it
-    cannot.
+    """``✓``/``✗`` when `encoding` can carry them, ``PASS``/``FAIL``
+    when it cannot.
 
     Both marks are tested, not just the one being returned: a terminal that
     can encode one and not the other would otherwise produce a column that

@@ -30,6 +30,20 @@ def _console(encoding: str) -> Console:
     return Console(file=io.TextIOWrapper(io.BytesIO(), encoding=encoding), width=40)
 
 
+def test_the_marks_have_the_values_the_tables_promise() -> None:
+    """Pinned as literals, not as `cs.*`.
+
+    Every other cell compares `status_mark`'s output to the same constant
+    the implementation reads, so both sides move together and the pair
+    could hold any value at all while the suite stayed green. This cell is
+    the one that would fail if a second constants module redefined them:
+    `constants/__init__.py` star-imports every submodule, so a duplicate is
+    shadowed by import order silently rather than raising.
+    """
+    assert (cs.HEALTH_MARK_PASS, cs.HEALTH_MARK_FAIL) == ("\u2713", "\u2717")
+    assert (cs.HEALTH_MARK_PASS_ASCII, cs.HEALTH_MARK_FAIL_ASCII) == ("PASS", "FAIL")
+
+
 def test_a_stream_that_can_carry_the_glyphs_gets_them() -> None:
     assert status_mark(True, "utf-8") == cs.HEALTH_MARK_PASS
     assert status_mark(False, "utf-8") == cs.HEALTH_MARK_FAIL
@@ -83,8 +97,8 @@ def test_the_split_codec_really_splits_the_pair() -> None:
 
 def test_both_marks_are_checked_not_only_the_one_returned() -> None:
     """A codec that carries one glyph and not the other must not produce a
-    column mixing the two alphabets: `OK` beside `✗` reads as two different
-    conventions in one table."""
+    column mixing the two alphabets: `PASS` beside `✗` reads as two
+    different conventions in one table."""
     assert status_mark(True, _SPLITS_THE_PAIR) == cs.HEALTH_MARK_PASS_ASCII
     assert status_mark(False, _SPLITS_THE_PAIR) == cs.HEALTH_MARK_FAIL_ASCII
 
