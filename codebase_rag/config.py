@@ -104,6 +104,23 @@ def format_missing_api_key_errors(
 
 LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA})
 
+
+def normalised_credential(value: str | None) -> str | None:
+    """A credential with surrounding whitespace removed, or None if it is blank
+    or the local-provider placeholder (`cs.DEFAULT_API_KEY`).
+
+    One rule for every source, a role's `api_key` and a provider variable
+    alike (#2119): the environment used to be read raw, so `"  "` or `"ollama"`
+    there passed the start-up gate and failed later in the provider call.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped == cs.DEFAULT_API_KEY:
+        return None
+    return stripped
+
+
 # The provider-owned variable `validate_api_key` accepts INSTEAD of the role's
 # own `<ROLE>_API_KEY`. Module level so `cgr doctor` can name the same variable
 # the gate reads rather than restating the rule and drifting from it (#1910).
@@ -147,14 +164,10 @@ class ModelConfig:
                 provider_lower == cs.Provider.GOOGLE
                 and self.provider_type == cs.GoogleProviderType.VERTEX
             )
-            or (env_key and os.environ.get(env_key))
+            or (env_key and normalised_credential(os.environ.get(env_key)))
         ):
             return
-        if (
-            not self.api_key
-            or not self.api_key.strip()
-            or self.api_key == cs.DEFAULT_API_KEY
-        ):
+        if normalised_credential(self.api_key) is None:
             error_msg = format_missing_api_key_errors(self.provider, role)
             raise ValueError(error_msg)
 

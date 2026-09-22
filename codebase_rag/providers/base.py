@@ -22,7 +22,7 @@ from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvide
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
-from ..config import ModelConfig, settings
+from ..config import ModelConfig, normalised_credential, settings
 
 
 class ModelProvider(ABC):
@@ -68,9 +68,9 @@ class ApiKeyProvider(ModelProvider):
 
 
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
-    if api_key and api_key != cs.DEFAULT_API_KEY:
-        return api_key
-    return os.environ.get(env_var)
+    return normalised_credential(api_key) or normalised_credential(
+        os.environ.get(env_var)
+    )
 
 
 def _output_budget(model_id: str) -> int:
