@@ -8,20 +8,21 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Node Types
 
+<!-- SECTION:node_schemas -->
 | Label | Properties |
-|-------|------------|
-| Project | `{name: string}` |
+|-----|----------|
+| Project | `{name: string, root_path: string?}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
-| Enum | same as Interface |
-| Type | same as Interface, but `path` and `absolute_path` are optional |
-| Union | same as Type |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
@@ -29,8 +30,12 @@ The knowledge graph uses a unified schema across all supported languages.
 | Resource | `{qualified_name: string, name: string, kind: string}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| CodeSmell | same as Pattern |
-| SecurityIssue | same as Pattern |
+| CodeSmell | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| SecurityIssue | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| Gloss | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
+| Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
+| Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
+<!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
 
@@ -42,8 +47,9 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Relationships
 
+<!-- SECTION:relationship_schemas -->
 | Source | Relationship | Target |
-|--------|-------------|--------|
+|------|------------|------|
 | Project, Package, Folder | CONTAINS_PACKAGE | Package |
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
@@ -68,9 +74,17 @@ The knowledge graph uses a unified schema across all supported languages.
 | Module, Function, Method | READS_FROM | Resource |
 | Module, Function, Method | WRITES_TO | Resource |
 | Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
+| Function, Method, File | EXPOSES | Resource |
+| Resource | RESOLVES_TO | Resource |
 | Module | IMPLEMENTS_PATTERN | Pattern |
 | Module | HAS_SMELL | CodeSmell |
 | Module | HAS_VULNERABILITY | SecurityIssue |
+| Gloss | ANNOTATES | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Gloss | MENTIONS | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Function, Method | HAS_PARAMETER | Parameter |
+| Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
+| Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
+<!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 
@@ -111,6 +125,33 @@ candidates stay unresolved rather than guessed). Each resolved name yields
 one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
+
+## Resource Kinds
+
+A `Resource` node stands for something outside the code that code reads,
+writes, exposes or calls. Its `kind` is one of:
+
+| Kind | Stands for |
+|------|------------|
+| FILE | A file path an I/O call names |
+| NETWORK | A URL or host a client call reaches |
+| DATABASE | A database, table or query target |
+| STDIN | Standard input |
+| STDOUT | Standard output |
+| STDERR | Standard error |
+| ENV | An environment variable |
+| SOCKET | A socket address |
+| PROCESS | A command run as a subprocess |
+| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
+| CONTRACT | A codegen contract operation shared by client stubs and server implementations |
+| RPC | An RPC method a handler exposes; callers join it directly |
+| DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
+
+`EXPOSES` joins a handler to the ENDPOINT, RPC or DISPATCH resource it
+serves. `RESOLVES_TO` joins a client's NETWORK resource to the ENDPOINT its
+literal URL matches, a client stub's RPC operation and a server's ENDPOINT
+to the CONTRACT they implement, and a `key/deployment` DISPATCH variant to
+its head key.
 
 ## I/O and Data-Flow Edges
 
@@ -226,7 +267,7 @@ Language notes:
 - **Rust**: macros and functions live in separate namespaces, so a macro invocation (`write!`) never binds a same-named `fn` and a function call never binds a same-named macro. `#[macro_export]` sets `is_exported` (macros take no `pub`).
 - **C/C++** (macro semantics, shared by the libclang-backed modes): compiler builtins, system-header macros, and empty-bodied object-like macros (include guards, feature flags) are not nodes. A macro use inside a function body emits `CALLS` from that function; a use outside any function attributes to the `Module`. A macro whose definition body references another macro emits a macro-to-macro `CALLS` edge, since nested expansions are never reported as individual uses.
 - **C/C++ hybrid mode** (the default: `CPP_FRONTEND=hybrid`; `libclang` forces the pure libclang frontend and `treesitter` disables libclang entirely; the libclang bindings ship in the `cpp` extra, `pip install "code-graph-rag[cpp]"`): tree-sitter remains the backbone (every file gets its tree-sitter definitions and calls; nothing is skipped) and libclang layers on only macro `Function` nodes and `#include` `IMPORTS` edges, whose qualified names are identical between the two schemes. Macro uses are attributed to the tightest enclosing tree-sitter definition span after the definition pass, so macro `CALLS` edges join the qualified-name scheme the rest of the graph uses.
-- **C# hybrid mode** (the default: `CSHARP_FRONTEND=auto` runs it wherever `dotnet` is on PATH, falling back to pure tree-sitter otherwise; `hybrid`/`roslyn` force it, `treesitter` disables it): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site.
+- **C# hybrid mode** (opt-in: the default is `CSHARP_FRONTEND=treesitter`; selecting `auto` uses hybrid mode when `dotnet` is on PATH, while `hybrid`/`roslyn` explicitly request Roslyn-backed analysis; unavailable toolchains fall back to tree-sitter): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site. See the [security model](security.md#repository-parsing-and-toolchains) before enabling toolchain-backed analysis on untrusted repositories.
 
 ## Language-Specific AST Mappings
 

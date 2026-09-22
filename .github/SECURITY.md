@@ -31,6 +31,14 @@ If the vulnerability is accepted, we will work on a fix, coordinate disclosure w
 
 If the vulnerability is declined, we will provide a clear explanation of why.
 
+## Incident Response
+
+The [public incident response plan](../docs/incident-response.md) describes how
+the maintainer investigates, contains and recovers from security incidents,
+including compromised releases, and communicates actions users should take.
+Reporting instructions, supported versions and response targets remain in this
+policy.
+
 ## Scope
 
 This policy applies to the `code-graph-rag` Python package and its official repository. Third party dependencies are outside the direct scope of this policy, though we use Dependabot to monitor and update them.

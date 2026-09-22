@@ -25,6 +25,7 @@ from ...types_defs import (
     PropertyDict,
     RustTraitImpl,
 )
+from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
@@ -166,6 +167,7 @@ class ClassIngestMixin:
     class_owner_module: dict[str, str]
     dart_annotated_overrides: dict[str, list[tuple[str, str]]]
     dart_extends_type_args: dict[str, list[str]]
+    dart_constructor_qns: set[str]
     class_field_types: dict[str, dict[str, str]]
     java_anon_overrides: list[tuple[str, str, str, str]]
     csharp_methods: set[str]
@@ -890,7 +892,7 @@ class ClassIngestMixin:
         # type declaration IS the written sibling, whichever of the pair the
         # child happens to be. More than one other means a 3+ arity family;
         # refuse rather than guess, matching every other ambiguity tier.
-        natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        natural = qn_markers.natural_qn(entry.child_qn)
         same_scope = [
             qn
             for qn in self.function_registry.variants(natural)
@@ -1293,7 +1295,16 @@ class ClassIngestMixin:
                     if cs.SEPARATOR_DOT in module_qn
                     else module_qn
                 )
-                key = f"{directory}{cs.SEPARATOR_DOT}{class_qn[len(module_qn) + 1 :]}"
+                # A second same-name part in ONE file registers under a
+                # duplicate-suffixed qn (`Bench@24`); the marker is a
+                # registration artefact, not part of the declared name, so
+                # strip it or the two parts never share a group (issue #2014).
+                suffix = class_qn[len(module_qn) + 1 :]
+                head, sep, tail = suffix.rpartition(cs.DUP_QN_MARKER)
+                # Only a NUMERIC suffix is the marker: a verbatim identifier
+                # (`@event`) also opens with the character (local review).
+                declared = head if sep and tail[:1].isdigit() else suffix
+                key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)
                 self.csharp_partial_groups[class_qn] = group
@@ -1607,6 +1618,8 @@ class ClassIngestMixin:
                 and (dart_return := dart_utils.dart_return_type_name(method_node))
             ):
                 self.method_return_types[ingested_qn] = dart_return
+                if method_node.type in cs.DART_CONSTRUCTOR_SIGNATURE_TYPES:
+                    self.dart_constructor_qns.add(ingested_qn)
             if ingested_qn is not None:
                 # Rust trait bodies reach here rather than the impl path above;
                 # a trait is no module either (issue #1086).

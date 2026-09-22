@@ -13,6 +13,7 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import settings
+from ..console_marks import status_mark
 from ..constants import (
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
@@ -758,7 +759,9 @@ def create_query_tool(
                         if value is None:
                             renderable_values.append("")
                         elif isinstance(value, bool):
-                            renderable_values.append("✓" if value else "✗")
+                            renderable_values.append(
+                                status_mark(value, console.encoding)
+                            )
                         elif isinstance(value, int | float):
                             renderable_values.append(str(value))
                         else:

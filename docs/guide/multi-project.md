@@ -82,8 +82,38 @@ RETURN caller.qualified_name, handler.qualified_name
 ```
 
 Matching uses the URL path only: dynamic (non-literal) URLs and requests
-whose paths match no known template stay unlinked. FastAPI and Flask style
-route decorators are recognized.
+whose paths match no known template stay unlinked.
+
+### Cross-service edges
+
+What the route extractors recognise, and what the links can and cannot say:
+
+| Language | Routes recognised |
+|----------|-------------------|
+| Python | FastAPI and Flask style decorators (`@app.get`, `@router.post`, `@app.route`), with `include_router` mount prefixes resolved |
+| JavaScript / TypeScript | Express and `express.Router` handlers (`app.get(...)`, `router.post(...)`), including handlers registered as options |
+| Go | `http.HandleFunc` / `Handle`, and the `echo`, `gin`, `chi` and `mux` router factories |
+
+A client URL links to an endpoint only when it is a literal with a path
+the endpoint's template matches; an f-string, a concatenated path or a
+computed host stays unlinked and shows up as an unresolved dependency
+rather than as a wrong link. RPC and dispatch resources join their callers
+directly (`READS_FROM`/`WRITES_TO` on the resource itself) and need no
+`RESOLVES_TO`.
+
+Three deterministic MCP tools read these edges, all project-scoped like the
+other graph tools: `endpoints` lists what a project exposes with how many
+call sites in the whole graph reach each one; `endpoint_callers` lists the
+call sites in any project that reach one endpoint, by handler name or by
+identity (`GET /users/{id}`); `remote_dependencies` lists every network
+access a project makes with the handler it resolves to, keeping the
+unresolved ones. `cgr dead-code --no-endpoint-roots` stops rooting a
+decorator-routed handler (FastAPI, Flask) by its decorator alone: such a
+handler whose endpoint no indexed call site reaches is reported. A handler
+registered by a call (Go `HandleFunc`, Express `app.get(path, handler)`)
+stays live through that registration, whatever the switch. On a graph
+holding one project the report reads as "no callers indexed", which the
+command says; index the calling services first.
 
 ## Housekeeping
 
