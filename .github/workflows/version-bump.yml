@@ -61,11 +61,14 @@ jobs:
       - name: Determine bump type
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_type
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
           else
-            echo "type=patch" >> $GITHUB_OUTPUT
+            echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Bump version
