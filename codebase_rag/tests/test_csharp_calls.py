@@ -917,3 +917,76 @@ public class A {
 
     targets = _call_targets(mock_ingestor)
     assert not any("Twice" in t for t in targets), targets
+
+
+def test_global_static_import_reaches_every_file(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `global using static` puts the type's members in bare-call scope for
+    # the whole compilation, not only the file that declares it (Greptile,
+    # #2036). Now that a bare miss no longer falls to the name trie, a call
+    # in another file reaches the member only through this scope.
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class MathHelpers {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "Usings.cs").write_text(
+        "global using static Helpers.MathHelpers;\n", encoding="utf-8"
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        source.endswith("App.A.Run") and target.endswith("MathHelpers.Twice(int)")
+        for source, target in pairs
+    ), pairs
+
+
+def test_static_import_keeps_a_same_arity_overload_family(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Same-name same-arity overloads on ONE imported type are a family C#
+    # picks from by argument type, not the CS0121 ambiguity two imported
+    # types make. Refusing them dropped the call; the enclosing-type tier
+    # keeps such a family, so the static tier does too (Greptile, #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Parsing {
+    public static int Parse(string s) => 0;
+    public static int Parse(char c) => 0;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Parsing;
+namespace App;
+public class A {
+    public int Run() { return Parse("1"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        source.endswith("App.A.Run") and ".Parsing.Parse(" in target
+        for source, target in pairs
+    ), pairs

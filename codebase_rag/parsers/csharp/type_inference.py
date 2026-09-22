@@ -640,22 +640,44 @@ class CSharpTypeInferenceEngine:
         # An ambiguity across two static imports is CS0121 in C#, not a call
         # anyone compiles, so refuse rather than pick one: the values are a
         # set, and choosing arbitrarily would emit a different edge per run.
-        static_matches: list[str] = []
-        for static_type in self.import_processor.csharp_static_imports.get(
-            module_qn, ()
-        ):
+        # Same-arity overloads on ONE type are a family, not an ambiguity,
+        # and are picked from as the enclosing-type tier above picks.
+        matches_by_type: dict[str, list[str]] = {}
+        for static_type, context_qn in self._static_import_scope(module_qn):
             # The directive stores the C# type path (`Helpers.MathHelpers`);
             # the registry keys types by project-qualified qn, so resolve it
-            # the same way a written type reference is resolved.
-            type_qn = self._type_name_to_qn(static_type, module_qn)
-            if not type_qn:
+            # the same way a written type reference is resolved, from the
+            # file that wrote it.
+            type_qn = self._type_name_to_qn(static_type, context_qn)
+            if not type_qn or type_qn in matches_by_type:
                 continue
-            static_matches.extend(
-                self._find_arity_matches_across_parts(type_qn, name, arg_count)
+            matches_by_type[type_qn] = self._find_arity_matches_across_parts(
+                type_qn, name, arg_count
             )
-        if len(static_matches) == 1:
-            return cs.NodeLabel.METHOD.value, static_matches[0]
+        families = [matches for matches in matches_by_type.values() if matches]
+        if len(families) == 1:
+            (matches,) = families
+            preferred = [
+                m for m in matches if (m in self.csharp_generic_methods) == generic_call
+            ]
+            return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
         return None
+
+    def _static_import_scope(self, module_qn: str) -> list[tuple[str, str]]:
+        # (type path, module that wrote it): the file's own `using static`
+        # directives, then every `global using static` in the project, which
+        # C# puts in scope in every file of the compilation.
+        imports = self.import_processor
+        scope = [
+            (path, module_qn)
+            for path in imports.csharp_static_imports.get(module_qn, ())
+        ]
+        scope.extend(
+            (path, declaring_qn)
+            for declaring_qn, paths in imports.csharp_global_static_imports.items()
+            for path in paths
+        )
+        return scope
 
     def _find_in_scope_local_function(
         self, name: str, arg_count: int, caller_qn: str | None, module_qn: str
