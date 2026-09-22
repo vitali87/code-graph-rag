@@ -1139,7 +1139,7 @@ class _StatefulIngestor:
         # Every edge whose TARGET node lives at one of `paths`, through the
         # inbound index: the store answers a path-scoped query with an index
         # lookup, not a scan of every edge.
-        found: list[_RelTuple] = []
+        found: list[_EdgeKey] = []
         for node_id, props in self.nodes.items():
             if props.get(cs.KEY_PATH) in paths:
                 found.extend(self._in.get(node_id, ()))
