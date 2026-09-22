@@ -112,6 +112,33 @@ one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
 
+## Resource Kinds
+
+A `Resource` node stands for something outside the code that code reads,
+writes, exposes or calls. Its `kind` is one of:
+
+| Kind | Stands for |
+|------|------------|
+| FILE | A file path an I/O call names |
+| NETWORK | A URL or host a client call reaches |
+| DATABASE | A database, table or query target |
+| STDIN | Standard input |
+| STDOUT | Standard output |
+| STDERR | Standard error |
+| ENV | An environment variable |
+| SOCKET | A socket address |
+| PROCESS | A command run as a subprocess |
+| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
+| CONTRACT | A codegen contract operation shared by client stubs and server implementations |
+| RPC | An RPC method a handler exposes; callers join it directly |
+| DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
+
+`EXPOSES` joins a handler to the ENDPOINT, RPC or DISPATCH resource it
+serves. `RESOLVES_TO` joins a client's NETWORK resource to the ENDPOINT its
+literal URL matches, a client stub's RPC operation and a server's ENDPOINT
+to the CONTRACT they implement, and a `key/deployment` DISPATCH variant to
+its head key.
+
 ## I/O and Data-Flow Edges
 
 The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.
@@ -226,7 +253,7 @@ Language notes:
 - **Rust**: macros and functions live in separate namespaces, so a macro invocation (`write!`) never binds a same-named `fn` and a function call never binds a same-named macro. `#[macro_export]` sets `is_exported` (macros take no `pub`).
 - **C/C++** (macro semantics, shared by the libclang-backed modes): compiler builtins, system-header macros, and empty-bodied object-like macros (include guards, feature flags) are not nodes. A macro use inside a function body emits `CALLS` from that function; a use outside any function attributes to the `Module`. A macro whose definition body references another macro emits a macro-to-macro `CALLS` edge, since nested expansions are never reported as individual uses.
 - **C/C++ hybrid mode** (the default: `CPP_FRONTEND=hybrid`; `libclang` forces the pure libclang frontend and `treesitter` disables libclang entirely; the libclang bindings ship in the `cpp` extra, `pip install "code-graph-rag[cpp]"`): tree-sitter remains the backbone (every file gets its tree-sitter definitions and calls; nothing is skipped) and libclang layers on only macro `Function` nodes and `#include` `IMPORTS` edges, whose qualified names are identical between the two schemes. Macro uses are attributed to the tightest enclosing tree-sitter definition span after the definition pass, so macro `CALLS` edges join the qualified-name scheme the rest of the graph uses.
-- **C# hybrid mode** (opt-in; the default is `CSHARP_FRONTEND=treesitter`, which disables it. `auto` runs it wherever `dotnet` is on PATH, falling back to pure tree-sitter otherwise; `hybrid`/`roslyn` force it): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site.
+- **C# hybrid mode** (opt-in: the default is `CSHARP_FRONTEND=treesitter`; selecting `auto` uses hybrid mode when `dotnet` is on PATH, while `hybrid`/`roslyn` explicitly request Roslyn-backed analysis; unavailable toolchains fall back to tree-sitter): tree-sitter remains the backbone and a bundled Roslyn tool (requires `dotnet`) layers on location-keyed semantic facts. Base lists get exact `INHERITS`-vs-`IMPLEMENTS` classification; each invocation site gets the compiler's own overload resolution (argument types, not arity) and extension-method binding, overriding the syntactic heuristics per call; `partial` types merge by symbol identity instead of the directory heuristic; and LINQ query-syntax operators that resolve to first-party methods emit `CALLS` edges tree-sitter cannot see (query syntax has no invocation nodes). Source generators run inside the workspace compilation, so resolution through generated members works, but generated code has no repo file and gets no nodes. Any missing fact degrades to the tree-sitter heuristic for that site. See the [security model](security.md#repository-parsing-and-toolchains) before enabling toolchain-backed analysis on untrusted repositories.
 
 ## Language-Specific AST Mappings
 

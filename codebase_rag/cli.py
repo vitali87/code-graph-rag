@@ -1458,6 +1458,7 @@ def _dead_code_config(
     entry_points: list[str],
     decorator_roots: list[str],
     min_resolution: cs.EdgeResolution | None = None,
+    endpoint_roots: bool = True,
 ) -> DeadCodeConfig:
     # test_patterns is always set: included tests become roots; excluded, it
     # filters test modules out of module-load roots so test-only code stays dead.
@@ -1471,6 +1472,7 @@ def _dead_code_config(
         entry_points=tuple(entry_points),
         test_patterns=tuple(cs.TEST_PATH_PATTERNS),
         min_resolution=str(min_resolution) if min_resolution is not None else None,
+        endpoint_roots=endpoint_roots,
     )
 
 
@@ -1581,6 +1583,18 @@ def _emit_dead_code(
         app_context.console.print(style(notice, cs.Color.YELLOW))
 
 
+def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
+    """Endpoint roots off on a graph holding one project: every endpoint
+    reads as uncalled. Stdout carries the JSON payload when that format is
+    chosen (local review P1), so the notice goes to stderr then."""
+    if show_progress:
+        app_context.console.print(
+            style(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, cs.Color.YELLOW)
+        )
+    else:
+        typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
+
+
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
     help=ch.CMD_DEAD_CODE,
@@ -1621,6 +1635,11 @@ def dead_code(
     min_resolution: cs.EdgeResolution | None = typer.Option(
         None, "--min-resolution", help=ch.HELP_DEADCODE_MIN_RESOLUTION
     ),
+    endpoint_roots: bool = typer.Option(
+        True,
+        "--endpoint-roots/--no-endpoint-roots",
+        help=ch.HELP_DEADCODE_ENDPOINT_ROOTS,
+    ),
 ) -> None:
     from .dead_code import collect_dead_code_with_coverage
 
@@ -1647,8 +1666,11 @@ def dead_code(
                         entry_point,
                         decorator_root,
                         min_resolution,
+                        endpoint_roots,
                     ),
                 )
+                if not endpoint_roots and len(projects) <= 1:
+                    _notice_single_project_endpoint_roots(show_progress)
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
