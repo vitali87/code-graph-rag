@@ -137,6 +137,8 @@ KEY_PROJECT_PREFIX = "project_prefix"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# Registered projects whose names extend this one (`svc.v2` under `svc`).
+KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
@@ -637,9 +639,14 @@ CYPHER_DELETE_MODULE = (
     # module subtree with it. A repository-root __init__.py's module qn IS
     # the bare project name (no trailing dot), so the prefix test alone
     # would miss it.
+    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
+    # name extends this one is excluded: a module belongs to the LONGEST
+    # registered name it sits under (issue #1985).
     "MATCH (m:Module {path: $path}) "
-    "WHERE m.qualified_name = $project_name "
-    "OR m.qualified_name STARTS WITH $project_prefix "
+    "WHERE (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
+    "OR m.qualified_name STARTS WITH p + '.') "
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).

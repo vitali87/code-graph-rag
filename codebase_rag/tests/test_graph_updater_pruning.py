@@ -10,6 +10,13 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 
+def _rows_by_query(rows: dict[str, list[dict[str, str]]]):  # noqa: ANN202
+    """Rows keyed by query, not by call order: the prune also reads the
+    registered projects (issue #1985), and a positional side_effect list
+    shifts every later read by one."""
+    return lambda query, params=None: rows.get(query, [])
+
+
 @pytest.fixture
 def updater(temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
     parsers, queries = load_parsers()
@@ -46,21 +53,20 @@ class TestPruneOrphanNodes:
         )
         project_name = py_project.resolve().name
 
-        mock_ingestor.fetch_all.side_effect = [
-            [],
-            [
-                {
-                    "path": "old_project/main.py",
-                    "qualified_name": f"{project_name}.old_project.main",
-                },
-                {
-                    "path": "module_a.py",
-                    "qualified_name": f"{project_name}.module_a",
-                },
-            ],
-            [],
-            [],
-        ]
+        mock_ingestor.fetch_all.side_effect = _rows_by_query(
+            {
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                    {
+                        "path": "old_project/main.py",
+                        "qualified_name": f"{project_name}.old_project.main",
+                    },
+                    {
+                        "path": "module_a.py",
+                        "qualified_name": f"{project_name}.module_a",
+                    },
+                ],
+            }
+        )
         updater._prune_orphan_nodes()
 
         delete_calls = [
@@ -73,6 +79,7 @@ class TestPruneOrphanNodes:
             cs.KEY_PATH: "old_project/main.py",
             cs.KEY_PROJECT_NAME: project_name,
             cs.KEY_PROJECT_PREFIX: f"{project_name}.",
+            cs.KEY_NESTED_PROJECTS: [],
         }
 
     def test_prune_removes_orphan_external_module_nodes(
@@ -239,27 +246,28 @@ class TestPruneOrphanNodes:
 
         project_name = py_project.resolve().name
         repo_abs = py_project.resolve().as_posix()
-        mock_ingestor.fetch_all.side_effect = [
-            [
-                {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
-                {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
-            ],
-            [
-                {
-                    "path": "deleted.py",
-                    "qualified_name": f"{project_name}.deleted",
-                },
-                {
-                    "path": "module_a.py",
-                    "qualified_name": f"{project_name}.module_a",
-                },
-            ],
-            [
-                {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
-                {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
-            ],
-            [],
-        ]
+        mock_ingestor.fetch_all.side_effect = _rows_by_query(
+            {
+                cs.CYPHER_ALL_FILE_PATHS: [
+                    {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
+                    {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
+                ],
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                    {
+                        "path": "deleted.py",
+                        "qualified_name": f"{project_name}.deleted",
+                    },
+                    {
+                        "path": "module_a.py",
+                        "qualified_name": f"{project_name}.module_a",
+                    },
+                ],
+                cs.CYPHER_ALL_FOLDER_PATHS: [
+                    {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
+                    {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
+                ],
+            }
+        )
         updater._prune_orphan_nodes()
 
         path_deletes = [
