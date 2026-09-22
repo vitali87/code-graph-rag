@@ -18,9 +18,9 @@ found by walking its callers one hop at a time.
 from __future__ import annotations
 
 import ast
-import re
 import textwrap
 import time
+import tokenize
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -553,11 +553,8 @@ def _dangling(
 
 # `*name` only: a bare `*` (keyword-only marker) accepts no extra positionals
 # and `**name` accepts keywords, not positionals.
-_VARIADIC = re.compile(r"(?<!\*)\*(?!\*)\s*[A-Za-z_]")
-
-
-def _header_is_variadic(header: str) -> bool:
-    """Whether a `def` header declares `*args` or keyword-only params.
+def _header_absorbs_extra_positionals(header: str) -> bool:
+    """Whether a `def` header declares `*args`.
 
     Parsed, not scanned. Scanning got both directions wrong, and this is
     the sole suppressor of a too-many-arguments verdict, so each costs
@@ -571,28 +568,68 @@ def _header_is_variadic(header: str) -> bool:
     oracle because it is the same parser that decides whether the call
     raises at runtime.
 
+    Only `*args` absorbs a surplus POSITIONAL argument, which is the one
+    branch that consults this. Keyword-only parameters do not: CPython
+    rejects `helper(1, 2, b=3)` against `def helper(a, *, b=1)` with
+    "takes 1 positional argument but 2 ... were given". Treating them as
+    a suppressor silently dropped a real TOO_MANY verdict.
+
     An unparseable header answers False, keeping the arity check ACTIVE:
     for a suppressor, refusing to suppress is the safe direction.
     """
     body = textwrap.dedent(header).strip()
     if not body:
         return False
+    # A one-line definition (`def f(a, *rest): return a`) already has its
+    # suite, and an appended indented `pass` would make it unparseable; only
+    # a bare header needs the stand-in body (bot review).
     try:
-        tree = ast.parse(body + "\n    pass\n")
+        tree = ast.parse(body)
     except SyntaxError:
-        return False
+        try:
+            tree = ast.parse(body + "\n    pass\n")
+        except SyntaxError:
+            return False
     node = tree.body[0] if tree.body else None
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return False
-    return node.args.vararg is not None or bool(node.args.kwonlyargs)
+    return node.args.vararg is not None
 
 
-def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
+def _parameter_list_end_row(lines: list[str]) -> int | None:
+    """The 1-based row of the `)` that ends the parameter list, or None.
+
+    Tokenised rather than counted character by character: a bracket inside
+    a string or comment (`a=")"`, `# (`) is not a delimiter, and a raw count
+    ended the header early on one, dropping a `*rest` that followed (bot
+    review). One pass over the lines, stopping at the close. Input that ends
+    before the list closes, or does not tokenise, answers None.
+    """
+    source = iter(line + "\n" for line in lines)
+    depth = 0
+    seen_open = False
+    try:
+        for token in tokenize.generate_tokens(lambda: next(source, "")):
+            if token.type != tokenize.OP:
+                continue
+            if token.string in ("(", "[", "{"):
+                depth += 1
+                seen_open = True
+            elif token.string in (")", "]", "}"):
+                depth -= 1
+                if seen_open and depth <= 0:
+                    return token.end[0]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return None
+
+
+def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -> bool:
     """Whether the Python definition's header declares `*args`.
 
     `positional_params` ends at the star (CPython counts nothing after it),
     so the stored list alone cannot tell `f(a)` from `f(a, *rest)`; the
-    header is read back so a variadic callee is never reported as
+    header is read back so a `*args` callee is never reported as
     receiving too many arguments.
     """
     if repo_root is None or not definition.path or definition.start_line < 1:
@@ -605,12 +642,16 @@ def _is_variadic(definition: Definition, repo_root: Path | None) -> bool:
         )
     except (OSError, UnicodeDecodeError):
         return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        if ")" in line:
-            break
-    return _header_is_variadic("\n".join(header))
+    # Stop where the parameter list CLOSES, not at the first `)`. A default
+    # can contain one (`a=g()`, `a=(1, 2)`, `a=")"`), and cutting there drops
+    # a `*rest` that follows it -- the header then fails to parse and answers
+    # False, which suppresses nothing and reports a variadic callee as
+    # receiving too many arguments. A list that never closes keeps every
+    # line to `end_line`, which is the safe direction.
+    body = lines[definition.start_line - 1 : definition.end_line or None]
+    end_row = _parameter_list_end_row(body)
+    header = body[:end_row] if end_row is not None else body
+    return _header_absorbs_extra_positionals("\n".join(header))
 
 
 def _arity_verdict(
@@ -641,7 +682,7 @@ def _arity_verdict(
     if verdict.confirmed:
         return declared_count, cs.DELTA_ARITY_OK
     if positional + (1 if is_method else 0) > verdict.declared_count:
-        if _is_variadic(definition, repo_root):
+        if _absorbs_extra_positionals(definition, repo_root):
             return declared_count, cs.DELTA_ARITY_OK
         return declared_count, cs.DELTA_ARITY_TOO_MANY
     if passed > verdict.declared_count:
