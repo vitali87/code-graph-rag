@@ -169,6 +169,14 @@ CHECK_ISOLATED_WITH_IO = (
 )
 
 CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
+# With endpoint roots off, a handler is live only through an indexed caller;
+# a graph holding one project has no other project to call it from, so the
+# report means "no callers indexed", not "dead" (issue #1603).
+CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS = (
+    "--no-endpoint-roots with one project indexed: an endpoint reported here "
+    "has no callers INDEXED, which is not the same as dead. Index the services "
+    "that call it (each with --capture io) before reading it as dead."
+)
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
 CLI_DEADCODE_COL_KIND = "Kind"
 CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"

@@ -9,6 +9,7 @@ from loguru import logger
 from ... import constants as cs
 from ... import logs
 from ...types_defs import NodeType
+from ...utils import qn_markers
 
 if TYPE_CHECKING:
     from ...services import IngestorProtocol
@@ -190,7 +191,7 @@ def _emit_recorded_impl_override(
     # the ancestry walk a name it could not match before, inventing an
     # override for an INHERENT method that merely shares a trait method's
     # name, and would empty out a C# verbatim identifier like `@event`.
-    method_name = method_name.split(cs.DUP_QN_MARKER, 1)[0]
+    method_name = qn_markers.strip_dup_marker(method_name)
     parent_method_qn = f"{trait_qn}{cs.SEPARATOR_DOT}{method_name}"
     if function_registry.get(parent_method_qn) != NodeType.METHOD:
         # An inherent method, or one the trait declares nowhere: the walk has
