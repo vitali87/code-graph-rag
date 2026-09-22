@@ -908,6 +908,9 @@ class GraphUpdater:
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
         self._exclusion_match: bool | None = None
+        # Project provenance can match while the exclusion set changes. Keep
+        # the old cache in that case so newly excluded files can be removed.
+        self._cache_project_match: bool | None = None
         # Set when a run that needed the graph's module paths could not read
         # them: the reconciliation it was meant to do may not have happened,
         # so that run must not stamp its exclusion set as reconciled.
@@ -1663,6 +1666,7 @@ class GraphUpdater:
         # run replaced. Reset after _register_generated_sources so the answer
         # is always computed against the effective unignore set.
         self._exclusion_match = None
+        self._cache_project_match = None
         self._graph_state_unknown = False
         # Per-run for the same reason (issue #1620's shape): a run that raised
         # between `_process_files` and the commit point leaves its cache
@@ -3844,11 +3848,13 @@ class GraphUpdater:
             # project cannot authorize this project's in-sync fast path
             # (issue #1987).
             if stored.get("project") != self.project_name:
+                self._cache_project_match = False
                 logger.info(
                     ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
                 )
                 self._exclusion_match = False
                 return False
+            self._cache_project_match = True
             # `named` stays informational for readers such as `cgr check`;
             # the sync decision compares the scope itself. Leaving `named` in
             # the comparison made every run with --project-name miss the
@@ -3865,6 +3871,7 @@ class GraphUpdater:
         # apart from a real change so a user seeing an unexpected full pass
         # can tell which of the two they are looking at.
         if stored is None:
+            self._cache_project_match = False
             logger.info(ls.EXCLUSION_STATE_MISSING)
         else:
             logger.info(
@@ -4057,15 +4064,15 @@ class GraphUpdater:
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
         cache_is_dead = self._cache_discarded_in_memory
-        # A repository cache can contain hashes from another project (or from
-        # a run whose exclusion stamp is missing). Reusing those hashes would
-        # skip every unchanged file even though this project has not been
-        # parsed into the graph. Treat the cache as cacheless until this
-        # project's scope is known to match.
-        scope_matches = force or self._exclusions_match_last_run()
+        # A repository cache can contain hashes from another project. Reusing
+        # those hashes would skip every unchanged file even though this
+        # project has not been parsed into the graph. Exclusion-set changes
+        # are different: the old cache is needed to identify files that just
+        # became excluded, so keep it when project provenance still matches.
+        self._exclusions_match_last_run()
         old_hashes = (
             _load_hash_cache(cache_path)
-            if not (force or cache_is_dead or not scope_matches)
+            if not (force or cache_is_dead or self._cache_project_match is False)
             else {}
         )
         # Snapshot for the single-file merge, read from DISK and independently
