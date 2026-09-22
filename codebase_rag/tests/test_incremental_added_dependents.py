@@ -312,7 +312,7 @@ def test_a_duplicate_marker_is_not_part_of_a_known_simple_name(
     look like it GAINED `Foo` and re-parse every waiter on that name (bot
     review on PR #1979)."""
     updater = GraphUpdater(
-        ingestor=_StatefulIngestor(),  # type: ignore[arg-type]
+        ingestor=_StatefulIngestor(),
         repo_path=tmp_path,
         parsers={},
         queries={},

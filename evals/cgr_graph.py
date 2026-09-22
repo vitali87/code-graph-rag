@@ -1105,18 +1105,12 @@ class _StatefulIngestor:
                     if node is not None:
                         node[cs.KEY_UNRESOLVED_REFERENCES] = []
             case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
-                # Each module's list, replaced so a resolved name leaves it.
-                raw_rows = params.get(cs.CYPHER_PARAM_ROWS) if params else None
-                for row in raw_rows if isinstance(raw_rows, list) else []:
-                    qn = row.get(cs.KEY_QN) if isinstance(row, dict) else None
-                    names = (
-                        row.get(cs.CYPHER_PARAM_NAMES)
-                        if isinstance(row, dict)
-                        else None
-                    )
-                    node = self.nodes.get((_MODULE_LABEL, qn))
-                    if node is not None and isinstance(names, list):
-                        node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
+                # One module's list, replaced so a resolved name leaves it.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:

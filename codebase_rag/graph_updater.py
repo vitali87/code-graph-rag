@@ -3067,15 +3067,10 @@ class GraphUpdater:
                 self.ingestor.execute_write(
                     cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES, {cs.KEY_QNS: cleared}
                 )
-            if pending:
+            for module_qn, names in pending:
                 self.ingestor.execute_write(
                     cs.CYPHER_SET_UNRESOLVED_REFERENCES,
-                    {
-                        cs.CYPHER_PARAM_ROWS: [
-                            {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names}
-                            for module_qn, names in pending
-                        ]
-                    },
+                    {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
