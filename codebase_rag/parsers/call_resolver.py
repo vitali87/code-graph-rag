@@ -66,6 +66,24 @@ def _split_receiver_chain(expr: str) -> list[str]:
     return parts
 
 
+def _split_csharp_qualified_path(path: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    generic_depth = 0
+    for char in path:
+        if char == cs.CHAR_ANGLE_OPEN:
+            generic_depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
+            generic_depth -= 1
+        if char == cs.SEPARATOR_DOT and generic_depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 # PHP folds A-Z only when comparing namespace and function names, so
@@ -2184,7 +2202,7 @@ class CallResolver:
         is_global = path.startswith(global_prefix)
         if path.startswith(global_prefix):
             path = path[len(global_prefix) :]
-        parts = path.split(cs.SEPARATOR_DOT)
+        parts = _split_csharp_qualified_path(path)
         if len(parts) < 2 or any(not part for part in parts):
             return None, False
 

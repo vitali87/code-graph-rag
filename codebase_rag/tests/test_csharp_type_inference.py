@@ -412,9 +412,17 @@ def test_generic_outer_nested_type_receiver_resolves(
         """
 namespace N;
 public class Outer<T> {
-    public class Inner { public static void Ping() {} }
+    public class Inner {
+        public static void Ping() {}
+        public static void QualifiedArgument() {}
+    }
 }
-public class App { public void Run() { N.Outer<int>.Inner.Ping(); } }
+public class App {
+    public void Run() {
+        N.Outer<int>.Inner.Ping();
+        N.Outer<System.Collections.Generic.List<int>>.Inner.QualifiedArgument();
+    }
+}
 """,
         encoding="utf-8",
     )
@@ -422,6 +430,10 @@ public class App { public void Run() { N.Outer<int>.Inner.Ping(); } }
 
     assert any(
         t.endswith("N.Outer.Inner.Ping") for t in _call_targets(mock_ingestor)
+    ), _call_targets(mock_ingestor)
+    assert any(
+        t.endswith("N.Outer.Inner.QualifiedArgument")
+        for t in _call_targets(mock_ingestor)
     ), _call_targets(mock_ingestor)
 
 
