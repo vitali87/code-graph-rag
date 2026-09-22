@@ -2377,7 +2377,7 @@ class GraphUpdater:
             name = row.get(cs.KEY_NAME)
             if isinstance(name, str) and name:
                 names.add(name)
-        registered = sorted(names, key=lambda name: len(name), reverse=True)
+        registered = sorted(names, key=str.__len__, reverse=True)
         self._registered_projects = registered
         return registered
 
@@ -3735,8 +3735,17 @@ class GraphUpdater:
                     cs.KEY_PATH: file_key,
                     cs.KEY_PROJECT_NAME: self.project_name,
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
                 },
             )
+
+    def _nested_project_names(self) -> list[str]:
+        """Registered projects whose names extend this one, whose modules
+        the prefix-scoped module delete must leave alone (issue #1985)."""
+        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        return [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
 
     def _diff_dir_against_cache(
         self,
@@ -5971,7 +5980,6 @@ class GraphUpdater:
         logger.info(ls.PRUNE_START)
         total_pruned = 0
 
-        project_prefix = self.project_name + "."
         repo_abs = self.repo_path.resolve().as_posix()
         prune_specs: list[tuple[str, str, str]] = [
             (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
@@ -6034,12 +6042,10 @@ class GraphUpdater:
                 # dropped it here and let a stale root Package survive beside
                 # the Folder that replaced it. `_package_paths` reads these
                 # same rows and admits both forms; the two must agree.
-                if (
-                    isinstance(qn, str)
-                    and qn
-                    and qn != self.project_name
-                    and not qn.startswith(project_prefix)
-                ):
+                # Ownership, not the prefix: `svc.` prefixes `svc.v2`'s rows
+                # too, and a file only `svc.v2` holds is absent from `svc`'s
+                # tree, so the prefix rule pruned it (issue #1985).
+                if isinstance(qn, str) and qn and not self._owns(qn):
                     continue
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now

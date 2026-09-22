@@ -362,7 +362,9 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
         )
         assert store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md")
 
-        store._delete_module_subtree("doc.md")
+        store._delete_module_subtree(
+            "doc.md", {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
+        )
 
         assert not store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md"), (
             "the Section outlived its Module's re-parse, which production's "
@@ -395,7 +397,9 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
             (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Top.Nested"),
         )
 
-        store._delete_module_subtree("doc.md")
+        store._delete_module_subtree(
+            "doc.md", {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
+        )
 
         survivors = {
             uid

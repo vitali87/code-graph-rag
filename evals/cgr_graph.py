@@ -1140,7 +1140,7 @@ class _StatefulIngestor:
         path = params.get(cs.KEY_PATH) if params else None
         match query:
             case cs.CYPHER_DELETE_MODULE:
-                self._delete_module_subtree(path)
+                self._delete_module_subtree(path, params or {})
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
                 # absolute path (issue #897).
@@ -1192,9 +1192,27 @@ class _StatefulIngestor:
             if node_label == label and props.get(key) == path
         }
 
-    def _delete_module_subtree(self, path: PropertyValue) -> None:
+    def _delete_module_subtree(self, path: PropertyValue, params: PropertyDict) -> None:
+        # Mirrors the real query's project scope: the relative path is shared
+        # across projects, and a path-only match deleted every project's
+        # module there (issue #1985).
+        project = _str(params.get(cs.KEY_PROJECT_NAME))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        nested = params.get(cs.KEY_NESTED_PROJECTS)
+        nested_names = (
+            [n for n in nested if isinstance(n, str)]
+            if isinstance(nested, list)
+            else []
+        )
+
+        def in_scope(node: _NodeId) -> bool:
+            qn = _str(self.nodes.get(node, {}).get(cs.KEY_QUALIFIED_NAME))
+            if qn != project and not qn.startswith(prefix):
+                return False
+            return not any(qn == n or qn.startswith(f"{n}.") for n in nested_names)
+
         doomed: set[_NodeId] = set()
-        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        frontier = [n for n in self._nodes_at_path(_MODULE_LABEL, path) if in_scope(n)]
         while frontier:
             node = frontier.pop()
             if node in doomed:
