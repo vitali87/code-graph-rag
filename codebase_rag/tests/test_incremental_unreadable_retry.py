@@ -207,6 +207,30 @@ def test_a_link_with_no_target_at_all_is_gone(tmp_path: Path) -> None:
     assert gu._vanished(through_a_file) is True
 
 
+def test_a_path_under_a_directory_now_a_file_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pkg/module.py` after `pkg/` was replaced by a regular file: `lstat`
+    raises ENOTDIR (POSIX), and the path can never exist again. Reading it
+    as unreachable kept its subtree through every orphan prune (bot review
+    on PR #1993). A permission failure on the same lookup stays unreachable."""
+    (tmp_path / "pkg").write_text("not a directory\n")
+    under_a_file = tmp_path / "pkg" / "module.py"
+    assert gu._vanished(under_a_file) is True
+
+    present = tmp_path / "present.py"
+    present.write_text("x = 1\n")
+    real_lstat = os.lstat
+
+    def denied(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if Path(str(path)) == present:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(gu.os, "lstat", denied)
+    assert gu._vanished(present) is False
+
+
 def test_a_windows_reparse_loop_is_gone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -277,8 +301,10 @@ def test_the_orphan_prune_does_not_raise_on_an_unreachable_link(
     Drives the PREDICATE, not the prune: reaching that line end to end
     needs a link the structure walk itself can stat, and `is_dir()` in
     `structure_processor` raises on this shape first. So this pins the
-    contract the prune depends on -- answer for every shape, never raise --
-    and the control below shows the old spelling violating it.
+    contract the prune depends on -- answer for every shape, never raise.
+    Whether `exists()` itself raises depends on the interpreter (3.14 reads
+    every OSError as False), so the precondition is checked with `os.stat`,
+    which raises on every version when the target really is unreachable.
     """
     secret = tmp_path / "secret"
     secret.mkdir()
@@ -291,14 +317,18 @@ def test_the_orphan_prune_does_not_raise_on_an_unreachable_link(
 
     os.chmod(secret, 0o000)
     try:
+        # The precondition: the target really is unreachable, so the
+        # assertions below are not passing on a fixture that never had the
+        # problem. Root, and Windows ACLs, ignore the mode bits.
+        try:
+            os.stat(link)
+        except PermissionError:
+            pass
+        else:
+            pytest.skip("the mode bits do not block access on this host")
         # The predicate the prune uses must ANSWER for all three, never raise.
         assert gu._vanished(link) is False
         assert gu._vanished(absent) is True
         assert gu._vanished(present) is False
-        # The control: the old spelling really does raise on this shape, so
-        # the assertions above are not passing on a fixture that never had
-        # the problem.
-        with pytest.raises(PermissionError):
-            link.exists()
     finally:
         os.chmod(secret, 0o755)

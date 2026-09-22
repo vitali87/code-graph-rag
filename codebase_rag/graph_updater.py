@@ -166,10 +166,17 @@ type DirMtimesCache = dict[str, float]
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
 
 
-_LINK_TARGET_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+_PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
 # Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
 # CPython maps to EINVAL rather than ELOOP (bot review).
 _ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _is_gone_error(exc: OSError) -> bool:
+    return (
+        exc.errno in _PATH_GONE_ERRNOS
+        or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+    )
 
 
 def _vanished(filepath: Path) -> bool:
@@ -177,12 +184,14 @@ def _vanished(filepath: Path) -> bool:
     is absent, or a symlink whose target is. Judged without following the
     link and without `exists()`, which reads a permission failure on the
     file or its directory as absence (issue #1983)."""
+    # ENOTDIR here means an ancestor is now a regular file, so the path can
+    # never exist again; reading it as "not gone" kept its subtree through
+    # every orphan prune (bot review). Only a permission-style failure is
+    # left as unreachable.
     try:
         os.lstat(filepath)
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return False
+    except OSError as exc:
+        return _is_gone_error(exc)
     if not filepath.is_symlink():
         return False
     # A link with no target at all is gone: dangling, a cycle, or a target
@@ -193,10 +202,7 @@ def _vanished(filepath: Path) -> bool:
     try:
         os.stat(filepath)
     except OSError as exc:
-        return (
-            exc.errno in _LINK_TARGET_GONE_ERRNOS
-            or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
-        )
+        return _is_gone_error(exc)
     return False
 
 
