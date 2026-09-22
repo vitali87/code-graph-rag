@@ -1,3 +1,5 @@
+import re
+from collections.abc import Callable
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -663,6 +665,10 @@ class _StatefulIngestor:
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
+        node = self._node_addressed_by(query, params or {}, cq.build_node_props_query)
+        if node is not None:
+            props = self.nodes.get(node)
+            return [] if props is None else [{cs.KEY_PROPS: dict(props)}]
         match query:
             case cs.CYPHER_ALL_FILE_PATHS:
                 return self._path_rows(_FILE_LABEL)
@@ -724,11 +730,22 @@ class _StatefulIngestor:
                         key=lambda n: (n[0], _str(n[1])),
                     )
                 ]
-            case cq.CYPHER_CHECK_ORPHAN_SHARED_NODES:
+            case cq.CYPHER_CHECK_GRAPH_IO_LINKS:
+                io = {
+                    cs.RelationshipType.FLOWS_TO.value,
+                    cs.RelationshipType.RESOLVES_TO.value,
+                }
+                found = next((edge[2] for edge in self.edges if edge[2] in io), None)
+                return [] if found is None else [{cs.KEY_REL: found}]
+            case cq.CYPHER_CHECK_SHARED_NODES:
                 return [
-                    {cs.KEY_LABEL: label, cs.KEY_PROPS: dict(props)}
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_PROPS: dict(props),
+                        cs.KEY_INBOUND: len(self._in.get((label, uid), ())),
+                    }
                     for (label, uid), props in self.nodes.items()
-                    if label in _SHARED_ORPHAN_LABELS and not self._in.get((label, uid))
+                    if label in _SHARED_ORPHAN_LABELS
                 ]
             case cq.CYPHER_CHECK_SCOPE_EDGES:
                 return self._check_scope_edges(params or {})
@@ -1162,6 +1179,8 @@ class _StatefulIngestor:
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
+        if self._remove_node_keys(query, params or {}):
+            return None
         match query:
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
@@ -1183,12 +1202,8 @@ class _StatefulIngestor:
                 self._delete_orphan_external_modules()
             case cq.CYPHER_CHECK_DELETE_FINDINGS:
                 self._delete_check_findings(params or {})
-            case cq.CYPHER_CHECK_DELETE_SHARED_NODE:
-                # One shared node the isolated check created, addressed by
-                # label and qualified name (#1718).
-                label = _str(params.get(cs.KEY_LABEL)) if params else ""
-                uid = params.get(cs.KEY_QUALIFIED_NAME) if params else None
-                self._detach_delete({(label, uid)} & set(self.nodes))
+            case cq.CYPHER_CHECK_DELETE_SHARED_NODES:
+                self._delete_created_shared_nodes(params or {})
             case _:
                 return None
 
@@ -1279,6 +1294,45 @@ class _StatefulIngestor:
                 )
                 rows.append(row)
         return rows
+
+    @staticmethod
+    def _node_addressed_by(
+        query: str, params: PropertyDict, builder: Callable[[str, str], str]
+    ) -> _NodeId | None:
+        # The per-node queries are generated per label, so they are
+        # recognised by being exactly a builder's output for one label with
+        # a unique key, not matched against a constant.
+        for label, key in cs.NODE_UNIQUE_CONSTRAINTS.items():
+            if query == builder(label, key):
+                return (label, params.get(cs.KEY_ID))
+        return None
+
+    def _remove_node_keys(self, query: str, params: PropertyDict) -> bool:
+        for label, key in cs.NODE_UNIQUE_CONSTRAINTS.items():
+            prefix = cq.build_node_props_query(label, key).split(" RETURN ")[0]
+            if not query.startswith(prefix + " REMOVE "):
+                continue
+            names = re.findall(r"n\.`([^`]+)`", query[len(prefix) :])
+            props = self.nodes.get((label, params.get(cs.KEY_ID)))
+            if props is not None:
+                for name in names:
+                    props.pop(name, None)
+            return True
+        return False
+
+    def _delete_created_shared_nodes(self, params: PropertyDict) -> None:
+        # The shared nodes the isolated check created, by key (#1718).
+        labels = params.get(cs.CYPHER_PARAM_LABELS)
+        names = params.get(cs.CYPHER_PARAM_QUALIFIED_NAMES)
+        created = {
+            (_str(label), name)
+            for label, name in zip(
+                labels if isinstance(labels, list) else [],
+                names if isinstance(names, list) else [],
+                strict=False,
+            )
+        }
+        self._detach_delete(created & set(self.nodes))
 
     def _delete_check_findings(self, params: PropertyDict) -> None:
         raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
