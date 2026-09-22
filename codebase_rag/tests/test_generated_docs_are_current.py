@@ -22,10 +22,29 @@ from scripts.generate_readme import (
 
 REGENERATE = "uv run python scripts/generate_readme.py"
 
+# Which generated section each target carries. Pinned rather than read from
+# the file: a target whose section was swapped for another current one would
+# otherwise compare clean against the section it happens to hold (CodeRabbit,
+# #2127).
+EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
+    "README.md": frozenset({"latest_news"}),
+    "docs/architecture/language-support.md": frozenset({"supported_languages"}),
+    "docs/architecture/graph-schema.md": frozenset({"language_mappings"}),
+    "docs/guide/mcp-server.md": frozenset({"mcp_tools"}),
+    "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),
+    "docs/getting-started/installation.md": frozenset({"dependencies"}),
+}
+
 
 @pytest.fixture(scope="module")
 def sections() -> dict[str, str]:
     return generate_all_sections(PROJECT_ROOT)
+
+
+def test_every_target_has_its_sections_pinned() -> None:
+    """The forcing function for the map above: a new target, or a renamed
+    one, fails here until its sections are pinned."""
+    assert EXPECTED_SECTIONS.keys() == set(TARGET_FILES)
 
 
 @pytest.mark.parametrize("relative_path", TARGET_FILES)
@@ -33,14 +52,19 @@ def test_the_committed_file_is_what_the_generator_writes(
     relative_path: str, sections: dict[str, str]
 ) -> None:
     committed = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
-    # A file with no marker the generator fills would pass the comparison
+    # A file with no marker, or a different one, would pass the comparison
     # below vacuously, whatever its content.
     marked = {m.group(2) for m in SECTION_PATTERN.finditer(committed)}
-    assert marked & sections.keys(), f"{relative_path} has no generated section"
+    expected = EXPECTED_SECTIONS.get(relative_path, frozenset())
+    assert marked == expected, (
+        f"{relative_path} carries section(s) {sorted(marked)}, "
+        f"expected {sorted(expected)}"
+    )
+    assert expected <= sections.keys(), sorted(expected - sections.keys())
 
     stale = sorted(
         name
-        for name in marked & sections.keys()
+        for name in expected
         if replace_sections(committed, {name: sections[name]}) != committed
     )
     assert not stale, (
