@@ -302,3 +302,27 @@ def test_the_scoped_path_offers_created_files_only(
     (root / "pkg/base.py").write_text(PYTHON["pkg/base.py"])
     updater.reingest(["pkg/base.py"])
     assert asked == [[], ["pkg/base.py"]]
+
+
+def test_a_duplicate_marker_is_not_part_of_a_known_simple_name(
+    tmp_path: Path,
+) -> None:
+    """A same-named sibling is stored as `Foo@<line>`. Read raw, `had` would
+    hold `Foo@3` while the parse yields `Foo`, so an unchanged file would
+    look like it GAINED `Foo` and re-parse every waiter on that name (bot
+    review on PR #1979)."""
+    updater = GraphUpdater(
+        ingestor=_StatefulIngestor(),  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+        project_name="proj",
+    )
+    rows = [
+        {cs.KEY_QUALIFIED_NAME: "proj.m.Foo", cs.KEY_PATH: "m.py"},
+        {cs.KEY_QUALIFIED_NAME: "proj.m.Foo@3", cs.KEY_PATH: "m.py"},
+        {cs.KEY_QUALIFIED_NAME: "proj.m.Bar@9", cs.KEY_PATH: "m.py"},
+    ]
+    updater.ingestor.fetch_all = lambda *_a, **_k: rows  # type: ignore[method-assign]
+
+    assert updater._known_simple_names_by_path(["m.py"]) == {"m.py": {"Foo", "Bar"}}
