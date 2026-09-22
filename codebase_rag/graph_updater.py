@@ -2369,11 +2369,13 @@ class GraphUpdater:
                 continue
             if path in self._reparsed_file_keys:
                 continue
-            pending.append(
-                PendingConstantType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name, path
-                )
-            )
+            # The owner is the qn minus the constant's name: emit builds it as
+            # `{module_qn}.{name}` from the DISAMBIGUATED module qn, which
+            # `base_module_qn` cannot reproduce (`settings.py` beside
+            # `settings.c` owns `proj.settings.py`), and the bare name
+            # resolves the annotation through the other file's scope.
+            owner = qn.rpartition(cs.SEPARATOR_DOT)[0]
+            pending.append(PendingConstantType(qn, owner, type_name, path))
 
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed

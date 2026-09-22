@@ -434,3 +434,40 @@ def test_scoped_reingest_drops_the_old_constant_annotation(tmp_path: Path) -> No
     assert _edges(store, cs.RelationshipType.OF_TYPE.value) == {
         ("proj.app.THING", "proj.app.New")
     }
+
+
+def test_a_requeued_constant_keeps_its_disambiguated_owner(tmp_path: Path) -> None:
+    """The requeue rebuilds a Constant's owner from its qn, not its path.
+
+    `settings.c` beside `settings.py` suffixes the Python module to
+    `proj.settings.py`. `base_module_qn` runs before that disambiguation and
+    yields the bare `proj.settings`, so a requeue keyed on the path resolved
+    `Widget` through the C module's scope and gained an OF_TYPE edge a clean
+    index never has (Copilot, PR #1931; the Parameter/Field shape is #1935).
+    Touching an unrelated third file leaves the constant to the requeue.
+    """
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    files = {
+        "other.py": "X = 1\n",
+        "settings.c": "struct Widget { int a; };\n",
+        "settings.py": "class Widget:\n    pass\n\nDEFAULT: Widget = Widget()\n",
+    }
+    for name, src in files.items():
+        (repo / name).write_text(src)
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+    GraphUpdater(
+        ingestor=store,
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+        capture=resolve_capture(["+constants", "+parameters"]),
+    ).run(force=True)
+    clean = set(_edges(store, cs.RelationshipType.OF_TYPE.value))
+    assert ("proj.settings.py.DEFAULT", "proj.settings.py.Widget") in clean, clean
+
+    (repo / "other.py").write_text("X = 2\n")
+    _reindex(store, repo)
+
+    assert set(_edges(store, cs.RelationshipType.OF_TYPE.value)) == clean
