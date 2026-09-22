@@ -162,6 +162,7 @@ def _run_script(
             "HEAD_BRANCH": BRANCH,
             "HEAD_REPO": head_repo,
             "PR_NUMBER": str(PR),
+            "PR_CREATED_AT": PR_CREATED_AT,
             "GH_PAGES": "\n".join(
                 json.dumps({"workflow_runs": runs}) for runs in pages
             ),
@@ -729,6 +730,73 @@ class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
         assert result.returncode == 1
         assert "Do NOT dispatch another" not in result.stdout
         assert "gh workflow run ci.yml" in result.stdout
+
+    def test_a_queued_push_event_run_is_not_awaited(self) -> None:
+        """`ci_count`'s fallback requires `.event == "pull_request"`.
+
+        A `push`-event run can never gain a PR association, so awaiting
+        it withholds the dispatch command for ever.
+        """
+        run = _make_workflow_run(status="queued", conclusion=None)
+        run["event"] = "push"
+        result = _execute_workflow_check(
+            [[run]], pr_pages=[[_make_source_pull_request()]]
+        )
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout
+        assert "gh workflow run ci.yml" in result.stdout
+
+    def test_a_queued_run_created_before_the_pr_is_not_awaited(self) -> None:
+        """A run's `created_at` never changes, so a run predating the PR
+        can never satisfy the fallback's `created_at >= pr_created_at`."""
+        run = _make_workflow_run(status="queued", conclusion=None)
+        run["created_at"] = "2026-09-01T00:00:00Z"
+        result = _execute_workflow_check(
+            [[run]], pr_pages=[[_make_source_pull_request()]]
+        )
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout
+        assert "gh workflow run ci.yml" in result.stdout
+
+    def test_an_unresolved_history_says_the_wait_may_not_clear(self) -> None:
+        """Ambiguous history stays awaitable -- it can settle when a PR
+        sharing the branch closes -- but the step must not say only "Do
+        NOT dispatch" after reporting the history did not resolve.
+        """
+        run = _make_workflow_run(status="queued", conclusion=None)
+        result = _execute_workflow_check(
+            [[run]],
+            pr_pages=[[_make_source_pull_request(), _make_source_pull_request(PR + 1)]],
+        )
+
+        assert result.returncode == 1
+        assert "does not uniquely identify" in result.stdout
+        assert "cannot be counted YET" in result.stdout
+        assert "fresh branch name" in result.stdout
+
+    def test_a_resolved_history_omits_the_unresolved_advice(self) -> None:
+        """Control for the test above: when the fallback DID resolve, the
+        extra paragraph must not print."""
+        run = _make_workflow_run(status="queued", conclusion=None)
+        run["created_at"] = "2026-09-01T00:00:00Z"
+        result = _execute_workflow_check(
+            [[run]], pr_pages=[[_make_source_pull_request()]]
+        )
+
+        assert "cannot be counted YET" not in result.stdout
+
+    def test_a_foreign_association_routes_to_the_dispatch_remedy(self) -> None:
+        """A run naming another PR is not awaitable, so the state is
+        `absent`. The `foreign` branch carried two lines describing this
+        case that could never print."""
+        run = _make_workflow_run(prs=(9999,), conclusion="success")
+        result = _execute_workflow_check([[run]], pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "gh workflow run ci.yml" in result.stdout
+        assert "naming a different PR" not in result.stdout
 
     def test_a_branch_named_like_a_status_does_not_flip_the_remedy(self) -> None:
         """`head_branch` is interpolated into the reason text the grep

@@ -37,6 +37,7 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -180,30 +181,37 @@ jobs:
             # interpolates head_branch, so a branch literally named
             # `status=queued` would flip the advice -- and a status the
             # grep does not list (`requested`, `pending`) would silently
-            # fall through to the absent-case remedy. Restricted to runs
-            # matching THIS PR's source identity, so a queued run belonging
-            # to another PR cannot claim "one is already coming". A run is
-            # eligible to wait for when it names this PR, or when it
-            # carries no association AND is a fork run, where the
-            # source-branch fallback may yet resolve it. A SAME-REPO run
-            # with an empty association is not eligible: `ci_count`'s
-            # fallback is gated on `HEAD_REPO != REPO`, so nothing can
-            # ever associate it with this PR. Awaiting it printed "Do NOT
-            # dispatch another" for a run that could never count, leaving
-            # the PR stuck (`test_same_repo_empty_association_is_not_proof`
-            # already refuses it as proof; the remedy must agree).
-            ci_state=$(echo "$runs" | jq -r \
-              --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
-              --arg head_repo "$HEAD_REPO" --arg repo "$REPO" \
-              --argjson pr "$PR_NUMBER" '
-                [.[] | select(.path == ".github/workflows/ci.yml")
-                     | select(.head_sha == $sha and .head_branch == $branch
-                              and .head_repo == $head_repo)
-                     | select((.prs | index($pr))
-                              or ((.prs | length) == 0 and $head_repo != $repo))]
-                | if length == 0 then "absent"
-                  elif any(.[]; .status != "completed") then "pending"
-                  else "foreign" end' 2>/dev/null) || ci_state="absent"
+            # fall through to the absent-case remedy.
+            #
+            # `awaitable` asks whether a run could EVER be counted, which
+            # is deliberately NOT `ci_count`'s question ("can it be counted
+            # now"). The two must differ: `ci_count` ignores status, so any
+            # run it counts exits the gate at 0 before this code runs.
+            # Making the predicates identical would leave `pending`
+            # unreachable and the whole branch dead.
+            #
+            # So the conditions here are exactly those a run can never
+            # outgrow. A same-repo run and a `push`-event run can never
+            # gain a PR association, and a run created before the PR can
+            # never satisfy the fallback's `created_at >= pr_created_at`,
+            # so none of the three is worth waiting for. What is
+            # deliberately absent is whether the fork fallback has ALREADY
+            # resolved: ambiguous branch history can settle (the other PR
+            # closes, the branch stops being shared) while the run keeps
+            # its identity, so a still-queued fork run stays awaitable.
+            #
+            # An explicit association is also absent, because a run naming
+            # this PR is counted by `ci_count` and never reaches here.
+            ci_state=$(echo "$ci_runs" | jq -r \
+              --argjson pr "$PR_NUMBER" --arg head_repo "$HEAD_REPO" \
+              --arg repo "$REPO" --arg pr_created "$PR_CREATED_AT" '
+                def awaitable:
+                  (.prs | length) == 0 and .event == "pull_request"
+                  and $head_repo != $repo
+                  and ($pr_created == "" or .created_at >= $pr_created);
+                [.[] | select(awaitable and .status != "completed")]
+                | if length > 0 then "pending" else "absent" end' \
+              2>/dev/null) || ci_state="absent"
             echo
             echo "::error::No 'CI' workflow run matches PR #$PR_NUMBER at head $HEAD_SHA."
             echo "This PR has not been verified by the test suite at the commit"
@@ -230,11 +238,17 @@ jobs:
               echo "On a fork PR this usually means the run is awaiting"
               echo "maintainer approval -- sibling runs reporting"
               echo "completed/action_required are the tell."
+              if [ -z "${pr_created_at:-}" ]; then
+                echo
+                echo "The branch history above did not resolve this run to"
+                echo "this PR, so the run cannot be counted YET. That can"
+                echo "still clear on its own (a PR sharing the branch closes)."
+                echo "If it does not, push this branch to a fresh branch name"
+                echo "used by no other PR."
+              fi
             else
               echo "Fork runs without PR associations require a source branch"
               echo "used by this PR alone; reused or shared branches are ambiguous."
-              echo "A run naming a different PR is the shared-head case a"
-              echo "rebase produces (issue #1582); it is not this PR's evidence."
             fi
             exit 1
           fi
