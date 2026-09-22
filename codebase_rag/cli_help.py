@@ -125,6 +125,7 @@ CMD_CHECK = (
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
+    "\n  cgr check --base origin/main --isolated --fail-on-found"
 )
 HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
@@ -132,6 +133,11 @@ HELP_CHECK_BASE = (
 HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, arity "
     "findings, new duplicates or new import cycles."
+)
+HELP_CHECK_ISOLATED = (
+    "Put the graph and the hash cache back as they were once the delta is "
+    "computed, so the check never changes the shared graph and can be rerun "
+    "on the same edit."
 )
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "

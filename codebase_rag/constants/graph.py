@@ -925,6 +925,16 @@ KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
+# Isolated check capture rows (issue #1718): the far end of an edge touching
+# the scope carries its own label, key fields and (for the labels the check
+# can prune or re-grade) properties, prefixed so they sit beside the near
+# end's in one row.
+KEY_OUTGOING = "outgoing"
+FAR_END_PREFIX = "far_"
+KEY_FAR_LABEL = FAR_END_PREFIX + KEY_LABEL
+KEY_FAR_PROPS = FAR_END_PREFIX + KEY_PROPS
+CYPHER_PARAM_ABSOLUTE_PATHS = "absolute_paths"
+CYPHER_PARAM_KEEP = "keep"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 

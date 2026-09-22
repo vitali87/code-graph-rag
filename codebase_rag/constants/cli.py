@@ -156,6 +156,17 @@ CHECK_NOT_INDEXED = (
     "Project {project} is not indexed; run 'cgr start --update-graph' at the "
     "base ref first."
 )
+# --isolated restores the subgraph the re-ingest replaces, and reaches it by
+# walking out from the re-parsed modules. A Resource is never on that walk,
+# and the endpoint pass deletes every network RESOLVES_TO edge repo-wide
+# before rebuilding them from the edited tree, so those edges cannot be put
+# back. Refused rather than silently lost (greptile-local, #1718).
+CHECK_ISOLATED_WITH_IO = (
+    "--isolated cannot restore IO resource links, which the current capture "
+    "({groups}) enables: the endpoint pass rewrites them across the whole "
+    "graph, not only the changed files. Re-run with '--capture -io', or "
+    "without --isolated on a graph you can rebuild."
+)
 
 CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
 # With endpoint roots off, a handler is live only through an indexed caller;

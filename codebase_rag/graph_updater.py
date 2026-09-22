@@ -902,6 +902,12 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The file keys the current `reingest` call will delete and re-parse
+        # (changed, deleted, dependents, same-stem survivors), published right
+        # before `before_write` runs so a caller can capture exactly that set
+        # while nothing has been written yet (issue #1718). Empty outside a
+        # call and until the prologue has computed it.
+        self.reingest_scope: tuple[str, ...] = ()
         self._exclusion_match: bool | None = None
         # Set when a run that needed the graph's module paths could not read
         # them: the reconciliation it was meant to do may not have happened,
@@ -5619,6 +5625,7 @@ class GraphUpdater:
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
+        self.reingest_scope = ()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
@@ -5673,7 +5680,9 @@ class GraphUpdater:
         # The caller's last word before the first write. Still inside the
         # read-only prologue: a refusal here leaves the graph exactly as it
         # was, and `reingest_mutated` stays False so the caller classifies
-        # it as "nothing changed".
+        # it as "nothing changed". The scope is published first so the hook
+        # can read what this call is about to replace (issue #1718).
+        self.reingest_scope = tuple(all_keys)
         if before_write is not None:
             try:
                 before_write()
