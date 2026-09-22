@@ -95,7 +95,7 @@ def test_a_nested_defs_binding_does_not_type_the_outer_name(
     assert "v" not in types
 
 
-def test_a_nested_class_bodys_binding_does_not_type_the_outer_name(
+def test_a_nested_class_body_binding_does_not_type_the_outer_name(
     tmp_path: Path,
 ) -> None:
     """A class body binds attributes, reached as `Holder.v`. A bare `v` in

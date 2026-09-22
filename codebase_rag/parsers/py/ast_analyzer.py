@@ -495,26 +495,31 @@ def _nonlocal_names(scope: Node) -> frozenset[str]:
     while stack:
         current = stack.pop()
         if current.type == cs.TS_PY_NONLOCAL_STATEMENT:
-            for child in current.named_children:
-                if child.type != cs.TS_PY_IDENTIFIER:
-                    continue
-                if not (text := safe_decode_text(child)):
-                    continue
-                owner = next(
-                    (
-                        fn
-                        for fn in _enclosing_functions(current, scope)
-                        if _binds_name(fn, text)
-                    ),
-                    None,
-                )
-                # No enclosing binder found: the declaration is unresolved
-                # (or `scope` is the only candidate), so keep the previous
-                # behaviour and let `scope` own it.
-                if owner is None or owner.id == scope.id:
-                    names.add(text)
+            names.update(_names_owned_by(current, scope))
         stack.extend(current.children)
     return frozenset(names)
+
+
+def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
+    """The names in one `nonlocal` statement that rebind `scope`'s own."""
+    for child in declaration.named_children:
+        if child.type != cs.TS_PY_IDENTIFIER:
+            continue
+        if not (text := safe_decode_text(child)):
+            continue
+        owner = next(
+            (
+                fn
+                for fn in _enclosing_functions(declaration, scope)
+                if _binds_name(fn, text)
+            ),
+            None,
+        )
+        # No enclosing binder found: the declaration is unresolved (or
+        # `scope` is the only candidate), so keep the previous behaviour
+        # and let `scope` own it.
+        if owner is None or owner.id == scope.id:
+            yield text
 
 
 def _rebinds_nonlocal(assignment: Node, nonlocal_names: frozenset[str]) -> bool:
