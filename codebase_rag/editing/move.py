@@ -48,7 +48,16 @@ from .imports import (
 )
 from .patcher import Patcher, PatcherError
 from .rename import _name_token
-from .transaction import EditTransaction, StagedTree, VerificationResult, undo_last
+from .transaction import (
+    EditTransaction,
+    StagedFile,
+    StagedTree,
+    TransactionConflict,
+    VerificationResult,
+    load_history,
+    undo_transaction,
+    unified_diff,
+)
 
 _IDENTIFIER = r"(?<![\w.])%s(?!\w)"
 # The shared set, so `.tsx` takes the JS path too: a hand-kept {JS, TS}
@@ -264,6 +273,33 @@ def _strip_project(qn: str, project: str) -> str:
 
 
 class Mover:
+    # What the import and paste generators below can write. TSX is left out
+    # on purpose: `_narrow_statement` spells JavaScript only for
+    # `_JS_LANGUAGES`, which does not name TSX, so a TSX move would copy
+    # its imports in Python syntax. Anything else has a grammar but no
+    # generator here, and every non-JS branch writes Python.
+    _MOVABLE = frozenset(
+        {cs.SupportedLanguage.PYTHON, cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}
+    )
+    _FUTURE = "__future__"
+    _FUTURE_IMPORT = "from __future__ import {features}\n"
+    # Refusals that have no home in constants/cli.py yet.
+    _UNSUPPORTED = "move does not support {language} ({path})"
+    _CROSS_LANGUAGE = (
+        "{new_path} is not in the language of {old_path}; a move cannot "
+        "change a definition's language"
+    )
+    _NESTED = "{qn} is nested inside another definition; move that one instead"
+    _COLLISION = "{path} already binds {name}; the moved definition would shadow it"
+    _NOT_EXPORTED = (
+        "{names} is not exported from {path}, so the moved definition could "
+        "not import it; export it first"
+    )
+    _ROLLBACK_REFUSED = (
+        "Move failed its postcondition ({reasons}) and was not rolled back "
+        "({error}); the moved files may remain modified; check the working tree"
+    )
+
     def __init__(
         self,
         repo_root: Path,
@@ -317,6 +353,17 @@ class Mover:
         patcher = Patcher(self.repo_root)
         source = patcher.source(old_path)
         language, root = self._parse(old_path, source)
+        if language not in self._MOVABLE:
+            raise MoveRefused(
+                self._UNSUPPORTED.format(language=language, path=old_path)
+            )
+        # An explicit `pkg/core.ts` for a Python definition would get Python
+        # text under a TypeScript name, and no parser of the right language
+        # would ever look at it.
+        if get_language_for_extension(Path(new_path).suffix) != language:
+            raise MoveRefused(
+                self._CROSS_LANGUAGE.format(new_path=new_path, old_path=old_path)
+            )
         token = _name_token(
             source,
             language,
@@ -327,6 +374,22 @@ class Mover:
         node = _definition_at(root, *token) if token else None
         if node is None:
             raise MoveRefused(cs.MOVE_NO_DEFINITION_TOKEN.format(qn=qn, path=old_path))
+        # A nested function or class keeps its indentation when cut, and
+        # pasted at module level it no longer parses (or, one level down,
+        # silently changes what it closes over).
+        top = (
+            node.parent
+            if node.parent is not None and node.parent.type in _WRAPPERS
+            else node
+        )
+        if top.parent is None or top.parent.type != root.type:
+            raise MoveRefused(self._NESTED.format(qn=qn))
+        existing = self._existing_target(patcher, new_path)
+        target_root: Node | None = None
+        if existing is not None:
+            _language, target_root = self._parse(new_path, existing)
+            if name in self._bindings(target_root):
+                raise MoveRefused(self._COLLISION.format(path=new_path, name=name))
         cut = _cut_span(source, node)
         remainder = (source[: cut.start] + source[cut.end :]).decode(
             cs.ENCODING_UTF8, errors="replace"
@@ -335,7 +398,16 @@ class Mover:
         needed = self._needed_imports(
             old_module, old_path, new_path, cut.text, language
         )
-        from_old = self._needed_from_old(old_path, cut.text, name)
+        old_bindings = self._bindings(root)
+        from_old = self._needed_from_old(old_path, cut.text, name, old_bindings)
+        if language in _JS_LANGUAGES:
+            # `import { X }` of a name the module never exported is a load
+            # error in ESM and a compile error in TypeScript.
+            hidden = [n for n in from_old if not old_bindings.get(n, False)]
+            if hidden:
+                raise MoveRefused(
+                    self._NOT_EXPORTED.format(names=", ".join(hidden), path=old_path)
+                )
         old_uses = _uses(remainder, name)
         # The cycle check runs on the graph BEFORE any file is touched.
         self._refuse_cycles(
@@ -346,6 +418,9 @@ class Mover:
             old_uses or keep_alias,
             old_path,
             new_path,
+            qn,
+            name,
+            language,
         )
 
         old_spelled = _strip_project(old_module, self.project)
@@ -369,11 +444,23 @@ class Mover:
         paste = self._paste_text(
             cut.text, needed, from_old, old_spelled, old_path, new_path, language
         )
+        # `from __future__ import annotations` is never referenced by name,
+        # so the use filter above drops it, and without it the destination
+        # evaluates the moved annotations eagerly: a forward reference that
+        # loaded fine before the move is a NameError after it.
+        futures = (
+            self._future_features(source)
+            if language == cs.SupportedLanguage.PYTHON
+            else []
+        )
         new_content: str | None = None
-        try:
-            existing = patcher.source(new_path)
-        except PatcherError:
-            new_content = paste.lstrip("\n")
+        if existing is None:
+            head = (
+                self._FUTURE_IMPORT.format(features=", ".join(futures)) + "\n"
+                if futures
+                else ""
+            )
+            new_content = head + paste.lstrip("\n")
         else:
             sep = (
                 ""
@@ -382,8 +469,25 @@ class Mover:
             )
             if existing and not existing.endswith(b"\n"):
                 sep = "\n" + sep
+            have = set(self._future_features(existing))
+            missing = [f for f in futures if f not in have]
+            future_line = (
+                self._FUTURE_IMPORT.format(features=", ".join(missing))
+                if missing
+                else ""
+            )
+            # A future statement must precede every other statement, so it
+            # goes at the head of the destination (after its docstring),
+            # never with the pasted imports at the end.
+            assert target_root is not None
+            at = self._head_end(existing, target_root)
+            if future_line and at < len(existing):
+                patcher.replace_span(new_path, (at, at), future_line)
+                future_line = ""
             patcher.replace_span(
-                new_path, (len(existing), len(existing)), sep + paste.lstrip("\n")
+                new_path,
+                (len(existing), len(existing)),
+                sep + future_line + paste.lstrip("\n"),
             )
         # 3. Importers, and uses through a module import (`pkg.util.helper`).
         self._retarget_attribute_uses(
@@ -404,12 +508,153 @@ class Mover:
             importers=tuple(sorted(importers)),
             unchanged_importers=tuple(sorted(unchanged)),
             copied_imports=tuple(n.statement for n in needed),
-            diff="",
+            diff=self._preview_diff(patcher, new_path, new_content),
             message=cs.MOVE_PLANNED.format(
                 importers=len(importers), unchanged=len(unchanged)
             ),
         )
         return report, patcher, new_content
+
+    @staticmethod
+    def _preview_diff(patcher: Patcher, new_path: str, new_content: str | None) -> str:
+        """The diff `apply` would write, so a dry run can be inspected.
+
+        Built from the patched contents in memory: nothing is staged or
+        written, and `apply` replaces it with the committed diff.
+        """
+        staged = [
+            StagedFile(key, patcher.source(key), result.content)
+            for key, result in patcher.apply().items()
+        ]
+        if new_content is not None:
+            staged.append(
+                StagedFile(new_path, None, new_content.encode(cs.ENCODING_UTF8))
+            )
+        return "".join(unified_diff(s) for s in sorted(staged))
+
+    def _existing_target(self, patcher: Patcher, new_path: str) -> bytes | None:
+        """The destination's bytes, or None when it is a new file.
+
+        Only an absent path inside the repository is a new file. Reading
+        every `PatcherError` as "absent" planned a target outside the repo
+        as a file to create, and the refusal came later, from the
+        transaction, as a crash instead of a refused move.
+        """
+        try:
+            return patcher.source(new_path)
+        except PatcherError as error:
+            candidate = self.repo_root / new_path
+            try:
+                inside = candidate.resolve().is_relative_to(self.repo_root)
+            except OSError:
+                inside = False
+            if inside and not candidate.exists() and not candidate.is_symlink():
+                return None
+            raise MoveRefused(str(error)) from error
+
+    @staticmethod
+    def _bindings(root: Node) -> dict[str, bool]:
+        """Top-level names a module binds, each with whether it is exported.
+
+        Definitions, and plain assignments or `const`/`let`/`var`
+        declarations, which the graph has no node for. Imports are not
+        included: they are copied by `_needed_imports`. "Exported" only
+        means something for JavaScript and TypeScript.
+        """
+        bound: dict[str, bool] = {}
+        exported_as: set[str] = set()
+        for child in root.children:
+            exported = child.type == cs.TS_EXPORT_STATEMENT
+            nodes = list(child.named_children) if child.type in _WRAPPERS else [child]
+            for node in nodes:
+                if node.type == cs.TS_EXPORT_CLAUSE:
+                    for spec in node.named_children:
+                        if spec.type == cs.TS_EXPORT_SPECIFIER:
+                            as_name = spec.child_by_field_name(
+                                cs.FIELD_ALIAS
+                            ) or spec.child_by_field_name(cs.FIELD_NAME)
+                            exported_as.add(_text(as_name))
+                    continue
+                for named in Mover._bound_names(node):
+                    bound[named] = bound.get(named, False) or exported
+        for named in exported_as:
+            if named in bound:
+                bound[named] = True
+        return bound
+
+    @staticmethod
+    def _bound_names(node: Node) -> list[str]:
+        # An import statement has a `name` field too (the imported module).
+        if node.type in _IMPORT_TYPES:
+            return []
+        named = node.child_by_field_name(cs.FIELD_NAME)
+        if named is not None:
+            return [_text(named)]
+        if node.type in (cs.TS_LEXICAL_DECLARATION, cs.TS_VARIABLE_DECLARATION):
+            declared = (
+                d.child_by_field_name(cs.FIELD_NAME)
+                for d in node.named_children
+                if d.type == cs.TS_VARIABLE_DECLARATOR
+            )
+            return [
+                _text(n)
+                for n in declared
+                if n is not None and n.type == cs.TS_IDENTIFIER
+            ]
+        if node.type != cs.TS_PY_EXPRESSION_STATEMENT:
+            return []
+        names: list[str] = []
+        for assignment in node.named_children:
+            # `a = b = 1` nests the second target in the right-hand side.
+            while assignment is not None and assignment.type == cs.TS_PY_ASSIGNMENT:
+                left = assignment.child_by_field_name(cs.FIELD_LEFT)
+                if left is not None and left.type == cs.TS_PY_IDENTIFIER:
+                    names.append(_text(left))
+                elif left is not None and left.type in cs.PY_UNPACKING_TARGET_TYPES:
+                    names.extend(
+                        _text(n)
+                        for n in left.named_children
+                        if n.type == cs.TS_PY_IDENTIFIER
+                    )
+                assignment = assignment.child_by_field_name(cs.FIELD_RIGHT)
+        return names
+
+    @classmethod
+    def _future_features(cls, source: bytes) -> list[str]:
+        """The `from __future__ import ...` features a Python module enables."""
+        try:
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError):
+            return []
+        return [
+            alias.name
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and node.module == cls._FUTURE
+            for alias in node.names
+        ]
+
+    @staticmethod
+    def _head_end(source: bytes, root: Node) -> int:
+        """Byte offset after a Python module's leading comments and docstring.
+
+        Where a statement goes that must not displace them: a shebang or an
+        encoding line only works on the first lines, and a string that is no
+        longer the first statement is no longer `__doc__`.
+        """
+        end = 0
+        for child in root.children:
+            is_docstring = (
+                child.type == cs.TS_PY_EXPRESSION_STATEMENT
+                and child.named_child_count == 1
+                and child.named_children[0].type == cs.TS_PY_STRING
+            )
+            if child.type != cs.TS_COMMENT and not is_docstring:
+                break
+            end = source.find(b"\n", child.end_byte)
+            end = len(source) if end < 0 else end + 1
+            if is_docstring:
+                break
+        return end
 
     def _needed_imports(
         self,
@@ -455,14 +700,32 @@ class Mover:
             )
             statement = _statement_text(source, site)
             narrowed = _narrow_statement(statement, alias, language, old_path, new_path)
-            if narrowed is None:
+            # Future directives are placed by `plan`, at the destination's
+            # head; one pasted among the ordinary imports is a SyntaxError.
+            if (
+                narrowed is None
+                or imported_raw == self._FUTURE
+                or (row.get(cs.KEY_TO_QN) == self._FUTURE)
+            ):
                 continue
             target = str(row.get(cs.KEY_TO_QN) or "")
             out.setdefault(narrowed, _NeededImport(narrowed, target))
         return list(out.values())
 
-    def _needed_from_old(self, old_path: str, moved_text: str, name: str) -> list[str]:
-        """Old-module definitions the moved text still refers to."""
+    def _needed_from_old(
+        self,
+        old_path: str,
+        moved_text: str,
+        name: str,
+        bindings: dict[str, bool],
+    ) -> list[str]:
+        """Old-module names the moved text still refers to.
+
+        The graph has definitions only, so a module constant the moved code
+        reads (`DEFAULT_TIMEOUT = 5`) came from the parsed `bindings`
+        instead; without it the move parsed, passed its contract, and died
+        with a NameError the first time the moved code ran.
+        """
         rows = self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
@@ -483,6 +746,9 @@ class Mover:
                 continue
             if _uses(moved_text, other):
                 names.add(other)
+        names.update(
+            other for other in bindings if other != name and _uses(moved_text, other)
+        )
         return sorted(names)
 
     def _refuse_cycles(
@@ -494,7 +760,13 @@ class Mover:
         old_needs_new: bool,
         old_path: str,
         new_path: str,
+        qn: str,
+        name: str,
+        language: cs.SupportedLanguage | None,
     ) -> None:
+        # `snapshot`'s module-import query is project-wide (it filters by
+        # project, not by `paths`), so an importer outside the two modules
+        # is in `graph` and a cycle through it is still seen.
         graph = {
             qn: set(targets)
             for qn, targets in snapshot(
@@ -507,14 +779,51 @@ class Mover:
             graph.setdefault(new_module, set()).add(old_module)
         if old_needs_new:
             graph.setdefault(old_module, set()).add(new_module)
-        for importer, targets in graph.items():
-            if old_module in targets and importer not in (old_module, new_module):
-                targets.add(new_module)
-        after = import_cycles({qn: frozenset(t) for qn, t in graph.items()})
-        fresh = [c for c in after - before if new_module in c or old_module in c]
+        # Only the importers the move rewires gain an edge to the new module:
+        # an importer of some other name from the old module is untouched, and
+        # modelling it as rewired refused safe moves over cycles that would
+        # never exist. One whose only import from the old module is the moved
+        # name loses that edge.
+        rewired, keeps_old = self._rewired_importers(old_module, qn, name, language)
+        for importer in rewired - {old_module, new_module}:
+            targets = graph.setdefault(importer, set())
+            targets.add(new_module)
+            if importer not in keeps_old:
+                targets.discard(old_module)
+        after = import_cycles({m: frozenset(t) for m, t in graph.items()})
+        # Sorted, so the cycle named is the same on every run when there are
+        # several: set order follows string hashing, which is per-process.
+        fresh = sorted(
+            tuple(sorted(c))
+            for c in after - before
+            if new_module in c or old_module in c
+        )
         if fresh:
-            cycle = tuple(sorted(fresh[0]))
+            cycle = fresh[0]
             raise MoveRefused(cs.MOVE_CYCLE.format(cycle=" -> ".join(cycle)), cycle)
+
+    def _rewired_importers(
+        self,
+        old_module: str,
+        qn: str,
+        name: str,
+        language: cs.SupportedLanguage | None,
+    ) -> tuple[set[str], set[str]]:
+        """Modules the move points at the new module, and those of them (or
+        others) that still import something else from the old one."""
+        rows = graph_query.importers(self.fetch_all, self.project, old_module)
+        rewired = {r["module"] for r in rows if r["imported_name"] == name}
+        keeps_old = {r["module"] for r in rows if r["imported_name"] != name}
+        if language == cs.SupportedLanguage.PYTHON:
+            # `pkg.util.helper(...)` through `import pkg.util` gains an
+            # `import pkg.new` (`_retarget_attribute_uses`) and keeps its
+            # module import.
+            for row in graph_query.callers(self.fetch_all, self.project, qn):
+                if isinstance(row["path"], str):
+                    module = base_module_qn(Path(row["path"]), self.project)
+                    if module in keeps_old:
+                        rewired.add(module)
+        return rewired, keeps_old
 
     def _add_import(
         self,
@@ -529,6 +838,10 @@ class Mover:
         export: bool,
     ) -> None:
         at = _import_block_end(source, root)
+        if not at and language == cs.SupportedLanguage.PYTHON:
+            # No imports: offset 0 would push a shebang, an encoding line or
+            # the module docstring down, and the docstring stops being one.
+            at = self._head_end(source, root)
         if language in _JS_LANGUAGES:
             spec = _relative_specifier(path, new_path)
             line = (
@@ -652,9 +965,14 @@ class Mover:
         report, patcher, new_content = self.plan(qn, target, keep_alias)
         tx = EditTransaction(self.repo_root)
         results = patcher.stage_into(tx)
-        if new_content is not None:
-            tx.stage(report.new_path, new_content)
         broken = [key for key, result in results.items() if result.parses is False]
+        if new_content is not None:
+            # `stage_into` parses every patched file; a new destination is
+            # not patched, so it gets the same gate here.
+            if self._parses(report.new_path, new_content):
+                tx.stage(report.new_path, new_content)
+            else:
+                broken.append(report.new_path)
         if broken:
             tx.rollback()
             return report._replace(
@@ -676,22 +994,60 @@ class Mover:
             report = self._enforce_contract(report)
         return report
 
+    def _parses(self, path: str, content: str) -> bool:
+        _language, root = self._parse(path, content.encode(cs.ENCODING_UTF8))
+        return not root.has_error
+
     def _enforce_contract(self, report: MoveReport) -> MoveReport:
         assert self.reingest is not None
+        renamed = (report.qualified_name, report.new_qualified_name)
         delta = measure(
-            self.fetch_all, self.project, self.repo_root, report.files, self.reingest
+            self.fetch_all,
+            self.project,
+            self.repo_root,
+            report.files,
+            self.reingest,
+            # An empty class has no fingerprint and no members to match the
+            # two sides by, so the delta cannot infer this rename; without
+            # it the move of one reads as a removal plus an addition.
+            declared_renames=(renamed,),
         )
-        verdict = verify(
-            move_expectation(report.qualified_name, report.new_qualified_name), delta
-        )
+        verdict = verify(move_expectation(*renamed), delta)
         if verdict.ok:
             return report._replace(verdict=verdict)
-        undo_last(self.repo_root)
+        reasons = "; ".join(verdict.failures)
+        report = report._replace(verdict=verdict)
+        try:
+            # This move's own transaction, not whatever is newest: the lock
+            # is released before the re-ingest, so another edit can land in
+            # between, and `undo_last` reversed THAT edit and kept the move.
+            outcome = undo_transaction(self.repo_root, report.transaction_id)
+        except TransactionConflict as conflict:
+            return self._not_rolled_back(report, reasons, str(conflict))
+        if not outcome.applied:
+            return self._not_rolled_back(report, reasons, outcome.message)
         self.reingest(list(report.files))
         return report._replace(
-            applied=False,
-            verdict=verdict,
-            message=cs.MOVE_CONTRACT_FAILED.format(reasons="; ".join(verdict.failures)),
+            applied=False, message=cs.MOVE_CONTRACT_FAILED.format(reasons=reasons)
+        )
+
+    def _not_rolled_back(
+        self, report: MoveReport, reasons: str, error: str
+    ) -> MoveReport:
+        """The report for a failed move this op could not reverse.
+
+        `applied` stays True while the history still records the move: a
+        later edit stacked on it, or a file changed since, keeps it on disk.
+        An entry already gone may mean another actor reversed it, which
+        this op cannot tell from the history, so it claims nothing then.
+        """
+        recorded = any(
+            entry.get(cs.EDIT_KEY_ID) == report.transaction_id
+            for entry in load_history(self.repo_root)
+        )
+        return report._replace(
+            applied=recorded,
+            message=self._ROLLBACK_REFUSED.format(reasons=reasons, error=error),
         )
 
 
