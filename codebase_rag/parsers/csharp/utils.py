@@ -198,14 +198,17 @@ def declared_namespace(node: Node) -> str | None:
     return cs.SEPARATOR_DOT.join(namespaces) if namespaces else None
 
 
-def namespace_qualified_name(type_node: Node) -> str:
+def namespace_qualified_name(type_node: Node) -> str | None:
     """`N1.Outer.Widget` for a type declaration: namespace, enclosing types,
     own name. Read from the declaration rather than the qualified name,
     because a namespace the module's directory already spells is not in the
-    qn (issue #1629)."""
-    namespaces, types = _enclosing_scopes(type_node)
+    qn (issue #1629). None for a declaration with no name: its enclosing
+    path alone would be the key of the type that encloses it (bot review)."""
     own = _declared_name(type_node)
-    return cs.SEPARATOR_DOT.join([*namespaces, *types, *([own] if own else [])])
+    if not own:
+        return None
+    namespaces, types = _enclosing_scopes(type_node)
+    return cs.SEPARATOR_DOT.join([*namespaces, *types, own])
 
 
 def unique_carrier(

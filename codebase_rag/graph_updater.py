@@ -28,6 +28,7 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_namespaced_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -2402,6 +2403,26 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # The C# declared-form index (issue #1629) is filled only by
+                # parsing; an unchanged type must stay reachable by `N.Widget`
+                # from a re-parsed base list or receiver (bot review).
+                if node_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ) and path.endswith(cs.EXT_CS):
+                    namespace = row.get(cs.KEY_NAMESPACE)
+                    namespaced = csharp_namespaced_from_graph(
+                        qn,
+                        path,
+                        self.project_name,
+                        namespace if isinstance(namespace, str) else None,
+                    )
+                    if namespaced:
+                        processor = self.factory.definition_processor
+                        processor.csharp_class_namespaced[qn] = namespaced
+                        processor.csharp_namespaced_qns.setdefault(
+                            namespaced, set()
+                        ).add(qn)
                 # Persisted annotations of UNCHANGED definitions rejoin the
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE

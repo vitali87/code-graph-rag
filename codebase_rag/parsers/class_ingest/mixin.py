@@ -1106,9 +1106,9 @@ class ClassIngestMixin:
             # not the qn repeats it (issue #1629).
             if namespace := csharp_utils.declared_namespace(class_node):
                 class_props[cs.KEY_NAMESPACE] = namespace
-            namespaced = csharp_utils.namespace_qualified_name(class_node)
-            self.csharp_class_namespaced[class_qn] = namespaced
-            self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
+            if namespaced := csharp_utils.namespace_qualified_name(class_node):
+                self.csharp_class_namespaced[class_qn] = namespaced
+                self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:

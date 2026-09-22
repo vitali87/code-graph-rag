@@ -15,11 +15,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from tree_sitter import Node
 
 from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.language_spec import CSHARP_FQN_SPEC
+from codebase_rag.language_spec import CSHARP_FQN_SPEC, csharp_namespaced_from_graph
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.fqn_resolver import resolve_fqn_from_ast
 from evals.cgr_graph import _StatefulIngestor
@@ -417,3 +418,68 @@ class TestWrittenNamespaceQualifiedNames:
             "proj.src.N.Widget.Widget",
             "proj.src.N.Widget.Designer.Widget",
         }, sorted(inherits)
+
+    def test_an_incremental_run_binds_a_base_in_an_unchanged_file(
+        self, tmp_path: Path
+    ) -> None:
+        """The declared-form index is rebuilt from the graph for files an
+        incremental run does not re-parse: without it, editing `Q.cs` loses
+        `: Zeta.BaseC`, whose folded qn no longer ends with the declared
+        name (bot review)."""
+        root = tmp_path / "proj"
+        q_source = "namespace App;\n\npublic class Q : Zeta.BaseC { }\n"
+        _write(
+            root,
+            {
+                "src/Zeta/Base.cs": "namespace Zeta;\n\npublic class BaseC { }\n",
+                "src/App/Q.cs": q_source,
+            },
+        )
+        parsers, queries = load_parsers()
+        store = _StatefulIngestor()
+        for force in (True, False):
+            GraphUpdater(
+                ingestor=store,  # type: ignore[arg-type]
+                repo_path=root,
+                parsers=parsers,
+                queries=queries,
+            ).run(force=force)
+            # A trailing comment re-parses Q.cs alone; Base.cs is rehydrated.
+            (root / "src/App/Q.cs").write_text(q_source + "// touched\n")
+        edge = ("proj.src.App.Q.Q", "proj.src.Zeta.Base.BaseC")
+        inherits = {
+            (str(source), str(target))
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == "INHERITS"
+        }
+        assert edge in inherits, sorted(inherits)
+
+
+@pytest.mark.parametrize(
+    ("qn", "path", "namespace", "expected"),
+    [
+        # Folded: the directory spells the namespace, the qn does not.
+        ("proj.src.Zeta.Base.BaseC", "src/Zeta/Base.cs", "Zeta", "Zeta.BaseC"),
+        # Kept: the qn already carries the namespace run.
+        (
+            "proj.src.Serilog.Nested.JetBrains.Annotations.Attr",
+            "src/Serilog/Nested.cs",
+            "JetBrains.Annotations",
+            "JetBrains.Annotations.Attr",
+        ),
+        # No namespace, nested type.
+        ("proj.src.Plain.Outer.Inner", "src/Plain.cs", None, "Outer.Inner"),
+        # A same-stem sibling of another language: `<stem>.<ext>` module.
+        ("proj.src.Foo.cs.Foo", "src/Foo.cs", None, "Foo"),
+        # The duplicate-qn marker is a registration artefact.
+        ("proj.src.N.W.Bench@24", "src/N/W.cs", "N", "N.Bench"),
+        # A verbatim identifier is not the marker.
+        ("proj.src.N.W.@event", "src/N/W.cs", "N", "N.@event"),
+        # A module qn neither spelling predicts is not guessed.
+        ("other.src.N.W.Widget", "src/N/W.cs", "N", None),
+    ],
+)
+def test_the_declared_form_is_rebuilt_from_the_graph(
+    qn: str, path: str, namespace: str | None, expected: str | None
+) -> None:
+    assert csharp_namespaced_from_graph(qn, path, "proj", namespace) == expected

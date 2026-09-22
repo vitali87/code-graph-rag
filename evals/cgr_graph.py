@@ -775,6 +775,9 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                        if cs.KEY_NAMESPACE in props
+                        else None,
                     }
                     defs.append(row)
                 return defs

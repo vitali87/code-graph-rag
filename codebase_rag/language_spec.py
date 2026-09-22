@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -262,6 +262,36 @@ def _csharp_fold_scopes(
     if directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
         return names[run:]
     return names
+
+
+def csharp_namespaced_from_graph(
+    qn: str, path: str, project_name: str, namespace: str | None
+) -> str | None:
+    """`N.Outer.Widget` for a C# type read back from the graph, or None.
+
+    An incremental run re-parses only changed files, so the declared-form
+    index is rebuilt for the rest from what the node stores: its qn, path
+    and declared namespace. The fold is undone by the same directory rule
+    `_csharp_fold_scopes` applied, and a duplicate-qn marker (`Bench@24`)
+    is dropped as the parsed form never carries it (bot review on #1999).
+    A module qn that is neither of the two path spellings is not guessed.
+    """
+    rel = PurePosixPath(path)
+    stem = module_stem(rel.name)
+    directory = cs.SEPARATOR_DOT.join([project_name, *rel.parent.parts])
+    # The `<stem>.<ext>` spelling first: the bare stem is its prefix.
+    for own in (f"{stem}{cs.SEPARATOR_DOT}{rel.suffix.lstrip('.')}", stem):
+        prefix = f"{directory}{cs.SEPARATOR_DOT}{own}{cs.SEPARATOR_DOT}"
+        if not qn.startswith(prefix):
+            continue
+        scoped = []
+        for part in qn[len(prefix) :].split(cs.SEPARATOR_DOT):
+            head, sep, tail = part.rpartition(cs.DUP_QN_MARKER)
+            scoped.append(head if sep and tail[:1].isdigit() else part)
+        if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
+            scoped.insert(0, namespace)
+        return cs.SEPARATOR_DOT.join(scoped)
+    return None
 
 
 def _csharp_get_name(node: Node) -> str | None:
