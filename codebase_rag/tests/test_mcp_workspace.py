@@ -420,7 +420,29 @@ async def test_a_fixed_root_handler_refuses_an_ambiguous_workspace(
     project, refusal = _registry(tmp_path, ws, root="elsewhere")._fixed_root_project()
 
     assert project is None
-    assert refusal is not None and "ws" in refusal
+    assert refusal is not None
+    assert "ws" in refusal
+
+
+@pytest.mark.anyio
+async def test_every_fixed_root_handler_returns_the_ambiguity_refusal(
+    tmp_path: Path,
+) -> None:
+    """The handlers, not just the helper: each returns the refusal and
+    never reads the graph. Driving `_fixed_root_project` alone left the
+    handlers' own early return untested."""
+    ws = _workspace(tmp_path, ("a", ALPHA), ("b", BETA))
+    registry = _registry(tmp_path, ws, root="elsewhere")
+
+    results = [
+        await registry.flow_verdict("pkg.source", "pkg.sink"),
+        await registry.explain_traceback("Traceback (most recent call last):\n"),
+        await registry.rank_root_causes("Traceback (most recent call last):\n"),
+    ]
+
+    for result in results:
+        assert "ws" in result[cs.DICT_KEY_ERROR]
+    registry.ingestor.fetch_all.assert_not_called()
 
 
 @pytest.mark.anyio

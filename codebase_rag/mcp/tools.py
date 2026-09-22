@@ -1014,7 +1014,7 @@ class MCPToolsRegistry:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
         project, workspace_refusal = self._fixed_root_project()
-        if workspace_refusal is not None:
+        if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         # The edge scan and coverage read must see one consistent graph:
         # index/update handlers hold this lock while they delete and
@@ -1044,7 +1044,7 @@ class MCPToolsRegistry:
         from codebase_rag.crash_correlation import explain_traceback
 
         project, workspace_refusal = self._fixed_root_project()
-        if workspace_refusal is not None:
+        if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
@@ -1076,7 +1076,7 @@ class MCPToolsRegistry:
         from codebase_rag.crash_correlation import rank_root_causes
 
         project, workspace_refusal = self._fixed_root_project()
-        if workspace_refusal is not None:
+        if project is None:
             return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
@@ -2623,7 +2623,7 @@ class MCPToolsRegistry:
             )
         return default, None
 
-    def _fixed_root_project(self) -> tuple[str | None, str | None]:
+    def _fixed_root_project(self) -> tuple[str, None] | tuple[None, str]:
         """(project, refusal) for a handler that takes no `project` argument.
 
         flow_verdict, explain_traceback and rank_root_causes derive their
