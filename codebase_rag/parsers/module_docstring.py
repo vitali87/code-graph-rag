@@ -316,11 +316,9 @@ MODULE_DOC_SPECS: dict[SupportedLanguage, ModuleDocSpec] = {
         line_markers=("---",),
         skip_types=_SHEBANGS,
     ),
-    # Julia has no comment-form module docstring: `?Module` shows the
-    # module's `"""` docstring (a string literal, not a comment), and a
-    # leading `#=` block is an ordinary comment -- typically a license
-    # header, which must not be persisted as Module.docstring (issue #1882
-    # review).
+    # Julia has no comment-form module docstring: the `"""` docstring is a
+    # string literal, and a leading `#=` block is an ordinary comment
+    # (typically a license header, not Module.docstring).
     SupportedLanguage.JULIA: ModuleDocSpec(
         skip_types=_SHEBANGS,
         declaration_types=_JULIA_DECLS,

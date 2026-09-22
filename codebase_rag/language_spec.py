@@ -387,10 +387,8 @@ def _julia_get_name(node: Node) -> str | None:
         if head is None or not head.text:
             return None
         name = decode_node_text(head.text)
-        # The same recovered-span refusal as the function path: a type head
-        # the grammar error-recovered spans source lines (a `binary_expression`
-        # chain, not a type name), so naming it would mint a qn out of source
-        # code; a nameless class registers nothing, as on a missing name.
+        # The same recovered-span refusal as the function path: a multi-line
+        # type head is a grammar error-recovery span, not a name.
         if "\n" in name:
             return None
         return name
@@ -871,13 +869,10 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_JULIA_CALL_TYPES,
         import_node_types=cs.SPEC_JULIA_IMPORT_TYPES,
         import_from_node_types=(),
-        # Bare captures (like C/C++/C#): the grammar gives no `name` field on
-        # function heads, and the concise method `f(x) = ...` is an
-        # `assignment` that must be constrained to its LEFT side (the `.`
-        # first-child anchor) or every `x = f()` call site becomes a function.
-        # A return type wraps the head in `typed_expression`, a `where`
-        # clause in `where_expression`, and the two nest in either order
-        # (`f(x)::Int`, `f(x) where T`, `f(x)::Int where T`).
+        # Bare captures (like C/C++/C#): no `name` field on function heads,
+        # and the concise method `f(x) = ...` is an `assignment` that must
+        # be constrained to its LEFT side (`.` first-child anchor) or every
+        # `x = f()` call site becomes a function.
         function_query="""
         (function_definition) @function
         (macro_definition) @function

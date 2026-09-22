@@ -3,26 +3,20 @@
 TS_JULIA_SOURCE_FILE = "source_file"
 TS_JULIA_MODULE_DEFINITION = "module_definition"
 
-# Type declarations. `struct_definition` covers both `struct` and
-# `mutable struct`; the name lives in a positional `type_head` child (no
-# `name` field), whose first named child is the name (a `binary_expression`
-# when a `<:` base is present).
+# Type declarations. The name is in a positional `type_head` child (no
+# `name` field); a `<:` base wraps it in a `binary_expression`.
 TS_JULIA_STRUCT_DEFINITION = "struct_definition"
 TS_JULIA_ABSTRACT_DEFINITION = "abstract_definition"
 TS_JULIA_PRIMITIVE_DEFINITION = "primitive_definition"
 TS_JULIA_TYPE_HEAD = "type_head"
 TS_JULIA_PARAMETRIZED_TYPE_EXPRESSION = "parametrized_type_expression"
 
-# Functions. A `function_definition` holds a positional `signature` child
-# wrapping the call-shaped head (name = the head's first named child) plus
-# the body statements; the concise form `f(x) = body` is an `assignment`
-# whose LEFT side is that call head (a plain `x = 1` assignment is NOT a
-# function). `where`/return-type spellings wrap the head in
-# `where_expression`/`typed_expression`.
+# Functions. The head is a positional `signature` child; the concise form
+# `f(x) = body` is an `assignment` whose LEFT side is the head. Return
+# types / `where` clauses wrap the head.
 TS_JULIA_FUNCTION_DEFINITION = "function_definition"
-# The trailing keyword of a function_definition body. The grammar names no
-# body field (the `function`/`end` keywords are anonymous tokens), so the
-# body span is derived between the signature and the `end` token.
+# No body field in the grammar: the body span is derived between the
+# signature and this `end` token.
 TS_JULIA_END_KEYWORD = "end"
 TS_JULIA_MACRO_DEFINITION = "macro_definition"
 TS_JULIA_SIGNATURE = "signature"
@@ -30,19 +24,16 @@ TS_JULIA_ARROW_FUNCTION_EXPRESSION = "arrow_function_expression"
 TS_JULIA_ASSIGNMENT = "assignment"
 TS_JULIA_WHERE_EXPRESSION = "where_expression"
 TS_JULIA_TYPED_EXPRESSION = "typed_expression"
-# Head decoration: a concise method's return type and a `function` head's
-# return type both wrap the call head in `typed_expression`, and a closure
-# head `(x::T)(args)` is a `parenthesized_expression` around a typed/unary
-# typed expression. Macro-emitted heads interpolate names (`$op(...)`),
-# whose callee is an `interpolation_expression`.
+# Head wrappers: return types use `typed_expression`, closure heads
+# `(x::T)(args)` a `parenthesized_expression`, macro-emitted names
+# (`$op(...)`) an `interpolation_expression`.
 TS_JULIA_PARENTHESIZED_EXPRESSION = "parenthesized_expression"
 TS_JULIA_UNARY_TYPED_EXPRESSION = "unary_typed_expression"
 TS_JULIA_INTERPOLATION_EXPRESSION = "interpolation_expression"
 TS_JULIA_ARGUMENT_LIST = "argument_list"
 
-# Call sites. `call_expression` has NO `function` field: the callee is the
-# first named child. `macrocall_expression` (`@name args`) is the macro
-# namespace's invocation form; `broadcast_call_expression` is `f.(args)`.
+# Call sites. `call_expression` has no `function` field (callee = first
+# named child); `macrocall_expression` is `@name args`.
 TS_JULIA_CALL_EXPRESSION = "call_expression"
 TS_JULIA_MACROCALL_EXPRESSION = "macrocall_expression"
 TS_JULIA_MACRO_IDENTIFIER = "macro_identifier"
@@ -51,9 +42,7 @@ TS_JULIA_FIELD_EXPRESSION = "field_expression"
 TS_JULIA_SCOPED_IDENTIFIER = "scoped_identifier"
 TS_JULIA_IDENTIFIER = "identifier"
 
-# Imports: `using A.B`, `import A: b as c`. Relative `.`/`..` prefixes are
-# dropped by the grammar, and `using A.B.*` parse-recoveries keep the
-# statement node usable.
+# Imports. Relative `.`/`..` prefixes are dropped by the grammar.
 TS_JULIA_USING_STATEMENT = "using_statement"
 TS_JULIA_IMPORT_STATEMENT = "import_statement"
 TS_JULIA_SELECTED_IMPORT = "selected_import"
