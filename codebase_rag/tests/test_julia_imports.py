@@ -610,6 +610,44 @@ end
     ) in calls, calls
 
 
+def test_doubly_nested_module_import(temp_repo: Path, mock_ingestor: MagicMock) -> None:
+    """A `using` inside a module nested two levels deep is keyed under the
+    FULL scope chain (`Outer.Inner`), matching the caller qn chain the
+    resolver walks (issue #1882 review round 5: only the innermost name
+    was recorded, so doubly-nested imports never resolved)."""
+    project = temp_repo / "julia_doubly_nested"
+    project.mkdir()
+    (project / "main.jl").write_text(
+        """
+module Outer
+module Inner
+module Helper
+alpha() = 1
+end
+using .Helper: alpha
+f() = alpha()
+end
+end
+""",
+        encoding="utf-8",
+    )
+    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+
+    prefix = f"{project.name}.main"
+    mapping = updater.factory.import_processor.import_mapping
+    assert mapping.get(f"{prefix}.Outer.Inner", {}).get("alpha") == (
+        f"{prefix}.Outer.Inner.Helper"
+    ), mapping
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert (
+        f"{prefix}.Outer.Inner.f",
+        f"{prefix}.Outer.Inner.Helper.alpha",
+    ) in calls, calls
+
+
 def test_nested_package_declared_module_import(
     temp_repo: Path, mock_ingestor: MagicMock
 ) -> None:

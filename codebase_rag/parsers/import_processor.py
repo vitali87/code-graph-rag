@@ -1050,8 +1050,9 @@ class ImportProcessor:
         # registry keeps a sibling FILE module whose qn is a prefix
         # (`proj.a.b` beside `proj.a`) from leaking in.
         map_keys = {module_qn, *self._julia_scope_map_keys.get(module_qn, ())}
-        for map_key, bindings in self.import_mapping.items():
-            if map_key not in map_keys:
+        for map_key in map_keys:
+            bindings = self.import_mapping.get(map_key)
+            if not bindings:
                 continue
             for local_name, full_name in bindings.items():
                 if (module_qn, full_name) in self._cpp_declaration_mappings:
@@ -4767,16 +4768,25 @@ class ImportProcessor:
                     )
 
     def _julia_import_scope_name(self, stmt_node: Node) -> str | None:
-        # Innermost enclosing `module` of the statement, if any.
+        # Dotted chain of every enclosing `module`, outermost first (None
+        # at file scope), so `Outer.Inner` matches the caller qn chain.
         node = stmt_node.parent
+        names: list[str] = []
         while node is not None:
             if node.type == cs.TS_JULIA_MODULE_DEFINITION:
-                for child in node.named_children:
-                    if child.type == cs.TS_JULIA_IDENTIFIER:
-                        return safe_decode_text(child)
-                return None
+                name = next(
+                    (
+                        safe_decode_text(c)
+                        for c in node.named_children
+                        if c.type == cs.TS_JULIA_IDENTIFIER
+                    ),
+                    None,
+                )
+                if name is None:
+                    return None
+                names.append(name)
             node = node.parent
-        return None
+        return cs.SEPARATOR_DOT.join(reversed(names)) if names else None
 
     def _parse_julia_imports(self, captures: dict, module_qn: str) -> None:
         # `using A.B` / `using A.B as C` / `import A: b, c as d` / `using .S`:
