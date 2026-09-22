@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING
 from .utils.token_utils import count_tokens
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pydantic_ai.messages import ModelMessage
 
 # What replaces dropped output. Says the result existed and can be re-fetched,
@@ -88,6 +90,24 @@ def _content_tokens(part: object) -> int:
     return count_tokens(content if isinstance(content, str) else str(content))
 
 
+def _parts_newest_first(
+    messages: list[ModelMessage],
+) -> Iterator[tuple[int, int, object]]:
+    """Every `(message index, part index, part)`, newest message and part first."""
+    for message_index in range(len(messages) - 1, -1, -1):
+        parts = getattr(messages[message_index], "parts", None) or ()
+        for part_index in range(len(parts) - 1, -1, -1):
+            yield message_index, part_index, parts[part_index]
+
+
+def _is_unpruned_tool_return(part: object) -> bool:
+    """A prunable tool result that an earlier prune has not already replaced."""
+    return (
+        _is_prunable_tool_return(part)
+        and getattr(part, "content", None) != PRUNED_PLACEHOLDER
+    )
+
+
 def _prunable_candidates(
     messages: list[ModelMessage], protect_recent_tokens: int
 ) -> tuple[list[tuple[int, int]], int]:
@@ -111,29 +131,22 @@ def _prunable_candidates(
     # for, which is the exact thrash the floor exists to prevent.
     placeholder_tokens = count_tokens(PRUNED_PLACEHOLDER)
 
-    for message_index in range(len(messages) - 1, -1, -1):
-        parts = getattr(messages[message_index], "parts", None)
-        if not parts:
+    for message_index, part_index, part in _parts_newest_first(messages):
+        if not _is_unpruned_tool_return(part):
             continue
-        for part_index in range(len(parts) - 1, -1, -1):
-            part = parts[part_index]
-            if not _is_prunable_tool_return(part):
-                continue
-            if getattr(part, "content", None) == PRUNED_PLACEHOLDER:
-                continue
-            part_tokens = _content_tokens(part)
-            if protected_tokens < protect_recent_tokens:
-                protected_tokens += part_tokens
-                continue
-            # A part no larger than the placeholder GROWS the context when
-            # rewritten, so it is not a candidate at all. Clamping its
-            # contribution to zero instead would still rewrite it, and the
-            # reported recovery would then overstate the net change by the
-            # difference (Greptile, #2106).
-            if part_tokens <= placeholder_tokens:
-                continue
-            candidates.append((message_index, part_index))
-            recoverable_tokens += part_tokens - placeholder_tokens
+        part_tokens = _content_tokens(part)
+        if protected_tokens < protect_recent_tokens:
+            protected_tokens += part_tokens
+            continue
+        # A part no larger than the placeholder GROWS the context when
+        # rewritten, so it is not a candidate at all. Clamping its
+        # contribution to zero instead would still rewrite it, and the
+        # reported recovery would then overstate the net change by the
+        # difference (Greptile, #2106).
+        if part_tokens <= placeholder_tokens:
+            continue
+        candidates.append((message_index, part_index))
+        recoverable_tokens += part_tokens - placeholder_tokens
     return candidates, recoverable_tokens
 
 
