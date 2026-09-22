@@ -139,8 +139,45 @@ class TestReachRow(TypedDict):
     through: str
 
 
+def _owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]:
+    """Whether `project_name`, and not a longer-named registered project it
+    is a dotted prefix of, owns a qualified name (issue #1982).
+
+    Every read here is scoped by `STARTS WITH $project_prefix`, and `foo.`
+    selects `foo.bar`'s rows too. The owner is the LONGEST registered
+    project name the qn sits under, the way the updater and the gloss
+    repair decide it; the project list is read once per call, and a failed
+    read keeps the prefix rule rather than dropping every row.
+    """
+    prefix = _prefix(project_name)
+    names: set[str] = {project_name}
+    try:
+        rows = fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+    except Exception:
+        rows = []
+    for row in rows:
+        name = row.get(cs.KEY_NAME)
+        if isinstance(name, str) and name:
+            names.add(name)
+    longest_first = sorted(names, key=len, reverse=True)
+
+    def owns(qn: str) -> bool:
+        if qn != project_name and not qn.startswith(prefix):
+            return False
+        for name in longest_first:
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == project_name
+        return True
+
+    return owns
+
+
 def _prefix(project_name: str) -> str:
     return f"{project_name}{cs.SEPARATOR_DOT}"
+
+
+def _text_qn(row: ResultRow) -> str:
+    return str(row.get(cs.KEY_QUALIFIED_NAME, ""))
 
 
 def _opt_int(value: object) -> int | None:
@@ -191,6 +228,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     returns the innermost definitions spanning that line.
     """
     prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     location = parse_location(target)
     if location is not None:
         path, line = location
@@ -202,7 +240,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
                 cs.KEY_LINE: line,
             },
         )
-        symbols = [_symbol_row(r) for r in rows]
+        symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
         # Innermost first: the tightest span is what the line "is in".
         symbols.sort(
             key=lambda s: (
@@ -220,7 +258,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
             cs.KEY_QN: target,
         },
     )
-    symbols = [_symbol_row(r) for r in rows]
+    symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
     exact = [s for s in symbols if s["qualified_name"] == target]
     suffix = [
         s
@@ -274,6 +312,8 @@ def definition(
         cq.CYPHER_GRAPH_DEFINITION,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qualified_name},
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     if not rows:
         return DefinitionRow(
             label="",
@@ -345,6 +385,7 @@ def _walk_sites(
     # sites appear at the depth it was first reached and never again, so a
     # cycle terminates and the output stays a finite, ordered list.
     prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
@@ -352,8 +393,7 @@ def _walk_sites(
         next_frontier: list[str] = []
         for qn in sorted(frontier):
             rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for row in rows:
-                site = _site_row(row, level, qn)
+            for site in _owned_sites(rows, owns, level, qn):
                 out.append(site)
                 other = site["qualified_name"]
                 if other not in seen:
@@ -363,6 +403,14 @@ def _walk_sites(
         if not frontier:
             break
     return sorted(out, key=_site_sort_key)
+
+
+def _owned_sites(
+    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
+) -> list[CallSiteRow]:
+    """The sites among `rows` whose other endpoint this project owns: a
+    foreign row is neither reported nor a hop the walk continues through."""
+    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
 
 
 def callers(
@@ -396,6 +444,8 @@ def _related_rows(
     rows = fetch_all(
         query, {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qn}
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     out = [
         RelatedRow(
             label=str(r.get(cs.KEY_LABEL, "")),
@@ -434,6 +484,8 @@ def importers(
         cq.CYPHER_GRAPH_IMPORTERS,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: module_qn},
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     out = [
         ImporterRow(
             module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
@@ -497,8 +549,11 @@ class ReachIndex:
     ) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
         nodes: dict[_NodeId, PropertyDict] = {}
+        owns = _owner_check(fetch_all, project_name)
         for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
             qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+            if not owns(qn):
+                continue
             if qn:
                 nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
         reverse: dict[str, set[str]] = {}
@@ -507,7 +562,9 @@ class ReachIndex:
                 continue
             src = str(row.get(cs.KEY_FROM_QN) or "")
             dst = str(row.get(cs.KEY_TO_QN) or "")
-            if src and dst:
+            # Both ends owned: a foreign caller must neither be reported
+            # nor be a hop the walk continues through (issue #1982).
+            if src and dst and owns(src) and owns(dst):
                 reverse.setdefault(dst, set()).add(src)
         return cls(nodes, reverse, test_patterns)
 

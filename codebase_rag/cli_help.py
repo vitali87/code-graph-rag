@@ -24,6 +24,8 @@ class CLICommandName(StrEnum):
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
+    VERIFY_INDEX = "verify-index"
+    DIFF_INDEX = "diff-index"
 
 
 APP_DESCRIPTION = (
@@ -463,6 +465,9 @@ HELP_DELETE_PROJECT_REPO_PATH = (
 )
 HELP_COMMAND = "Command path to document, such as 'start' or 'daemon logs'."
 
+CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
+CMD_DIFF_INDEX = "Structural diff between two protobuf index snapshots"
+
 CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.START: CMD_START,
     CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
@@ -486,14 +491,14 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.STATUS: CMD_STATUS,
     CLICommandName.DOCTOR: CMD_DOCTOR,
     CLICommandName.HELP: CMD_HELP,
+    CLICommandName.VERIFY_INDEX: CMD_VERIFY_INDEX,
+    CLICommandName.DIFF_INDEX: CMD_DIFF_INDEX,
 }
-CMD_VERIFY_INDEX = "Verify a protobuf index against its provenance manifest"
 HELP_VERIFY_INDEX_DIR = "Directory holding the index artifacts and manifest.json."
 HELP_TRUSTED_MANIFEST_SHA = (
     "Externally trusted sha256 of manifest.json (e.g. from an attestation); "
     "anchors verification beyond local self-consistency."
 )
-CMD_DIFF_INDEX = "Structural diff between two protobuf index snapshots"
 HELP_DIFF_OLD = "Directory holding the OLD snapshot artifacts."
 HELP_DIFF_NEW = "Directory holding the NEW snapshot artifacts."
 HELP_DIFF_JSON_OUT = "Write the JSON delta to FILE instead of stdout."
