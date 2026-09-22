@@ -28,7 +28,7 @@ from .extract_types import ExtractRefused, InlineRefused, InlineReport
 from .imports import _JS_NAMED, ImportSite, _local_name, _match_py_from, _split_names
 from .move import _cut_span, _statement_text, _text
 from .patcher import Patcher, SpanEdit, apply_span_edits, line_col_to_byte
-from .signature import _call_at
+from .signature import _call_at, _site_end
 from .transaction import StagedTree, VerificationResult
 
 # Evaluating any of these runs code, so an argument moved past one of them
@@ -194,7 +194,9 @@ class Inliner:
                 continue
             c_source = patcher.source(c_path)
             c_language, root = self._extractor._parse(c_path, c_source)
-            call = _call_at(root, line, col)
+            # The recorded end picks the exact call: `helper(2).upper()` starts
+            # where `helper(2)` does (Copilot, PR #2064).
+            call = _call_at(root, line, col, _site_end(row))
             args_node = _find_call_arguments_node(call) if call is not None else None
             if call is None or args_node is None:
                 rewritten_all = False

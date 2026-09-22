@@ -378,3 +378,29 @@ def test_inline_keeps_a_definition_still_referenced_as_a_value(
         _python(root, "from pkg.app import use, HANDLER\nprint(use(), HANDLER(4))")
         == "2 5"
     )
+
+
+# --- a chained call site (Copilot, PR #2064) ---------------------------------------
+
+
+def test_inline_rewrites_the_inner_call_of_a_chained_site(temp_repo: Path) -> None:
+    """`helper(2).upper()` starts where `helper(2)` does. Located by its start
+    alone the outermost call was taken, so `.upper()`'s empty argument list
+    was bound to `helper`'s parameter; the site's recorded end picks the
+    call the graph actually recorded, as change_signature does."""
+    root, store = _build(
+        temp_repo,
+        {
+            "pkg/__init__.py": "",
+            "pkg/util.py": "def helper(a):\n    return str(a)\n",
+            "pkg/app.py": (
+                "from pkg.util import helper\n\n\n"
+                "def run():\n    return helper(2).upper()\n"
+            ),
+        },
+    )
+    report = _inline(root, store, "pkg.util.helper")
+
+    assert report is not None and report.applied, report
+    assert "str(2).upper()" in (root / "pkg/app.py").read_text()
+    assert _python(root, "from pkg.app import run; print(run())") == "2"
