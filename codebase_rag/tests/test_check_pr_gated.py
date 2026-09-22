@@ -624,3 +624,154 @@ def test_a_status_and_a_check_run_sharing_a_name_must_both_pass(
     assert reasons == [
         "'Extra Gate' (required by classic branch protection) concluded FAILURE"
     ]
+
+
+# --- A required check bound to one GitHub App (#2131) ---
+
+_BOUND_APP = 15368
+_OTHER_APP = 999
+
+
+def _app_run(app: int, conclusion: str = "success") -> dict[str, object]:
+    return {
+        "name": REQUIRED_CONTEXT,
+        "status": "completed",
+        "conclusion": conclusion,
+        "started_at": "2026-09-22T10:00:00Z",
+        "app": {"id": app},
+    }
+
+
+_CLASSIC_BOUND: dict[str, object] = {
+    "required_status_checks": {
+        "contexts": [REQUIRED_CONTEXT],
+        "checks": [{"context": REQUIRED_CONTEXT, "app_id": _BOUND_APP}],
+    },
+    "enforce_admins": {"enabled": False},
+}
+_RULESET_BOUND: list[dict[str, object]] = [
+    {
+        "type": "required_status_checks",
+        "parameters": {
+            "required_status_checks": [
+                {"context": REQUIRED_CONTEXT, "integration_id": _BOUND_APP}
+            ]
+        },
+    }
+]
+
+
+def test_bindings_are_read_from_both_layers_and_any_source_is_unbound() -> None:
+    protection = {
+        "required_status_checks": {
+            "checks": [
+                {"context": "A", "app_id": 1},
+                {"context": "B", "app_id": -1},
+                {"context": "C", "app_id": None},
+                {"context": "D"},
+            ]
+        }
+    }
+    rules = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "required_status_checks": [
+                    {"context": "A", "integration_id": 2},
+                    {"context": "E", "integration_id": 3},
+                    {"context": "F"},
+                ]
+            },
+        }
+    ]
+    assert check_pr_gated.required_app_bindings(rules, protection) == {
+        "A": {1, 2},
+        "E": {3},
+    }
+
+
+@pytest.mark.parametrize(
+    ("rules", "protection"),
+    [
+        pytest.param(None, _CLASSIC_BOUND, id="classic-app_id"),
+        pytest.param(_RULESET_BOUND, None, id="ruleset-integration_id"),
+    ],
+)
+def test_a_same_name_check_from_another_app_does_not_satisfy_a_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    rules: list[dict[str, object]] | None,
+    protection: dict[str, object] | None,
+) -> None:
+    """The name-only rollup is green, but the only run of the name comes
+    from another App, which GitHub does not accept (#2131)."""
+    monkeypatch.setattr(
+        check_pr_gated, "head_check_runs", lambda _h, _n: [_app_run(_OTHER_APP)]
+    )
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, _GREEN, rules=rules, protection=protection
+    )
+    assert reasons == [
+        f"'{REQUIRED_CONTEXT}' is required from App {_BOUND_APP}, but no check "
+        f"run of that name at the head comes from it (posted by App(s) {_OTHER_APP})"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rules", "protection"),
+    [
+        pytest.param(None, _CLASSIC_BOUND, id="classic-app_id"),
+        pytest.param(_RULESET_BOUND, None, id="ruleset-integration_id"),
+    ],
+)
+def test_the_bound_apps_green_run_satisfies_it(
+    monkeypatch: pytest.MonkeyPatch,
+    rules: list[dict[str, object]] | None,
+    protection: dict[str, object] | None,
+) -> None:
+    """The accept control: the bound App's own green run is enough, beside a
+    red run of the same name from another App."""
+    monkeypatch.setattr(
+        check_pr_gated,
+        "head_check_runs",
+        lambda _h, _n: [_app_run(_OTHER_APP, "failure"), _app_run(_BOUND_APP)],
+    )
+    reasons, _ = _gate_a_green_pr(
+        monkeypatch, _GREEN, rules=rules, protection=protection
+    )
+    assert reasons == []
+
+
+def test_the_bound_apps_failed_run_is_a_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        check_pr_gated,
+        "head_check_runs",
+        lambda _h, _n: [_app_run(_BOUND_APP, "failure"), _app_run(_OTHER_APP)],
+    )
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, protection=_CLASSIC_BOUND)
+    assert reasons == [f"'{REQUIRED_CONTEXT}' from App {_BOUND_APP} concluded FAILURE"]
+
+
+def test_unreadable_check_runs_leave_a_binding_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed: an unread provider is not a satisfied one."""
+    monkeypatch.setattr(check_pr_gated, "head_check_runs", lambda _h, _n: None)
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN, rules=_RULESET_BOUND)
+    assert len(reasons) == 1
+    assert "could not be read" in reasons[0]
+    assert "unverified" in reasons[0]
+
+
+def test_an_unbound_requirement_makes_no_check_runs_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No binding, no extra API call: this repo's own requirement is unbound."""
+
+    def unexpected(_head: str, _name: str) -> list[dict[str, object]]:
+        raise AssertionError("check runs read for an unbound requirement")
+
+    monkeypatch.setattr(check_pr_gated, "head_check_runs", unexpected)
+    reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN)
+    assert reasons == []
