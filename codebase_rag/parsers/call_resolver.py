@@ -1024,7 +1024,7 @@ class CallResolver:
                 continue
             label = self.function_registry.get(qn)
             if label in (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD):
-                twins.add((label, qn))
+                twins.add((str(label), qn))
         return twins
 
     def go_package_sibling_targets(self, callee_qn: str) -> set[tuple[str, str]]:
@@ -1348,13 +1348,13 @@ class CallResolver:
             )
         ) or (language == cs.SupportedLanguage.JULIA and nested_caller):
             use_cache = False
+        # `new X()` and a bare `X()` in one module are different
+        # questions with different answers, so they never share a slot.
+        cache_key = (call_name, module_qn, constructing)
         if use_cache:
-            # `new X()` and a bare `X()` in one module are different
-            # questions with different answers, so they never share a slot.
-            cache_key = (call_name, module_qn, constructing)
             if cache_key in self._simple_resolution_cache:
-                self.last_resolution = self._resolution_labels.get(
-                    cache_key, cs.EdgeResolution.EXACT
+                self.last_resolution = str(
+                    self._resolution_labels.get(cache_key, cs.EdgeResolution.EXACT)
                 )
                 return self._simple_resolution_cache[cache_key]
 

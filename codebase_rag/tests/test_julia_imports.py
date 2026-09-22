@@ -380,7 +380,7 @@ def test_nested_package_stem_not_matched(
     (project / "dep" / "Utils.jl").write_text("util_fn(x) = x\n", encoding="utf-8")
     (project / "main.jl").write_text("using .Utils\n", encoding="utf-8")
 
-    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
         (c.args[0][2], c.args[2][2])
@@ -532,7 +532,7 @@ def test_same_nested_package_import(temp_repo: Path, mock_ingestor: MagicMock) -
     (dep / "Bar.jl").write_text("module Bar\nv = 1\nend\n", encoding="utf-8")
     (dep / "foo.jl").write_text("using .Bar\n", encoding="utf-8")
 
-    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
         (c.args[0][2], c.args[2][2])
@@ -627,7 +627,7 @@ def test_nested_package_declared_module_import(
         "module Foo\nusing .SimulationModels\nend\n", encoding="utf-8"
     )
 
-    updater = create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
+    create_and_run_updater(project, mock_ingestor, skip_if_missing=SKIP)
 
     imports = {
         (c.args[0][2], c.args[2][2])
