@@ -38,6 +38,14 @@ KEY_TYPE_NAME = "type_name"
 KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
 KEY_HAS_DEFAULT = "has_default"
+# Constant node properties (issue #1806).
+KEY_VALUE = "value"
+# The right-hand side is recorded as written, for the constants whose POINT
+# is their value (a version string, a limit, a table name). A generated
+# lookup table can be megabytes on one line, so anything longer is recorded
+# as absent rather than truncated: a truncated literal reads as a valid one
+# and would be wrong in the reassuring direction.
+CONSTANT_VALUE_MAX_CHARS = 200
 KEY_NAME_START_LINE = "name_start_line"
 KEY_NAME_START_COL = "name_start_col"
 KEY_END_LINE = "end_line"
@@ -189,6 +197,7 @@ ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
 ONEOF_FIELD = "field"
+ONEOF_CONSTANT = "constant"
 
 
 class UniqueKeyType(StrEnum):
@@ -237,6 +246,9 @@ class NodeLabel(StrEnum):
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
     FIELD = "Field"
+    # A named constant a Module declares (issue #1806). Python module
+    # scope only for now; a class-level member is a Field (#1805).
+    CONSTANT = "Constant"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -274,6 +286,9 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
+    # <module qn>.<NAME>: a rename is a new constant, not an update of
+    # this one, the same as every other qualified-name-keyed label.
+    NodeLabel.CONSTANT: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -332,6 +347,10 @@ class RelationshipType(StrEnum):
     HAS_FIELD = "HAS_FIELD"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
+    # Module -> Constant (issue #1806). Named for the declaring side like
+    # DEFINES / DEFINES_METHOD, because a module DEFINES its constants;
+    # HAS_FIELD reads from the owner's side because a field is part of it.
+    DEFINES_CONSTANT = "DEFINES_CONSTANT"
 
 
 class CaptureGroup(StrEnum):
@@ -348,6 +367,7 @@ class CaptureGroup(StrEnum):
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
     FIELDS = "fields"
+    CONSTANTS = "constants"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -428,6 +448,13 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     # whenever the `parameters` group is on -- one relationship, one switch --
     # and `fields` alone yields Field nodes and HAS_FIELD only.
     CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
+    # Opt-in (issue #1806), like parameters and fields. OF_TYPE is NOT
+    # listed here for the same reason it is not under `fields`: every
+    # relationship belongs to exactly one group, and OF_TYPE is already
+    # under `parameters`. So a constant's type edge is captured whenever
+    # `parameters` is on, and `constants` alone yields Constant nodes and
+    # DEFINES_CONSTANT only.
+    CaptureGroup.CONSTANTS: frozenset({RelationshipType.DEFINES_CONSTANT}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -485,6 +512,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
     CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
+    CaptureGroup.CONSTANTS: frozenset({NodeLabel.CONSTANT}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -648,7 +676,8 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
+    "|HAS_FIELD|DEFINES_CONSTANT*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -738,6 +767,15 @@ CYPHER_PROJECT_FIELD_TYPES = (
     "AND f.type_name IS NOT NULL "
     "RETURN f.qualified_name AS qualified_name, f.type_name AS type_name, "
     "f.path AS path"
+)
+# The Constant counterpart (issue #1806): an annotated module-level
+# constant carries OF_TYPE the same way, so the incremental requeue needs
+# the same read-back for files a run does not re-parse.
+CYPHER_PROJECT_CONSTANT_TYPES = (
+    "MATCH (c:Constant) WHERE c.qualified_name STARTS WITH $project_prefix "
+    "AND c.type_name IS NOT NULL "
+    "RETURN c.qualified_name AS qualified_name, c.type_name AS type_name, "
+    "c.path AS path"
 )
 CYPHER_ALL_DEFINITION_QNS = (
     "MATCH (n) WHERE (n:Function OR n:Method OR n:Class OR n:Interface "
