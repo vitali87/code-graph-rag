@@ -371,3 +371,12 @@ CAPTURE_MODULE_OBJ = "module_obj"
 CAPTURE_EXPORTS_PROP = "exports_prop"
 CAPTURE_EXPORT_NAME = "export_name"
 CAPTURE_EXPORT_FUNCTION = "export_function"
+
+# Inline-function evaluation checks (PR #2058).
+TS_JS_YIELD_EXPRESSION = "yield_expression"
+TS_JS_NUMBER = "number"
+TS_JS_NULL = "null"
+TS_JS_UNARY_EXPRESSION = "unary_expression"
+TS_JS_ARGUMENTS_NAME = "arguments"
+TS_ASYNC_KEYWORD = "async"
+TS_GENERATOR_STAR = "*"

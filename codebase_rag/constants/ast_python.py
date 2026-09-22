@@ -199,3 +199,12 @@ TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
 GUARD_INHERITED_METHOD = "_inherited_method_guard"
 GUARD_NESTED_JAVA_CALL = "_nested_java_call_guard"
+
+# Inline-function evaluation checks (PR #2058).
+TS_PY_SET_COMPREHENSION = "set_comprehension"
+TS_PY_DICTIONARY_COMPREHENSION = "dictionary_comprehension"
+TS_PY_GENERATOR_EXPRESSION = "generator_expression"
+TS_PY_INTEGER = "integer"
+TS_PY_FLOAT = "float"
+TS_PY_NONE = "none"
+TS_PY_UNARY_OPERATOR = "unary_operator"
