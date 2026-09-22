@@ -35,9 +35,9 @@ from ..structural_delta import import_cycles, snapshot
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, move_expectation, verify
 from .imports import (
+    _JS_KEYWORD,
     _JS_NAMED,
     _JS_SPEC,
-    _PY_IMPORT,
     ImportRewriter,
     ImportSite,
     SymbolMove,
@@ -51,11 +51,30 @@ from .rename import _name_token
 from .transaction import EditTransaction, StagedTree, VerificationResult, undo_last
 
 _IDENTIFIER = r"(?<![\w.])%s(?!\w)"
-_JS_LANGUAGES = frozenset({cs.SupportedLanguage.JS, cs.SupportedLanguage.TS})
+# The shared set, so `.tsx` takes the JS path too: a hand-kept {JS, TS}
+# sent TSX through the Python branch, which wrote `from a import b` into
+# a .tsx file and made every TSX move fail the parse gate.
+_JS_LANGUAGES = cs.JS_TS_LANGUAGES
 _WRAPPERS = frozenset({cs.TS_PY_DECORATED_DEFINITION, cs.TS_EXPORT_STATEMENT})
 _IMPORT_TYPES = frozenset(
     {cs.TS_PY_IMPORT_STATEMENT, cs.TS_PY_IMPORT_FROM_STATEMENT, cs.TS_IMPORT_STATEMENT}
 )
+# What must stay above any import added to a file that has none: a
+# shebang or coding line, `from __future__` (anything
+# before it is a SyntaxError), and a leading string statement -- the
+# module docstring, or a JS "use strict" directive, both of which stop
+# being one the moment a statement precedes them.
+_TS_FUTURE_IMPORT = "future_import_statement"
+_TS_HASH_BANG = "hash_bang_line"
+_PROLOGUE_TYPES = frozenset({_TS_HASH_BANG, _TS_FUTURE_IMPORT})
+_PINNED_COMMENT_LINES = 2
+# `import D, * as ns, { a } from ...`: the clause between the keyword and
+# `from`, and the one-binding clauses it is split into.
+_JS_FROM = re.compile(r"\s+from\s+(?=['\"])")
+_JS_NAMESPACE = re.compile(r"\*\s*as\s+(?P<name>[\w$]+)")
+# A TS inline type-only entry (`{ type Foo }`) binds `Foo`; the modifier
+# must be set aside before comparing, but `{ type }` alone is a real name.
+_TS_INLINE_TYPE = re.compile(r"^type\s+(?=\S)")
 
 
 class MoveRefused(ValueError):
@@ -117,13 +136,20 @@ def _module_bound(text: str, module: str) -> bool:
 
     Unparseable input answers False: the caller then adds an import it
     may not need, which is recoverable, rather than omitting one it does.
+
+    Only the module's own statements count. An import inside a function
+    or class binds that scope's name, not the module's, so `ast.walk`
+    let a nested `import pkg.new` suppress the top-level one the
+    rewritten module-level call sites need. An import under a top-level
+    `if`/`try` is skipped too: it may not run, and the cost of that
+    choice is at worst a redundant import.
     """
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return False
     wanted = module.split(".")
-    for node in ast.walk(tree):
+    for node in tree.body:
         if not isinstance(node, ast.Import):
             continue
         for alias in node.names:
@@ -178,14 +204,58 @@ def _cut_span(source: bytes, node: Node) -> _Cut:
     return _Cut(start, end, text)
 
 
+def _line_end(source: bytes, node: Node) -> int:
+    end = source.find(b"\n", node.end_byte)
+    return len(source) if end < 0 else end + 1
+
+
+def _is_directive(node: Node) -> bool:
+    # A statement that is only a string literal: docstring or "use strict".
+    named = node.named_children
+    return (
+        node.type == cs.TS_EXPRESSION_STATEMENT
+        and len(named) == 1
+        and named[0].type == cs.TS_STRING
+    )
+
+
+def _prologue_end(source: bytes, root: Node) -> int:
+    """Byte offset just after the file's prologue (0 when it has none)."""
+    end = 0
+    seen_directive = False
+    for child in root.children:
+        if child.type == cs.TS_COMMENT:
+            # Comments are stepped over, but only a shebang or PEP 263
+            # coding line (first two lines) is pinned above the import:
+            # pinning every comment would split a `# note` from the
+            # definition it annotates.
+            if child.start_point[0] < _PINNED_COMMENT_LINES:
+                end = _line_end(source, child)
+        elif child.type in _PROLOGUE_TYPES:
+            end = _line_end(source, child)
+        elif not seen_directive and _is_directive(child):
+            # Only the FIRST statement can be the docstring or directive.
+            seen_directive = True
+            end = _line_end(source, child)
+        else:
+            break
+    return end
+
+
 def _import_block_end(source: bytes, root: Node) -> int:
-    """Byte offset just after the last top-level import (0 when none)."""
+    """Byte offset just after the last top-level import.
+
+    With no import, just after the prologue rather than byte 0: an import
+    written above a module docstring turns `__doc__` into None, above a
+    shebang breaks the script, above `from __future__` is a SyntaxError,
+    and above "use strict" silently drops strict mode. All four still
+    parse, so the transaction's parse gate cannot catch them.
+    """
     end = 0
     for child in root.children:
         if child.type in _IMPORT_TYPES:
-            end = source.find(b"\n", child.end_byte)
-            end = len(source) if end < 0 else end + 1
-    return end
+            end = _line_end(source, child)
+    return end or _prologue_end(source, root)
 
 
 def _strip_project(qn: str, project: str) -> str:
@@ -644,29 +714,14 @@ def _narrow_statement(
     new_path: str,
 ) -> str | None:
     """The statement reduced to the entry binding `alias`, respelled for
-    the new file where the specifier is relative."""
+    the new file where the specifier is relative.
+
+    The result is pasted at the top of the destination, so it must bind
+    `alias` there and nothing else: a sibling binding copied along can
+    shadow a name the destination already defines.
+    """
     if language in _JS_LANGUAGES:
-        spec = _JS_SPEC.search(statement)
-        if spec is None:
-            return None
-        text = statement
-        if spec.group("spec").startswith("."):
-            target = (Path(old_path).parent / spec.group("spec")).as_posix()
-            text = (
-                statement[: spec.start("spec")]
-                + _relative_specifier(new_path, target)
-                + statement[spec.end("spec") :]
-            )
-        named = _JS_NAMED.search(text)
-        if named is None:
-            return text.strip()
-        entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
-        kept = [e for e in entries if _local_name(e) == alias]
-        if not kept:
-            return None
-        return (
-            text[: named.start()] + "{ " + ", ".join(kept) + " }" + text[named.end() :]
-        ).strip()
+        return _narrow_js(statement, alias, old_path, new_path)
     if parsed := _match_py_from(statement):
         # main replaced the _PY_FROM regex with a token parser returning
         # (lead, module, mid, names); only those two fields are needed here.
@@ -675,10 +730,113 @@ def _narrow_statement(
         kept = [e for e in entries if _local_name(e) == alias]
         if not kept:
             return None
+        module = _rebase_py_relative(module, old_path, new_path)
         return f"from {module} import {kept[0]}"
-    if _PY_IMPORT.match(statement):
-        return statement.strip()
-    return statement.strip()
+    return _narrow_py_import(statement, alias)
+
+
+def _rebase_py_relative(module: str, old_path: str, new_path: str) -> str:
+    """`module` as `new_path` must spell it to reach what `old_path` meant.
+
+    A relative import counts its dots from the importing file's package,
+    so copying `from .deps import X` from `pkg/sub/util.py` into
+    `pkg/core.py` would silently switch it from `pkg.sub.deps` to
+    `pkg.deps` -- the wrong module, or none. The target is resolved from
+    the old file's directory and re-expressed from the new one's; both
+    are directories, which is also right for `__init__.py`, whose `.` is
+    its own package.
+    """
+    level = len(module) - len(module.lstrip(cs.SEPARATOR_DOT))
+    if level == 0:
+        return module
+    rest = [p for p in module[level:].split(cs.SEPARATOR_DOT) if p]
+    old_package = list(Path(old_path).parent.parts)
+    ups = level - 1
+    if ups > len(old_package):
+        # Already escapes the tree it was written in; nothing to rebase.
+        return module
+    target = old_package[: len(old_package) - ups] + rest
+    new_package = list(Path(new_path).parent.parts)
+    common = 0
+    while (
+        common < min(len(target), len(new_package))
+        and target[common] == new_package[common]
+    ):
+        common += 1
+    if common == 0:
+        # No shared package: a relative import cannot climb there.
+        return cs.SEPARATOR_DOT.join(target)
+    dots = cs.SEPARATOR_DOT * (len(new_package) - common + 1)
+    return dots + cs.SEPARATOR_DOT.join(target[common:])
+
+
+def _narrow_py_import(statement: str, alias: str) -> str:
+    """`import a, b` reduced to the entry binding `alias`.
+
+    `alias` is the graph's local name: the `as` name, else the dotted
+    path itself or its root (`import pkg.dep` binds `pkg`). Unparseable
+    or unmatched input is returned whole: copying a spare binding is
+    recoverable, omitting the needed one is a NameError.
+    """
+    text = statement.strip()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return text
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Import):
+        return text
+    for entry in tree.body[0].names:
+        bound = entry.asname or entry.name
+        if bound == alias or (
+            entry.asname is None and entry.name.split(cs.SEPARATOR_DOT)[0] == alias
+        ):
+            suffix = f" as {entry.asname}" if entry.asname else ""
+            return f"import {entry.name}{suffix}"
+    return text
+
+
+def _js_entry_local(entry: str) -> str:
+    return _local_name(_TS_INLINE_TYPE.sub("", entry, count=1))
+
+
+def _narrow_js(statement: str, alias: str, old_path: str, new_path: str) -> str | None:
+    """A JS/TS import reduced to the one clause that binds `alias`.
+
+    `import D, * as ns, { a } from 'm'` binds three kinds of name; each is
+    kept on its own. Looking only inside the braces lost the default and
+    namespace bindings (the moved code then referred to an unbound name)
+    and dragged the default along with a named entry.
+    """
+    spec = _JS_SPEC.search(statement)
+    if spec is None:
+        return None
+    text = statement
+    if spec.group("spec").startswith("."):
+        target = (Path(old_path).parent / spec.group("spec")).as_posix()
+        text = (
+            statement[: spec.start("spec")]
+            + _relative_specifier(new_path, target)
+            + statement[spec.end("spec") :]
+        )
+    keyword = _JS_KEYWORD.match(text)
+    source_at = _JS_FROM.search(text)
+    if keyword is None or source_at is None or source_at.start() < keyword.end():
+        # A side-effect import (`import './x'`) binds nothing to narrow.
+        return text.strip()
+    clause = text[keyword.end() : source_at.start()].strip()
+    tail = text[source_at.start() :]
+    named = _JS_NAMED.search(clause)
+    if named is not None:
+        entries = [e.strip() for e in named.group("names").split(",") if e.strip()]
+        kept = [e for e in entries if _js_entry_local(e) == alias]
+        if kept:
+            return f"{keyword.group(0)}{{ {', '.join(kept)} }}{tail}".strip()
+        clause = (clause[: named.start()] + clause[named.end() :]).strip()
+    for part in (p.strip() for p in clause.split(",")):
+        namespace = _JS_NAMESPACE.fullmatch(part)
+        if (namespace.group("name") if namespace else part) == alias:
+            return f"{keyword.group(0)}{part}{tail}".strip()
+    return None
 
 
 def move(
