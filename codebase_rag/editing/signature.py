@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .. import constants as cs
+from ..graph_query import QueryFn
 from .contract import Reingest, change_signature_expectation, measure, verify
 from .signature_planner import SignaturePlanner
 from .signature_types import (
@@ -99,7 +100,7 @@ class SignatureChanger(SignaturePlanner):
 
 def change_signature(
     repo_root: Path,
-    fetch_all: Callable[[str, dict[str, object]], list[dict[str, object]]],
+    fetch_all: QueryFn,
     project_name: str,
     qualified_name: str,
     new_params: Iterable[ParamSpec | str],

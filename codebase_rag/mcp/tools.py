@@ -2597,16 +2597,16 @@ class MCPToolsRegistry:
     def _reingest_for_contract(
         self, project_name: str
     ) -> Callable[[list[str]], ReingestReport] | None:
-        """The live updater's re-ingest for an edit's postcondition contract.
+        """The re-ingest an edit's postcondition contract measures against.
 
-        A project that is not indexed has no graph to measure against and
-        the operation runs without the contract (issue #1531).
+        Delegates to `_guarded_rename_reingest`, which returns None for a
+        project with no graph to measure (issue #1531) and wraps the callback
+        in the incomplete-run marker. Passing the raw callback here would
+        reopen the failure Greptile caught on PR #1547: a process death part
+        way through the re-ingest leaves a partial graph that a restarted
+        server reads as complete.
         """
-        if self._live_updater is not None or (
-            project_name in self.ingestor.list_projects()
-        ):
-            return self._updater_for_reingest(project_name).reingest
-        return None
+        return self._guarded_rename_reingest(project_name)
 
     async def rename(
         self,
