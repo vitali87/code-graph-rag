@@ -6,10 +6,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
+from .. import constants as cs
 from ..graph_query import QueryFn
 from .contract import Expectation, Reingest, measure, verify
 from .patcher import Patcher
-from .transaction import EditTransaction, StagedTree, VerificationResult, undo_last
+from .transaction import (
+    EditTransaction,
+    StagedTree,
+    TransactionConflict,
+    VerificationResult,
+    undo_transaction,
+)
 
 
 def _commit(
@@ -43,10 +52,26 @@ def _enforce(
     verdict = verify(expectation, delta)
     if verdict.ok:
         return report._replace(verdict=verdict)
-    undo_last(repo_root)
+    reasons = "; ".join(verdict.failures)
+    report = report._replace(applied=False, verdict=verdict)
+    # This report's own transaction, never whatever is newest: `undo_last`
+    # reversed an unrelated later edit and left this one on disk while the
+    # report claimed a rollback (Greptile and Copilot, PR #2057). A later
+    # edit stacked on it, or a hand edit to its files, refuses the undo.
+    try:
+        outcome = undo_transaction(repo_root, report.transaction_id)
+    except TransactionConflict as conflict:
+        logger.warning(str(conflict))
+        return report._replace(
+            message=cs.EDIT_ROLLBACK_REFUSED.format(reasons=reasons, error=conflict)
+        )
+    if not outcome.applied:
+        return report._replace(
+            message=cs.EDIT_ROLLBACK_REFUSED.format(
+                reasons=reasons, error=outcome.message
+            )
+        )
+    # Only a confirmed undo changed the tree, so only then does the graph
+    # need re-describing.
     reingest(list(report.files))
-    return report._replace(
-        applied=False,
-        verdict=verdict,
-        message=failure.format(reasons="; ".join(verdict.failures)),
-    )
+    return report._replace(message=failure.format(reasons=reasons))

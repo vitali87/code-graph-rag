@@ -674,6 +674,10 @@ EXTRACT_JS_CONTEXT = (
 EXTRACT_JS_UNSUPPORTED_METHOD = (
     "{qn} is not a method of a named class; extracting from it is not supported"
 )
+EDIT_ROLLBACK_REFUSED = (
+    "Edit failed its postcondition ({reasons}) and was not rolled back "
+    "({error}); its files may remain modified; check the working tree"
+)
 INLINE_NOT_SINGLE_RETURN = "{qn} is not a single-return function; only those inline"
 INLINE_GUESSED_CALLERS = (
     "Refusing to inline: callers resolved by guesswork or trace only: {sites}"
