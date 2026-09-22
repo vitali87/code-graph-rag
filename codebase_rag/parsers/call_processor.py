@@ -58,6 +58,7 @@ from .utils import (
     python_parameter_names,
     safe_decode_text,
     sorted_captures,
+    written_simple_name,
 )
 
 
@@ -1129,7 +1130,7 @@ class _JsFileBindingCollector:
 class CallProcessor:
     __slots__ = (
         "ingestor",
-        "_unresolved_references",
+        "_note_unresolved",
         "_site_node",
         "_resolution",
         "_site_cache",
@@ -1225,8 +1226,9 @@ class CallProcessor:
         self.js_symbol_member_types: dict[str, set[str]] = {}
         self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
 
-        # Shared with the import processor, which owns the record (#1568).
-        self._unresolved_references = import_processor.unresolved_references
+        # The import processor owns the record (#1568); every pass notes
+        # through it so the empty-name guard lives in one place.
+        self._note_unresolved = import_processor.note_unresolved
         self._resolver = CallResolver(
             function_registry=function_registry,
             import_processor=import_processor,
@@ -3926,13 +3928,7 @@ class CallProcessor:
                     # its simple name so that file's arrival re-parses this
                     # one (issue #1568). Not where an import would be needed
                     # anyway: the importer lookup finds those waiters.
-                    simple = call_name.replace(
-                        cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT
-                    ).rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                    if simple:
-                        self._unresolved_references.setdefault(module_qn, set()).add(
-                            simple
-                        )
+                    self._note_unresolved(module_qn, written_simple_name(call_name))
                 if (
                     is_js_ts
                     and class_context

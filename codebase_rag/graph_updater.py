@@ -3003,7 +3003,9 @@ class GraphUpdater:
             qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
             if isinstance(qn, str) and isinstance(path, str):
                 known.setdefault(path, set()).add(
-                    qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
+                    qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                    .split(cs.CHAR_PAREN_OPEN, 1)[0]
+                    .split(cs.DUP_QN_MARKER, 1)[0]
                 )
         return known
 
@@ -3065,10 +3067,15 @@ class GraphUpdater:
                 self.ingestor.execute_write(
                     cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES, {cs.KEY_QNS: cleared}
                 )
-            for module_qn, names in pending:
+            if pending:
                 self.ingestor.execute_write(
                     cs.CYPHER_SET_UNRESOLVED_REFERENCES,
-                    {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
+                    {
+                        cs.CYPHER_PARAM_ROWS: [
+                            {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names}
+                            for module_qn, names in pending
+                        ]
+                    },
                 )
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
@@ -5507,12 +5514,12 @@ class GraphUpdater:
             # definitions they gained (bot review on PR #1979).
             *self._unresolved_reference_waiters(
                 [
-                    (key, _read_bytes(path))
+                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
                     for key, path in sorted(present.items())
                     if created is not None and key in created
                 ],
                 [
-                    (key, _read_bytes(path))
+                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
                     for key, path in sorted(present.items())
                     if created is None or key not in created
                 ],

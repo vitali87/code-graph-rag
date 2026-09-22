@@ -483,7 +483,8 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
 
 def _include_path_suffix(include_path: str) -> str:
     """A written include path as the repository path suffix it names:
-    normalised, with any leading `./` and `../` segments dropped."""
+    normalised, with every `.` and `..` segment dropped wherever it falls
+    (after `normpath`, only leading `..` segments can remain)."""
     parts = [
         part
         for part in posixpath.normpath(include_path.replace("\\", "/")).split("/")

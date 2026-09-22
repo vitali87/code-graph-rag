@@ -46,6 +46,7 @@ from ..utils import (
     record_cpp_definition_span,
     safe_decode_text,
     sorted_captures,
+    written_simple_name,
 )
 from . import cpp_modules
 from . import identity as id_
@@ -129,15 +130,6 @@ def _skip_method(
     if settings.CAPTURE_FUNCTION_LOCAL_DEFINITIONS:
         return not _method_belongs_directly(method_node, class_node, lang_config)
     return _is_nested_inside_function(method_node, class_body, lang_config)
-
-
-def _written_simple_name(name: str) -> str:
-    """The last segment of a written base name, whatever the separator:
-    `geo::Shape` and `pkg.Base` both name the class the way a defining
-    file's own simple name does (issue #1568)."""
-    return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
-        cs.SEPARATOR_DOT, 1
-    )[-1]
 
 
 class _DeferredForwardDecl(NamedTuple):
@@ -476,7 +468,7 @@ class ClassIngestMixin:
                 )
                 if module_qn is not None:
                     self.import_processor.note_unresolved(
-                        module_qn, _written_simple_name(entry.base_name)
+                        module_qn, written_simple_name(entry.base_name)
                     )
                 continue
             bases = self.class_inheritance.get(entry.child_qn)
@@ -548,7 +540,7 @@ class ClassIngestMixin:
                 # Resolved nowhere, or to a node outside the index: the file
                 # defining this base may be added later (issue #1568).
                 self.import_processor.note_unresolved(
-                    entry.module_qn, _written_simple_name(entry.parent_qn)
+                    entry.module_qn, written_simple_name(entry.parent_qn)
                 )
             if resolved is None:
                 continue

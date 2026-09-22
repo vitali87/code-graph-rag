@@ -903,9 +903,13 @@ class _StatefulIngestor:
                 own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
                 raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
                 raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
-                wanted = set(raw_names) if isinstance(raw_names, list) else set()
+                wanted = (
+                    {n for n in raw_names if isinstance(n, str)}
+                    if isinstance(raw_names, list)
+                    else set()
+                )
                 wanted_prefixes = (
-                    [str(p) for p in raw_prefixes]
+                    [p for p in raw_prefixes if isinstance(p, str)]
                     if isinstance(raw_prefixes, list)
                     else []
                 )
@@ -1101,12 +1105,18 @@ class _StatefulIngestor:
                     if node is not None:
                         node[cs.KEY_UNRESOLVED_REFERENCES] = []
             case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
-                # One module's list, replaced so a resolved name leaves it.
-                qn = params.get(cs.KEY_QN) if params else None
-                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
-                node = self.nodes.get((_MODULE_LABEL, qn))
-                if node is not None and isinstance(names, list):
-                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
+                # Each module's list, replaced so a resolved name leaves it.
+                raw_rows = params.get(cs.CYPHER_PARAM_ROWS) if params else None
+                for row in raw_rows if isinstance(raw_rows, list) else []:
+                    qn = row.get(cs.KEY_QN) if isinstance(row, dict) else None
+                    names = (
+                        row.get(cs.CYPHER_PARAM_NAMES)
+                        if isinstance(row, dict)
+                        else None
+                    )
+                    node = self.nodes.get((_MODULE_LABEL, qn))
+                    if node is not None and isinstance(names, list):
+                        node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:

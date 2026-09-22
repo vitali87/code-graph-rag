@@ -885,6 +885,7 @@ CYPHER_UNRESOLVED_REFERENCE_WAITERS = (
     "RETURN DISTINCT m.path AS caller_path"
 )
 CYPHER_PARAM_NAMES = "names"
+CYPHER_PARAM_ROWS = "rows"
 CYPHER_PARAM_PREFIXES = "prefixes"
 # SET, not merge, so a name that now resolves is gone from the list (issue
 # #1568); after a flush, so the Module nodes of a first build exist to
@@ -896,7 +897,8 @@ CYPHER_CLEAR_UNRESOLVED_REFERENCES = (
     "SET m.unresolved_references = []"
 )
 CYPHER_SET_UNRESOLVED_REFERENCES = (
-    "MATCH (m:Module {qualified_name: $qn}) SET m.unresolved_references = $names"
+    "UNWIND $rows AS row MATCH (m:Module {qualified_name: row.qn}) "
+    "SET m.unresolved_references = row.names"
 )
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
