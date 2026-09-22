@@ -128,7 +128,7 @@ def _dump(ingestor: MemgraphIngestor) -> tuple[list[str], list[str]]:
     )
 
 
-def _check(ingestor: MemgraphIngestor, root: Path, *, isolated: bool) -> dict:
+def _run_check_delta(ingestor: MemgraphIngestor, root: Path, *, isolated: bool) -> dict:
     parsers, queries = load_parsers()
     delta = run_check(
         root, "HEAD", PROJECT, ingestor, parsers, queries, isolated=isolated
@@ -147,7 +147,7 @@ class TestIsolatedCheck:
         assert before[0], "the graph holds no nodes to restore"
         assert before[1], "the graph holds no edges to restore"
 
-        delta = _check(memgraph_ingestor, repo, isolated=True)
+        delta = _run_check_delta(memgraph_ingestor, repo, isolated=True)
 
         assert _dump(memgraph_ingestor) == before
         assert delta["dangling_callers"][0]["target"] == f"{PROJECT}.pkg.util.helper"
@@ -163,7 +163,7 @@ class TestIsolatedCheck:
         _edit(repo)
         before = _dump(memgraph_ingestor)
 
-        _check(memgraph_ingestor, repo, isolated=False)
+        _run_check_delta(memgraph_ingestor, repo, isolated=False)
 
         assert _dump(memgraph_ingestor) != before
         rows = memgraph_ingestor.fetch_all(
@@ -185,7 +185,7 @@ class TestIsolatedCheck:
         )
         _edit(repo)
 
-        _check(memgraph_ingestor, repo, isolated=True)
+        _run_check_delta(memgraph_ingestor, repo, isolated=True)
 
         rows = memgraph_ingestor.fetch_all(
             "MATCH (n:CodeSmell {qualified_name: $qn}) RETURN count(n) AS c",
@@ -199,8 +199,8 @@ class TestIsolatedCheck:
         _index(memgraph_ingestor, repo)
         _edit(repo)
 
-        first = _check(memgraph_ingestor, repo, isolated=True)
-        second = _check(memgraph_ingestor, repo, isolated=True)
+        first = _run_check_delta(memgraph_ingestor, repo, isolated=True)
+        second = _run_check_delta(memgraph_ingestor, repo, isolated=True)
 
         assert first["dangling_callers"]
         assert second == first
