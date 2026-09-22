@@ -688,16 +688,47 @@ class TestTheFailureSaysWhichRunsWereExcludedAndWhy:
         assert "Do NOT dispatch another" not in result.stdout
         assert "gh workflow run ci.yml" in result.stdout
 
-    def test_a_queued_run_with_no_association_is_still_awaited(self) -> None:
-        """The control for the test above: an empty association may still
-        resolve through the fork fallback, so it stays `pending` and must
-        NOT be told to dispatch."""
-        run = _make_workflow_run(status="queued", conclusion=None)
-        result = _execute_workflow_check([[run]], pr_pages=[[]])
+    def test_a_queued_fork_run_with_no_association_is_still_awaited(
+        self,
+    ) -> None:
+        """The control for the test above: on a FORK an empty association
+        may still resolve through the source-branch fallback, so it stays
+        `pending` and must NOT be told to dispatch.
+
+        `repo`/`head_repo` are passed explicitly rather than relying on
+        `_make_workflow_run`'s FORK default, because the repository is the
+        axis that decides this case against the same-repo test below.
+        """
+        run = _make_workflow_run(repo=FORK, status="queued", conclusion=None)
+        result = _execute_workflow_check([[run]], head_repo=FORK, pr_pages=[[]])
 
         assert result.returncode == 1
         assert "Do NOT dispatch another" in result.stdout
         assert "gh workflow run ci.yml" not in result.stdout
+
+    def test_a_queued_same_repo_run_with_no_association_is_not_awaited(
+        self,
+    ) -> None:
+        """A same-repo run with an empty association can never count.
+
+        `ci_count`'s empty-association fallback is gated on
+        `HEAD_REPO != REPO`, so for a branch in this repository nothing
+        will ever associate the run with this PR
+        (`test_same_repo_empty_association_is_not_proof` refuses it as
+        proof). Classifying it `pending` printed "Do NOT dispatch
+        another" and left the PR with no eligible run and no way to get
+        one (Copilot on #1955).
+
+        The exact mirror of the fork test above: same status, same empty
+        association, only the repository differs, and the remedy must
+        differ with it.
+        """
+        run = _make_workflow_run(repo=REPO, status="queued", conclusion=None)
+        result = _execute_workflow_check([[run]], head_repo=REPO, pr_pages=[[]])
+
+        assert result.returncode == 1
+        assert "Do NOT dispatch another" not in result.stdout
+        assert "gh workflow run ci.yml" in result.stdout
 
     def test_a_branch_named_like_a_status_does_not_flip_the_remedy(self) -> None:
         """`head_branch` is interpolated into the reason text the grep

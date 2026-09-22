@@ -183,15 +183,24 @@ jobs:
             # fall through to the absent-case remedy. Restricted to runs
             # matching THIS PR's source identity, so a queued run belonging
             # to another PR cannot claim "one is already coming". A run is
-            # eligible to wait for when it names this PR, or when it carries
-            # no association and the fork fallback may yet resolve it.
+            # eligible to wait for when it names this PR, or when it
+            # carries no association AND is a fork run, where the
+            # source-branch fallback may yet resolve it. A SAME-REPO run
+            # with an empty association is not eligible: `ci_count`'s
+            # fallback is gated on `HEAD_REPO != REPO`, so nothing can
+            # ever associate it with this PR. Awaiting it printed "Do NOT
+            # dispatch another" for a run that could never count, leaving
+            # the PR stuck (`test_same_repo_empty_association_is_not_proof`
+            # already refuses it as proof; the remedy must agree).
             ci_state=$(echo "$runs" | jq -r \
               --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
-              --arg head_repo "$HEAD_REPO" --argjson pr "$PR_NUMBER" '
+              --arg head_repo "$HEAD_REPO" --arg repo "$REPO" \
+              --argjson pr "$PR_NUMBER" '
                 [.[] | select(.path == ".github/workflows/ci.yml")
                      | select(.head_sha == $sha and .head_branch == $branch
                               and .head_repo == $head_repo)
-                     | select((.prs | index($pr)) or (.prs | length) == 0)]
+                     | select((.prs | index($pr))
+                              or ((.prs | length) == 0 and $head_repo != $repo))]
                 | if length == 0 then "absent"
                   elif any(.[]; .status != "completed") then "pending"
                   else "foreign" end' 2>/dev/null) || ci_state="absent"
