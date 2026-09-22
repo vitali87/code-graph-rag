@@ -102,7 +102,111 @@ def _selector_has_argument_part(node: Node) -> bool:
     )
 
 
-def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | None:
+def _holds_only_type_arguments(selector: Node) -> bool:
+    return bool(selector.named_children) and all(
+        child.type == cs.TS_DART_TYPE_ARGUMENTS for child in selector.named_children
+    )
+
+
+def _skip_type_argument_selectors(node: Node | None) -> Node | None:
+    # `Box<int>.of(1);` in statement position is `Box` + selector(<int>) +
+    # selector(.of) + selector((1)): a selector holding only type arguments
+    # is not a hop (local review).
+    while (
+        node is not None
+        and node.type == cs.TS_DART_SELECTOR
+        and _holds_only_type_arguments(node)
+    ):
+        node = node.prev_named_sibling
+    return node
+
+
+def _relational_operator_text(node: Node) -> str | None:
+    # The relational operator joining a relational_expression's operands.
+    for child in node.children:
+        if child.type == cs.TS_DART_RELATIONAL_OPERATOR and child.text:
+            return decode_node_text(child.text)
+    return None
+
+
+def _construction_class_name(node: Node) -> str | None:
+    # The class a construction-expression receiver builds, for the two shapes
+    # that are NOT an identifier + argument_part selector (issue #2015):
+    #
+    #   `new X(1).m`   -> new_expression, and `const X(1).m` ->
+    #      const_object_expression: distinct node types, both carrying the
+    #      class as their first type_identifier (a `type_arguments` child
+    #      may follow).
+    #   `X<int>(1).m`                 -> relational_expression: the grammar
+    #      reads `<`/`>` as comparisons, so the class is the identifier
+    #      leading the `X < int` left operand, and the call's parens are a
+    #      sibling parenthesized_expression.
+    #
+    # Returning the bare class name lets the caller emit it as a normal
+    # `C` + `()` chain, so the receiver types through the same resolver path
+    # the bare `X(1).m` form already uses.
+    if node.type in (
+        cs.TS_DART_NEW_EXPRESSION,
+        cs.TS_DART_CONST_OBJECT_EXPRESSION,
+    ):
+        for child in node.named_children:
+            if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
+                return decode_node_text(child.text)
+        return None
+    if node.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    # Match the mis-parsed-generic shape: exactly
+    # [relational_expression, relational_operator, parenthesized_expression],
+    # the parens standing in for the call's arguments. `(a < b).hashCode >
+    # lo.height` carries extra selector/identifier children and is excluded.
+    children = node.named_children
+    if [child.type for child in children[:3]] != [
+        cs.TS_DART_RELATIONAL_EXPRESSION,
+        cs.TS_DART_RELATIONAL_OPERATOR,
+        cs.TS_DART_PARENTHESIZED_EXPRESSION,
+    ]:
+        return None
+    # The operators must read `<` then `>`, the order type arguments impose.
+    # This rules out `a > b < (1).x`, but NOT `a < b > (1).x`, which the
+    # grammar makes token-for-token identical to `X<int>(1).x`. That residual
+    # ambiguity is left to the resolver: the name is only emitted as a
+    # receiver, and a leading identifier that is not a known class resolves
+    # to nothing, so a comparison yields no edge rather than a wrong one.
+    if _relational_operator_text(children[0]) != cs.DART_ANGLE_OPEN:
+        return None
+    if _relational_operator_text(node) != cs.DART_ANGLE_CLOSE:
+        return None
+    # The left spine is `X < int`: the class is its leading identifier. Any
+    # other shape (a parenthesized or call left operand) is not a construction.
+    spine = children[0].named_children
+    if not spine or spine[0].type != cs.TS_DART_IDENTIFIER or not spine[0].text:
+        return None
+    return decode_node_text(spine[0].text)
+
+
+def _construction_receiver_class(
+    node: Node, allow_ambiguous: bool = False
+) -> str | None:
+    # The class constructed by the receiver hop AT this chain position.
+    # `new X(1).m` / `const X(1).m` reach the construction node itself and are
+    # unambiguous. In the mis-parsed generic (`X<int>(1).m`) the chain instead
+    # bottoms out at the call's `(1)`, whose PARENT relational_expression
+    # carries the class; that shape is token-for-token identical to the
+    # comparison `a < b > (1).m`, so it is only read as a construction when
+    # the caller can reject a shadowing local (allow_ambiguous). The CALL path
+    # cannot, and does not need it: `X<int>(1).m()` already binds through the
+    # pre-existing argument_part hop.
+    if node.type == cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        if not allow_ambiguous:
+            return None
+        parent = node.parent
+        return _construction_class_name(parent) if parent is not None else None
+    return _construction_class_name(node)
+
+
+def _walk_chain(
+    node: Node | None, allow_calls: bool = False, allow_ambiguous: bool = False
+) -> list[str] | None:
     # Backward walk over a selector chain, shared by plain and cascade calls:
     # None means the chain is broken (index selector, arbitrary expression)
     # and has no static name; an empty list means it bottomed out at
@@ -112,11 +216,20 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
     # type or constructor class; without it (cascade path) a call-result
     # receiver stays unresolvable.
     parts_rev: list[str] = []
+    node = _skip_type_argument_selectors(node)
     while node is not None:
         if allow_calls and _selector_has_argument_part(node):
             parts_rev.append(_CALL_HOP)
-            node = node.prev_named_sibling
+            node = _skip_type_argument_selectors(node.prev_named_sibling)
             continue
+        if allow_calls and (
+            class_name := _construction_receiver_class(node, allow_ambiguous)
+        ):
+            # A construction receiver is its own base: the class name plus a
+            # call hop, with nothing further to walk behind it.
+            parts_rev.append(_CALL_HOP)
+            parts_rev.append(class_name)
+            break
         part = _chain_part(node)
         if part is None:
             return None
@@ -125,7 +238,7 @@ def _walk_chain(node: Node | None, allow_calls: bool = False) -> list[str] | Non
         parts_rev.append(part)
         if node.type == cs.TS_DART_IDENTIFIER:
             break
-        node = node.prev_named_sibling
+        node = _skip_type_argument_selectors(node.prev_named_sibling)
     return list(reversed(parts_rev))
 
 
@@ -207,10 +320,95 @@ def dart_call_name(call_node: Node) -> str | None:
     """
     if call_node.type == cs.TS_DART_CASCADE_SECTION:
         return _cascade_call_name(call_node)
+    if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
+        return _construction_name(call_node)
+    if call_node.type == cs.TS_DART_RELATIONAL_EXPRESSION:
+        return _generic_call_name(call_node)
     tokens = _walk_chain(call_node.prev_named_sibling, allow_calls=True)
     if not tokens or all(token == _CALL_HOP for token in tokens):
         return None
     return _assemble_chain(tokens)
+
+
+def _construction_name(node: Node) -> str | None:
+    # `new X(...)`, `const X(...)`, `X<T>.named(...)`: the type_identifier,
+    # then the named-constructor identifier when there is one; type and
+    # value arguments are skipped. `new p.X(...)` on an import prefix parses
+    # the same way (type_identifier `p`, identifier `X`) and reads back as
+    # `p.X`, the name the bare `p.X(...)` chain yields.
+    parts = [
+        decode_node_text(child.text)
+        for child in node.named_children
+        if child.type in (cs.TS_DART_TYPE_IDENTIFIER, cs.TS_DART_IDENTIFIER)
+        and child.text is not None
+    ]
+    return cs.SEPARATOR_DOT.join(parts) or None
+
+
+def _generic_call_name(node: Node) -> str | None:
+    # `Box<int>(1)` parsed as relational_expression(relational_expression(
+    # chain < T), >, parenthesized_expression): the callee is the chain
+    # before the inner `<`. Any other operator pair is a real comparison.
+    inner = node.named_children[0] if node.named_children else None
+    if inner is None or inner.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    if (
+        _relational_operator_text(node) != cs.DART_ANGLE_CLOSE
+        or _relational_operator_text(inner) != cs.DART_ANGLE_OPEN
+        or generic_call_argument(node) is None
+    ):
+        return None
+    opener = next(
+        (
+            child
+            for child in inner.named_children
+            if child.type == cs.TS_DART_RELATIONAL_OPERATOR
+        ),
+        None,
+    )
+    if opener is None:
+        return None
+    tokens = _walk_chain(opener.prev_named_sibling)
+    if not tokens:
+        return None
+    return _assemble_chain(tokens)
+
+
+def generic_call_argument(node: Node) -> Node | None:
+    # The one argument of `X<T>(arg)` parsed as a chained comparison: the
+    # parenthesised operand right after the outer `>`. A member read on the
+    # result (`Box<int>(1).width`) nests its selector INSIDE the same node,
+    # after the operand, so the last child is not the anchor (local review).
+    ops = [
+        child
+        for child in node.named_children
+        if child.type == cs.TS_DART_RELATIONAL_OPERATOR
+    ]
+    if len(ops) != 1:
+        return None
+    arg = ops[0].next_named_sibling
+    if arg is None or arg.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        return None
+    return arg
+
+
+def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
+    """The identifier a read's receiver would construct, when ambiguous.
+
+    `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
+    identically, so the generic-construction reading of a receiver is only a
+    guess (issue #2015). Returns the leading identifier when THIS read took
+    that reading, for the caller to reject when a local or parameter of that
+    name is in scope (then it is a comparison, not a construction). Returns
+    None for every unambiguous shape, including `new X(1).m`.
+    """
+    receiver = selector_node.prev_named_sibling
+    if receiver is None or receiver.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
+        return None
+    parent = receiver.parent
+    if parent is None or parent.type != cs.TS_DART_RELATIONAL_EXPRESSION:
+        return None
+    return _construction_class_name(parent)
 
 
 def dart_member_read_name(selector_node: Node) -> str | None:
@@ -228,7 +426,9 @@ def dart_member_read_name(selector_node: Node) -> str | None:
     member = _selector_member_name(selector_node)
     if member is None:
         return None
-    receiver = _walk_chain(selector_node.prev_named_sibling, allow_calls=True)
+    receiver = _walk_chain(
+        selector_node.prev_named_sibling, allow_calls=True, allow_ambiguous=True
+    )
     if receiver is None:
         return None
     return _assemble_chain([*receiver, member])

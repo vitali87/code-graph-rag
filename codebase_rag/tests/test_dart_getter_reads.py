@@ -449,3 +449,81 @@ def test_invoked_chain_head_is_not_a_property_read(tmp_path: Path) -> None:
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".Screen.fill", REFERENCES, ".Screen._wonders"), rels
     assert _has(rels, ".Screen.fill", "CALLS", ".Screen._wonders"), rels
+
+
+def test_construction_receiver_getter_read_is_referenced(tmp_path: Path) -> None:
+    # A member read on a construction receiver names the member on the
+    # constructed class, for the `new` and type-argument forms as well as
+    # the bare one (issue #2015). The call pass already types the same
+    # receiver, which is why `Box<int>(1).describe()` binds; the read pass
+    # lost the `new` form to an unhandled new_expression base and the
+    # generic form to a `<`/`>` relational mis-parse.
+    files = {
+        "app.dart": (
+            "class Box<T> {\n"
+            "  Box(T v);\n"
+            "  int get height => 2;\n"
+            "  String describe() => 'b';\n"
+            "}\n"
+            "int bareGet() { return Box(1).height; }\n"
+            "int newGet() { return new Box(1).height; }\n"
+            "int genGet() { return Box<int>(1).height; }\n"
+            "void chained() { Box<int>(1).describe(); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # Control: the bare form and the generic CALL already bind on main.
+    assert _has(rels, ".app.bareGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.chained", "CALLS", ".Box.describe"), rels
+    assert _has(rels, ".app.newGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.genGet", REFERENCES, ".Box.height"), rels
+
+
+def test_real_comparison_is_not_read_as_a_construction(tmp_path: Path) -> None:
+    # `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
+    # identically, so the construction reading is a guess (issue #2015).
+    # Both operator orders are covered, and `flipped`/`same` deliberately
+    # use a LOCAL NAMED AFTER THE CLASS: that is the only shape in which a
+    # fabricated receiver resolves, so a weaker fixture would pass either
+    # way. A local or parameter of that name means the operand is that
+    # variable, not a type, so no member may bind.
+    files = {
+        "app.dart": (
+            "class Box {\n"
+            "  int get height => 2;\n"
+            "  int get width => 3;\n"
+            "}\n"
+            "dynamic same(dynamic Box, dynamic b) {\n"
+            "  return Box < b > (1).height;\n"
+            "}\n"
+            "dynamic flipped(dynamic Box, dynamic b) {\n"
+            "  return Box > b < (1).height;\n"
+            "}\n"
+            "bool nested(int a, int b, Box lo) {\n"
+            "  return (a < b).hashCode > lo.width;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # The genuine receiver read still binds...
+    assert _has(rels, ".app.nested", REFERENCES, ".Box.width"), rels
+    # ...and neither comparison invents a construction receiver.
+    assert not _has(rels, ".app.same", REFERENCES, ".Box.height"), rels
+    assert not _has(rels, ".app.flipped", REFERENCES, ".Box.height"), rels
+
+
+def test_const_construction_receiver_read_is_referenced(tmp_path: Path) -> None:
+    # `const X(1).m` is a const_object_expression, a DIFFERENT node type
+    # from `new X(1).m`'s new_expression (issue #2015); both carry the class
+    # as their first type_identifier.
+    files = {
+        "app.dart": (
+            "class Box {\n"
+            "  const Box(int v);\n"
+            "  int get height => 2;\n"
+            "}\n"
+            "int constGet() { return const Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.constGet", REFERENCES, ".Box.height"), rels

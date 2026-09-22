@@ -107,6 +107,7 @@ nav:
     - Structural Delta: architecture/structural-delta.md
     - Adding a Language Frontend: architecture/language-frontends.md
     - Security Model: architecture/security.md
+    - Incident Response: incident-response.md
     - Span-Preserving Patchers: architecture/patchers.md
     - Edit Transactions: architecture/edit-transactions.md
     - Rename Operation: architecture/rename.md

@@ -1,3 +1,28 @@
+"""Cypher query literals.
+
+Many of these are f-strings, so that a label set derived once from the
+`constants.graph` enums (`_SNIPPET_LABELS`, `_GLOSS`, ... -- defined below,
+from those enums) is interpolated rather than respelled per query. **In an
+f-string query every literal brace must be doubled**: `{{qualified_name:
+$qn}}`, not `{qualified_name: $qn}`.
+
+A missed doubling in Cypher's map syntax is loud, because the colon is parsed
+as a format spec: `{name: $x}` raises `NameError` at import, and `{id: $x}`
+(a builtin key) raises `TypeError`. The quiet case is a COLON-FREE brace whose
+contents resolve as a name -- usually a builtin, which is always in scope
+whatever this module defines. `f"RETURN {id}"` yields `RETURN <built-in
+function id>`, and Cypher's own quantifier is the shape that would bite here:
+`f"-[:CALLS*{2}]->"` yields `-[:CALLS*2]->`.
+
+Non-f-string literals split two ways. In a plain string a brace is inert; in a
+`.format()` template it is not, and a stray brace raises `KeyError` at CALL
+time rather than at import -- quieter still. The templates in THIS file are
+`CYPHER_AUDIT_MISSING_REQUIRED` and `CYPHER_AUDIT_IS_NULL`, both formatted in
+`graph_audit.py`. (`constants.graph` holds another,
+`CYPHER_MEMORY_LIMIT_SUFFIX`, formatted in `graph_dialects.py`; the same rule
+applies there.)
+"""
+
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
@@ -307,9 +332,9 @@ _DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
 MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
-ORDER BY labels(n)[0], m.path, n.start_line
+ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line
 LIMIT 1
 """
 
@@ -712,6 +737,59 @@ RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
        callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
        r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
        r.resolution AS resolution"""
+# Cross-service edges as reads (issue #1603). The writers (`EXPOSES` from a
+# handler to its ENDPOINT/RPC/DISPATCH resource, `RESOLVES_TO` from a client
+# NETWORK resource to the endpoint, `READS_FROM`/`WRITES_TO` from a call site
+# to a resource) existed without a consumer. A caller reaches an endpoint
+# either through a NETWORK resource that RESOLVES_TO it, or directly for the
+# RPC and dispatch kinds, which join without RESOLVES_TO. Callers are counted
+# ACROSS projects by design: the endpoint's own project is scoped by the
+# handler, the callers may live anywhere in the shared graph.
+# "Is called" is asked with OPTIONAL MATCH plus a count, not a pattern
+# predicate in WHERE (Memgraph 3).
+CYPHER_GRAPH_ENDPOINTS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+WITH h, e, count(DISTINCT c) AS resolved
+OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
+       h.qualified_name AS handler, h.path AS path,
+       resolved + count(DISTINCT d) AS callers
+ORDER BY endpoint, handler"""
+# `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
+CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+  AND (h.qualified_name = $qn OR e.name = $qn)
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler"""
+CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+  AND (h.qualified_name = $qn OR e.name = $qn)
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(e)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       e.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler"""
+# Every NETWORK access a project makes, with the handler it resolves to when
+# one does; an unresolved row (null endpoint) is a dependency the graph
+# cannot place, which is itself the answer to "what does this depend on".
+CYPHER_GRAPH_REMOTE_DEPENDENCIES = """MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})
+WHERE c.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (n)-[:RESOLVES_TO]->(e:Resource)<-[:EXPOSES]-(h)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler, e.project AS handler_project
+ORDER BY qualified_name, url, handler"""
+# The dead-code walk's view of the same joins: per exposing handler, how many
+# call sites reach its resource (through RESOLVES_TO, or directly).
+CYPHER_DEAD_CODE_ENDPOINT_LINKS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+WITH h, e, count(DISTINCT c) AS resolved
+OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+RETURN h.qualified_name AS handler, e.name AS endpoint,
+       resolved + count(DISTINCT d) AS callers"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,

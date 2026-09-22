@@ -115,6 +115,10 @@ class DefinitionProcessor(
         # read at call resolution to bind a member call on an undeclared
         # receiver against the type arguments of an EXTERNAL base (#875).
         self.dart_extends_type_args: dict[str, list[str]] = {}
+        # Dart constructor qns (default, named, const, factory): a named
+        # constructor call resolves to its own method, so the call pass
+        # needs this set to record the construction (issue #2012).
+        self.dart_constructor_qns: set[str] = set()
         # {interface_qn: [implementer_class_qns]} from IMPLEMENTS edges, so the
         # resolver can redirect an interface-typed call `I.m` to the concrete
         # `Impl.m` when I has exactly one first-party implementer (unambiguous).

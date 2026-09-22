@@ -517,6 +517,11 @@ class DeadCodeConfig(NamedTuple):
     # Drop CALLS/REFERENCES edges below this confidence before the walk
     # (issue #1526); None keeps every edge.
     min_resolution: str | None = None
+    # A route handler is a root by its decorator alone (the default, right
+    # for a single-project graph where nothing can call it). Off, a handler
+    # exposing an endpoint is live only if an indexed call site reaches that
+    # endpoint, so an endpoint nobody calls is reported (issue #1603).
+    endpoint_roots: bool = True
 
 
 class AstFingerprintResult(NamedTuple):

@@ -144,6 +144,9 @@ _READS_THE_GRAPH = frozenset(
         cs.MCPToolName.OVERRIDES,
         cs.MCPToolName.IMPORTERS,
         cs.MCPToolName.TESTS_REACHING,
+        cs.MCPToolName.ENDPOINTS,
+        cs.MCPToolName.ENDPOINT_CALLERS,
+        cs.MCPToolName.REMOTE_DEPENDENCIES,
         # `annotate` writes, but it READS first: the subject is resolved
         # against the graph, and on a partial graph a missing sibling makes
         # an ambiguous name look unique, so the note lands on the wrong
@@ -484,6 +487,18 @@ class MCPToolsRegistry:
                 {cs.MCPParamName.QUALIFIED_NAME: td.MCP_PARAM_QUALIFIED_NAME},
                 [cs.MCPParamName.QUALIFIED_NAME],
                 self.tests_reaching,
+            ),
+            cs.MCPToolName.ENDPOINTS: self._graph_tool(
+                cs.MCPToolName.ENDPOINTS, {}, [], self.endpoints
+            ),
+            cs.MCPToolName.ENDPOINT_CALLERS: self._graph_tool(
+                cs.MCPToolName.ENDPOINT_CALLERS,
+                {cs.MCPParamName.TARGET: td.MCP_PARAM_ENDPOINT_TARGET},
+                [cs.MCPParamName.TARGET],
+                self.endpoint_callers,
+            ),
+            cs.MCPToolName.REMOTE_DEPENDENCIES: self._graph_tool(
+                cs.MCPToolName.REMOTE_DEPENDENCIES, {}, [], self.remote_dependencies
             ),
             cs.MCPToolName.RENAME: self._rename_tool(),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
@@ -2418,6 +2433,29 @@ class MCPToolsRegistry:
                 qualified_name,
                 self._source_root_for(name),
             ),
+        )
+
+    async def endpoints(self, project: str | None = None) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.ENDPOINTS,
+            project,
+            lambda name: graph_query.endpoints(self.ingestor.fetch_all, name),
+        )
+
+    async def endpoint_callers(self, target: str, project: str | None = None) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.ENDPOINT_CALLERS,
+            project,
+            lambda name: graph_query.endpoint_callers(
+                self.ingestor.fetch_all, name, target
+            ),
+        )
+
+    async def remote_dependencies(self, project: str | None = None) -> object:
+        return await self._graph_query(
+            cs.MCPToolName.REMOTE_DEPENDENCIES,
+            project,
+            lambda name: graph_query.remote_dependencies(self.ingestor.fetch_all, name),
         )
 
     async def callers(
