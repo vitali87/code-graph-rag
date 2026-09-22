@@ -257,23 +257,63 @@ class CSharpTypeInferenceEngine:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
 
-    def _foreach_binds_var(self, node: Node, name: str) -> bool:
-        """Whether an enclosing `foreach (var name in ...)` binds `name`.
+    def _binds_local(self, node: Node, name: str) -> bool:
+        """Whether a local in scope at `node` binds `name`.
 
-        Only the IMPLICIT form: an explicitly typed binding declares its
-        type, reaches `local_var_types`, and must keep resolving normally.
+        Two binders, both of which can leave the name out of
+        `local_var_types` and so read as a TYPE: a `foreach (var name in
+        ...)` loop, whose element type is not inferred, and a local declared
+        in an enclosing block whose initializer is not inferred
+        (`var Config = Ext.Make();`, Copilot, #2011).
+
+        The foreach binding is in scope in the loop BODY only; in the
+        collection expression `foreach (var Config in Config.All())` the
+        name is still the class (CodeRabbit, #2011). Only its IMPLICIT form
+        counts: an explicitly typed binding declares its type, reaches
+        `local_var_types`, and must keep resolving normally.
         """
+        child: Node | None = None
         current: Node | None = node
         while current is not None:
             if current.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+                body = current.child_by_field_name(cs.FIELD_BODY)
                 bound = current.child_by_field_name(cs.FIELD_LEFT)
                 declared = current.child_by_field_name(cs.FIELD_TYPE)
                 implicit = declared is None or (
                     declared.type == cs.TS_CSHARP_IMPLICIT_TYPE
                 )
-                if bound is not None and implicit and safe_decode_text(bound) == name:
+                if (
+                    child is not None
+                    and body is not None
+                    and child.id == body.id
+                    and bound is not None
+                    and implicit
+                    and safe_decode_text(bound) == name
+                ):
                     return True
-            current = current.parent
+            elif current.type == cs.TS_CSHARP_BLOCK and self._block_declares(
+                current, name
+            ):
+                return True
+            child, current = current, current.parent
+        return False
+
+    def _block_declares(self, block: Node, name: str) -> bool:
+        # A local declared directly in this block; C# forbids a use before
+        # its declaration, so its position within the block is no signal.
+        for statement in block.named_children:
+            for decl in statement.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                for declarator in decl.named_children:
+                    if (
+                        declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+                        and safe_decode_text(
+                            declarator.child_by_field_name(cs.FIELD_NAME)
+                        )
+                        == name
+                    ):
+                        return True
         return False
 
     def _declared_type_name(self, decl: Node) -> str | None:
@@ -568,11 +608,7 @@ class CSharpTypeInferenceEngine:
             # type, reaches local_var_types, and resolves normally -- this
             # branch is never reached for it. Guarding on the `var` form
             # keeps that path working.
-            if (
-                name
-                and name not in local_var_types
-                and self._foreach_binds_var(bound, name)
-            ):
+            if name and name not in local_var_types and self._binds_local(bound, name):
                 return True
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
@@ -1260,7 +1296,7 @@ class CSharpTypeInferenceEngine:
             # Config.Each(); }` emitted an edge to the registered class
             # `N.Config` (Copilot, PR #1998). A local owns the name here
             # whatever its type, so the receiver is unresolved, not static.
-            if self._foreach_binds_var(receiver, name):
+            if self._binds_local(receiver, name):
                 return None
             if class_qn := self._containing_class_qn(caller_qn):
                 if ftype := self._field_type(class_qn, name):

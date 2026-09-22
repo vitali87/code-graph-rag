@@ -306,3 +306,68 @@ def test_a_typed_foreach_var_still_resolves_its_own_method(tmp_path: Path) -> No
     edges = _edges(tmp_path / "proj", FOREACH_SHADOW)
 
     assert any(target.endswith("Item.Ping") for _kind, target in edges), sorted(edges)
+
+
+LOCAL_SHADOW = {
+    "src/Lib.cs": (
+        "using System.Collections.Generic;\n\nnamespace Lib;\n\n"
+        "public class Config\n{\n"
+        "    public static void Each() { }\n"
+        "    public static List<string> All() { return null; }\n}\n\n"
+        "public class Printer { public static void Hello() { } }\n"
+    ),
+    "src/App.cs": (
+        "using Lib;\n\nnamespace App;\n\n"
+        "public class Bench\n{\n"
+        "    public void Run()\n    {\n"
+        # Uninferred: `Ext.Make()` is outside the graph, so the local never
+        # reaches `local_var_types`.
+        "        var Config = Ext.Make();\n"
+        "        { Config.Each(); }\n"
+        "        Take(Config.Each);\n"
+        # The known positive: a static call on a class no local shadows.
+        "        Printer.Hello();\n"
+        "    }\n"
+        "    void Take(System.Action a) { }\n}\n"
+    ),
+}
+
+
+def test_an_untyped_local_shadowing_a_class_is_not_that_class(tmp_path: Path) -> None:
+    """`var Config = Ext.Make();` binds a LOCAL whose type is not inferred.
+
+    It never reaches `local_var_types`, so the static-type fallback read the
+    name as the class `Config` and bound both the call and the method group
+    to `Lib.Config.Each` (Copilot, #2011). Declared in an ENCLOSING block, so
+    the use in the inner block is covered too."""
+    edges = _edges(tmp_path / "proj", LOCAL_SHADOW)
+
+    assert any(target.endswith("Printer.Hello") for _kind, target in edges), sorted(
+        edges
+    )
+    assert not any(target.endswith("Config.Each") for _kind, target in edges), sorted(
+        edges
+    )
+
+
+FOREACH_COLLECTION = {
+    "src/Lib.cs": LOCAL_SHADOW["src/Lib.cs"],
+    "src/App.cs": (
+        "using Lib;\n\nnamespace App;\n\n"
+        "public class Bench\n{\n"
+        "    public void Run()\n    {\n"
+        "        foreach (var Config in Config.All()) { }\n"
+        "    }\n}\n"
+    ),
+}
+
+
+def test_a_foreach_collection_names_the_class_not_the_loop_variable(
+    tmp_path: Path,
+) -> None:
+    """The loop variable is in scope in the BODY only; in the collection
+    expression `Config` is still the class, so `Config.All()` binds
+    (CodeRabbit, #2011)."""
+    edges = _edges(tmp_path / "proj", FOREACH_COLLECTION)
+
+    assert any(target.endswith("Config.All") for _kind, target in edges), sorted(edges)
