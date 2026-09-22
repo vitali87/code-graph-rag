@@ -231,3 +231,54 @@ def test_a_real_file_named_like_an_inline_module_is_not_synthetic() -> None:
     # assertions above are not passing on a predicate that always answers
     # False.
     assert _is_inline_module_path("src/lib.rs") is False
+    # Matched on the basename, so the answer does not depend on DEPTH.
+    # Anchoring on the whole path made an extensionless `inline_module_data`
+    # synthetic at the root but not under `pkg/` -- the same name answering
+    # two ways (local review, PR #1967). Both are synthetic now; the
+    # extension, not the directory, is what separates a real file.
+    assert _is_inline_module_path("inline_module_data") is True
+    assert _is_inline_module_path("pkg/inline_module_data") is True
+    assert _is_inline_module_path("pkg/inline_module_data.py") is False
+
+
+def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(
+    tmp_path: Path,
+) -> None:
+    """The CONSEQUENCE of narrowing the predicate, not the predicate itself.
+
+    `_seed_module_qns_from_graph` exists so an incremental ADD whose basename
+    collides with an already-indexed sibling of another language cannot
+    re-claim the bare qn. Skipping every path starting with the inline prefix
+    excluded a REAL file called `inline_module_widget.py` from that seed, so
+    an added `inline_module_widget.rs` took `proj.inline_module_widget` from
+    under it.
+
+    Asserting the predicate returns False does not pin this: reverting the
+    suffix clause reddens only the predicate's own unit test (local review,
+    PR #1967). This drives the seeded map instead, which is what the
+    disambiguator reads.
+    """
+    repo = tmp_path / "proj"
+    files = {
+        "other.py": "X = 1\n",
+        "inline_module_widget.py": "class Widget:\n    pass\n",
+    }
+    _write(repo, files)
+    store = _StatefulIngestor()
+    _updater(repo, store).run(force=True)
+
+    # The real file owns the bare qn after a clean pass.
+    updater = _updater(repo, store)
+    seeded = updater.factory.definition_processor.module_qn_to_file_path
+    updater._seed_module_qns_from_graph({"other.py", "inline_module_widget.py"})
+    # The map stores the absolute path of the file owning each qn.
+    owner = seeded.get("proj.inline_module_widget")
+    assert owner is not None, (
+        "a real file named like an inline module must be seeded; skipping it "
+        "lets a same-basename ADD re-claim its qualified name"
+    )
+    assert Path(owner).name == "inline_module_widget.py"
+    # The control: an ordinary sibling is seeded the same way, so the
+    # assertion above is not passing on a map that simply holds everything
+    # regardless of the predicate.
+    assert Path(seeded["proj.other"]).name == "other.py"

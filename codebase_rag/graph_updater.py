@@ -127,8 +127,15 @@ def _is_inline_module_path(path: str) -> bool:
     file may legitimately be called `inline_module_widget.py`, and
     treating it as synthetic drops it from the owner map (Copilot,
     PR #1935).
+
+    Matched on the BASENAME, not the whole path: the producer writes no
+    directory component, so a path-anchored test could only ever match at
+    the repository root, and an extensionless `inline_module_data` there
+    was still read as synthetic while `pkg/inline_module_data` was not
+    (local review, PR #1967).
     """
-    return path.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(path).suffix
+    name = Path(path).name
+    return name.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(name).suffix
 
 
 def _persisted_int(value: object) -> int | None:
@@ -2271,9 +2278,10 @@ class GraphUpdater:
         """
         if self._module_qns_by_path is None:
             self._module_qns_by_path = self._read_module_qns_by_path()
-        return self._module_qns_by_path.get(path) or base_module_qn(
-            Path(path), self.project_name
-        )
+        recorded = self._module_qns_by_path.get(path)
+        if recorded is not None:
+            return recorded
+        return base_module_qn(Path(path), self.project_name)
 
     def _read_module_qns_by_path(self) -> dict[str, str]:
         # Scoped in the query: the shared graph holds every project, and a
@@ -2312,7 +2320,7 @@ class GraphUpdater:
                 continue
             if _is_inline_module_path(path):
                 continue
-            if path not in found or len(qn) < len(found[path]):
+            if path not in found or (len(qn), qn) < (len(found[path]), found[path]):
                 found[path] = qn
         return found
 
