@@ -212,3 +212,158 @@ def test_a_missing_hash_cache_is_removed_again(
     snapshot.put_back()
 
     assert not cache.exists()
+
+
+def test_an_isolated_check_refuses_a_graph_already_holding_io_links(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The capture check covers what THIS run writes; a graph built earlier
+    with IO on can hold a resource chain the re-ingest's repo-wide prune
+    would delete once a changed file's subtree stops anchoring it (bot
+    review, #1718). `test_an_isolated_check_runs_without_io_links` is the
+    control: the same fixture without the edge runs."""
+    root, store = indexed
+    resource = cs.NodeLabel.RESOURCE.value
+    for name in ("env:HOME", "file:/tmp/out"):
+        store.ensure_node_batch(resource, {cs.KEY_QUALIFIED_NAME: name})
+    store.ensure_relationship_batch(
+        (resource, cs.KEY_QUALIFIED_NAME, "env:HOME"),
+        cs.RelationshipType.FLOWS_TO.value,
+        (resource, cs.KEY_QUALIFIED_NAME, "file:/tmp/out"),
+    )
+    store.flush_all()
+    _edit(root)
+    parsers, queries = load_parsers()
+
+    with pytest.raises(CheckError, match="already holds"):
+        run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
+
+
+def test_an_isolated_check_refuses_an_unreadable_hash_cache(
+    indexed: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache that exists but cannot be read may still be writable (mode
+    0o200), so the re-ingest could rewrite it and `put_back` could not undo
+    that. Refused before anything is written (bot review, #1718)."""
+    root, store = indexed
+    cache = root / cs.HASH_CACHE_FILENAME
+    content = cache.read_bytes()
+    nodes_before = dict(store.nodes)
+    _edit(root)
+    parsers, queries = load_parsers()
+    real_read_bytes = Path.read_bytes
+
+    def refuse(self: Path, *args: Any, **kwargs: Any) -> bytes:
+        if self == cache:
+            raise PermissionError(13, "Permission denied")
+        return real_read_bytes(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "read_bytes", refuse)
+        with pytest.raises(CheckError, match="cannot be read"):
+            run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
+
+    assert cache.read_bytes() == content
+    assert store.nodes == nodes_before
+
+
+class _RecordingStore:
+    """The stateful store, with every write query recorded in order."""
+
+    def __init__(self, inner: _StatefulIngestor) -> None:
+        self._inner = inner
+        self.writes: list[str] = []
+
+    def execute_write(self, query: str, params: Any = None) -> None:
+        self.writes.append(query)
+        self._inner.execute_write(query, params)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _marker_writes(store: _RecordingStore) -> list[str]:
+    marks = {
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE: "mark",
+        cq.CYPHER_CLEAR_PROJECT_INCOMPLETE: "clear",
+    }
+    return [marks[query] for query in store.writes if query in marks]
+
+
+def test_an_isolated_check_clears_its_marker_once_restored(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The marker is set before the first write and cleared only after the
+    restore; this is the success half of the test below."""
+    root, inner = indexed
+    store = _RecordingStore(inner)
+    _edit(root)
+    parsers, queries = load_parsers()
+
+    run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
+
+    assert _marker_writes(store) == ["mark", "clear"]
+
+
+def test_a_failed_restore_leaves_the_incomplete_marker_set(
+    indexed: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The restore deletes before it re-creates, with no transaction around
+    the two, so a failure between them leaves the graph partial. The
+    persistent marker (#1679) must then stay set, so readers refuse and the
+    next full update repairs (bot review, #1718)."""
+    root, inner = indexed
+    store = _RecordingStore(inner)
+    _edit(root)
+    parsers, queries = load_parsers()
+
+    def fail(_self: IsolationGuard) -> None:
+        raise RuntimeError("restore failed after its deletes")
+
+    monkeypatch.setattr(IsolationGuard, "_replace_survivor_properties", fail)
+    with pytest.raises(RuntimeError, match="restore failed"):
+        run_check(root, "HEAD", PROJECT, store, parsers, queries, isolated=True)
+
+    assert _marker_writes(store) == ["mark"]
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_cgr_check_forwards_isolated_to_run_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: bool
+) -> None:
+    """The CLI boundary itself: `cgr check --isolated` must reach
+    `run_check` as `isolated=True`, and its absence as False (the control).
+    Driving `run_check` directly could not catch a typo in the option or a
+    dropped keyword (bot review, #1718)."""
+    import contextlib
+
+    from typer.testing import CliRunner
+
+    from codebase_rag import cli, structural_check
+    from codebase_rag import cli_help as ch
+
+    seen: dict[str, Any] = {}
+
+    class _Graph:
+        def list_projects(self) -> list[str]:
+            return [PROJECT]
+
+    @contextlib.contextmanager
+    def connect(**_kwargs: Any):  # noqa: ANN202
+        yield _Graph()
+
+    def run_check(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(cli, "connect_memgraph", connect)
+    monkeypatch.setattr(cli, "load_parsers", lambda: ({}, {}))
+    monkeypatch.setattr(structural_check, "indexed_scope", lambda *a, **k: (None, None))
+    monkeypatch.setattr(structural_check, "run_check", run_check)
+    args = [ch.CLICommandName.CHECK.value, "--repo-path", str(tmp_path)]
+    args += ["--project", PROJECT] + (["--isolated"] if flag else [])
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 0, result.output
+    assert seen["isolated"] is flag
