@@ -90,6 +90,26 @@ def test_the_oldest_tool_result_is_replaced_and_the_newest_is_kept() -> None:
     )
 
 
+def test_an_earlier_placeholder_does_not_fill_the_protected_window() -> None:
+    """A result already replaced is skipped, not counted as recent output.
+
+    If the placeholder counted toward the protected window, a history whose
+    newest tool result was pruned on an earlier turn would spend the window on
+    that placeholder, and the next-newest REAL result would be dropped even
+    though it is the most recent output the model still has.
+    """
+    history = _turn("first", "KEPT RESULT " * 200) + _turn("second", PRUNED_PLACEHOLDER)
+
+    pruned = prune_old_tool_results(
+        history, protect_recent_tokens=1, minimum_recovered_tokens=1
+    )
+
+    assert "KEPT RESULT" in _tool_contents(pruned)[0], (
+        "the placeholder filled the protected window and the newest real "
+        "result was pruned"
+    )
+
+
 def test_the_dialogue_survives_pruning() -> None:
     """Only tool output is dropped. The conversation itself is the point.
 
