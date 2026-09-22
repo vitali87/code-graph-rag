@@ -8,6 +8,7 @@ from check_isolation_helpers import (
     _check,
     _edit,
     _state,
+    _write,
 )
 
 from codebase_rag import constants as cs
@@ -115,13 +116,42 @@ def test_a_failed_reingests_queued_writes_are_not_committed_by_the_restore(
     assert _state(inner) == before
 
 
+def test_a_key_the_check_added_to_a_surviving_node_is_removed(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """The batch write merges (`SET n += props`), so re-emitting a captured
+    node restores its keys but keeps any the check added. A File node at a
+    scope path survives the check, so it is exactly that case (bot review):
+    the restore must set its captured properties verbatim."""
+    root, store = indexed
+    file_label = cs.NodeLabel.FILE.value
+    file_node = next(
+        node
+        for node, props in store.nodes.items()
+        if node[0] == file_label
+        and str(props.get(cs.KEY_ABSOLUTE_PATH, "")).endswith("pkg/util.py")
+    )
+    captured_props = dict(store.nodes[file_node])
+    before = _state(store)
+    guard = IsolationGuard(store, PROJECT, root)
+
+    guard.capture(["pkg/util.py"])
+    # What a merge-write during the check does to a surviving node.
+    store.ensure_node_batch(file_label, {**captured_props, "added_by_the_check": True})
+    assert store.nodes[file_node]["added_by_the_check"] is True
+    guard.restore()
+
+    assert store.nodes[file_node] == captured_props
+    assert _state(store) == before
+
+
 def test_the_buffering_double_commits_on_flush(
     indexed: tuple[Path, _StatefulIngestor],
 ) -> None:
     """Known positive for the double: without the restore, the queued write
     does land on flush. Otherwise the test above would pass against a store
     that simply drops everything."""
-    root, inner = indexed
+    _root, inner = indexed
     store = _BufferingStore(inner)
 
     store.ensure_node_batch(
@@ -200,6 +230,42 @@ def test_an_unrelated_orphan_survives_an_isolated_check(
     assert orphan in store.nodes, "an unrelated orphan was swept by the restore"
 
 
+def test_a_shared_node_another_project_anchors_survives_the_restore(
+    indexed: tuple[Path, _StatefulIngestor],
+) -> None:
+    """Newly reachable from the scope is not newly created (bot review).
+
+    `requests` already exists, imported by another project's module; the
+    edit makes this project import it too, so the restore finds it reachable
+    from the scope and outside the capture. Deleting it globally would take
+    the other project's import with it. `numpy` is the control: nothing else
+    anchors it, so it is the check's own and must go.
+    """
+    root, store = indexed
+    ext = cs.NodeLabel.EXTERNAL_MODULE.value
+    other = ("Module", "other__proj.mod")
+    store.ensure_node_batch(other[0], {cs.KEY_QUALIFIED_NAME: other[1]})
+    store.ensure_node_batch(ext, {cs.KEY_QUALIFIED_NAME: "requests"})
+    store.ensure_relationship_batch(
+        (other[0], cs.KEY_QUALIFIED_NAME, other[1]),
+        cs.RelationshipType.IMPORTS.value,
+        (ext, cs.KEY_QUALIFIED_NAME, "requests"),
+    )
+    store.flush_all()
+    before = _state(store)
+    _write(
+        root,
+        "pkg/util.py",
+        "import numpy\nimport requests\n\n\ndef helper(a):\n    return a + 1\n",
+    )
+
+    _check(root, store, isolated=True)
+
+    assert (ext, "requests") in store.nodes, "a pre-existing shared node was deleted"
+    assert (ext, "numpy") not in store.nodes, "the check's own shared node survived"
+    assert _state(store) == before
+
+
 def test_a_findings_properties_come_back_when_its_name_survives(
     indexed: tuple[Path, _StatefulIngestor],
 ) -> None:
@@ -266,19 +332,15 @@ def test_the_emulator_walks_every_relation_the_capture_does() -> None:
     the double does not makes every unit test here blind to nodes the real
     store would lose.
 
-    Asserted as containment rather than equality: the double omits
-    `CONTAINS_SECTION`, which the delete does walk, and that gap is
-    pre-existing on `origin/main` and filed separately. Requiring equality
-    would make this branch's test fail for a defect it did not introduce.
+    Asserted as equality, `CONTAINS_SECTION` included: the double walks it
+    now, and excluding it would let exactly that relation drift unseen (bot
+    review, #1718).
     """
     pattern = re.compile(r"\[:([A-Z_|]+)\*")
     capture = pattern.search(cq.CYPHER_CHECK_SCOPE_NODES)
     assert capture is not None
-    walked = set(capture.group(1).split("|")) - {
-        cs.RelationshipType.CONTAINS_SECTION.value
-    }
 
-    assert walked <= set(cgr_graph._MODULE_SUBTREE_RELS)
+    assert set(capture.group(1).split("|")) == set(cgr_graph._MODULE_SUBTREE_RELS)
 
 
 def test_a_dangling_subtree_edge_does_not_crash_the_capture() -> None:
