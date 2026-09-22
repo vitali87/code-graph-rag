@@ -16,6 +16,7 @@ from ...types_defs import (
     NodeType,
     SimpleNameLookup,
 )
+from ...utils import qn_markers
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
@@ -1264,7 +1265,7 @@ class CSharpTypeInferenceEngine:
         self, candidate_qn: str, expanded: str, module_qn: str
     ) -> bool:
         """Accept a complete type path rooted at a known repository module."""
-        natural_qn = candidate_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        natural_qn = qn_markers.natural_qn(candidate_qn)
         if natural_qn == expanded:
             return True
         suffix = f"{cs.SEPARATOR_DOT}{expanded}"

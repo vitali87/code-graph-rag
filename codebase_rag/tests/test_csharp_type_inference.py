@@ -2,10 +2,12 @@
 # type is known (local from `new`, parameter, field, `this`) binds to that
 # type's method, including inherited methods and overload arity.
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.parsers.csharp.type_inference import CSharpTypeInferenceEngine
 from codebase_rag.tests.conftest import get_relationships, run_updater
 
 SKIP = "c_sharp"
@@ -639,3 +641,79 @@ public class App {
 
     targets = _call_targets(mock_ingestor)
     assert any("CastTwinB" in t and t.endswith("N.Opt.M") for t in targets), targets
+
+
+def test_alias_qualified_receiver_of_a_verbatim_or_nested_type(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A verbatim identifier (`@event`) opens with the duplicate marker's
+    # character, and a nested type of a generic outer keeps its `.Inner`
+    # once the type arguments are stripped (bot review on #2025).
+    (csharp_project / "Zeta.cs").write_text(
+        """
+namespace Zeta;
+public class @event {
+    public static void Fire() {}
+}
+public class Outer<T> {
+    public class Inner {
+        public static void NestedS() {}
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using Z = Zeta;
+namespace App;
+public class Q {
+    public void RunVerbatim() {
+        Z.@event.Fire();
+    }
+    public void RunNested() {
+        Z::Outer<int>.Inner.NestedS();
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    calls = {
+        (c.args[0][2], c.args[2][2]) for c in get_relationships(mock_ingestor, "CALLS")
+    }
+    assert any(
+        source.endswith("Q.RunVerbatim") and target.endswith("@event.Fire")
+        for source, target in calls
+    ), calls
+    assert any(
+        source.endswith("Q.RunNested") and target.endswith("Outer.Inner.NestedS")
+        for source, target in calls
+    ), calls
+
+
+@pytest.mark.parametrize(
+    ("candidate_qn", "matches"),
+    [
+        ("proj.Zeta.@event", True),
+        ("proj.Zeta.@event@12", True),
+        ("proj.Zeta.@event@12_5", True),
+        ("proj.Other.@event", False),
+    ],
+)
+def test_qualified_match_keeps_a_verbatim_identifier(
+    candidate_qn: str, matches: bool
+) -> None:
+    # `@event` opens with the duplicate marker's character; only a numeric
+    # suffix is the marker, so the verbatim name must survive (bot review).
+    engine = SimpleNamespace(module_qn_to_file_path={}, project_name="proj")
+    assert (
+        CSharpTypeInferenceEngine._csharp_qualified_qn_matches(
+            engine,  # type: ignore[arg-type]
+            candidate_qn,
+            "Zeta.@event",
+            "proj.App",
+        )
+        is matches
+    )
