@@ -2168,7 +2168,8 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
         return out
 
@@ -2183,7 +2184,8 @@ class GraphUpdater:
         except Exception:
             return []
         out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
-        for row in rows:
+        # `svc.` also selects `svc.v2`'s handlers (issue #2126).
+        for row in self._owned_rows(rows, cs.KEY_QUALIFIED_NAME):
             if not isinstance(row, dict):
                 continue
             entry = _route_handler_entry(row, already_pending, module_qns)
@@ -2226,7 +2228,8 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
         return out
 
@@ -2377,7 +2380,7 @@ class GraphUpdater:
             name = row.get(cs.KEY_NAME)
             if isinstance(name, str) and name:
                 names.add(name)
-        registered = sorted(names, key=lambda name: len(name), reverse=True)
+        registered = sorted(names, key=str.__len__, reverse=True)
         self._registered_projects = registered
         return registered
 
@@ -3060,14 +3063,15 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
             return None
-        prefix = self.project_name + cs.SEPARATOR_DOT
         paths: set[str] = set()
         for row in rows:
             path = row.get(cs.KEY_PATH)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             if not isinstance(path, str) or not isinstance(qn, str):
                 continue
-            if qn == self.project_name or qn.startswith(prefix):
+            # Ownership, not the prefix: a package only `svc.v2` holds would
+            # otherwise count as one of `svc`'s (issue #2126).
+            if self._owns(qn):
                 paths.add(path)
         return paths
 
