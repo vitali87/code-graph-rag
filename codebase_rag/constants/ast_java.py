@@ -319,3 +319,8 @@ JAVA_RANK_OBJECT = 4
 
 # `void m(C this, int b)`: the explicit receiver, which no caller supplies.
 TS_RECEIVER_PARAMETER = "receiver_parameter"
+
+# An enum body holds its constants first, then an `enum_body_declarations`
+# with the constructors and methods (issue #1807).
+TS_JAVA_ENUM_BODY = "enum_body"
+TS_JAVA_ENUM_CONSTANT = "enum_constant"

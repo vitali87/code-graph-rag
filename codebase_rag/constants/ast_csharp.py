@@ -342,3 +342,6 @@ TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"
 # the pattern or the bound name looks clean inside the branch.
 TS_CSHARP_IS_PATTERN = "is_pattern_expression"
 TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
+# An enum body and its members (issue #1807).
+TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
+TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"

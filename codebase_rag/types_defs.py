@@ -955,6 +955,11 @@ _FIELD_NODE_PROPS = (
     "modifiers: list[string]?, is_static: boolean?, docstring: string?}"
 )
 
+_ENUM_VARIANT_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}"
+)
+
 _GLOSS_NODE_PROPS = (
     "{qualified_name: string, kind: string, status: string, body: string, "
     "created_by: string, created_at: string, commit_sha: string?, "
@@ -1035,6 +1040,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
     NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
+    NodeSchema(NodeLabel.ENUM_VARIANT, _ENUM_VARIANT_NODE_PROPS),
 )
 
 
@@ -1277,6 +1283,11 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         _FIELD_OWNER_LABELS,
         RelationshipType.HAS_FIELD,
         (NodeLabel.FIELD,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENUM,),
+        RelationshipType.HAS_VARIANT,
+        (NodeLabel.ENUM_VARIANT,),
     ),
     RelationshipSchema(
         (NodeLabel.PARAMETER, NodeLabel.FIELD),
