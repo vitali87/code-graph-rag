@@ -3707,7 +3707,7 @@ class GraphUpdater:
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
-                and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and not _is_inline_module_path(path)
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -5940,7 +5940,7 @@ class GraphUpdater:
                 path = r.get("path")
                 if not isinstance(path, str) or not path:
                     continue
-                if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                if _is_inline_module_path(path):
                     continue
                 abs_path = r.get("absolute_path")
                 qn = r.get("qualified_name", "")
