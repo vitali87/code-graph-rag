@@ -662,6 +662,18 @@ EXTRACT_PLANNED = (
 )
 EXTRACT_PARSE_FAILED = "Extract rolled back: {files} would no longer parse"
 EXTRACT_CONTRACT_FAILED = "Extract rolled back, postcondition failed: {reasons}"
+EXTRACT_NOT_CALLABLE = (
+    "{qn} is a {label}, not a function or method; only a function body can be extracted"
+)
+EXTRACT_AWAITS = (
+    "The span awaits (`{token}` at line {line}); a synchronous helper cannot hold it"
+)
+EXTRACT_JS_CONTEXT = (
+    "The span uses `{word}` at line {line}, which the extracted function would not see"
+)
+EXTRACT_JS_UNSUPPORTED_METHOD = (
+    "{qn} is not a method of a named class; extracting from it is not supported"
+)
 INLINE_NOT_SINGLE_RETURN = "{qn} is not a single-return function; only those inline"
 INLINE_GUESSED_CALLERS = (
     "Refusing to inline: callers resolved by guesswork or trace only: {sites}"

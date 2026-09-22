@@ -211,6 +211,8 @@ TS_JS_TERNARY_EXPRESSION = "ternary_expression"
 # spelled `await` with X as its argument (the TS grammar does not); climbs
 # treat that call as the transparent await it denotes.
 JS_AWAIT_IDENTIFIER = "await"
+JS_ASYNC_KEYWORD = "async"
+JS_ARGUMENTS_OBJECT = "arguments"
 # Short-circuit operators whose result IS one of the operands, so a
 # bind through them unions both operands' taints.
 JS_SHORT_CIRCUIT_OPERATORS: frozenset[str] = frozenset({"||", "??", "&&"})
