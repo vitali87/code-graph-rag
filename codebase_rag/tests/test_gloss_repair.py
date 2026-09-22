@@ -952,3 +952,19 @@ def test_a_candidate_without_a_hash_is_never_bound_by_the_quote_move() -> None:
     assert _writes(store, cq.CYPHER_GLOSS_MOVE_TO_QN) == []
     assert "t.anchor_hash IS NOT NULL" in cq.CYPHER_GLOSS_MOVE_TO_QN
     assert "coalesce(t.anchor_hash" not in cq.CYPHER_GLOSS_MOVE_TO_QN
+
+
+def test_a_module_is_never_a_quote_candidate() -> None:
+    """A Module never carries an `anchor_hash`, so the quote move could never
+    bind one; kept in the span index, a sole module match would leave its note
+    unattached on every pass rather than graded LOST (Copilot, PR #1966).
+    Every other definition label stays a candidate."""
+    match = re.match(r"MATCH \(t:([^)]*)\)", cq.CYPHER_DEFINITION_SPANS)
+    assert match is not None
+    labels = set(match.group(1).split("|"))
+    assert cs.NodeLabel.MODULE.value not in labels
+    assert labels == {
+        label.value
+        for label in cs.DEFINITION_NODE_LABELS
+        if label is not cs.NodeLabel.MODULE
+    }

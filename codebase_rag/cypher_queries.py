@@ -316,6 +316,15 @@ _GRAPH_DEFINITION_LABELS = "|".join(
     sorted(label.value for label in DEFINITION_NODE_LABELS)
 )
 _SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
+# The quote tier's candidates. A Module is a definition label but never
+# carries an `anchor_hash`, so the quote move could never bind one: a sole
+# module match would hold its note unattached on every pass instead of
+# grading it LOST (Copilot, PR #1966).
+_QUOTE_SPAN_LABELS = "|".join(
+    sorted(
+        label.value for label in DEFINITION_NODE_LABELS if label is not NodeLabel.MODULE
+    )
+)
 
 # A lookup keyed on qualified_name alone can match more than one node: identity
 # constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
@@ -673,7 +682,7 @@ MERGE (g)-[:{_ANNOTATES}]->(t)"""
 # in a project, to digest each one's current text the way the note's quote
 # was digested when it was written. Read once per project per pass, and
 # only when a note has reached this tier.
-CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
+CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_QUOTE_SPAN_LABELS})
 WHERE t.qualified_name STARTS WITH $project_prefix
   AND t.path IS NOT NULL AND t.start_line IS NOT NULL AND t.end_line IS NOT NULL
 RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,

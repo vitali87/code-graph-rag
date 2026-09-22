@@ -114,11 +114,16 @@ def _definition_root(
         # too, and taking the smallest match dropped the body, so a body
         # edit stopped changing the quote.
         covers = node.start_point[0] <= first_row and node.end_point[0] >= last_row
-        if named is not None and named.text == wanted and covers:
-            if best is None or (node.end_byte - node.start_byte) < (
-                best.end_byte - best.start_byte
-            ):
-                best = node
+        if (
+            named is not None
+            and named.text == wanted
+            and covers
+            and (
+                best is None
+                or (node.end_byte - node.start_byte) < (best.end_byte - best.start_byte)
+            )
+        ):
+            best = node
         stack.extend(node.children)
     return best if best is not None else tree.root_node
 

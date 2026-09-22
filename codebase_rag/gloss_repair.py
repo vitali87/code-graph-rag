@@ -204,10 +204,10 @@ class _QuoteIndex:
 
     def candidates(self, project: str, quote: str) -> list[_QuoteCandidate]:
         if project not in self._by_project:
-            self._by_project[project] = self._build(project)
+            self._by_project[project] = self._build_quote_index(project)
         return self._by_project[project].get(quote, [])
 
-    def _build(self, project: str) -> dict[str, list[_QuoteCandidate]]:
+    def _build_quote_index(self, project: str) -> dict[str, list[_QuoteCandidate]]:
         rows = self._fetch_all(
             cq.CYPHER_DEFINITION_SPANS,
             {cs.KEY_PROJECT_PREFIX: f"{project}{cs.SEPARATOR_DOT}"},
