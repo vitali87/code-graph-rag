@@ -1,5 +1,7 @@
 """Graph-aware editing primitives: span-preserving patchers (issue #1529),
-transactions (issue #1528) and import rewriting (issue #1530)."""
+transactions (issue #1528), import rewriting (issue #1530) and the graph
+operations built on them: rename (issue #1532) and change_signature (issue
+#1533)."""
 
 from .contract import (
     Expectation,
