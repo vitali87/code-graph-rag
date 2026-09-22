@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from codebase_rag import constants as cs
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from evals.cgr_graph import _StatefulIngestor
@@ -34,6 +37,8 @@ def _updater(root: Path) -> GraphUpdater:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
     parsers, queries = load_parsers()
+    if cs.SupportedLanguage.CSHARP not in parsers:
+        pytest.skip("csharp parser not available")
     return GraphUpdater(
         ingestor=_StatefulIngestor(),  # type: ignore[arg-type]
         repo_path=root,
