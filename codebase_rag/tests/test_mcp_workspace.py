@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag import constants as cs
+from codebase_rag import cypher_queries as cq
 from codebase_rag.mcp import server as mcp_server
 from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, WorkspaceRepo
@@ -281,13 +282,26 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     # take the same wrap, since both routes call the wrapped instances.
     registry._code_tool = registry._workspace_scoped_by_name(code_tool)
     registry._function_source_tool = registry._workspace_scoped_by_node(source_tool)
-    # Node 7 is defined in a served project, node 8 outside, node 9 nowhere.
-    by_id = {7: f"{BETA}.pkg.f", 8: "other__9999.pkg.g"}
-    registry.ingestor.fetch_all.side_effect = lambda query, params=None: (
-        [{"qualified_name": by_id[params["node_id"]]}]
-        if params and params.get("node_id") in by_id
-        else []
-    )
+    # Node 7 is defined in a served project, node 8 outside, node 9 nowhere,
+    # node 10 in a served project the graph shows indexed from elsewhere.
+    by_id = {7: f"{BETA}.pkg.f", 8: "other__9999.pkg.g", 10: f"{ALPHA}.pkg.h"}
+    # The stored-root proof: BETA was indexed from its workspace checkout,
+    # ALPHA from a checkout the workspace does not name (a moved repo).
+    stored_roots = {
+        BETA: str((tmp_path / "b").resolve()),
+        ALPHA: str((tmp_path / "moved").resolve()),
+    }
+
+    def graph(query: str, params: dict | None = None) -> list[dict]:
+        params = params or {}
+        if query == cq.CYPHER_PROJECT_ROOT_PATH:
+            root = stored_roots.get(params.get(cs.KEY_PROJECT_NAME))
+            return [{cs.KEY_ROOT_PATH: root}] if root else []
+        if params.get("node_id") in by_id:
+            return [{"qualified_name": by_id[params["node_id"]]}]
+        return []
+
+    registry.ingestor.fetch_all.side_effect = graph
     with (
         patch("codebase_rag.mcp.tools.create_rag_orchestrator") as build,
         patch("codebase_rag.mcp.tools.create_query_tool") as query_tool,
@@ -320,6 +334,13 @@ async def test_the_agents_tools_are_held_to_the_workspace(tmp_path: Path) -> Non
     assert await by_node.function(8) == refused
     # An unknown id is the tool's to report, not the allow-list's.
     assert await by_node.function(9) == "source:9"
+    # A served project the graph shows indexed from another checkout: the
+    # name passes the allow-list, but its source is not read (Copilot).
+    unproven = cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+        name=f"{ALPHA}.pkg.h", project=ALPHA, workspace="ws"
+    )
+    assert await code.function(f"{ALPHA}.pkg.h") == unproven
+    assert await by_node.function(10) == unproven
     # The direct MCP handlers share the guard (local review P1): the same
     # inputs are refused there too, before the graph is consulted.
     direct = await registry.get_code_snippet("other__9999.pkg.g")
@@ -489,6 +510,7 @@ async def test_the_agent_query_tool_binds_an_indexed_default(
 
     tool = registry._agent_query_tool()
 
-    # A bound tool answers without naming the project as unknown; the
-    # refusal stub returns the unknown-project message verbatim.
-    assert "Unknown project" not in str(tool.function("anything"))
+    # The bound tool is the real graph query, not the refusal stub. Calling
+    # it and reading `str(...)` checked nothing: the real tool is async, so
+    # the string was a coroutine's repr, never "Unknown project" (bot review).
+    assert tool.function.__name__ == "query_codebase_knowledge_graph"

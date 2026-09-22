@@ -184,6 +184,11 @@ MCP_NAME_OUTSIDE_WORKSPACE = (
     "{name!r} belongs to no project of workspace {workspace!r}. Workspace "
     "projects: {known}"
 )
+MCP_WORKSPACE_SOURCE_UNPROVEN = (
+    "{name!r} belongs to project {project!r} of workspace {workspace!r}, but the "
+    "graph does not show that project indexed from the workspace's checkout; "
+    "re-index it from there to read its source"
+)
 MCP_WORKSPACE_DEFAULT_AMBIGUOUS = (
     "Workspace {workspace!r} holds {count} projects and none is rooted at this "
     "server's directory; pass `project` (one of: {known})"

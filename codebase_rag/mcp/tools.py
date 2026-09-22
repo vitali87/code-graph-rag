@@ -904,27 +904,51 @@ class MCPToolsRegistry:
         names = self.workspace.project_names()
         if indexed is None:
             indexed = self.ingestor.list_projects()
-        # The name's project is the LONGEST indexed or served project name
-        # it sits under, not the first served one that is a prefix: with
-        # `foo` served and `foo.bar` indexed outside the workspace,
-        # `foo.bar.pkg.fn` belongs to `foo.bar` (bot review on PR #1972,
-        # the dotted-prefix class of issue #1970).
-        owner = max(
-            (
-                candidate
-                for candidate in {*names, *indexed}
-                if qualified_name == candidate
-                or qualified_name.startswith(f"{candidate}{cs.SEPARATOR_DOT}")
-            ),
-            key=len,
-            default=None,
-        )
+        owner = self._name_owner(qualified_name, [*names, *indexed])
         if owner is not None and owner in names:
             return None
         return cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
             name=qualified_name,
             workspace=self.workspace.name,
             known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    @staticmethod
+    def _name_owner(qualified_name: str, projects: list[str]) -> str | None:
+        # The name's project is the LONGEST indexed or served project name
+        # it sits under, not the first served one that is a prefix: with
+        # `foo` served and `foo.bar` indexed outside the workspace,
+        # `foo.bar.pkg.fn` belongs to `foo.bar` (bot review on PR #1972,
+        # the dotted-prefix class of issue #1970).
+        owners = [
+            (len(candidate), candidate)
+            for candidate in set(projects)
+            if qualified_name == candidate
+            or qualified_name.startswith(f"{candidate}{cs.SEPARATOR_DOT}")
+        ]
+        return max(owners)[1] if owners else None
+
+    def _workspace_source_refusal(self, qualified_name: str) -> str | None:
+        """Why a source read of `qualified_name` is refused under a
+        workspace: the name is outside it, or its project is served but the
+        graph does not show it indexed from the workspace's checkout. The
+        source readers read the graph-stored path, or fall back to this
+        server's root, so a moved repo or a stale graph would otherwise serve
+        an allowed name from outside the workspace; `definition` applies the
+        same stored-root proof (Copilot, PR #1972). Reads the graph: call it
+        off the event loop."""
+        if self.workspace is None:
+            return None
+        indexed = self.ingestor.list_projects()
+        refusal = self._workspace_name_refusal(qualified_name, indexed)
+        if refusal is not None:
+            return refusal
+        names = self.workspace.project_names()
+        owner = self._name_owner(qualified_name, [*names, *indexed])
+        if owner is not None and self._source_root_for(owner) is not None:
+            return None
+        return cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+            name=qualified_name, project=owner, workspace=self.workspace.name
         )
 
     def _workspace_scoped_by_name(self, tool: Tool) -> Tool:
@@ -938,10 +962,11 @@ class MCPToolsRegistry:
         async def scoped(
             qualified_name: str, *args: object, **kwargs: object
         ) -> object:
-            # The project list is a graph read: off the event loop, which the
+            # The refusal reads the graph: off the event loop, which the
             # direct handler holds under the ingestor lock (bot review).
-            indexed = await asyncio.to_thread(self.ingestor.list_projects)
-            refusal = self._workspace_name_refusal(qualified_name, indexed)
+            refusal = await asyncio.to_thread(
+                self._workspace_source_refusal, qualified_name
+            )
             if refusal is not None:
                 return refusal
             return await original(qualified_name, *args, **kwargs)
@@ -966,8 +991,7 @@ class MCPToolsRegistry:
             )
             name = rows[0].get(cs.KEY_QUALIFIED_NAME) if rows else None
             if isinstance(name, str):
-                indexed = await asyncio.to_thread(self.ingestor.list_projects)
-                refusal = self._workspace_name_refusal(name, indexed)
+                refusal = await asyncio.to_thread(self._workspace_source_refusal, name)
                 if refusal is not None:
                     return refusal
             return await original(node_id, *args, **kwargs)
