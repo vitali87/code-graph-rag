@@ -172,7 +172,8 @@ def test_every_language_emits_its_declared_parameters(tmp_path: Path) -> None:
             ("rest", 2, "string[]", True, False),
         ],
         "proj.ts.app.Factory.make": [("w", 0, "Widget", False, False)],
-        "proj.java.App.App.build(String,Widget)": [
+        # A primitive varargs is part of the signature since #1974.
+        "proj.java.App.App.build(String,Widget,int...)": [
             ("name", 0, "String", False, False),
             ("w", 1, "Widget", False, False),
             ("xs", 2, "int...", True, False),
@@ -246,7 +247,7 @@ def test_of_type_resolves_the_declared_type_in_every_language(tmp_path: Path) ->
         ("proj.dart.lib.app.build.1", "proj.dart.lib.app.Widget"),
         ("proj.go.lib.Build.1", "proj.go.lib.Widget"),
         ("proj.java.App.App.App(Widget).0", "proj.java.App.Widget"),
-        ("proj.java.App.App.build(String,Widget).1", "proj.java.App.Widget"),
+        ("proj.java.App.App.build(String,Widget,int...).1", "proj.java.App.Widget"),
         ("proj.php.app.Factory.__construct.0", "proj.php.app.Widget"),
         ("proj.php.app.Factory.make.0", "proj.php.app.Widget"),
         ("proj.php.app.build.1", "proj.php.app.Widget"),
