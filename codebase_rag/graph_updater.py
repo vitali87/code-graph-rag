@@ -4682,13 +4682,23 @@ class GraphUpdater:
         # the fingerprint it parsed under; a single-file run did not, and
         # leaves the stale stamp for the next project run (issue #1977).
         # Only a run that actually covered the project may vouch for the
-        # parser it parsed under. A file this run could not read keeps its
-        # old subtree, and an unknown graph state means the delete-before-
-        # reingest could not be scoped; in both cases some old parser's
-        # edges survive. Stamping anyway makes the NEXT run read back a
-        # matching fingerprint, skip the staleness warning, and fast-path
-        # over exactly those rows -- permanently (bot review).
-        covered_the_project = not unreadable_keys and not self._graph_state_unknown
+        # parser it parsed under. An unknown graph state means the delete-
+        # before-reingest could not be scoped, so some old parser's edges
+        # survive, and stamping anyway makes the NEXT run read back a
+        # matching fingerprint and fast-path over exactly those rows --
+        # permanently (bot review). A file this run could not read keeps its
+        # old subtree too, but one carrying the unreadable mark cannot be
+        # fast-pathed over: the next run refuses the in-sync check on the
+        # mark and re-parses the file under the current parser, old subtree
+        # deleted first (#1983). Holding the stamp back for it would re-index
+        # every file to repair one. An unreadable file left UNMARKED (its
+        # path is gone) still holds the stamp back.
+        unmarked_unreadable = {
+            key
+            for key in unreadable_keys
+            if new_hashes.get(key) != cs.HASH_CACHE_UNREADABLE
+        }
+        covered_the_project = not unmarked_unreadable and not self._graph_state_unknown
         if covered_the_project and (
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
