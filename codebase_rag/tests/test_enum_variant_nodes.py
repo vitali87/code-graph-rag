@@ -130,9 +130,9 @@ def test_every_variant_becomes_a_node_in_declaration_order(
     # green (local review P2).
     for src, tgt in edges:
         edge = (cs.NodeLabel.ENUM.value, src, REL, LABEL, tgt)
-        assert indexed.edge_props[edge][cs.KEY_INDEX] == names.index(
+        assert indexed.props_for(edge)[cs.KEY_INDEX] == names.index(
             tgt.rsplit(".", 1)[-1]
-        ), (edge, indexed.edge_props[edge])
+        ), (edge, indexed.props_for(edge))
 
 
 def test_a_variant_is_positioned_at_its_name_not_its_node(
