@@ -683,7 +683,7 @@ CYPHER_PROJECT_MODULE_PATHS = (
     # whose module qn is the project name itself.
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path"
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_COUNT_PROJECT_MODULES = (
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
