@@ -34,6 +34,7 @@ from .language_spec import (
 from .parser_fingerprint import compute_parser_fingerprint
 from .parser_loader import COMBINED_FUNC_CLASS_IMPORT_QUERIES
 from .parsers.ast_grep_tier import AstGrepTier
+from .parsers.constant_nodes import PendingConstantType
 from .parsers.contract_linking import link_contracts
 from .parsers.cpp.preproc_recovery import parse_with_preproc_recovery
 from .parsers.cpp_frontend import (
@@ -2342,6 +2343,40 @@ class GraphUpdater:
                 )
             )
 
+    def _requeue_constant_types(self, project_params: PropertyDict) -> None:
+        # The Constant counterpart of the two above (issue #1806), keyed on the
+        # FILE for the same reason: a Constant whose file is being re-parsed
+        # this run is re-emitted by ingest and queues its own type; one whose
+        # file is not needs rebuilding from the graph. A full build re-parses
+        # every file, so there is nothing to rebuild.
+        if (
+            self._is_full_build
+            or not self.capture.rel_enabled(cs.RelationshipType.OF_TYPE)
+            or not isinstance(self.ingestor, QueryProtocol)
+        ):
+            return
+        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_CONSTANT_TYPES, project_params)
+        pending = self.factory.definition_processor.pending_constant_types
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            type_name = row.get(cs.KEY_TYPE_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not (
+                isinstance(qn, str)
+                and isinstance(type_name, str)
+                and isinstance(path, str)
+            ):
+                continue
+            if path in self._reparsed_file_keys:
+                continue
+            # The owner is the qn minus the constant's name: emit builds it as
+            # `{module_qn}.{name}` from the DISAMBIGUATED module qn, which
+            # `base_module_qn` cannot reproduce (`settings.py` beside
+            # `settings.c` owns `proj.settings.py`), and the bare name
+            # resolves the annotation through the other file's scope.
+            owner = qn.rpartition(cs.SEPARATOR_DOT)[0]
+            pending.append(PendingConstantType(qn, owner, type_name, path))
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2458,6 +2493,7 @@ class GraphUpdater:
         self._rehydrate_class_inheritance_from_graph()
         self._requeue_parameter_types(project_params)
         self._requeue_field_types(project_params)
+        self._requeue_constant_types(project_params)
 
     def _seed_module_qns_from_graph(
         self,
@@ -5338,6 +5374,11 @@ class GraphUpdater:
         pending_fields = self.factory.definition_processor.pending_field_types
         pending_fields[:] = [
             fact for fact in pending_fields if fact.path not in stale_keys
+        ]
+        # Constants the same, keyed on the file for the same reason.
+        pending_constants = self.factory.definition_processor.pending_constant_types
+        pending_constants[:] = [
+            fact for fact in pending_constants if fact.path not in stale_keys
         ]
         for key, path in reparse.items():
             self.remove_file_from_state(path)
