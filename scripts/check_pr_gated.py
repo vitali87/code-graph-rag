@@ -198,20 +198,39 @@ def review_execution_caveats(real_reviews: list[tuple[str, str]]) -> list[str]:
     ]
 
 
+def _gh_result(*args: str) -> tuple[str, str, int]:
+    """`gh` stdout, stderr and exit code; ("", "", 1) when it cannot run.
+
+    For a call whose failure has more than one meaning: the classic
+    protection endpoint answers 404 when there is no classic layer, and
+    401/403/a network error when there may be one that could not be read.
+    `_gh_stdout_or_empty` collapses both to "", which reads as "no layer"
+    -- the fail-open direction (local review on #1957).
+    """
+    try:
+        done = subprocess.run(
+            ["gh", *args], capture_output=True, text=True, check=False, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return "", str(error), 1
+    return done.stdout, done.stderr, done.returncode
+
+
 def _gh_stdout_or_empty(*args: str) -> str:
     """`gh` stdout, or "" when the call fails.
 
     Failures are returned as empty rather than raised so one unavailable
     endpoint reports as its own named reason instead of aborting the run
     and leaving the other checks unreported.
+
+    Delegates to `_gh_result` so both helpers share ONE subprocess call
+    site. A second `subprocess.run` here would be a second I/O path that
+    the tests stubbing this function do not intercept, and those tests
+    would then reach the network and pass or fail on the developer's `gh`
+    auth rather than on the code (local review on #1957).
     """
-    try:
-        done = subprocess.run(
-            ["gh", *args], capture_output=True, text=True, check=False, timeout=60
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return done.stdout if done.returncode == 0 else ""
+    stdout, _stderr, code = _gh_result(*args)
+    return stdout if code == 0 else ""
 
 
 def context_name(entry: dict[str, object]) -> str:
@@ -412,7 +431,9 @@ NON_FAILING_CONCLUSIONS = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
 UNREQUIRED_CAVEAT_LIMIT = 8
 
 
-def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
+def failing_unrequired_contexts(
+    rollup: list[dict[str, object]], exclude: frozenset[str] = frozenset()
+) -> list[str]:
     """Finished contexts that did not succeed and that THIS gate does not require.
 
     The gate answers "is `REQUIRED_CONTEXT` present and satisfied", so a red
@@ -429,15 +450,18 @@ def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
     unrequired.
 
     `REQUIRED_CONTEXT` is excluded because a red one is already a reason, and
-    naming it twice reads as two problems. The jobs it AGGREGATES are not
-    excluded: `All Checks Pass` reports one verdict over all of them, and
-    naming the job that actually failed is the point.
+    naming it twice reads as two problems; so are the contexts in `exclude`,
+    the ones classic branch protection requires, for the same reason. The
+    jobs it AGGREGATES are not excluded: `All Checks Pass` reports one
+    verdict over all of them, and naming the job that actually failed is the
+    point.
     """
     names = {
         name
         for entry in rollup
         if (name := context_name(entry))
         and name != REQUIRED_CONTEXT
+        and name not in exclude
         and entry_finished(entry)
         and (
             outcome := str(entry.get("conclusion") or entry.get("state") or "").upper()
@@ -447,9 +471,11 @@ def failing_unrequired_contexts(rollup: list[dict[str, object]]) -> list[str]:
     return sorted(names)
 
 
-def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
+def unrequired_failure_caveat(
+    rollup: list[dict[str, object]], exclude: frozenset[str] = frozenset()
+) -> list[str]:
     """The caveat for `failing_unrequired_contexts`, or nothing."""
-    failing = failing_unrequired_contexts(rollup)
+    failing = failing_unrequired_contexts(rollup, exclude)
     if not failing:
         return []
     shown = failing[:UNREQUIRED_CAVEAT_LIMIT]
@@ -457,10 +483,10 @@ def unrequired_failure_caveat(rollup: list[dict[str, object]]) -> list[str]:
     return [
         f"{len(failing)} check(s) this gate does not require are failing at the "
         f"head: {', '.join(shown)}" + (f" (+{rest} more)" if rest else "") + ". "
-        f"The gate requires only '{REQUIRED_CONTEXT}' and does not read the "
-        "ruleset's required-context list, so it cannot say whether these are "
-        "required. They do not block it, and they are not evidence the change "
-        "is sound"
+        f"The gate requires only '{REQUIRED_CONTEXT}' and the contexts classic "
+        "branch protection names, and does not read the ruleset's "
+        "required-context list, so it cannot say whether these are required. "
+        "They do not block it, and they are not evidence the change is sound"
     ]
 
 
@@ -667,6 +693,240 @@ def ci_runs_at_head(head: str) -> list[dict[str, Any]]:
     return [run for run in runs if str(run.get("path", "")) == CI_WORKFLOW_PATH]
 
 
+# --- the classic branch-protection layer (issue #1957) -----------------------
+#
+# `rules/branches/<base>` returns RULESETS only. GitHub enforces classic branch
+# protection as a second, independent layer, and `gh pr merge` is refused by
+# whichever is stricter. Measured on this repo: the ruleset required 0
+# approvals, the classic layer 1, and three fully green PRs (#1946, #1947,
+# #1953) reported "gated" here and were then refused with "the base branch
+# policy prohibits the merge". The endpoint 404s on a repo with no classic
+# layer, which `_gh_stdout_or_empty` returns as "", so absence reads as "no
+# classic layer", never as an error.
+
+
+def classic_protection(base: str) -> tuple[dict[str, Any], str | None]:
+    """The classic branch-protection layer on `base`, and why it is unknown.
+
+    ({}, None) when the endpoint says there is no classic layer (HTTP 404,
+    the normal case on a rulesets-only repo); ({}, reason) when it could not
+    be read for any other cause, which must be reported rather than taken as
+    absence; (layer, None) when read.
+    """
+    out, err, code = _gh_result("api", f"repos/{REPO}/branches/{base}/protection")
+    if code == 0:
+        return _json_dict(out), None
+    if "HTTP 404" in err:
+        return {}, None
+    detail = err.strip().splitlines()[-1] if err.strip() else f"exit {code}"
+    return {}, (
+        f"could not read classic branch protection on '{base}' ({detail}), so its "
+        "approval and status-check requirements are unverified"
+    )
+
+
+def ruleset_review_count(rules: list[Any]) -> int | None:
+    """The approvals a `pull_request` ruleset rule requires; None without one."""
+    counts = [
+        int(count)
+        for rule in rules
+        if isinstance(rule, dict) and rule.get("type") == "pull_request"
+        for count in [
+            (rule.get("parameters") or {}).get("required_approving_review_count")
+        ]
+        if isinstance(count, int)
+    ]
+    return max(counts) if counts else None
+
+
+def classic_review_count(protection: dict[str, Any]) -> int | None:
+    """The approvals classic protection requires; None when it requires none."""
+    reviews = protection.get("required_pull_request_reviews")
+    if not isinstance(reviews, dict):
+        return None
+    count = reviews.get("required_approving_review_count")
+    return count if isinstance(count, int) else None
+
+
+def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
+    checks = protection.get("required_status_checks")
+    if not isinstance(checks, dict):
+        return []
+    contexts = checks.get("contexts")
+    return [str(c) for c in contexts] if isinstance(contexts, list) else []
+
+
+def effective_entries(
+    rollup: list[dict[str, object]], name: str
+) -> list[dict[str, object]]:
+    """The entries that decide `name`: the most recent of each shape.
+
+    A rerun leaves the earlier run's entry in the rollup beside the new one,
+    and GitHub judges a required context by its latest run. Judging every
+    entry kept a stale failure blocking after a green rerun and named it
+    once per stale entry (bot review on PR #1968). Recency is one lifecycle
+    event for every entry -- when it STARTED (`startedAt`, or `createdAt`
+    for a commit status) -- so an in-progress rerun outranks a run that
+    completed after the rerun began; comparing one entry's completion with
+    another's start picked the stale one (second round). Entries without a
+    timestamp keep rollup order, the later winning.
+
+    A check run and a commit status may share a name, and GitHub requires
+    BOTH to pass; they are kept apart by `__typename`, one winner each.
+    """
+    latest: dict[str, tuple[tuple[str, int], dict[str, object]]] = {}
+    for index, entry in enumerate(rollup):
+        if context_name(entry) != name:
+            continue
+        stamp = next(
+            (
+                str(entry[key])
+                for key in ("startedAt", "createdAt", "completedAt")
+                if isinstance(entry.get(key), str) and entry.get(key)
+            ),
+            "",
+        )
+        shape = str(entry.get("__typename") or "")
+        key = (stamp, index)
+        if shape not in latest or key > latest[shape][0]:
+            latest[shape] = (key, entry)
+    return [entry for _key, entry in latest.values()]
+
+
+def entry_outcome(entry: dict[str, object]) -> str:
+    """The terminal result of a rollup entry, whichever shape it is.
+
+    A `CheckRun` reports `conclusion`; a `StatusContext` reports `state`
+    and has no `conclusion` at all. Read by shape, or every third-party
+    status is unfinished forever (bot review on PR #1968).
+    """
+    return str(entry.get("conclusion") or entry.get("state") or "").upper()
+
+
+def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[str]:
+    """Why the classic-required context `name` is not satisfied, if it is not.
+
+    GitHub accepts SUCCESS, SKIPPED and NEUTRAL for a required check, so
+    those are satisfied; PENDING and EXPECTED are not terminal.
+    """
+    entries = effective_entries(rollup, name)
+    if not entries:
+        return [
+            f"context '{name}', required by classic branch protection, is absent "
+            "at the head"
+        ]
+    reasons: list[str] = []
+    for entry in entries:
+        if not entry_finished(entry):
+            reasons.append(
+                f"'{name}' (required by classic branch protection) has not concluded"
+            )
+            continue
+        outcome = entry_outcome(entry)
+        if outcome not in NON_FAILING_CONCLUSIONS:
+            reasons.append(
+                f"'{name}' (required by classic branch protection) concluded {outcome}"
+            )
+    return reasons
+
+
+def approvals(reviews: list[Any]) -> int:
+    """Distinct reviewers whose LATEST verdict is an approval.
+
+    GitHub counts a reviewer's most recent non-comment review: an approval
+    followed by "changes requested" is no longer an approval, and a
+    comment-only review changes nothing. The reviewing bots are excluded
+    by the login shapes `gh pr view` returns (`coderabbitai`, no suffix, as
+    `TRUSTED_REVIEWERS` lists them); whether GitHub would count an app's
+    approval was not verified, so this errs on not counting it.
+    """
+    latest: dict[str, str] = {}
+    for review in reviews:
+        if not isinstance(review, dict):
+            continue
+        state = str(review.get("state", "")).upper()
+        if state in ("", "COMMENTED", "PENDING"):
+            continue
+        author = _author_login(review)
+        if author in TRUSTED_REVIEWERS or author.endswith("[bot]"):
+            continue
+        latest[author] = state
+    return sum(1 for state in latest.values() if state == "APPROVED")
+
+
+def merge_remedies() -> str:
+    """Which routes past a refused merge exist on this repo, from its settings."""
+    repo = _json_dict(_gh_stdout_or_empty("api", f"repos/{REPO}"))
+    auto_merge = repo.get("allow_auto_merge")
+    if auto_merge is True:
+        return "auto-merge is enabled, so `--auto` will merge once the policy is met"
+    if auto_merge is False:
+        return "auto-merge is disabled on the repo, so `--auto` cannot help"
+    return "the repo's auto-merge setting could not be read"
+
+
+def approval_findings(
+    pr: str,
+    base: str,
+    rules: list[Any],
+    protection: dict[str, Any],
+    reviews: list[Any],
+) -> tuple[list[str], list[str]]:
+    """Reasons and caveats from the approval requirement of BOTH layers."""
+    reasons: list[str] = []
+    caveats: list[str] = []
+    from_ruleset = ruleset_review_count(rules)
+    from_classic = classic_review_count(protection)
+    if (
+        from_ruleset is not None
+        and from_classic is not None
+        and from_ruleset != from_classic
+    ):
+        caveats.append(
+            f"the ruleset and classic branch protection on '{base}' disagree on "
+            f"approvals ({from_ruleset} vs {from_classic}); the higher one binds, "
+            "and PRs that merged before the stricter layer was enabled are no "
+            "guide to what merges now"
+        )
+    required = max(
+        (n for n in (from_ruleset, from_classic) if n is not None), default=0
+    )
+    have = approvals(reviews)
+    if have >= required:
+        return reasons, caveats
+    sources = [
+        name
+        for name, count in (
+            ("classic branch protection", from_classic),
+            ("ruleset", from_ruleset),
+        )
+        if count == required
+    ]
+    admins = protection.get("enforce_admins")
+    enforced = isinstance(admins, dict) and admins.get("enabled") is True
+    # `enforce_admins` is a CLASSIC setting. When the binding requirement is
+    # the ruleset's, its own bypass list decides, and claiming `--admin`
+    # works could send a maintainer down a refused path (bot review, #1968).
+    if "classic branch protection" in sources:
+        admin_route = (
+            "the rule is enforced for administrators too"
+            if enforced
+            else "`--admin` would bypass it, which is a decision, not a fix"
+        )
+    else:
+        admin_route = (
+            "whether `--admin` bypasses it is the ruleset's bypass list's call, "
+            "not read here"
+        )
+    reasons.append(
+        f"base '{base}' requires {required} approving review(s) "
+        f"({' and '.join(sources)}) and #{pr} has {have}, so `gh pr merge` is "
+        "refused with 'the base branch policy prohibits the merge'; "
+        f"{merge_remedies()}; {admin_route}"
+    )
+    return reasons, caveats
+
+
 def check(pr: str) -> tuple[list[str], list[str]]:
     """Reasons `pr` is not verifiably gated, and caveats on the evidence.
 
@@ -701,10 +961,16 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         _gh_stdout_or_empty("api", f"repos/{REPO}/rules/branches/{base}")
     )
     rule_types = {r.get("type") for r in rules if isinstance(r, dict)}
-    if "required_status_checks" not in rule_types:
+    # Both enforcement layers (issue #1957): rulesets AND classic protection.
+    protection, protection_error = classic_protection(base)
+    if protection_error:
+        reasons.append(protection_error)
+    classic_contexts = classic_required_contexts(protection)
+    if "required_status_checks" not in rule_types and not classic_contexts:
         reasons.append(
-            f"base '{base}' is covered by no ruleset requiring status checks, "
-            "so nothing is enforced on this PR regardless of its check list"
+            f"base '{base}' is covered by no ruleset and no classic branch "
+            "protection requiring status checks, so nothing is enforced on "
+            "this PR regardless of its check list"
         )
 
     at_head = ci_runs_at_head(head)
@@ -799,6 +1065,13 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                     f"'{REQUIRED_CONTEXT}' concluded {entry.get('conclusion')}"
                 )
 
+    # Contexts the CLASSIC layer requires are enforced exactly like the
+    # ruleset's, and a PR missing one is refused the same way.
+    for name in classic_contexts:
+        if name == REQUIRED_CONTEXT:
+            continue
+        reasons.extend(classic_context_reasons(name, rollup))
+
     absent_jobs = missing_aggregated_jobs(rollup)
     if absent_jobs:
         reasons.append(
@@ -826,7 +1099,17 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     else:
         caveats.extend(review_execution_caveats(real_reviews))
 
-    caveats.extend(unrequired_failure_caveat(rollup))
+    caveats.extend(unrequired_failure_caveat(rollup, frozenset(classic_contexts)))
+
+    # The approval requirement of both layers, counted against the reviews
+    # actually on the PR (issue #1957): the refusal it predicts is the one
+    # `gh pr merge` prints without naming the layer.
+    review_list = [r for r in view.get("reviews", []) if isinstance(r, dict)]
+    approval_reasons, approval_caveats = approval_findings(
+        pr, base, rules, protection, review_list
+    )
+    reasons.extend(approval_reasons)
+    caveats.extend(approval_caveats)
 
     unresolved, thread_error = _unresolved_thread_count(pr)
     if thread_error:
@@ -852,8 +1135,9 @@ def main(argv: list[str]) -> int:
 
     if not reasons:
         sys.stdout.write(
-            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied; no "
-            "other context was tested for being required"
+            f"PR #{pr}: gated ('{REQUIRED_CONTEXT}' present and satisfied, as is "
+            "every context classic branch protection requires; no other context "
+            "was tested for being required"
             f"{'; see caveat(s) above' if caveats else ''})\n"
         )
         return 0

@@ -25,6 +25,7 @@ from ...types_defs import (
     PropertyDict,
     RustTraitImpl,
 )
+from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
@@ -893,7 +894,7 @@ class ClassIngestMixin:
         # type declaration IS the written sibling, whichever of the pair the
         # child happens to be. More than one other means a 3+ arity family;
         # refuse rather than guess, matching every other ambiguity tier.
-        natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        natural = qn_markers.natural_qn(entry.child_qn)
         same_scope = [
             qn
             for qn in self.function_registry.variants(natural)

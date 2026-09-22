@@ -25,6 +25,7 @@ from ..types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from ..utils import qn_markers
 from ..utils.fqn_resolver import scoped_name_parts
 from ..utils.path_utils import cached_relative_path, cached_resolve_posix
 from . import export_detection
@@ -509,7 +510,7 @@ class FunctionIngestMixin:
         loc = self.function_locations.get(function_span_key(module_qn, func_node))
         if loc is None:
             return False
-        claimed_base = loc.qualified_name.split(cs.DUP_QN_MARKER, 1)[0]
+        claimed_base = qn_markers.natural_qn(loc.qualified_name)
         return claimed_base == candidate_qn
 
     def _claim_function_span(

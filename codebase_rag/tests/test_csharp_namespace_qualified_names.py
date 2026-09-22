@@ -473,6 +473,7 @@ class TestWrittenNamespaceQualifiedNames:
         ("proj.src.Foo.cs.Foo", "src/Foo.cs", None, "Foo"),
         # The duplicate-qn marker is a registration artefact.
         ("proj.src.N.W.Bench@24", "src/N/W.cs", "N", "N.Bench"),
+        ("proj.src.N.W.Bench@24_5", "src/N/W.cs", "N", "N.Bench"),
         # A verbatim identifier is not the marker.
         ("proj.src.N.W.@event", "src/N/W.cs", "N", "N.@event"),
         # A module qn neither spelling predicts is not guessed.

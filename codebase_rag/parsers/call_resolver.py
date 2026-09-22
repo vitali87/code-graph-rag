@@ -12,6 +12,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..utils import qn_markers
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
 from .rs import utils as rs_utils
@@ -856,12 +857,13 @@ class CallResolver:
         # def pass registers under the NATURAL qn (`command.decorator`);
         # probe the variant-stripped scope too, or the call falls to the
         # module trie and mis-binds to a sibling's same-named nested.
-        last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if cs.DUP_QN_MARKER not in last:
+        # The stripped form, not the presence of the marker character: a C#
+        # verbatim identifier (`@event`) carries the character without a
+        # marker, and re-probing the identical scope is wasted work that can
+        # only re-bind what the caller already tried (issue #2017).
+        natural_scope = qn_markers.natural_qn(scope)
+        if natural_scope == scope:
             return None
-        natural_scope = (
-            scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
-        )
         return self._scope_candidate(natural_scope, call_name, language)
 
     def _bare_call_allowed(
@@ -1048,7 +1050,7 @@ class CallResolver:
         # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
         # Box`) declares its constructor under its natural name, so the
         # marker is not part of the name to match (issue #2007).
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]

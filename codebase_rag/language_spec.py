@@ -10,6 +10,7 @@ from . import constants as cs
 from .models import FQNSpec, LanguageSpec
 from .sql_names import normalize_sql_reference
 from .utils.path_utils import module_stem
+from .utils.qn_markers import strip_dup_marker
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -284,10 +285,9 @@ def csharp_namespaced_from_graph(
         prefix = f"{directory}{cs.SEPARATOR_DOT}{own}{cs.SEPARATOR_DOT}"
         if not qn.startswith(prefix):
             continue
-        scoped = []
-        for part in qn[len(prefix) :].split(cs.SEPARATOR_DOT):
-            head, sep, tail = part.rpartition(cs.DUP_QN_MARKER)
-            scoped.append(head if sep and tail[:1].isdigit() else part)
+        scoped = [
+            strip_dup_marker(part) for part in qn[len(prefix) :].split(cs.SEPARATOR_DOT)
+        ]
         if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
             scoped.insert(0, namespace)
         return cs.SEPARATOR_DOT.join(scoped)
