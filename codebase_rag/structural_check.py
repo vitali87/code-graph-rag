@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
@@ -29,12 +30,13 @@ from typing import cast
 from tree_sitter import Parser
 
 from . import constants as cs
+from . import cypher_queries as cq
 from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state
 from .structural_delta import StructuralDelta, normalise_paths, observe
-from .types_defs import LanguageQueries, ReingestReport
+from .types_defs import LanguageQueries, PropertyDict, ReingestReport
 from .utils.path_utils import derive_project_name
 
 _GIT_DELETED = "D"
@@ -221,6 +223,13 @@ class _FileSnapshot:
             # Unreadable: leave whatever is there alone.
             pass
 
+    @property
+    def unrestorable(self) -> bool:
+        """Present but unreadable: the re-ingest may still WRITE it (mode
+        0o200 allows that), and `put_back` could not undo the write (bot
+        review, #1718)."""
+        return not self._absent and not self._readable
+
     def put_back(self) -> None:
         if self._absent:
             self._path.unlink(missing_ok=True)
@@ -257,6 +266,22 @@ def _refuse_unrestorable_capture(capture: CaptureSelection) -> None:
         )
 
 
+def _refuse_graph_holding_io_links(ingestor: object) -> None:
+    """Refuse an isolated run over a graph that already holds IO links.
+
+    The capture check above covers what THIS run would write. A graph built
+    earlier with IO enabled can hold resource chains of its own; deleting a
+    changed file's subtree can leave one unanchored, and the re-ingest's
+    repo-wide resource prune then deletes it, chain edges included, which
+    the capture cannot put back (bot review, #1718).
+    """
+    rows = cast(GraphStore, ingestor).fetch_all(cq.CYPHER_CHECK_GRAPH_IO_LINKS)
+    if rows:
+        raise CheckError(
+            cs.CHECK_ISOLATED_GRAPH_HAS_IO.format(groups=rows[0].get(cs.KEY_REL))
+        )
+
+
 def _measure_then_restore(
     updater: GraphUpdater,
     ingestor: object,
@@ -272,13 +297,34 @@ def _measure_then_restore(
     fails after its first write is rolled back from the capture before the
     error propagates.
     """
-    guard = IsolationGuard(cast(GraphStore, ingestor), project_name, repo_root)
+    store = cast(GraphStore, ingestor)
+    guard = IsolationGuard(store, project_name, repo_root)
     cache = _FileSnapshot(repo_root / cs.HASH_CACHE_FILENAME)
+    if cache.unrestorable:
+        raise CheckError(
+            cs.CHECK_ISOLATED_CACHE_UNREADABLE.format(
+                path=repo_root / cs.HASH_CACHE_FILENAME
+            )
+        )
+    # The restore deletes before it re-creates, and the store offers no
+    # transaction around the two, so a failure between them leaves the graph
+    # partial. The persistent incomplete-run marker every mutating path sets
+    # (#1679) records that: set before the first write, cleared only once the
+    # restore has finished, so a failed restore leaves readers refusing and
+    # the next full update repairing (bot review, #1718).
+    marker: PropertyDict = {
+        cs.KEY_PROJECT_NAME: project_name,
+        cs.KEY_RUN_ID: uuid.uuid4().hex,
+    }
+    store.execute_write(
+        cq.CYPHER_MARK_PROJECT_INCOMPLETE, {**marker, cs.KEY_WRITING: True}
+    )
     try:
         return measure(lambda: apply(lambda: guard.capture(updater.reingest_scope)))
     finally:
         try:
             guard.restore()
+            store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
         finally:
             cache.put_back()
 
@@ -329,6 +375,7 @@ def run_check(
     if not isolated:
         return measure(lambda: updater.reingest(changed, deleted=deleted))
     _refuse_unrestorable_capture(capture or default_capture())
+    _refuse_graph_holding_io_links(ingestor)
     return _measure_then_restore(
         updater,
         ingestor,
