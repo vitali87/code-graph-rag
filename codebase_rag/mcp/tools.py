@@ -2688,7 +2688,7 @@ class MCPToolsRegistry:
                         cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_KEEP_ALIAS
                     ),
                     cs.MCPParamName.DRY_RUN: prop(
-                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_RENAME_DRY_RUN
+                        cs.MCPSchemaType.BOOLEAN, td.MCP_PARAM_MOVE_DRY_RUN
                     ),
                     cs.MCPParamName.PROJECT: prop(
                         cs.MCPSchemaType.STRING, td.MCP_PARAM_PROJECT
@@ -2729,9 +2729,20 @@ class MCPToolsRegistry:
     ) -> object:
         from codebase_rag.editing.move import MoveRefused, move
 
+        # The selected project's repo-relative paths name files only under the
+        # root it was indexed from; resolving them beneath this server's
+        # checkout would cut and rewrite another tree's files (issue #1542).
+        root = graph_query.source_root_for(
+            self.ingestor.fetch_all, project_name, Path(self.project_root)
+        )
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.MOVE_WRONG_ROOT.format(project=project_name),
+                cs.KEY_CYCLE: [],
+            }
         try:
             report = move(
-                Path(self.project_root),
+                root,
                 self.ingestor.fetch_all,
                 project_name,
                 qualified_name,

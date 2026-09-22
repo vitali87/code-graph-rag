@@ -236,9 +236,24 @@ class _StatefulIngestor:
         self._in.setdefault((str(to_label), to_val), set()).add(edge)
         if properties:
             self.edge_props[edge] = dict(properties)
-            sites = self.edge_sites.setdefault(edge, [])
-            if dict(properties) not in sites:
-                sites.append(dict(properties))
+            self._merge_site(edge, str(rel_type), dict(properties))
+
+    def _merge_site(self, edge: _RelTuple, rel_type: str, props: PropertyDict) -> None:
+        # The store's `MERGE` matches on the merge-key props the row carries
+        # (MERGE_KEY_PROPS_BY_REL, only those present) and then applies
+        # `SET r += props`: a re-emitted site updates its record in place,
+        # and only a new key tuple is a new parallel edge.
+        sites = self.edge_sites.setdefault(edge, [])
+        keys = [k for k in cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ()) if k in props]
+        matched = [
+            site
+            for site in sites
+            if all(k in site and site[k] == props[k] for k in keys)
+        ]
+        for site in matched:
+            site.update(props)
+        if not matched:
+            sites.append(props)
 
     def sites_of(self, edge: _RelTuple) -> list[PropertyDict]:
         """Every site of an edge (one empty record for a site-less edge)."""
@@ -683,7 +698,11 @@ class _StatefulIngestor:
                     caller_path = caller.get(cs.KEY_PATH)
                     if caller_path in changed:
                         continue
-                    inbound.append(
+                    # One row per relationship, as the store returns them:
+                    # the restore re-emits each site with its own properties
+                    # (issue #1522), so capturing only the last site would
+                    # drop every other parallel edge.
+                    inbound.extend(
                         {
                             cs.KEY_CALLER_LABEL: from_label,
                             cs.KEY_CALLER_QN: _text(from_val),
@@ -691,10 +710,9 @@ class _StatefulIngestor:
                             cs.KEY_TARGET_LABEL: to_label,
                             cs.KEY_TARGET_QN: _text(to_val),
                             cs.KEY_CALLER_PATH: _text(caller_path),
-                            # The restore re-emits the edge with its own
-                            # properties (its site, issue #1522).
-                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
+                            cs.KEY_PROPS: dict(site),
                         }
+                        for site in self.sites_of(edge)
                     )
                 return inbound
             case cs.CYPHER_AFFECTED_CALLER_PATHS:

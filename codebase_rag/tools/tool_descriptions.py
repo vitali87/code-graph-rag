@@ -318,6 +318,9 @@ MCP_MOVE = (
 MCP_PARAM_TARGET_MODULE = (
     "Destination module: a dotted module name (`pkg.core`) or a repo-relative path."
 )
+MCP_PARAM_MOVE_DRY_RUN = (
+    "Plan only: report the files, importers and copied imports, write nothing."
+)
 MCP_PARAM_KEEP_ALIAS = (
     "Leave a re-export at the old location so the old import path still works."
 )
