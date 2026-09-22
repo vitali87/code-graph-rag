@@ -130,6 +130,11 @@ _NOT_GRAPH_READERS = frozenset(
         # the postcondition contract, so refusing up front on a partial graph
         # would block the operation that repairs it (issue #1534).
         cs.MCPToolName.MOVE,
+        # EXTRACT and INLINE are graph-driven edits of the same shape as MOVE:
+        # each runs its own re-ingest behind the incomplete-run marker and is
+        # held to the postcondition contract (Copilot, PR #2061).
+        cs.MCPToolName.EXTRACT,
+        cs.MCPToolName.INLINE,
         cs.MCPToolName.SURGICAL_REPLACE_CODE,
         cs.MCPToolName.READ_FILE,
         cs.MCPToolName.WRITE_FILE,
@@ -2843,9 +2848,19 @@ class MCPToolsRegistry:
     ) -> object:
         from codebase_rag.editing.extract import ExtractRefused, extract
 
+        # The selected project's relative paths are meaningful only under the
+        # root it was indexed from; another checkout's paths must not be
+        # edited beneath this server's repository, as for rename (issue #1542;
+        # Greptile and Copilot, PR #2061).
+        root = self._source_root_for(project_name)
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+
         try:
             report = extract(
-                Path(self.project_root),
+                root,
                 self.ingestor.fetch_all,
                 project_name,
                 qualified_name,
@@ -2872,9 +2887,19 @@ class MCPToolsRegistry:
     ) -> object:
         from codebase_rag.editing.extract import InlineRefused, inline
 
+        # The selected project's relative paths are meaningful only under the
+        # root it was indexed from; another checkout's paths must not be
+        # edited beneath this server's repository, as for rename (issue #1542;
+        # Greptile and Copilot, PR #2061).
+        root = self._source_root_for(project_name)
+        if root is None:
+            return {
+                cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
+            }
+
         try:
             report = inline(
-                Path(self.project_root),
+                root,
                 self.ingestor.fetch_all,
                 project_name,
                 qualified_name,
