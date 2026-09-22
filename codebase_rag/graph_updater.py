@@ -905,8 +905,9 @@ class GraphUpdater:
         # The file keys the current `reingest` call will delete and re-parse
         # (changed, deleted, dependents, same-stem survivors), published right
         # before `before_write` runs so a caller can capture exactly that set
-        # while nothing has been written yet (issue #1718). Empty outside a
-        # call and until the prologue has computed it.
+        # while nothing has been written yet (issue #1718). Set only while
+        # `before_write` runs; empty before and after, whether the hook
+        # returned, refused or was never given.
         self.reingest_scope: tuple[str, ...] = ()
         self._exclusion_match: bool | None = None
         # Set when a run that needed the graph's module paths could not read
@@ -5683,11 +5684,17 @@ class GraphUpdater:
         # it as "nothing changed". The scope is published first so the hook
         # can read what this call is about to replace (issue #1718).
         self.reingest_scope = tuple(all_keys)
-        if before_write is not None:
-            try:
+        try:
+            if before_write is not None:
                 before_write()
-            except Exception as exc:
-                raise ReingestAborted(str(exc)) from exc
+        except Exception as exc:
+            raise ReingestAborted(str(exc)) from exc
+        finally:
+            # Published for the hook only: the declaration promises an empty
+            # scope outside a call, and a long-lived updater (the watcher,
+            # the MCP server) would otherwise carry the last call's keys into
+            # whatever reads it next (bot review, #1718).
+            self.reingest_scope = ()
         # Past this point the run WILL issue deletes and writes. Callers that
         # persist recovery state need to know whether a failure left the graph
         # untouched or partial, and classifying by exception TYPE is not
