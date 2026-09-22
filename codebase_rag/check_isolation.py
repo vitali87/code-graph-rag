@@ -16,13 +16,12 @@ writes the re-ingest issues: the subtrees are deleted again, the nodes the
 check created beside them (a new file's File node, a flipped container, a
 new finding, an ExternalModule for a new import) are removed, and the
 captured nodes and edges are re-emitted through the batch API the parsers
-write with. Nodes outside the scope that the check can prune or re-grade
-(ExternalModule, Resource, Gloss) come back with their captured properties;
-a property the check ADDED to such a node is not removed, since the batch
-write merges properties rather than replacing them. The same merge limit
-applies to the File, Folder and Package nodes at the scope's paths that
-survive the check: only the ones the capture did not see are deleted, so a
-key added to a survivor would persist (greptile-local, #1718).
+write with. Every captured node that outlived the delete -- the File,
+Folder and Package nodes at the scope's paths, and the shared nodes the
+check can prune or re-grade (ExternalModule, Resource, Gloss, findings) --
+then has its property set replaced by the captured one, because the batch
+write merges properties and would keep a key the check added (bot review,
+#1718).
 
 A failed re-ingest is why the restore discards the store's pending writes
 before its first delete. The batch API buffers -- `MemgraphIngestor` holds
@@ -156,7 +155,10 @@ class IsolationGuard:
         self._path_nodes: set[tuple[str, str]] = set()
         self._finding_qns: set[str] = set()
         self._orphans: list[tuple[str, PropertyDict]] = []
+        # Every shared node before the check, keyed (label, qualified name).
+        self._shared_before: dict[tuple[str, PropertyValue], PropertyDict] = {}
         self._captured = False
+        self._touched_shared: list[tuple[str, PropertyDict]] = []
 
     @property
     def captured(self) -> bool:
@@ -179,13 +181,17 @@ class IsolationGuard:
                 self._path_nodes.add((label, str(props.get(cs.KEY_ABSOLUTE_PATH))))
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_EDGES, params):
             self._capture_edge(row)
-        # Orphaned shared nodes: the re-ingest runs a repo-wide orphan
-        # sweep of its own, which collects pre-existing orphans anywhere in
-        # the graph. Captured here so the restore can put them back (#1718).
-        for row in self._store.fetch_all(cq.CYPHER_CHECK_ORPHAN_SHARED_NODES):
+        # Every shared node, for three reasons (CYPHER_CHECK_SHARED_NODES):
+        # the orphans the re-ingest's repo-wide sweep collects come back,
+        # only the ones absent here count as created, and a pre-existing one
+        # the re-parse re-emitted gets its own properties back (#1718).
+        for row in self._store.fetch_all(cq.CYPHER_CHECK_SHARED_NODES):
             label = row.get(cs.KEY_LABEL)
             props = row.get(cs.KEY_PROPS)
-            if isinstance(label, str) and isinstance(props, dict):
+            if not isinstance(label, str) or not isinstance(props, dict):
+                continue
+            self._shared_before[(label, props.get(cs.KEY_QUALIFIED_NAME))] = dict(props)
+            if row.get(cs.KEY_INBOUND) == 0:
                 self._orphans.append((label, dict(props)))
         self._captured = True
 
@@ -242,7 +248,13 @@ class IsolationGuard:
         params = self._params()
         # Before any delete: once the subtrees go, the edges that reach
         # these shared nodes go with them and they become unfindable.
-        created = self._shared_nodes_the_check_created(params)
+        reached = self._shared_nodes_the_scope_reaches(params)
+        created = [node for node in reached if node not in self._shared_before]
+        self._touched_shared = [
+            (label, self._shared_before[(label, value)])
+            for label, value in reached
+            if (label, value) in self._shared_before
+        ]
         store.execute_write(
             cq.CYPHER_CHECK_DELETE_FINDINGS,
             {
@@ -266,10 +278,15 @@ class IsolationGuard:
                 },
             )
         self._delete_new_path_nodes(params)
-        for label, value in created:
+        if created:
             store.execute_write(
-                cq.CYPHER_CHECK_DELETE_SHARED_NODE,
-                {cs.KEY_LABEL: label, cs.KEY_QUALIFIED_NAME: value},
+                cq.CYPHER_CHECK_DELETE_SHARED_NODES,
+                {
+                    cs.CYPHER_PARAM_LABELS: [label for label, _value in created],
+                    cs.CYPHER_PARAM_QUALIFIED_NAMES: [
+                        str(value) for _label, value in created
+                    ],
+                },
             )
         for label, props in self._nodes:
             store.ensure_node_batch(label, props)
@@ -277,23 +294,63 @@ class IsolationGuard:
             store.ensure_node_batch(label, props)
         for (label, _key, _value), props in self._far_nodes.items():
             store.ensure_node_batch(label, props)
+        for label, props in self._touched_shared:
+            store.ensure_node_batch(label, props)
         for source, rel, target, props in self._edges.values():
             store.ensure_relationship_batch(
                 source, rel, target, properties=props or None
             )
         store.flush_all()
+        self._replace_survivor_properties()
 
-    def _shared_nodes_the_check_created(
+    def _replace_survivor_properties(self) -> None:
+        """Remove every key the check added to a node that outlived the delete.
+
+        The re-emit above puts each captured value back, but the batch write
+        merges (`SET n += props`), so a key the check ADDED to a surviving
+        node -- a File at a scope path, an ExternalModule, a Resource, a
+        Gloss, a finding, a pre-existing shared node it re-emitted -- would
+        persist (bot review, #1718). Those keys are read back and removed by
+        name. Subtree nodes and swept orphans are recreated from the capture,
+        so a fresh node has nothing extra.
+        """
+        survivors: list[tuple[str, PropertyDict]] = [
+            (label, props)
+            for label, props in self._nodes
+            if label in _PATH_NODE_DELETES
+        ]
+        survivors += [
+            (label, props) for (label, _key, _value), props in self._far_nodes.items()
+        ]
+        survivors += self._touched_shared
+        for label, props in survivors:
+            key = cs.NODE_UNIQUE_CONSTRAINTS.get(label)
+            value = props.get(key) if key is not None else None
+            if key is None or value is None:
+                continue
+            params: PropertyDict = {cs.KEY_ID: value}
+            rows = self._store.fetch_all(cq.build_node_props_query(label, key), params)
+            current = rows[0].get(cs.KEY_PROPS) if rows else None
+            if not isinstance(current, dict):
+                continue
+            added = set(current) - set(props)
+            if added:
+                self._store.execute_write(
+                    cq.build_remove_node_keys_query(label, key, added), params
+                )
+
+    def _shared_nodes_the_scope_reaches(
         self, params: PropertyDict
     ) -> list[tuple[str, PropertyValue]]:
         """The shared nodes now reachable from the scope that the capture did not see.
 
-        An ExternalModule or Resource the re-parse created hangs off the
+        An ExternalModule or Resource the re-parse linked hangs off the
         scope without being defined by it, so the subtree delete leaves it
         behind. The repo-wide sweeps (`CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES`,
         `prune_unanchored_resources`) would collect it -- along with every
         pre-existing orphan elsewhere in the graph this check never touched,
-        which an isolated run must not delete (Greptile, #1718).
+        which an isolated run must not delete (Greptile, #1718). Whether
+        each one is the check's own is decided against the snapshot.
 
         Read BEFORE the first delete: once the subtrees go, the edges that
         reach these nodes go with them and nothing can find them again.
@@ -301,7 +358,7 @@ class IsolationGuard:
         captured = {
             (label, value) for (label, _key, value), _props in self._far_nodes.items()
         }
-        created: list[tuple[str, PropertyValue]] = []
+        reached: list[tuple[str, PropertyValue]] = []
         for row in self._store.fetch_all(cq.CYPHER_CHECK_SCOPE_EDGES, params):
             far_label = row.get(cs.KEY_FAR_LABEL)
             if str(far_label) not in _SHARED_LABELS:
@@ -309,9 +366,9 @@ class IsolationGuard:
             far = _node_spec(far_label, row, prefix=cs.FAR_END_PREFIX)
             if far is None or (far[0], far[2]) in captured:
                 continue
-            if (far[0], far[2]) not in created:
-                created.append((far[0], far[2]))
-        return created
+            if (far[0], far[2]) not in reached:
+                reached.append((far[0], far[2]))
+        return reached
 
     def _delete_new_path_nodes(self, params: PropertyDict) -> None:
         # File and container nodes now at the scope's paths that were not
