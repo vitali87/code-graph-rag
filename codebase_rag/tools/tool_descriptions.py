@@ -477,6 +477,22 @@ MCP_RANK_ROOT_CAUSES = (
     "the files outside flow-analysis coverage."
 )
 
+MCP_CONTEXT = (
+    "A graph-ranked minimal context slice for a task, within a token budget. "
+    "`target` is a qualified name, a bare name, `path:line`, or free text "
+    "(matched by embedding similarity when the semantic extra is installed). "
+    "Returns the target's source, its direct callers' call lines, its direct "
+    "callees' signatures, the types it accepts and returns, the tests that "
+    "reach it, and the documentation sections whose file links to it, ranked "
+    "by graph distance (trace hotness and similarity break ties) and trimmed "
+    "to `budget_tokens`. Every piece says why it is included. Use this before "
+    "reading whole files."
+)
+MCP_PARAM_CONTEXT_TARGET = (
+    "A qualified name, a bare name (`helper`, `Store.get`), `path:line`, or a "
+    "free-text description of the task."
+)
+MCP_PARAM_BUDGET_TOKENS = "Token budget for the slice (default 4000)."
 MCP_PARAM_TRACEBACK_TEXT = (
     "The traceback text exactly as Python printed it (the 'Traceback "
     "(most recent call last):' block; chained tracebacks are fine, the "
@@ -504,6 +520,7 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,
+    MCPToolName.CONTEXT: MCP_CONTEXT,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

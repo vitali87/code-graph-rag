@@ -27,6 +27,7 @@ class MCPToolName(StrEnum):
     REMOTE_DEPENDENCIES = "remote_dependencies"
     # Graph-driven edit operations (issue #1532).
     RENAME = "rename"
+    CONTEXT = "context"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -116,6 +117,7 @@ class MCPParamName(StrEnum):
     MODULE_QN = "module_qualified_name"
     NEW_NAME = "new_name"
     ALLOW_HEURISTIC = "allow_heuristic"
+    BUDGET_TOKENS = "budget_tokens"
 
 
 # MCP server constants
@@ -139,6 +141,7 @@ MCP_UPDATE_ERROR = "Error updating repository: {error}"
 MCP_REINGEST_ERROR = "Error re-ingesting files: {error}"
 # Structural delta appended to write tools (issue #1525).
 MCP_DELTA_HEADER = "Structural delta:"
+CONTEXT_DEFAULT_BUDGET = 4000
 MCP_DELTA_ERROR = "Structural delta unavailable: {error}"
 MCP_REINGEST_NEEDS_INDEX = (
     "Project {project} is not indexed; run index_repository or update_repository "
