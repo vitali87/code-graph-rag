@@ -27,6 +27,7 @@ from ...types_defs import (
 )
 from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
+from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
@@ -1100,6 +1101,12 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        # A container's hash covers its whole subtree, the same reading as a
+        # function's: a note on a class is about the class as declared, and
+        # a member edit is a change under it. It makes a class note gradable
+        # (STALE/EXACT), movable by hash, and re-validatable by the quote
+        # move, which refuses a hash-less candidate (issue #1808).
+        class_props.update(anchor_hash_props(class_node, decorators))
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:

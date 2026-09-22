@@ -282,11 +282,11 @@ MCP_GLOSSES = (
     "(then graded STALE, since the signature changed), several with the same "
     "body are told apart by the lines around them or listed as AMBIGUOUS, "
     "and none is LOST. The quote is recorded only when the note was written "
-    "against this server's own checkout. A note on a class or module, or one "
-    "written before hashes were recorded, is not graded while attached (there "
-    "is no hash to compare); if its name disappears, a note on a class follows "
-    "the same quote tier, and a note on a module is LOST (a module has no span "
-    "to quote). "
+    "against this server's own checkout. A note on a module, or one written "
+    "before hashes were recorded, is not graded while attached (there is no "
+    "hash to compare) and is LOST if its name disappears (a module has no span "
+    "to quote); a class, interface, enum, type or union carries a hash like a "
+    "function and is graded and repaired the same way. "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
