@@ -442,7 +442,9 @@ MCP_FLOW_VERDICT = (
     "flow-analysis coverage), or UNKNOWN (no path found, but part of the "
     "project sits outside coverage; the uncovered files are named). An "
     "absent path must never be read as a verified absence when coverage "
-    "gaps exist."
+    "gaps exist. The path may cross a service boundary: a NETWORK resource "
+    "that resolves to another project's endpoint continues into that "
+    "handler, and `remote_hops` lists the (from, to) pairs where it does."
 )
 
 MCP_PARAM_PROJECT = (
