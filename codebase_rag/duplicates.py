@@ -254,17 +254,6 @@ _DUP_QN_MARKER_RE = re.compile(
     + re.escape(cs.DUP_QN_COLUMN_MARKER)
     + r"\d+)?"
 )
-_DUP_QN_SUFFIX_RE = re.compile(
-    re.escape(cs.DUP_QN_MARKER)
-    + r"\d+(?:"
-    + re.escape(cs.DUP_QN_COLUMN_MARKER)
-    + r"\d+)?$"
-)
-
-
-def strip_duplicate_qn_suffix(name: str) -> str:
-    """Strip a trailing duplicate-definition suffix from one name segment."""
-    return _DUP_QN_SUFFIX_RE.sub("", name)
 
 
 # C#/Java qualified names carry a parameter signature ("Run(int)") that a

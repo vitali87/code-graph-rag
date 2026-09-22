@@ -13,7 +13,6 @@ from tree_sitter import Node, QueryCursor
 from .. import constants as cs
 from .. import logs as ls
 from ..capture import ALL_ENABLED, CaptureSelection
-from ..duplicates import strip_duplicate_qn_suffix
 from ..language_spec import LanguageSpec, decode_node_text
 from ..parser_loader import COMBINED_FUNC_CLASS_QUERIES
 from ..services import IngestorProtocol
@@ -26,6 +25,7 @@ from ..types_defs import (
     NodeType,
     PropertyDict,
 )
+from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -452,10 +452,13 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     # -> `useStore`): the def pass registers nested/anon members under the
     # NATURAL qn while the caller may carry the variant suffix. Registry-guarded,
     # so a scope without a twin adds nothing.
-    last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-    if cs.DUP_QN_MARKER not in last:
+    # Compare against the STRIPPED form rather than testing for the marker
+    # character: a C# verbatim identifier (`@event`) contains it without
+    # carrying a marker, and would otherwise add a duplicate candidate that
+    # is merely the scope again (issue #2017).
+    natural = qn_markers.natural_qn(scope_qn)
+    if natural == scope_qn:
         return [scope_qn]
-    natural = scope_qn[: len(scope_qn) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
     return [scope_qn, natural]
 
 
@@ -785,12 +788,16 @@ def _go_variant_spans(
     spans: list[_Span | None] = []
     for index, variant in enumerate(variants):
         marker = variant.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if cs.DUP_QN_MARKER not in marker:
+        # The LAST `@`, not the first: a C# verbatim identifier opens with
+        # one that is part of the name, so `@event@12` names line 12 while
+        # a first-`@` split reads `event@12` and gives up (issue #2017).
+        # The no-marker branch tests the stripped form for the same reason.
+        if qn_markers.strip_dup_marker(marker) == marker:
             if index != 0:
                 return None
             spans.append(declarations[0][1])
             continue
-        suffix = marker.split(cs.DUP_QN_MARKER, 1)[1]
+        suffix = marker.rpartition(cs.DUP_QN_MARKER)[2]
         line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
         if not line_text.isdigit() or int(line_text) not in by_line:
             return None
@@ -5229,7 +5236,7 @@ class CallProcessor:
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or registry.get(class_qn) != NodeType.CLASS:
             return
-        simple = strip_duplicate_qn_suffix(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
+        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         is_ctor = leaf == simple
         is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         if not is_ctor and not is_dtor:

@@ -45,6 +45,42 @@ from scripts.check_pr_gated import (
     validation_was_blocked,
 )
 
+
+@pytest.fixture(autouse=True)
+def _no_real_gh_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly on any `gh` call a test did not stub.
+
+    The tests stub `_gh_stdout_or_empty`, so a second I/O path reaches the
+    network unnoticed: `_gh_result` did, and 16 tests in this file ran a
+    real `gh api .../branches/main/protection` against github.com. They
+    passed only because `gh` is authenticated on the developer's machine,
+    and on a runner without auth each call burns its 60-second timeout.
+
+    Stubbing is not the point -- the failure is. A test reaching the
+    network must say so instead of quietly depending on the shell it runs
+    in, so this raises rather than returning a canned value: a canned
+    value would let the same drift happen again silently.
+    """
+
+    def _offline(*args: str) -> tuple[str, str, int]:
+        if len(args) >= 2 and args[0] == "api" and args[1].endswith("/protection"):
+            # "No classic layer" rather than the real payload, because the
+            # two are indistinguishable to these tests and the absent one
+            # needs no credentials: `classic_required_contexts` is [] under
+            # both, and `classic_review_count` differs (None vs 0) only
+            # where a ruleset approval count exists, which no fixture here
+            # sets. Not a claim that the endpoint 404s -- against this repo
+            # it answers 200.
+            return "", "gh: Not Found (HTTP 404)", 1
+        raise AssertionError(
+            f"unstubbed gh call reached the network: gh {' '.join(args)}. "
+            "Stub the seam this code path uses (`_gh_result`, which "
+            "`_gh_stdout_or_empty` delegates to) in the test."
+        )
+
+    monkeypatch.setattr(check_pr_gated, "_gh_result", _offline)
+
+
 REAL_STATUS_CONTEXT = {
     "__typename": "StatusContext",
     "context": "CodeRabbit",

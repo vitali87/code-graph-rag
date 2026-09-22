@@ -156,6 +156,8 @@ TS_MARKER_ANNOTATION = "marker_annotation"
 TS_GENERIC_TYPE = "generic_type"
 TS_TYPE_PARAMETER = "type_parameter"
 TS_MODIFIERS = "modifiers"
+TS_LINE_COMMENT = "line_comment"
+TS_BLOCK_COMMENT = "block_comment"
 TS_VOID_TYPE = "void_type"
 TS_PROGRAM = "program"
 TS_THIS = "this"
@@ -316,3 +318,6 @@ JAVA_RANK_WIDENED = 1
 JAVA_RANK_BOXED = 2
 JAVA_RANK_SUPERTYPE = 3
 JAVA_RANK_OBJECT = 4
+
+# `void m(C this, int b)`: the explicit receiver, which no caller supplies.
+TS_RECEIVER_PARAMETER = "receiver_parameter"

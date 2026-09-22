@@ -1477,6 +1477,37 @@ class TestFastPathInSync:
         )
         assert updater2._is_already_in_sync() is True
 
+    def test_a_named_project_keeps_the_fast_path(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The stamp records `named` for readers; the sync comparison left
+        it in the stored side only, so a project given with --project-name
+        never matched its own stamp and skipped the fast path on every sync
+        (issue #1981). Exercised through `run()`: the second run skips as
+        in sync and reads no module paths, and a changed scope on the same
+        named project still runs the full pass."""
+        parsers, queries = load_parsers()
+
+        def make_named_updater(exclusions: frozenset[str]) -> GraphUpdater:
+            return GraphUpdater(
+                ingestor=mock_ingestor,
+                repo_path=py_project,
+                parsers=parsers,
+                queries=queries,
+                project_name="proj",
+                exclude_paths=exclusions,
+            )
+
+        make_named_updater(frozenset()).run()
+        mock_ingestor.reset_mock()
+        second = make_named_updater(frozenset())
+        second.run()
+        assert second.skipped_because_in_sync is True
+        assert _module_path_queries(mock_ingestor) == 0
+        changed = make_named_updater(frozenset({"module_a.py"}))
+        changed.run()
+        assert changed.skipped_because_in_sync is False
+
     def test_newly_excluded_file_leaves_the_index(
         self, excludable_project: Path, mock_ingestor: MagicMock
     ) -> None:
