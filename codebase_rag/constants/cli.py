@@ -669,6 +669,16 @@ INLINE_GUESSED_CALLERS = (
 INLINE_PLANNED = "{count} call site(s) would be inlined; definition removed: {removed}"
 INLINE_PARSE_FAILED = "Inline rolled back: {files} would no longer parse"
 INLINE_CONTRACT_FAILED = "Inline rolled back, postcondition failed: {reasons}"
+INLINE_REFUSED_ASYNC = (
+    "{qn} is async; inlining would replace its coroutine or promise with a bare value"
+)
+INLINE_REFUSED_GENERATOR = (
+    "{qn} is a generator; inlining would replace its iterator with a bare value"
+)
+INLINE_REFUSED_IMPLICIT = (
+    "{qn} reads `{name}`, which would bind to the call site instead of the callee"
+)
+INLINE_REFUSED_PARAMETER = "{qn} has a parameter inlining cannot bind: {parameter}"
 # move (issue #1534).
 MOVE_UNKNOWN = "No definition named {qn} in the graph"
 MOVE_METHOD = "{qn} is a method; move its class instead"
