@@ -889,6 +889,121 @@ def test_a_callee_lookup_does_not_reach_another_project() -> None:
     assert taken.callees == {}
 
 
+def test_snapshot_uses_the_longest_registered_project_owner() -> None:
+    """A dotted project name must not leak into its shorter sibling scope."""
+    from codebase_rag.structural_delta import snapshot
+
+    store = _StatefulIngestor()
+    for project_name in ("proj", "proj.extra"):
+        store.ensure_node_batch(
+            cs.NodeLabel.PROJECT.value,
+            {cs.KEY_NAME: project_name},
+        )
+
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: "proj.pkg.app.main",
+            cs.KEY_NAME: "main",
+            cs.KEY_PATH: "pkg/app.py",
+            cs.KEY_START_LINE: 1,
+        },
+    )
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: "proj.extra.pkg.app.main",
+            cs.KEY_NAME: "main",
+            cs.KEY_PATH: "pkg/app.py",
+            cs.KEY_START_LINE: 1,
+        },
+    )
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: "proj.pkg.util.helper",
+            cs.KEY_NAME: "helper",
+            cs.KEY_PATH: "pkg/util.py",
+            cs.KEY_START_LINE: 1,
+        },
+    )
+    store.ensure_node_batch(
+        cs.NodeLabel.FUNCTION.value,
+        {
+            cs.KEY_QUALIFIED_NAME: "proj.extra.pkg.util.helper",
+            cs.KEY_NAME: "helper",
+            cs.KEY_PATH: "elsewhere/util.py",
+            cs.KEY_START_LINE: 1,
+            cs.KEY_POSITIONAL_PARAMS: ["a"],
+        },
+    )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.pkg.app.main"),
+        cs.RelationshipType.CALLS.value,
+        (
+            cs.NodeLabel.FUNCTION.value,
+            cs.KEY_QUALIFIED_NAME,
+            "proj.extra.pkg.util.helper",
+        ),
+        {cs.KEY_LINE: 5, cs.KEY_COL: 1, cs.KEY_ARG_COUNT: 1},
+    )
+    store.ensure_relationship_batch(
+        (
+            cs.NodeLabel.FUNCTION.value,
+            cs.KEY_QUALIFIED_NAME,
+            "proj.extra.pkg.app.main",
+        ),
+        cs.RelationshipType.CALLS.value,
+        (cs.NodeLabel.FUNCTION.value, cs.KEY_QUALIFIED_NAME, "proj.pkg.util.helper"),
+        {cs.KEY_LINE: 5, cs.KEY_COL: 1, cs.KEY_ARG_COUNT: 1},
+    )
+
+    for module_qn, path in (
+        ("proj.pkg.app", "pkg/app.py"),
+        ("proj.pkg.util", "pkg/util.py"),
+        ("proj.extra.pkg.app", "pkg/app.py"),
+        ("proj.extra.pkg.util", "pkg/util.py"),
+    ):
+        store.ensure_node_batch(
+            cs.NodeLabel.MODULE.value,
+            {
+                cs.KEY_QUALIFIED_NAME: module_qn,
+                cs.KEY_NAME: module_qn.rsplit(".", 1)[-1],
+                cs.KEY_PATH: path,
+            },
+        )
+    store.ensure_relationship_batch(
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.pkg.app"),
+        cs.RelationshipType.IMPORTS.value,
+        (cs.NodeLabel.MODULE.value, cs.KEY_QUALIFIED_NAME, "proj.pkg.util"),
+    )
+    store.ensure_relationship_batch(
+        (
+            cs.NodeLabel.MODULE.value,
+            cs.KEY_QUALIFIED_NAME,
+            "proj.extra.pkg.app",
+        ),
+        cs.RelationshipType.IMPORTS.value,
+        (
+            cs.NodeLabel.MODULE.value,
+            cs.KEY_QUALIFIED_NAME,
+            "proj.extra.pkg.util",
+        ),
+    )
+
+    taken = snapshot(store.fetch_all, "proj", ["pkg/app.py"])
+
+    assert sorted(taken.definitions) == ["proj.pkg.app.main"]
+    assert [(site.caller, site.callee) for site in taken.sites] == [
+        ("proj.pkg.app.main", "proj.extra.pkg.util.helper")
+    ]
+    assert taken.callees == {}
+    assert taken.imports == {
+        "proj.pkg.app": frozenset({"proj.pkg.util"}),
+        "proj.pkg.util": frozenset(),
+    }
+
+
 def test_check_refuses_a_named_projects_stamp_for_the_default_project(
     temp_repo: Path,
 ) -> None:
