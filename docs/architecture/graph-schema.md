@@ -112,6 +112,33 @@ one `RETURNS` (return annotation) or `ACCEPTS` (any parameter annotation)
 edge to the Class / Interface / Enum / Type / Union node. Builtins and
 third-party types produce no edge.
 
+## Resource Kinds
+
+A `Resource` node stands for something outside the code that code reads,
+writes, exposes or calls. Its `kind` is one of:
+
+| Kind | Stands for |
+|------|------------|
+| FILE | A file path an I/O call names |
+| NETWORK | A URL or host a client call reaches |
+| DATABASE | A database, table or query target |
+| STDIN | Standard input |
+| STDOUT | Standard output |
+| STDERR | Standard error |
+| ENV | An environment variable |
+| SOCKET | A socket address |
+| PROCESS | A command run as a subprocess |
+| ENDPOINT | A route a handler exposes (`GET /users/{id}`), reached from a NETWORK resource through `RESOLVES_TO` |
+| CONTRACT | A codegen contract operation shared by client stubs and server implementations |
+| RPC | An RPC method a handler exposes; callers join it directly |
+| DISPATCH | A string-keyed dispatch target (a queue name, a command key); callers join it directly, or through `RESOLVES_TO` from a `key/deployment` variant of the key |
+
+`EXPOSES` joins a handler to the ENDPOINT, RPC or DISPATCH resource it
+serves. `RESOLVES_TO` joins a client's NETWORK resource to the ENDPOINT its
+literal URL matches, a client stub's RPC operation and a server's ENDPOINT
+to the CONTRACT they implement, and a `key/deployment` DISPATCH variant to
+its head key.
+
 ## I/O and Data-Flow Edges
 
 The `io` capture group (opt-in; excluded from the default capture set) adds three relationships that model how code touches external resources and how values move between them.

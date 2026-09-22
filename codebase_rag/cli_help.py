@@ -405,6 +405,15 @@ HELP_DEADCODE_CLASSES = (
 )
 HELP_DEADCODE_FORMAT = "Report format: table or json."
 HELP_DEADCODE_OUTPUT = "Write the report to this file instead of stdout."
+HELP_DEADCODE_ENDPOINT_ROOTS = (
+    "Treat a decorator-routed handler (FastAPI, Flask) as reachable by its "
+    "route decorator alone (default). With --no-endpoint-roots, such a "
+    "handler is live only if some indexed call site resolves to its endpoint "
+    "(RESOLVES_TO into it, or a direct READS_FROM/WRITES_TO for RPC and "
+    "dispatch resources), so an endpoint nobody calls is reported. A handler "
+    "registered by a call (Go HandleFunc, Express app.get) stays live "
+    "through that call."
+)
 HELP_DEADCODE_MIN_RESOLUTION = (
     "Ignore call edges below this confidence when deciding liveness: "
     "heuristic < overload < exact < trace_confirmed (dynamic counts as confirmed)."

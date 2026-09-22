@@ -1,0 +1,48 @@
+name: Question or support
+description: Ask for help using or configuring Code Graph RAG.
+title: "[Question]: "
+labels:
+  - question
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, do not submit a public issue. Use the
+        private reporting process described in SECURITY.md.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the result you want to achieve.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include commands, configuration, and relevant code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: What happened?
+      description: Include the exact error or unexpected result.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "Example: v1.2.0 or abc1234"
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add logs or screenshots, removing secrets and private data.

@@ -581,6 +581,21 @@ def _find_call_arguments_node(call_node: Node) -> Node | None:
     )
     if args_node is not None:
         return args_node
+    if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
+        # `new X(...)`, `const X(...)`, `X<T>.named(...)` hold their
+        # `arguments` node directly.
+        return next(
+            (
+                child
+                for child in call_node.named_children
+                if child.type == cs.TS_DART_ARGUMENTS
+            ),
+            None,
+        )
+    if call_node.type == cs.TS_DART_RELATIONAL_EXPRESSION:
+        # `X<T>(arg)` mis-parsed as a chained comparison (issue #2010): the
+        # one argument is the parenthesised operand after the outer `>`.
+        return dart_utils.generic_call_argument(call_node)
     # Dart has no call-expression node: a selector/cascade_section wraps its
     # arguments in an argument_part holding the real `arguments` node one
     # level down.
@@ -4197,10 +4212,20 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
+                    # Every class variant INSTANTIATES above, so every one
+                    # takes its constructors too: `Box@8` for `class Box<T>`
+                    # declares `Box@8.Box(T)`, which is not a variant of the
+                    # natural twin's `Box.Box` (issue #2007).
+                    # The same class-typed gate INSTANTIATES applies above: a
+                    # variant of another kind (a colliding function, a merged
+                    # namespace) has no constructor to redirect to.
                     ctor_edges = [
                         (ctor_type, variant)
+                        for class_variant in class_variants
+                        if resolver.function_registry.get(class_variant)
+                        in (None, NodeType.CLASS)
                         for ctor_type, ctor_qn in sorted(
-                            resolver.java_constructor_targets(callee_qn)
+                            resolver.java_constructor_targets(class_variant)
                         )
                         for variant in resolver.function_registry.variants(ctor_qn)
                     ]

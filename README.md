@@ -51,6 +51,7 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
+- **Cross-Service Consumers**: `endpoints`, `endpoint_callers` and `remote_dependencies` MCP tools read the EXPOSES / RESOLVES_TO edges, and `cgr dead-code --no-endpoint-roots` reports an endpoint no indexed call site reaches.
 - **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
 - **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.
 - **Gloss Node & Notes**: Introduced the Gloss node for agent-authored notes and enabled writing and reading Gloss notes via the MCP server.
@@ -129,7 +130,7 @@ uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.c
 You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]
-> The wheel is pure Python (`py3-none-any`), so the package itself installs on any platform with Python 3.12 or newer (dependencies may still need platform wheels or build tools, such as `cmake` for `pymgclient`). The [piwheels](https://www.piwheels.org/project/code-graph-rag/) build for Debian Bookworm shows as failed because Bookworm's system Python is 3.11, which is below our floor. On Raspberry Pi OS Bookworm, pin the interpreter explicitly, for example `uv tool install --python 3.12 "code-graph-rag[treesitter-full,semantic]"`; uv downloads Python 3.12 automatically and the PyPI wheel installs normally.
+> The wheel is pure Python (`py3-none-any`), so it installs on any platform with Python 3.12 or newer. Older system interpreters (Debian Bookworm ships 3.11) need the interpreter pinned explicitly; see [Installation](docs/getting-started/installation.md#older-system-interpreters) for the commands.
 
 ## Quick Start
 
