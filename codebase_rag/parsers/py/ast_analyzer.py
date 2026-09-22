@@ -474,29 +474,44 @@ def _binds_name(scope: Node, name: str) -> bool:
     )
 
 
-def _nonlocal_names(scope: Node) -> frozenset[str]:
-    """Names a nested body declares `nonlocal` that `scope` itself owns.
+def _own_scope(node: Node) -> Node | None:
+    """The def, class or module whose body a node sits in directly."""
+    current = node.parent
+    while current is not None and current.type not in _PY_SCOPE_TYPES:
+        current = current.parent
+    return current
+
+
+def _nonlocal_names(binding: Node, scope: Node) -> frozenset[str]:
+    """The names `binding` rebinds in `scope` through a `nonlocal`.
 
     A `nonlocal x` makes an assignment to `x` in that body rebind the
     enclosing function's `x`, so the binding belongs to the enclosing map
     even though it sits in a nested scope (#1922). `global` is different:
     it binds the module's name, leaving the enclosing local alone.
 
-    Which enclosing function it rebinds matters once there are three
-    levels: Python binds the NEAREST enclosing function scope that already
-    binds the name, so an `inner` declaring `nonlocal v` under a `middle`
-    that binds `v` rebinds middle's `v`, and outer's `v` must be left
-    alone. Collecting every descendant's declarations flat let that
-    innermost assignment overwrite outer's inferred type (Greptile,
+    Decided per binding, from the binding's OWN body (#2124): a `nonlocal v`
+    in `middle` does not reach an `inner` below it that declares nothing,
+    whose `v = ...` binds inner's own local. And the declaration must
+    resolve to `scope`: Python binds the NEAREST enclosing function scope
+    that already binds the name, so an `inner` declaring `nonlocal v` under
+    a `middle` that binds `v` rebinds middle's `v`, not outer's (Greptile,
     PR #1928).
     """
+    own = _own_scope(binding)
+    if own is None or own.id == scope.id:
+        return frozenset()
     names: set[str] = set()
-    stack: list[Node] = [scope]
+    stack: list[Node] = [own]
     while stack:
         current = stack.pop()
-        if current.type == cs.TS_PY_NONLOCAL_STATEMENT:
-            names.update(_names_owned_by(current, scope))
-        stack.extend(current.children)
+        for child in current.named_children:
+            if child.type in _PY_NESTED_SCOPE_TYPES:
+                continue
+            if child.type == cs.TS_PY_NONLOCAL_STATEMENT:
+                names.update(_names_owned_by(child, scope))
+            else:
+                stack.append(child)
     return frozenset(names)
 
 
@@ -522,17 +537,47 @@ def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
             yield text
 
 
-def _rebinds_nonlocal(assignment: Node, nonlocal_names: frozenset[str]) -> bool:
-    """Whether a nested assignment rebinds a name declared `nonlocal`."""
-    if not nonlocal_names:
-        return False
-    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+def _rebinds_nonlocal(binding: Node, scope: Node) -> bool:
+    """Whether a nested assignment or `for` rebinds a name of `scope`'s that
+    its own body declares `nonlocal`."""
+    left = binding.child_by_field_name(cs.TS_FIELD_LEFT)
     if left is None:
         return False
+    if not (declared := _nonlocal_names(binding, scope)):
+        return False
     return any(
-        safe_decode_text(identifier) in nonlocal_names
-        for identifier in _identifiers_in(left)
+        safe_decode_text(identifier) in declared for identifier in _identifiers_in(left)
     )
+
+
+def _belongs_to(binding: Node, scope: Node) -> bool:
+    """Whether an assignment or `for` binds into `scope`'s own names: it sits
+    in `scope`'s body, or rebinds one of them through `nonlocal`."""
+    return _scope_of(binding) == scope.id or _rebinds_nonlocal(binding, scope)
+
+
+def _own_bound_names(scope: Node) -> frozenset[str]:
+    """Every name `scope`'s own body binds, parameters included."""
+    names = set(_parameter_names(scope))
+    names.update(
+        name
+        for _node, identifier in _bindings_in(scope)
+        if (name := safe_decode_text(identifier))
+    )
+    return frozenset(names)
+
+
+def _comprehension_names(comprehension: Node) -> frozenset[str]:
+    """The names a comprehension's `for ... in` clauses bind."""
+    names: set[str] = set()
+    for clause in comprehension.children:
+        if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+            continue
+        left = clause.child_by_field_name(cs.TS_FIELD_LEFT)
+        for identifier in _identifiers_in(left) if left is not None else ():
+            if name := safe_decode_text(identifier):
+                names.add(name)
+    return frozenset(names)
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -706,11 +751,20 @@ class PythonAstAnalyzerMixin(_AstBase):
         # binding does belong here (Greptile, #1922). `global` is not an
         # exception -- it binds the module name, and the enclosing
         # function's local of the same name is untouched.
-        nonlocal_names = _nonlocal_names(node)
-        assignments = [
-            a
-            for a in assignments
-            if _scope_of(a) == node.id or _rebinds_nonlocal(a, nonlocal_names)
+        assignments = [a for a in assignments if _belongs_to(a, node)]
+        # Every other writer into the map takes the same rule (#2124). A
+        # nested `for` target is the nested body's local unless declared
+        # `nonlocal` there. A comprehension is a scope of its own that
+        # cannot declare `nonlocal`, so one in a nested body binds nothing
+        # here; one in this body still types its variable for calls inside
+        # it, unless this body binds that name itself, whose type it must
+        # not overwrite.
+        for_statements = [f for f in for_statements if _belongs_to(f, node)]
+        own_names = _own_bound_names(node)
+        comprehensions = [
+            c
+            for c in comprehensions
+            if _scope_of(c) == node.id and not (_comprehension_names(c) & own_names)
         ]
 
         for assignment in assignments:
@@ -875,14 +929,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         # `nonlocal` is the same exception the value passes make: an
         # unpacking in a nested body whose target is declared `nonlocal`
         # rebinds THIS caller's name, so it belongs here (CodeRabbit).
-        nonlocal_names = _nonlocal_names(caller)
         unpackings = [
             assignment
             for assignment in assignments
-            if (
-                _scope_of(assignment) == caller.id
-                or _rebinds_nonlocal(assignment, nonlocal_names)
-            )
+            if _belongs_to(assignment, caller)
             and (left := assignment.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
             and left.type in cs.PY_UNPACKING_TARGET_TYPES
         ]
@@ -921,7 +971,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         # `a`, while `b` belongs to the inner scope and must not reach this
         # map (Greptile, #1922).
         nested = _scope_of(assignment) != caller.id
-        declared = _nonlocal_names(caller) if nested else frozenset()
+        declared = _nonlocal_names(assignment, caller) if nested else frozenset()
         for target, (element, _homogeneous) in zip(targets, elements, strict=True):
             # A nested pattern or a starred target binds no one type.
             name = (
