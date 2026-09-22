@@ -25,8 +25,8 @@ import pytest
 from codebase_rag.structural_delta import (
     Definition,
     _absorbs_extra_positionals,
-    _closes_the_parameter_list,
     _header_absorbs_extra_positionals,
+    _parameter_list_end_row,
 )
 
 
@@ -108,6 +108,17 @@ def test_an_unparseable_header_absorbs_nothing() -> None:
     assert _header_absorbs_extra_positionals("def f(a, ") is False
 
 
+def test_a_one_line_definition_keeps_its_suite() -> None:
+    """`def f(a, *rest): return a` carries its body on the header line.
+
+    Appending the stand-in `pass` made it unparseable, so the answer was
+    False and a variadic callee was reported as receiving too many
+    arguments.
+    """
+    assert _header_absorbs_extra_positionals("def f(a, *rest): return a") is True
+    assert _header_absorbs_extra_positionals("def f(a): return a") is False
+
+
 def test_keyword_only_params_do_not_absorb_an_extra_positional() -> None:
     """The regression: `*` is not `*args`.
 
@@ -162,17 +173,21 @@ def test_a_multiline_header_is_not_cut_at_a_paren_in_a_default(
 
 
 @pytest.mark.parametrize(
-    ("header", "closes"),
+    ("header", "end_row"),
     [
-        ("def f(a):", True),
-        ("def f(\n    a=g(),\n", False),
-        ("def f(\n    a=g(),\n    *rest,\n):", True),
-        ("def f(a=(1, 2), *rest):", True),
-        ("def f(", False),
+        ("def f(a):", 1),
+        ("def f(\n    a=g(),\n", None),
+        ("def f(\n    a=g(),\n    *rest,\n):", 4),
+        ("def f(a=(1, 2), *rest):", 1),
+        ("def f(", None),
+        # A bracket inside a string or a comment is not a delimiter.
+        ('def f(\n    a=")",\n    *rest,\n):', 4),
+        ("def f(\n    a=1,  # )\n    *rest,\n):", 4),
+        ('    def m(\n        self, a="(",\n    ):', 3),
     ],
 )
-def test_the_header_cut_follows_the_brackets(header: str, closes: bool) -> None:
-    """A `)` inside a default must not end the header.
+def test_the_header_cut_follows_the_brackets(header: str, end_row: int | None) -> None:
+    """A `)` inside a default, a string or a comment must not end the header.
 
     The read-back loop used to stop at the FIRST line containing `)`. For
 
@@ -184,6 +199,29 @@ def test_the_header_cut_follows_the_brackets(header: str, closes: bool) -> None:
     that cut after `a=g(),`, leaving an unparseable fragment that answers
     False -- so a genuine `*rest` callee was reported as receiving too many
     arguments, which is the false negative the docstring says this function
-    exists to avoid.
+    exists to avoid. A raw bracket count then had the same fault for
+    `a=")"` and for a `)` in a comment (bot review).
     """
-    assert _closes_the_parameter_list(header) is closes
+    assert _parameter_list_end_row(header.splitlines()) == end_row
+
+
+def test_a_paren_in_a_string_default_does_not_cut_the_header(
+    tmp_path: Path,
+) -> None:
+    """End to end through the line loop, as the multi-line test above."""
+    source = 'def f(\n    a=")",\n    *rest,\n):\n    pass\n'
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    definition = Definition(
+        label="Function",
+        qualified_name="m.f",
+        name="f",
+        path="m.py",
+        start_line=1,
+        end_line=5,
+        positional_params=("a",),
+        fingerprint="",
+        fingerprint_nodes=0,
+        branches=frozenset(),
+    )
+
+    assert _absorbs_extra_positionals(definition, tmp_path) is True

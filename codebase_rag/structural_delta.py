@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import textwrap
 import time
+import tokenize
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -579,33 +580,48 @@ def _header_absorbs_extra_positionals(header: str) -> bool:
     body = textwrap.dedent(header).strip()
     if not body:
         return False
+    # A one-line definition (`def f(a, *rest): return a`) already has its
+    # suite, and an appended indented `pass` would make it unparseable; only
+    # a bare header needs the stand-in body (bot review).
     try:
-        tree = ast.parse(body + "\n    pass\n")
+        tree = ast.parse(body)
     except SyntaxError:
-        return False
+        try:
+            tree = ast.parse(body + "\n    pass\n")
+        except SyntaxError:
+            return False
     node = tree.body[0] if tree.body else None
     if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
         return False
     return node.args.vararg is not None
 
 
-def _closes_the_parameter_list(header: str) -> bool:
-    """Whether `header` reaches the `)` that ends the parameter list.
+def _parameter_list_end_row(lines: list[str]) -> int | None:
+    """The 1-based row of the `)` that ends the parameter list, or None.
 
-    True once an opening `(` has been seen and brackets balance again, so a
-    `)` inside a default does not end the header early.
+    Tokenised rather than counted character by character: a bracket inside
+    a string or comment (`a=")"`, `# (`) is not a delimiter, and a raw count
+    ended the header early on one, dropping a `*rest` that followed (bot
+    review). One pass over the lines, stopping at the close. Input that ends
+    before the list closes, or does not tokenise, answers None.
     """
+    source = iter(line + "\n" for line in lines)
     depth = 0
     seen_open = False
-    for ch in header:
-        if ch in "([{":
-            depth += 1
-            seen_open = True
-        elif ch in ")]}":
-            depth -= 1
-            if seen_open and depth <= 0:
-                return True
-    return False
+    try:
+        for token in tokenize.generate_tokens(lambda: next(source, "")):
+            if token.type != tokenize.OP:
+                continue
+            if token.string in ("(", "[", "{"):
+                depth += 1
+                seen_open = True
+            elif token.string in (")", "]", "}"):
+                depth -= 1
+                if seen_open and depth <= 0:
+                    return token.end[0]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+    return None
 
 
 def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -> bool:
@@ -626,19 +642,15 @@ def _absorbs_extra_positionals(definition: Definition, repo_root: Path | None) -
         )
     except (OSError, UnicodeDecodeError):
         return False
-    header: list[str] = []
-    for line in lines[definition.start_line - 1 : definition.end_line or None]:
-        header.append(line)
-        # Stop where the parameter list CLOSES, not at the first `)`. A
-        # default can contain one (`a=g()`, `a=(1, 2)`), and cutting there
-        # drops a `*rest` that follows it -- the header then fails to parse
-        # and answers False, which suppresses nothing and reports a
-        # variadic callee as receiving too many arguments. Counting
-        # brackets is enough here: a `)` inside a string or comment would
-        # need the tokeniser, and an unbalanced count simply keeps reading
-        # to `end_line`, which is the safe direction.
-        if _closes_the_parameter_list("\n".join(header)):
-            break
+    # Stop where the parameter list CLOSES, not at the first `)`. A default
+    # can contain one (`a=g()`, `a=(1, 2)`, `a=")"`), and cutting there drops
+    # a `*rest` that follows it -- the header then fails to parse and answers
+    # False, which suppresses nothing and reports a variadic callee as
+    # receiving too many arguments. A list that never closes keeps every
+    # line to `end_line`, which is the safe direction.
+    body = lines[definition.start_line - 1 : definition.end_line or None]
+    end_row = _parameter_list_end_row(body)
+    header = body[:end_row] if end_row is not None else body
     return _header_absorbs_extra_positionals("\n".join(header))
 
 
