@@ -8,20 +8,21 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Node Types
 
+<!-- SECTION:node_schemas -->
 | Label | Properties |
-|-------|------------|
-| Project | `{name: string}` |
+|-----|----------|
+| Project | `{name: string, root_path: string?}` |
 | Package | `{qualified_name: string, name: string, path: string, absolute_path: string}` |
 | Folder | `{path: string, name: string, absolute_path: string}` |
 | File | `{path: string, name: string, extension: string?, absolute_path: string}` |
-| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?}` |
+| Module | `{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}` |
 | Class | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}` |
-| Function | same as Class, plus `is_macro: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
-| Method | same as Class, plus `is_property: boolean?, overrides_external: boolean?, name_start_line: int?, name_start_col: int?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?` |
+| Function | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_macro: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
+| Method | `{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, name_start_line: int?, name_start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, is_property: boolean?, overrides_external: boolean?, positional_params: list[string]?, return_type: string?, param_types: list[string]?, ast_fingerprint: string?, ast_fingerprint_nodes: int?, ast_branch_fingerprints: list[string]?, anchor_hash: string?}` |
 | Interface | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}` |
-| Enum | same as Interface |
-| Type | same as Interface, but `path` and `absolute_path` are optional |
-| Union | same as Type |
+| Enum | `{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}` |
+| Type | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
+| Union | `{qualified_name: string, name: string, path: string?, absolute_path: string?, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string, absolute_path: string, module_type: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string, module_type: string}` |
 | ExternalPackage | `{name: string}` |
@@ -29,8 +30,12 @@ The knowledge graph uses a unified schema across all supported languages.
 | Resource | `{qualified_name: string, name: string, kind: string}` |
 | Section | `{qualified_name: string, name: string, heading_level: int, start_line: int, end_line: int, path: string, absolute_path: string}` |
 | Pattern | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
-| CodeSmell | same as Pattern |
-| SecurityIssue | same as Pattern |
+| CodeSmell | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| SecurityIssue | `{qualified_name: string, name: string, message: string, start_line: int, end_line: int, path: string, snippet: string?}` |
+| Gloss | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
+| Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
+| Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
+<!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
 
@@ -42,8 +47,9 @@ The knowledge graph uses a unified schema across all supported languages.
 
 ## Relationships
 
+<!-- SECTION:relationship_schemas -->
 | Source | Relationship | Target |
-|--------|-------------|--------|
+|------|------------|------|
 | Project, Package, Folder | CONTAINS_PACKAGE | Package |
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
@@ -68,9 +74,17 @@ The knowledge graph uses a unified schema across all supported languages.
 | Module, Function, Method | READS_FROM | Resource |
 | Module, Function, Method | WRITES_TO | Resource |
 | Module, Function, Method, Resource | FLOWS_TO | Module, Function, Method, Resource |
+| Function, Method, File | EXPOSES | Resource |
+| Resource | RESOLVES_TO | Resource |
 | Module | IMPLEMENTS_PATTERN | Pattern |
 | Module | HAS_SMELL | CodeSmell |
 | Module | HAS_VULNERABILITY | SecurityIssue |
+| Gloss | ANNOTATES | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Gloss | MENTIONS | Module, Class, Function, Method, Interface, Enum, Type, Union |
+| Function, Method | HAS_PARAMETER | Parameter |
+| Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
+| Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
+<!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
 

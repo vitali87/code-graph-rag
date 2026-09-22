@@ -22,6 +22,7 @@ from codebase_rag.mcp.tools import MCPToolsRegistry
 from codebase_rag.types_defs import PropertyDict, ResultRow
 
 P = "proj"
+EXTRA = "proj.extra"
 
 
 def _node(
@@ -54,7 +55,29 @@ NODES: list[ResultRow] = [
     _node("Function", f"{P}.tests.test_app.test_run", "tests/test_app.py", 1, 5),
     _node("Function", f"{P}.tests.test_app.test_main", "tests/test_app.py", 7, 12),
     _node("Function", f"{P}.tests.test_app.setup", "tests/test_app.py", 14, 16),
+    # Reaches `util.helper` ONLY through `proj.extra.app.run`, so it is
+    # absent exactly when a foreign row is refused as a HOP. Filtering
+    # foreign entries out of `nodes` alone would still report it (#1982).
+    _node(
+        "Function",
+        f"{P}.tests.test_app.test_via_foreign",
+        "tests/test_app.py",
+        18,
+        20,
+    ),
+    # A SECOND registered project whose name extends this one (`proj.extra`):
+    # its rows start with `proj.` too, so every prefix-scoped query returns
+    # them, and the reader must drop them by ownership (issue #1982).
+    _node("Function", f"{EXTRA}.util.helper", "util.py", 1, 4),
+    _node("Function", f"{EXTRA}.app.run", "app.py", 3, 8),
+    _node("Class", f"{EXTRA}.app.Sub", "app.py", 20, 22),
+    _node("Method", f"{EXTRA}.app.Sub.go", "app.py", 21, 22),
+    _node("Module", f"{EXTRA}.main", "main.py", 1, 5),
+    _node("Function", f"{EXTRA}.tests.test_x.test_helper", "tests/test_x.py", 1, 3),
 ]
+# The project list the fixture graph answers; a test narrows it to prove the
+# exclusion is driven by the registry, not by the dotted name alone.
+PROJECTS: list[str] = [P, EXTRA]
 
 # (from_qn, to_qn, line, col, end_line, end_col, arg_count, kwarg_names)
 CALLS: list[
@@ -73,7 +96,24 @@ CALLS: list[
     (f"{P}.app.run", f"{P}.util.helper", 6, 11, 6, 26, 2, ["b"]),
     (f"{P}.app.main", f"{P}.app.run", 12, 4, 12, 9, 0, []),
     (f"{P}.tests.test_app.test_run", f"{P}.app.run", 3, 4, 3, 9, 0, []),
+    # From the extending project: a caller of THIS project's helper that is
+    # not this project's call site (issue #1982).
+    (f"{EXTRA}.app.run", f"{P}.util.helper", 2, 4, 2, 12, 1, []),
+    # ... and as a callee of this project's function, and as a test.
+    (f"{P}.app.main", f"{EXTRA}.app.run", 13, 4, 13, 9, 0, []),
+    (f"{EXTRA}.tests.test_x.test_helper", f"{P}.util.helper", 2, 4, 2, 12, 0, []),
     (f"{P}.tests.test_app.test_main", f"{P}.app.main", 9, 4, 9, 10, 0, []),
+    # Its sole outward edge is into the extending project's function.
+    (
+        f"{P}.tests.test_app.test_via_foreign",
+        f"{EXTRA}.app.run",
+        19,
+        4,
+        19,
+        9,
+        0,
+        [],
+    ),
     # An edge written without a site (a frontend fact).
     (
         f"{P}.tests.test_app.setup",
@@ -86,11 +126,18 @@ CALLS: list[
         None,
     ),
 ]
-INHERITS = [(f"{P}.app.Child", f"{P}.app.Base", "INHERITS")]
-OVERRIDES = [(f"{P}.app.Child.go", f"{P}.app.Base.go")]
+INHERITS = [
+    (f"{P}.app.Child", f"{P}.app.Base", "INHERITS"),
+    (f"{EXTRA}.app.Sub", f"{P}.app.Base", "INHERITS"),
+]
+OVERRIDES = [
+    (f"{P}.app.Child.go", f"{P}.app.Base.go"),
+    (f"{EXTRA}.app.Sub.go", f"{P}.app.Base.go"),
+]
 IMPORTS = [
     (f"{P}.app", f"{P}.util", 1, 0, 1, 27, "helper", "helper"),
     (f"{P}.tests.test_app", f"{P}.util", 2, 0, 2, 22, "util", "util"),
+    (f"{EXTRA}.main", f"{P}.util", 1, 0, 1, 20, "helper", "helper"),
 ]
 
 
@@ -113,6 +160,10 @@ def fake_fetch_all(query: str, params: PropertyDict | None = None) -> list[Resul
     # they return when they do run.
     if query == cq.CYPHER_PROJECT_IS_INCOMPLETE:
         return []
+    # The project list is not project-scoped either: the readers use it to
+    # decide which project a prefix-selected row belongs to (issue #1982).
+    if query == cq.CYPHER_LIST_PROJECTS:
+        return [{cs.KEY_NAME: name} for name in PROJECTS]
     prefix = str(p.get(cs.KEY_PROJECT_PREFIX, ""))
     assert prefix == f"{P}.", "every query is project-scoped"
     qn = str(p.get(cs.KEY_QN, ""))
@@ -808,3 +859,52 @@ def test_a_type_resolves_by_its_namespace_qualified_natural_name() -> None:
     assert rows[1]["label"] == "Interface"
     # The other namespace's type matched by bare name only, so it ranks last.
     assert graph_query.resolve(fetch_all, P, "Other.ILogger")[0]["label"] == "Class"
+
+
+def test_rows_of_a_project_extending_the_name_are_not_this_projects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`proj.extra.util.helper` starts with `proj.`, so every prefix-scoped
+    query returns it for `proj`; the reader drops it because the longest
+    registered project name it sits under is `proj.extra` (issue #1982).
+    With `proj.extra` not registered the same row is `proj`'s, so the
+    exclusion is the registry's, never the dotted name's alone."""
+    assert [
+        s["qualified_name"] for s in graph_query.resolve(fake_fetch_all, P, "helper")
+    ] == [f"{P}.util.helper"]
+    assert (
+        graph_query.definition(fake_fetch_all, P, f"{EXTRA}.util.helper", None)["found"]
+        is False
+    )
+    callers = graph_query.callers(fake_fetch_all, P, f"{P}.util.helper", 1)
+    assert {c["qualified_name"] for c in callers} == {
+        f"{P}.app.run",
+        f"{P}.tests.test_app.setup",
+    }
+    callees = graph_query.callees(fake_fetch_all, P, f"{P}.app.main", 1)
+    assert {c["qualified_name"] for c in callees} == {f"{P}.app.run"}
+    implementors = graph_query.implementors(fake_fetch_all, P, f"{P}.app.Base")
+    assert {r["qualified_name"] for r in implementors} == {f"{P}.app.Child"}
+    overrides = graph_query.overrides(fake_fetch_all, P, f"{P}.app.Base.go")
+    assert {r["qualified_name"] for r in overrides} == {f"{P}.app.Child.go"}
+    importers = graph_query.importers(fake_fetch_all, P, f"{P}.util")
+    assert {r["module"] for r in importers} == {f"{P}.app", f"{P}.tests.test_app"}
+    reaching = graph_query.tests_reaching(fake_fetch_all, P, f"{P}.util.helper")
+    names = {r["qualified_name"] for r in reaching}
+    assert not {qn for qn in names if qn.startswith(f"{EXTRA}.")}
+    assert f"{P}.tests.test_app.setup" in names
+    # A foreign row is refused as a HOP, not merely dropped from the report:
+    # this owned test reaches `helper` only through `proj.extra.app.run`.
+    # Filtering `nodes` alone leaves it reachable, and the assertion above
+    # cannot see the difference (issue #1982).
+    assert f"{P}.tests.test_app.test_via_foreign" not in names
+
+    monkeypatch.setattr(sys.modules[__name__], "PROJECTS", [P])
+    resolved = {
+        s["qualified_name"] for s in graph_query.resolve(fake_fetch_all, P, "helper")
+    }
+    assert resolved == {f"{P}.util.helper", f"{EXTRA}.util.helper"}
+    assert (
+        graph_query.definition(fake_fetch_all, P, f"{EXTRA}.util.helper", None)["found"]
+        is True
+    )
