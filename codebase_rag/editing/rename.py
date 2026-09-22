@@ -415,12 +415,20 @@ class Renamer:
             cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
             cs.KEY_QN: qn,
         }
+        # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
+        # rows too: a site in a project whose name extends this one must not
+        # join this project's plan (issue #1989; the rule of #1982).
+        owns = graph_query._owner_check(self.fetch_all, self.project)
         for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
+            if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
+                continue
             self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
         # A base-class list or an annotation names the symbol without a
         # call; an edge without a site cannot be rewritten and must refuse,
         # or the applied rename would leave `class Circle(Base)` dangling.
         for row in self.fetch_all(cq.CYPHER_GRAPH_TYPE_EDGES, params):
+            if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
+                continue
             if not isinstance(row.get("path"), str) or not isinstance(
                 row.get("line"), int
             ):

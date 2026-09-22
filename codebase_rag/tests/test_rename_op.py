@@ -1686,3 +1686,83 @@ def test_a_file_without_an_all_list_is_unaffected(tmp_path: Path) -> None:
     report.sites = [RenameSite("definition", "util.py", 1, 4, "util.helper", None)]
 
     assert run._old_name_is_back(report) is True
+
+
+class _NestedProjectGraph(RecordedGraph):
+    """The recorded graph plus a second registered project, `<project>.bar`,
+    whose rows the `STARTS WITH "<project>."` prefix also selects (#1989)."""
+
+    def __init__(self, graph: RecordedGraph, extra: dict[str, list[ResultRow]]):
+        self.__dict__.update(graph.__dict__)
+        self.extra = extra
+
+    def fetch_all(
+        self, query: str, params: PropertyDict | None = None
+    ) -> list[ResultRow]:
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [
+                {cs.KEY_NAME: self.project},
+                {cs.KEY_NAME: f"{self.project}.bar"},
+            ]
+        return [*super().fetch_all(query, params), *self.extra.get(query, [])]
+
+
+def _foreign_row(project: str, path: str | None, line: int | None) -> ResultRow:
+    return {
+        cs.KEY_LABEL: "Function",
+        cs.KEY_QUALIFIED_NAME: f"{project}.bar.far.use",
+        cs.KEY_PATH: path,
+        cs.KEY_REL_TYPE: "REFERENCES",
+        cs.KEY_LINE: line,
+        cs.KEY_COL: 4 if line else None,
+        cs.KEY_END_LINE: line,
+        cs.KEY_END_COL: 10 if line else None,
+        cs.KEY_RESOLUTION: cs.EdgeResolution.EXACT,
+    }
+
+
+def test_a_rename_plan_leaves_a_longer_named_projects_references_out(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    """`foo.bar`'s reference to `foo.pkg.util.helper` sits under the `foo.`
+    prefix, but `foo.bar` owns it: the plan must not edit its file (#1989)."""
+    root, graph = py_repo
+    _write(root, "far/use.py", "from pkg.util import helper\nx = helper\n")
+    nested = _NestedProjectGraph(
+        graph,
+        {cq.CYPHER_GRAPH_REFERENCES: [_foreign_row(graph.project, "far/use.py", 2)]},
+    )
+    report = rename(
+        root,
+        nested.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+        dry_run=True,
+    )
+    assert "far/use.py" not in report.files, report.files
+    assert not any(s.path == "far/use.py" for s in report.sites), report.sites
+    # The control: the project's own sites are still planned.
+    assert "pkg/app.py" in report.files, report.files
+
+
+def test_a_longer_named_projects_unlocatable_type_edge_does_not_refuse(
+    py_repo: tuple[Path, RecordedGraph],
+) -> None:
+    """A type edge without a site refuses the rename, so a foreign one would
+    block a rename of this project for another project's sake (#1989)."""
+    root, graph = py_repo
+    nested = _NestedProjectGraph(
+        graph,
+        {cq.CYPHER_GRAPH_TYPE_EDGES: [_foreign_row(graph.project, None, None)]},
+    )
+    report = rename(
+        root,
+        nested.fetch_all,
+        graph.project,
+        f"{graph.project}.pkg.util.helper",
+        "assist",
+        dry_run=True,
+    )
+    assert not any(s.kind == "unlocatable" for s in report.sites), report.sites
+    assert f"{graph.project}.bar.far.use" not in report.message
