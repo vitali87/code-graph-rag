@@ -1428,14 +1428,9 @@ class CallProcessor:
                 cs.TS_JULIA_FUNCTION_DEFINITION,
                 cs.TS_JULIA_MACRO_DEFINITION,
             ):
-                # The Julia grammar has no body field: the body is everything
-                # after the signature child. Exclude by span, keeping def-time
-                # calls in the signature (default args) module-attributed like
-                # the other languages. A head the naming pass refuses (error
-                # recovery swallowed the signature) owns no body either: its
-                # calls bubble to the module, like any unattributable call,
-                # instead of being swallowed by a node never registered under
-                # a real name (issue #1882 review).
+                # No body field: the body is everything after the signature.
+                # A head the naming pass refuses owns no body: its calls
+                # bubble to the module (issue #1882 review).
                 if func_node.named_children and julia_utils.julia_function_head_name(
                     func_node
                 ):
@@ -1456,11 +1451,8 @@ class CallProcessor:
                     )
                     and len(func_node.named_children) >= 2
                 ):
-                    # Concise method / arrow: the RHS is the body. Exclude it
-                    # from the module's calls only when the node gets its own
-                    # caller node; an anonymous arrow's calls must stay
-                    # module-attributed or they drop entirely (issue #1882
-                    # review: top-level `map(x -> helper(x), xs)`).
+                    # The RHS is the body; an anonymous arrow's calls stay
+                    # module-attributed or they drop entirely.
                     if self._julia_caller_name(func_node, module_qn) is None:
                         continue
                     body = func_node.named_children[-1]
@@ -1471,9 +1463,8 @@ class CallProcessor:
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
 
     def _sibling_qn_in_macro_namespace(self, qn: str, want_macro: bool) -> str | None:
-        # The duplicate bucket of a same-named function/macro pair: the
-        # natural qn plus its `@<line>` variants. A macro and a fn collide on
-        # one natural name, so the needed twin is the other bucket member.
+        # A same-named function/macro pair collides on one natural name;
+        # the needed twin is the other bucket member.
         natural = qn.rsplit(cs.DUP_QN_MARKER, 1)[0] if cs.DUP_QN_MARKER in qn else qn
         registry = self._resolver.function_registry
         bucket = registry.variants(natural)
@@ -1488,13 +1479,9 @@ class CallProcessor:
         return matches[0] if len(matches) == 1 else None
 
     def _julia_caller_name(self, func_node: Node, module_qn: str) -> str | None:
-        # The name the definition pass registers for this Julia function
-        # node, or None while it stays anonymous: definition heads and
-        # concise methods name themselves, an arrow takes its assignment's
-        # name, and a nameless expression the definition pass registered
-        # under a name reuses the recorded one. Every caller pass derives
-        # attribution through this one helper or the two passes name the
-        # same node differently (issue #1882 review).
+        # The name the definition pass registers for this node, or None
+        # while it stays anonymous; every caller pass derives attribution
+        # through this helper so both passes name a node identically.
         name = julia_utils.julia_function_head_name(
             func_node
         ) or julia_utils.julia_arrow_assigned_name(func_node)
@@ -2193,12 +2180,8 @@ class CallProcessor:
                         ),
                     )
             if not func_name and language == cs.SupportedLanguage.JULIA:
-                # Julia's definition nodes carry no `name` field (the head is
-                # a positional `signature` or the concise method's left side,
-                # and an arrow takes its name from its assignment); the
-                # definition pass names them through these same helpers, so
-                # recover the name here or every body is skipped. The
-                # recorded-caller branch below then reuses the registered qn.
+                # Julia definition nodes carry no `name` field; recover it
+                # here or the body is skipped.
                 func_name = julia_utils.julia_function_head_name(
                     func_node
                 ) or julia_utils.julia_arrow_assigned_name(func_node)
@@ -2505,10 +2488,8 @@ class CallProcessor:
             if not method_name and language in _JS_TS_LANGUAGES:
                 method_name = self._js_ts_arrow_binding_name(method_node)
             if not method_name and language == cs.SupportedLanguage.JULIA:
-                # Julia's definition nodes carry no `name` field; without the
-                # same recovery the module pass uses, an inner constructor's
-                # body is skipped and its calls emit no edge from the
-                # registered constructor (issue #1882 review).
+                # Same name recovery as the module pass, else the inner
+                # constructor's body is skipped (issue #1882 review).
                 method_name = self._julia_caller_name(method_node, module_qn)
             # A nameless function expression the definition pass registered
             # under a name (`x: function () {}` in a method's object literal,
@@ -2681,13 +2662,8 @@ class CallProcessor:
         body = func_node.child_by_field_name(cs.FIELD_BODY)
         if body is not None:
             return body.start_byte, body.end_byte
-        # Julia names no body field: a function_definition's NAMED children
-        # are [signature, *body] (the `function`/`end` keywords are
-        # anonymous tokens), so the body is the span between the signature
-        # and the trailing `end`; an arrow's body is its last named child.
-        # Without a span a nested Julia fn's calls are not excluded from the
-        # enclosing fn, which double-owns them (issue #1882 review: the
-        # field lookup always missed Julia's nodes).
+        # No body field: the body is the span between the signature and the
+        # trailing `end` (an arrow's body is its last named child).
         if func_node.type == cs.TS_JULIA_FUNCTION_DEFINITION:
             named = func_node.named_children
             if named and named[0].type == cs.TS_JULIA_SIGNATURE:
@@ -2864,12 +2840,8 @@ class CallProcessor:
         if language == cs.SupportedLanguage.DART:
             return dart_utils.dart_call_name(call_node)
         if language == cs.SupportedLanguage.JULIA:
-            # The grammar gives no `function` field on call_expression (the
-            # callee is the first named child), and a definition's own head
-            # IS a call_expression (signature `f(x)`, concise left side
-            # `f(x) = ...`): drop definition heads here, since the venv's
-            # tree-sitter has no query negation patterns to exclude them at
-            # capture time.
+            # A definition's own head IS a call_expression; drop heads
+            # here (no query negation to exclude them at capture time).
             if julia_utils.julia_is_signature_head(call_node):
                 return None
             return julia_utils.julia_call_name(call_node)
@@ -3998,23 +3970,17 @@ class CallProcessor:
                 cs.SupportedLanguage.JULIA,
             ):
                 # Rust and Julia macros and functions live in SEPARATE
-                # namespaces: a macro invocation (write! / @assert) must not
-                # bind a same-named fn (macro names collide with common fn
-                # names and the false edge revives dead code), and a fn call
-                # must not bind a same-named macro.
+                # namespaces: a macro invocation must not bind a same-named
+                # fn and vice versa.
                 is_macro_target = callee_info[1] in self.macro_qns
                 is_macro_invocation = call_node.type in (
                     cs.TS_RS_MACRO_INVOCATION,
                     cs.TS_JULIA_MACROCALL_EXPRESSION,
                 )
                 if is_macro_target != is_macro_invocation:
-                    # The resolver picked one of the same-named twins; the
-                    # other namespace's twin is the intended target (a bare
-                    # call must not bind the macro, an invocation must not
-                    # bind the fn), so swap to it when the duplicate bucket
-                    # holds exactly one candidate in the needed namespace;
-                    # without the swap a fn call under a same-named macro is
-                    # dropped entirely (issue #1882 review).
+                    # Swap to the other namespace's twin when the bucket
+                    # holds exactly one candidate there (issue #1882
+                    # review).
                     sibling = self._sibling_qn_in_macro_namespace(
                         callee_info[1], is_macro_invocation
                     )
@@ -4375,11 +4341,9 @@ class CallProcessor:
                 # it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
                 # the only edge.
                 class_variants = resolver.function_registry.variants(callee_qn)
-                # Julia: call syntax dispatches in the FUNCTION namespace,
-                # so a same-named free function (a shadowing function or an
-                # outer constructor) wins over the type — the call does not
-                # instantiate the type — and a same-named macro is not a
-                # call target for a plain call (issue #1882 review).
+                # Julia call syntax dispatches in the FUNCTION namespace:
+                # a same-named free function wins over the type (no
+                # INSTANTIATES) and a macro is not a call target.
                 julia_fn_variants: list[tuple[NodeType, str]] = []
                 if language == cs.SupportedLanguage.JULIA:
                     julia_fn_variants = [
@@ -4412,11 +4376,9 @@ class CallProcessor:
                         (class_label, qn_key, class_variant),
                     )
                 if language == cs.SupportedLanguage.JULIA:
-                    # Call syntax dispatches in the FUNCTION namespace: a
-                    # shadowing free function wins, else the inner same-name
-                    # constructor (like Java/C#). The resolution describes the
-                    # FILTERED target set, not the pre-filter class_variants
-                    # bucket (#1882 review).
+                    # A shadowing free function wins, else the inner same-
+                    # name constructor (like Java/C#). The resolution
+                    # describes the FILTERED target set (#1882 review).
                     fn_variants = julia_fn_variants
                     if fn_variants:
                         self._resolution = (
@@ -7919,11 +7881,8 @@ class CallProcessor:
             # `fn`s stay attributable and keep their own calls.
             return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
         if language == cs.SupportedLanguage.JULIA:
-            # A Julia arrow is unnamed unless its assignment names it; an
-            # anonymous one gets no caller node, so its calls must bubble to
-            # the enclosing named scope like JS/TS arrows (issue #1882
-            # review). Named definitions, concise methods, and recorded-named
-            # expressions own their calls.
+            # An anonymous Julia arrow gets no caller node: its calls
+            # bubble to the enclosing scope like JS/TS arrows.
             return [n for n in func_nodes if self._julia_caller_name(n, module_qn)]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes

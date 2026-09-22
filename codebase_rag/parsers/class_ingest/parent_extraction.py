@@ -219,10 +219,8 @@ def extract_parent_classes(
             extract_dart_parent_classes(class_node, module_qn, resolve_to_qn)
         )
 
-    # Julia `struct Dog <: Animal`, `abstract type Mammal <: Animal` and
-    # `primitive type MyFloat <: Signed 32`: the `<:` base lives in the
-    # type_head, whose first named child is a binary_expression (type name
-    # left, supertype right, dotted for a qualified base).
+    # Julia `<:` base: the type_head's first named child is a
+    # binary_expression (type name left, supertype right).
     if class_node.type in (
         cs.TS_JULIA_STRUCT_DEFINITION,
         cs.TS_JULIA_ABSTRACT_DEFINITION,

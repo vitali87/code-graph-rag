@@ -109,9 +109,8 @@ _JULIA_SNAKE_RE_WORD = re.compile(r"([a-z0-9])([A-Z])")
 
 
 def _julia_snake_case(name: str) -> str:
-    # Julia convention pairs CamelCase module names with snake_case files
-    # (`SharedStructs` -> `shared_structs.jl`); acronym runs keep their
-    # grouping (`APIRequest` -> `api_request`).
+    # Julia convention pairs CamelCase modules with snake_case files
+    # (`SharedStructs` -> `shared_structs.jl`); acronyms keep their grouping.
     s = _JULIA_SNAKE_RE_ACRONYM.sub(r"\1_\2", name)
     return _JULIA_SNAKE_RE_WORD.sub(r"\1_\2", s).lower()
 
@@ -1046,10 +1045,10 @@ class ImportProcessor:
         # yields that module qn, known only after every file is parsed
         # (flush_deferred_import_edges).
         sites = self._import_sites.get(module_qn, {})
-        # A nested Julia `module` keys its bindings under `module_qn.scope`;
-        # the IMPORTS edge stays on the file module (a nested module has no
-        # Module node, #652). Explicit registry: a sibling FILE module whose
-        # qn is a prefix (`proj.a.b` beside `proj.a`) must not leak in.
+        # Nested Julia `module` bindings are keyed under `module_qn.scope`,
+        # but the IMPORTS edge stays on the file module (#652). The explicit
+        # registry keeps a sibling FILE module whose qn is a prefix
+        # (`proj.a.b` beside `proj.a`) from leaking in.
         map_keys = {module_qn, *self._julia_scope_map_keys.get(module_qn, ())}
         for map_key, bindings in self.import_mapping.items():
             if map_key not in map_keys:
@@ -1058,9 +1057,8 @@ class ImportProcessor:
                 if (module_qn, full_name) in self._cpp_declaration_mappings:
                     continue
                 if full_name == cs.RUST_UNRESOLVABLE_QN:
-                    # The unrepresentable-#[path] sentinel stays in the map
-                    # for name binding but names no module, so it must never
-                    # become a phantom IMPORTS edge (issue #1082).
+                    # The unrepresentable-#[path] sentinel names no module;
+                    # never let it become a phantom IMPORTS edge (#1082).
                     continue
                 self._deferred_import_edges.append(
                     DeferredImportEdge(
@@ -1612,12 +1610,10 @@ class ImportProcessor:
                 entry.full_name == self.project_name
                 or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
             ):
-                # A Julia `using`/`import` target was resolved to a
-                # file-based project qn at parse time (path / unique-stem /
-                # proximity). Verify it against the real module qns instead
-                # of re-running the generic resolver, which would strip the
-                # last segment and externalise the bare project name (an
-                # orphan ExternalModule and a dropped edge).
+                # A Julia `using`/`import` target resolved to a file-based
+                # project qn at parse time: verify it against the real module
+                # qns, not the generic resolver (which would externalise the
+                # bare project name).
                 candidate = entry.full_name
                 importer_pkg = self._julia_nested_pkg_root(
                     known_module_paths.get(entry.module_qn, "")
@@ -1634,8 +1630,7 @@ class ImportProcessor:
                     )
                     if target_pkg is not None and target_pkg != importer_pkg:
                         # A target in ANOTHER nested package is unreachable
-                        # from here (its modules are not part of this
-                        # package); one in the SAME nested package is a
+                        # from here; one in the SAME nested package is a
                         # normal sibling import (issue #1882 review).
                         target = None
                     if target is not None:
@@ -3762,9 +3757,8 @@ class ImportProcessor:
 
     def reset_julia_path_caches(self) -> None:
         # Same contract as reset_rust_path_caches: the stem and declared-
-        # module indices are built from the filesystem on first use, so a
-        # .jl file created or deleted between runs must not keep resolving
-        # against the previous layout (orphan file, or a new file never found).
+        # module indices are filesystem-derived, so files added or removed
+        # between runs must not keep resolving against the old layout.
         self._julia_file_stems = None
         self._julia_declared = None
         self._julia_scope_declared = None
@@ -4785,13 +4779,11 @@ class ImportProcessor:
         return None
 
     def _parse_julia_imports(self, captures: dict, module_qn: str) -> None:
-        # `using A.B`, `using A.B as C`, `import A: b, c as d`, `using .S`:
+        # `using A.B` / `using A.B as C` / `import A: b, c as d` / `using .S`:
         # the local name is the alias / selected member / last path segment,
-        # the target is the dotted path. The grammar drops relative `.`/`..`
-        # from the path CHILDREN but keeps them in the import_path's text, so
-        # relativity is recovered from the raw text. Bindings inside a nested
-        # `module` are keyed under that module's qn; the IMPORTS edge stays
-        # on the file module (nested modules have no Module node, #652).
+        # the target the dotted path. Relative `.`/`..` stay in the
+        # import_path's text; nested-`module` bindings key under that
+        # module's qn, the IMPORTS edge on the file module (#652).
         for stmt_node in captures.get(cs.CAPTURE_IMPORT, []):
             scope = self._julia_import_scope_name(stmt_node)
             map_qn = f"{module_qn}{cs.SEPARATOR_DOT}{scope}" if scope else module_qn
@@ -4864,7 +4856,7 @@ class ImportProcessor:
             ):
                 # `using A.B` (and the `using A.B.*` recovery, whose
                 # scoped_identifier is a direct child) — local is the last
-                # segment of the path.
+                # path segment.
                 dotted, relative = self._julia_path_dotted(child)
                 if dotted:
                     yield dotted.split(cs.SEPARATOR_DOT)[-1], dotted, relative
@@ -4872,11 +4864,8 @@ class ImportProcessor:
     @staticmethod
     def _julia_path_dotted(node: Node) -> tuple[str, int]:
         # (dotted path, depth). depth is the count of leading dots: `Sibling`
-        # -> 0 (project-relative), `.Sibling` / `./Sibling` -> 1 (the current
-        # module), `..Sibling` / `../Sibling` -> 2 (the parent's children),
-        # and so on. `lstrip` used to collapse every depth to 1, so nested
-        # `..` imports searched from the importer's own dir and resolved to
-        # the wrong module (issue #1882 review).
+        # -> 0 (project-relative), `.Sibling` -> 1 (the current module),
+        # `..Sibling` -> 2 (the parent's children), and so on.
         raw = safe_decode_text(node) or ""
         depth = 0
         for ch in raw:
@@ -4889,9 +4878,7 @@ class ImportProcessor:
     def _julia_dir_parts(self, module_qn: str) -> list[str]:
         # The module qn is rooted at the FULL project name, which may itself
         # be dotted (a Julia repo dir is conventionally `Pkg.jl`): strip the
-        # project's N segments, not just the first, or the dir parts carry a
-        # phantom leading segment and every resolved target misses the real
-        # module qn by one segment.
+        # project's N segments, not just the first.
         prefix = len(self.project_name.split(cs.SEPARATOR_DOT))
         parts = module_qn.split(cs.SEPARATOR_DOT)
         return parts[prefix:-1]
@@ -4940,7 +4927,6 @@ class ImportProcessor:
     def _julia_nested_pkg_root(self, path: str) -> str | None:
         # The nearest enclosing directory with its own Project.toml (the
         # nested package root), or None if the path is in the main package.
-        # Accepts repo-relative and absolute paths.
         if not path:
             return None
         p = Path(path)
@@ -4958,12 +4944,9 @@ class ImportProcessor:
     def _julia_declared_modules(self) -> dict[str, set[str]]:
         """Declared module name -> the files that declare it.
 
-        A package's submodule need not be named after its file (src/router/
-        models.jl declares `module SimulationModels`), so `using Pkg.
-        SimulationModels` defeats both the path and the file-stem lookups;
-        the declared name is the only link to the file. Nested packages are
-        indexed too: an importer inside the SAME package may reach them, and
-        the package-root boundary is enforced at lookup time.
+        A submodule need not be named after its file, so the declared name
+        is often the only link to it. Nested packages are indexed too; the
+        package-root boundary is enforced at lookup time.
         """
         if (cached := getattr(self, "_julia_declared", None)) is not None:
             return cached
@@ -5045,8 +5028,7 @@ class ImportProcessor:
         self, segs: list[str], module_qn: str, scope: str
     ) -> str | None:
         # `using .X` in `module S` names a submodule of S declared in this
-        # same file (no file match: the target lives in the importer itself);
-        # the leading path segments extend the scope chain.
+        # same file; the leading path segments extend the scope chain.
         if not segs:
             return None
         chain = cs.SEPARATOR_DOT.join([scope, *segs[:-1]])
@@ -5059,9 +5041,7 @@ class ImportProcessor:
 
     def julia_member_qn_candidates(self, module_qn: str, name: str) -> list[str]:
         # A Julia function qn carries the file's DECLARED module segment
-        # (`api.jl` declaring `module api` registers `proj.api.api.alpha`),
-        # so an imported member lives at the file level or inside a
-        # declared module of that file.
+        # (`api.jl` declaring `module api` registers `proj.api.api.alpha`).
         candidates = [f"{module_qn}{cs.SEPARATOR_DOT}{name}"]
         rel_file = self._julia_module_rel_file(module_qn)
         for declared, files in self._julia_declared_modules().items():
@@ -5132,9 +5112,7 @@ class ImportProcessor:
 
     def _julia_candidate_excluded(self, rel_file: str) -> bool:
         # The same exclude/unignore predicate the indexer walks with, so an
-        # excluded generated module cannot win import resolution (issue
-        # #1882 review: excluded candidates had no graph Module node, so the
-        # IMPORTS edge was dropped instead of hitting an indexed alternative).
+        # excluded generated module cannot win import resolution.
         parts = rel_file.split(cs.SEPARATOR_SLASH)
         return should_skip_rel_file(
             rel_file,
@@ -5199,11 +5177,7 @@ class ImportProcessor:
         scope: str | None = None,
     ) -> str:
         # Module qns are rooted at the FULL project name (a dotted repo dir
-        # like `Symbolics.jl` keeps both segments); deriving the root from
-        # the importer's first qn segment truncated it to `Symbolics`, so a
-        # resolved first-party target (`Symbolics.src.arrays`) missed the
-        # real module (`Symbolics.jl.src.arrays`) and every internal IMPORTS
-        # edge became a phantom ExternalModule.
+        # like `Symbolics.jl` keeps both segments).
         project_root = self.project_name
         # `using .First` in `module Outer` names a submodule of `Outer`,
         # not a sibling file (in-file submodules have no path of their own).
@@ -5228,8 +5202,7 @@ class ImportProcessor:
         )
         # The exact-path lookup is a first-party link only: an absolute
         # dotted import names an external package unless it starts with
-        # this project's own name, so a repo file that happens to sit at
-        # the same path must not capture it (issue #1882 review).
+        # this project's own name (issue #1882 review).
         rel_file = (
             self._julia_find_by_path(dotted, depth, module_qn, importer_root)
             if depth > 0 or self_ref
@@ -5244,9 +5217,9 @@ class ImportProcessor:
             and not over_climb
             and (depth > 0 or cs.SEPARATOR_DOT not in dotted or self_ref)
         ):
-            # The module's declared name (`module SimulationModels`) may
-            # match neither the file path nor the file stem: the declared-
-            # module index is the last first-party link before externalising.
+            # The declared name may match neither the file path nor the
+            # file stem: the declared-module index is the last first-party
+            # link before externalising.
             rel_file = self._julia_find_by_declared_module(
                 dotted.split(cs.SEPARATOR_DOT)[-1], module_qn, importer_root
             )
@@ -5257,8 +5230,7 @@ class ImportProcessor:
             return f"{project_root}{cs.SEPARATOR_DOT}{rel_module}"
         if depth > 0 and not over_climb:
             # No file matched: build the qn the relative path points at,
-            # climbing the importer's dir tree by the path's depth (the same
-            # arithmetic _julia_find_by_path used for its search base).
+            # climbing the importer's dir tree by the path's depth.
             dir_parts = self._julia_dir_parts(module_qn)
             climb = depth - 1
             base = dir_parts[: len(dir_parts) - climb]

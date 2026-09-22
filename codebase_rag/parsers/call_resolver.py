@@ -2169,10 +2169,9 @@ class CallResolver:
             logger.debug(ls.CALL_DIRECT_IMPORT, call_name=call_name, qn=imported_qn)
             return self.function_registry[imported_qn], imported_qn
         if language == cs.SupportedLanguage.JULIA:
-            # A Julia selected import (`using .api: alpha`) records the local
-            # name bound to the source MODULE; the callable is the member
-            # inside it. Resolve the member exactly before the name trie, or
-            # a same-named function elsewhere soaks the edge (#1882 review).
+            # A Julia selected import (`using .api: alpha`) binds the local
+            # name to the source MODULE; resolve the member exactly before
+            # the name trie, or a same-named function soaks the edge.
             for member in self.import_processor.julia_member_qn_candidates(
                 imported_qn, call_name
             ):

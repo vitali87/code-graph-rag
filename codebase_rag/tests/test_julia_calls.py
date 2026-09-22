@@ -545,10 +545,8 @@ end
     module_qn = f"{project.name}.main"
     src = f"{module_qn}.user_macro"
     targets = {dst for (s, dst) in calls if s == src}
-    # Exactly one twin: the macro (the function is registered first in the
-    # query order only if it precedes the macro; assert on the count and on
-    # the absence of the @-suffixed free-function variant in BOTH
-    # directions' over-emission).
+    # Exactly one twin (the macro), with no @-suffixed free-function
+    # variant in either direction.
     assert len(targets) == 1, calls
     assert not any(
         t.endswith(f".f@{line}") for t in targets for line in range(1, 30)

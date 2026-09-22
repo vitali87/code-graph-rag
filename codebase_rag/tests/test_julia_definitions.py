@@ -1,9 +1,7 @@
 # Julia structural support: modules, functions (explicit, concise, where,
-# qualified, macros, arrows), struct/abstract/primitive types with `<:`
-# inheritance, and inner constructors. Julia is a FLAT language like Lua:
-# every callable registers through the function pass, so an inner
-# constructor's qn is `mod.Point.Point` (the C#/Java constructor convention)
-# and the class pass only mints the type nodes.
+# qualified, macros, arrows), types with `<:` inheritance, inner
+# constructors. FLAT like Lua: an inner constructor's qn is `mod.Point.Point`
+# (the C#/Java convention); the class pass mints only the type nodes.
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock

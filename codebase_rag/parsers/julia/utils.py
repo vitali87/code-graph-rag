@@ -1,12 +1,8 @@
 """Name extraction for tree-sitter-julia nodes.
 
-Julia's grammar has no uniform `name` field on its definition nodes:
-`function_definition` and `macro_definition` wrap the call-shaped head in a
-positional `signature`, the concise method `f(x) = ...` is an `assignment`
-whose left side is that head, and an `arrow_function_expression` takes its
-name from the enclosing assignment. Every site that names a Julia function
-(definition FQN pass, call-pass caller attribution) must route through these
-helpers or the two passes mint different qns for the same node.
+Julia's grammar has no uniform `name` field on its definition nodes, so
+every site that names a Julia function routes through these helpers or the
+definition and call passes mint different qns for the same node.
 """
 
 from tree_sitter import Node
@@ -30,26 +26,16 @@ def _last_named(node: Node | None) -> Node | None:
 
 
 def _single_line_or_none(text: str | None) -> str | None:
-    # Error recovery can make the parser's whole recovery span stand in for a
-    # name: on a `:(->)` the grammar re-syncs hundreds of lines downstream and
-    # the "head" becomes a chain spanning that span, so the name-reduction
-    # below would mint a qn out of source code (issue #1882 review). No Julia
-    # name spans lines, so a newline is the marker of a recovered span rather
-    # than a name; refusing it lets the caller degrade (anonymous
-    # registration, dropped edge) instead of registering the span.
+    # A multi-line span is a grammar error-recovery span standing in for a
+    # name, not a name (no Julia name spans lines, issue #1882 review).
     if text is None or "\n" in text:
         return None
     return text
 
 
 def _unwrap_head(head: Node | None) -> Node | None:
-    """Unwrap `where`/return-type decoration around a call-shaped head.
-
-    A signature (or a concise method's left side) holds the callee head
-    directly, or wrapped: `f(x) where T` -> where_expression,
-    `f(x)::Int` -> typed_expression, `f(x) where T where U` -> nested. In
-    every wrapper the callee is the FIRST named child.
-    """
+    """Unwrap `where`/return-type decoration; the callee is the first
+    named child in every wrapper."""
     while head is not None and head.type in (
         cs.TS_JULIA_WHERE_EXPRESSION,
         cs.TS_JULIA_TYPED_EXPRESSION,
@@ -59,14 +45,9 @@ def _unwrap_head(head: Node | None) -> Node | None:
 
 
 def _dotted_text(node: Node) -> str | None:
-    """A dotted callee's text, with interpolation segments reduced to names.
-
-    Macro-emitted heads interpolate the name (`LogExpFunctions.$(f)(x)`),
-    so the raw text carries `$(` and the head's arguments; the segment is
-    reduced to the interpolated expression's name instead (`LogExpFunctions.f`).
-    A segment that reduces to nothing keeps the raw text rather than
-    inventing a partial name.
-    """
+    """A dotted callee's text; interpolated segments (`LogExpFunctions.$(f)`) reduce
+    to the interpolated expression's name, and a segment that reduces to
+    nothing keeps the raw text."""
     text = safe_decode_text(node)
     if text is None:
         return None
@@ -81,10 +62,8 @@ def _dotted_text(node: Node) -> str | None:
         else:
             inner = safe_decode_text(child)
             if inner is not None and "\n" in inner:
-                # A segment the grammar error-recovered spans lines rather
-                # than naming a part; a partial name would point at an
-                # unrelated definition, so refuse the whole name (the
-                # single-line raw text is refused by the same guard).
+                # A segment that spans lines is error-recovered, not a
+                # part: refuse the whole name.
                 return _single_line_or_none(text)
         if inner:
             parts.append(inner)
@@ -94,14 +73,10 @@ def _dotted_text(node: Node) -> str | None:
 def julia_callee_name(node: Node | None) -> str | None:
     """Reduce any call-position expression to the name it stands for.
 
-    Definition heads and call sites name the same callee differently in the
-    raw text (`Arr{T, N}(ex)` defines the `Arr` constructor, `f(x)::Int = ...`
-    defines `f`, `(D::Differential)(x) = ...` defines a method on type
-    `Differential`, `$op(c, x, y) = ...` is a macro-emitted method whose
-    name the loop variable `op` stands in for). Reducing BOTH sides through
-    this one helper is what keeps definition qns and call edges agreeing:
-    a parameter list, a return type, or an interpolated marker in the name
-    would otherwise mint an unaddressable qn and break the link.
+    Reducing BOTH definition heads and call sites through this one helper
+    is what keeps definition qns and call edges agreeing (a parameter list,
+    a return type, or an interpolated marker in the name would mint an
+    unaddressable qn).
     """
     if node is None or not node.text:
         return None
@@ -118,9 +93,7 @@ def julia_callee_name(node: Node | None) -> str | None:
         cs.TS_JULIA_INTERPOLATION_EXPRESSION,
         cs.TS_JULIA_CALL_EXPRESSION,
     ):
-        # Parens, type parameters, an interpolation marker, and a call-shaped
-        # callee (`f(x)(y)`) all wrap the real callee in the first named
-        # child; peel to a fixpoint.
+        # The real callee is the first named child; peel to a fixpoint.
         return julia_callee_name(_first_named(node))
     if node_type == cs.TS_JULIA_TYPED_EXPRESSION:
         # `(D::Differential)(x)`: a closure method on a type — the type is
@@ -134,10 +107,8 @@ def julia_callee_name(node: Node | None) -> str | None:
         # `(::T)` — an anonymous-type closure head; the type side carries
         # the best available stand-in name.
         return julia_callee_name(_first_named(node))
-    # Anything else (a bare quoted operator `:(+)`, a string callee): the
-    # whole text is the best available name; callers that cannot resolve
-    # it drop the edge. A multi-line span is a recovered head, not a
-    # name (_single_line_or_none).
+    # Anything else (a bare quoted operator, a string callee): the whole
+    # text is the best available name.
     return _single_line_or_none(safe_decode_text(node))
 
 
@@ -197,10 +168,8 @@ def julia_function_head_name(node: Node) -> str | None:
 
 
 def _same_span(a: Node, b: Node) -> bool:
-    # py-tree-sitter returns a fresh wrapper per access chain
-    # (`node.parent.named_children[0] is node.parent.named_children[0]` can
-    # be False across different parents), so identity is unreliable; the byte
-    # span is the node's real identity.
+    # py-tree-sitter returns a fresh wrapper per access chain, so identity
+    # is unreliable; the byte span is the node's real identity.
     return (
         a.start_byte == b.start_byte and a.end_byte == b.end_byte and a.type == b.type
     )
@@ -209,11 +178,9 @@ def _same_span(a: Node, b: Node) -> bool:
 def _climb_head_wrappers(call_node: Node) -> Node:
     """Climb the where/typed decoration wrapping a definition head.
 
-    Returns the outermost wrapper that still sits in head position: a
-    `typed_expression`/`where_expression` only decorates the head while it
-    IS the head's own first named child, so the climb stops at the first
-    wrapper in an expression position (`y = f(x)::Int`, `g(f(x) where T)`) —
-    those are real call sites, not heads.
+    The climb stops at the first wrapper in an expression position
+    (`y = f(x)::Int`, `g(f(x) where T)`) — those are real call sites,
+    not heads.
     """
     current = call_node
     while (parent := current.parent) is not None and parent.type in (
@@ -230,13 +197,9 @@ def _climb_head_wrappers(call_node: Node) -> Node:
 def julia_is_signature_head(call_node: Node) -> bool:
     """Whether a call_expression is a function definition's own head.
 
-    Julia's grammar parses definition heads as call_expressions: a
-    `function_definition`'s `signature` contains `f(x)` (possibly wrapped in
-    `where_expression`/`typed_expression`), and the concise method
-    `f(x) = ...` / `f(x)::Int = ...` LEFT side is that head. Neither is a
-    call site, but both are captured by the bare `(call_expression) @call`
-    pattern (the tree-sitter version in the venv has no query negation
-    patterns), so the call pass drops them here.
+    Julia's grammar parses definition heads as call_expressions, and both
+    are captured by the bare `(call_expression) @call` pattern, so the call
+    pass drops heads here.
     """
     head = _climb_head_wrappers(call_node)
     parent = head.parent
@@ -245,9 +208,7 @@ def julia_is_signature_head(call_node: Node) -> bool:
         cs.TS_JULIA_ASSIGNMENT,
     ):
         return False
-    # Only the head position (the first named child of the signature or the
-    # assignment's left side) is a definition; right-side and argument calls
-    # are real call sites.
+    # Only the head position (first named child) is a definition.
     first = next(iter(parent.named_children), None)
     return first is not None and _same_span(first, head)
 
@@ -255,12 +216,8 @@ def julia_is_signature_head(call_node: Node) -> bool:
 def julia_arrow_assigned_name(node: Node) -> str | None:
     """The binding name of an arrow function, from its enclosing assignment.
 
-    `f = x -> x + 1` -> `f`; `M.f = x -> ...` -> `M.f` (dotted). Only a
-    DIRECT binding counts: the arrow must BE the assigned value, behind at
-    most typed/where/paren decoration. `ys = map(x -> x + 1, xs)` names
-    nothing: the arrow is nested in the call, and taking the nearest
-    assignment's name would register the anonymous callback as `module.ys`,
-    a phantom twin (issue #1882 review).
+    Only a DIRECT binding counts (the arrow must BE the assigned value):
+    `ys = map(x -> x + 1, xs)` names nothing (issue #1882 review).
     """
     current = node.parent
     while current is not None and current.type != cs.TS_JULIA_ASSIGNMENT:
@@ -289,12 +246,8 @@ def julia_arrow_assigned_name(node: Node) -> str | None:
 
 
 def julia_call_name(call_node: Node) -> str | None:
-    """The callee name of a Julia call-site node, dotted for member calls.
-
-    `call_expression` carries no `function` field: the callee is the first
-    named child. `macrocall_expression` names its `macro_identifier`
-    (minus the `@`), matching the name a `macro_definition` registers.
-    """
+    """The callee name of a Julia call-site node (callee = first named
+    child; a macrocall names its `macro_identifier` minus the `@`)."""
     if call_node.type == cs.TS_JULIA_MACROCALL_EXPRESSION:
         macro_id = next(
             (c for c in call_node.children if c.type == cs.TS_JULIA_MACRO_IDENTIFIER),
