@@ -3456,37 +3456,55 @@ class CallResolver:
         # (Greptile, PR #2040).
         aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
         import_map = self.import_processor.import_mapping.get(module_qn, {})
-        target = aliases.get(prefix) or import_map.get(prefix)
-        if not target:
-            return None
+        targets = aliases.get(prefix) or (
+            [import_map[prefix]] if import_map.get(prefix) else []
+        )
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        if not name:
+        if not targets or not name:
             return None
-        # `p.Box.named()` reaches here as prefix `p` and hop `Box.named`: the
-        # parser cannot tell a named CONSTRUCTOR from a class, because both
-        # are a trailing identifier (issue #2033). The import map can: if the
-        # full dotted name is not a definition but its head is, the tail is a
-        # constructor and the receiver's type is the head.
-        name = self._drop_named_constructor(name, target)
+        # Imports sharing a prefix are searched together, and `p.Box` names
+        # the ONE library defining `Box`; a name several of them define is
+        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
+        hits = [
+            (target, qn, kind)
+            for target in targets
+            if (
+                kind := self.function_registry.get(
+                    qn := self._prefixed_qn(target, name)
+                )
+            )
+            is not None
+        ]
+        if len(hits) != 1:
+            return None
+        target, qn, kind = hits[0]
         # The hop must be a CONSTRUCTION, so the imported module must define
         # that name as a CLASS. Accepting any registry entry bound a
         # `mod.factory()` whose factory is a FUNCTION to a same-named class in
         # an unrelated module: a confidently wrong edge where the resolver
         # previously emitted none.
-        qn = f"{target}{cs.SEPARATOR_DOT}{name}"
-        kind = self.function_registry.get(qn)
         if kind in _CONSTRUCTIBLE_NODE_TYPES:
             # The QUALIFIED name, not the bare one: `qn` is the exact class
             # the prefix names, and returning `name` sent the rest of the
             # chain back through a suffix lookup that another module's
             # same-named class could win (Copilot, PR #2040).
             return qn, parts[1:]
-        if kind is None:
-            return None
         # A function hop types the chain by its RECORDED return type instead;
         # with none recorded the chain stays unresolved rather than guessing.
+        # The type is a BARE name, qualified in the factory's OWN module: in
+        # the caller another import's same-named class could win (Copilot,
+        # PR #2040).
         returned = self.type_inference.method_return_types.get(qn)
-        return (returned, parts[1:]) if returned else None
+        return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
+
+    def _prefixed_qn(self, target: str, name: str) -> str:
+        # `p.Box.named()` reaches the fold as prefix `p` and hop `Box.named`:
+        # the parser cannot tell a named CONSTRUCTOR from a class, because
+        # both are a trailing identifier (issue #2033). The import map can: if
+        # the full dotted name is not a definition but its head is, the tail
+        # is a constructor and the receiver's type is the head.
+        member = self._drop_named_constructor(name, target)
+        return f"{target}{cs.SEPARATOR_DOT}{member}"
 
     def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring

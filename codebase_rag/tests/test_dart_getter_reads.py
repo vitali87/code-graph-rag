@@ -813,7 +813,7 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     processor = object.__new__(_Probe)
     processor.import_mapping = {"m": {"p": "m.lib"}}
     processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
-    processor.dart_import_aliases = {"m": {"p": "m.lib"}}
+    processor.dart_import_aliases = {"m": {"p": ["m.lib"]}}
     processor._cpp_shadowed_include_targets = set()
     processor._cpp_declaration_mappings = set()
 
@@ -824,3 +824,58 @@ def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
     # The control: the mapping it sits beside is emptied, not dropped, so
     # this is the documented reset rather than a wholesale delete.
     assert processor.import_mapping["m"] == {}
+
+
+def test_a_prefixed_factory_types_the_chain_in_its_own_module(tmp_path: Path) -> None:
+    # The recorded return type is a BARE name. Resolved in the CALLER, where
+    # an unprefixed import brings another `Thing` into scope, the chain bound
+    # `alt.Thing.v`; the factory's own module names `lib.Thing`
+    # (Copilot, PR #2040). The decoy must sort BEFORE `lib`: named
+    # `other.dart` the suffix lookup reached `lib.Thing` first by luck and
+    # the test passed on the unfixed code.
+    files = {
+        "lib.dart": (
+            "class Thing {\n  int get v => 1;\n}\n\nThing make() { return Thing(); }\n"
+        ),
+        "alt.dart": "class Thing {\n  int get v => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\nimport 'alt.dart';\n"
+            "int f() { return p.make().v; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.f", REFERENCES, ".lib.Thing.v"), rels
+    assert not _has(rels, ".app.f", REFERENCES, ".alt.Thing.v"), rels
+
+
+def test_libraries_sharing_a_prefix_are_all_searched(tmp_path: Path) -> None:
+    # Dart lets several imports share one prefix, and `p.Box` names the one
+    # library that defines `Box`. Keeping only the LAST import under `p`
+    # searched `b.dart`, which has no `Box`, and the fold gave up
+    # (CodeRabbit, PR #2040).
+    files = {
+        "a.dart": "class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n",
+        "b.dart": "class Other {\n  int get height => 3;\n}\n",
+        "app.dart": (
+            "import 'a.dart' as p;\nimport 'b.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.genGet", REFERENCES, ".a.Box.height"), rels
+
+
+def test_a_name_both_prefixed_libraries_define_is_not_guessed(tmp_path: Path) -> None:
+    # The same name in two libraries under one prefix is an ambiguous import
+    # in Dart; the fold binds neither rather than picking one.
+    files = {
+        "a.dart": "class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n",
+        "b.dart": "class Box<T> {\n  Box(T v);\n  int get height => 3;\n}\n",
+        "app.dart": (
+            "import 'a.dart' as p;\nimport 'b.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.genGet", REFERENCES, ".b.Box.height"), rels
+    assert not _has(rels, ".app.genGet", REFERENCES, ".a.Box.height"), rels

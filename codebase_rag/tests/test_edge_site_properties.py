@@ -800,3 +800,31 @@ def test_incremental_update_restores_inbound_edges_with_their_sites(
     assert calls[0].kwargs[cs.KEY_PROPERTIES] == site
     assert calls[1].kwargs[cs.KEY_PROPERTIES] is None
     assert "properties(r) AS props" in cs.CYPHER_INBOUND_EDGES
+
+
+DART_PREFIXED_SRC = "import 'util.dart' as u;\n\nclass A {}\n"
+
+
+def test_a_dart_import_prefix_binding_carries_its_site(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`import 'util.dart' as u;` binds the prefix `u` beside the file key.
+
+    The prefix entered the import mapping without a recorded site, so its
+    IMPORTS edge was emitted site-less, losing the span and alias every
+    other binding carries (Copilot, #2040)."""
+    (temp_repo / "util.dart").write_text("int util() => 1;\n", encoding="utf-8")
+    (temp_repo / "a.dart").write_text(DART_PREFIXED_SRC, encoding="utf-8")
+    create_and_run_updater(temp_repo, mock_ingestor, skip_if_missing="dart")
+
+    out_of_a = [
+        props
+        for src, _dst, props in _edges(mock_ingestor, cs.RelationshipType.IMPORTS)
+        if src.endswith(".a")
+    ]
+    assert out_of_a, "no IMPORTS edge out of a.dart"
+    assert all(props is not None and cs.KEY_LINE in props for props in out_of_a), (
+        out_of_a
+    )
+    sited = _import_props(mock_ingestor, ".a")
+    assert _site(sited["u"]) == _span(DART_PREFIXED_SRC, "import 'util.dart' as u;")

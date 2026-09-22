@@ -755,7 +755,7 @@ class ImportProcessor:
         # import_mapping. Kept separately so BOTH imports keep their IMPORTS
         # edge (those come from import_mapping's values) while the name the
         # source writes resolves to the aliased library (Greptile, #2033).
-        self.dart_import_aliases: dict[str, dict[str, str]] = {}
+        self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -4662,11 +4662,18 @@ class ImportProcessor:
                     # its own map rather than overwriting import_mapping,
                     # whose values carry the IMPORTS edges: writing it there
                     # dropped the colliding unprefixed import entirely.
-                    self.dart_import_aliases.setdefault(module_qn, {})[prefix] = (
-                        full_name
-                    )
+                    # Several imports may SHARE a prefix (`import 'a.dart' as
+                    # p; import 'b.dart' as p;`), so every library is kept and
+                    # the fold picks the one defining the name (CodeRabbit,
+                    # PR #2040).
+                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+                        prefix, []
+                    ).append(full_name)
                     if prefix not in self.import_mapping[module_qn]:
                         self.import_mapping[module_qn][prefix] = full_name
+                        # Its IMPORTS edge carries a span and alias like every
+                        # other binding (Copilot, PR #2040).
+                        self._record_import_site(module_qn, prefix, import_node, uri)
                     prefixes.add(prefix)
         # A local or parameter of the same name SHADOWS the prefix inside its
         # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
