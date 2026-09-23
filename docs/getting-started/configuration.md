@@ -125,6 +125,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `WEB_SEARCH_PROVIDER` | `duckduckgo` | Web-search backend: keyless `duckduckgo` or `serpdive`. The web-search tool is registered by default, so searches can send query text to the selected external provider even when this variable is unset. |
 | `SERPDIVE_API_KEY` | _(unset)_ | API key used when `WEB_SEARCH_PROVIDER=serpdive`; without one, web search falls back to DuckDuckGo. |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
+| `CGR_CONTEXT_COMPACTION_ENABLED` | `true` | Drop old tool output once the context passes the critical threshold, keeping a long session inside the model's window. Set to `false` to keep every tool result and accept the ceiling instead; the agent prints a notice whenever it compacts. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama

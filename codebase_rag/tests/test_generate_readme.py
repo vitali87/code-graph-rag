@@ -2,9 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codebase_rag import cli_help as ch
 from codebase_rag.readme_sections import format_cli_commands_table, format_latest_news
-from scripts.generate_readme import TARGET_FILES, replace_sections, update_file
+from scripts import generate_readme
+from scripts.generate_readme import (
+    PROJECT_ROOT,
+    SECTION_PATTERN,
+    TARGET_FILES,
+    marked_sections,
+    replace_sections,
+    unconsumed_sections,
+    update_file,
+)
 
 
 class TestReplaceSections:
@@ -220,3 +231,56 @@ def test_cli_command_table_has_one_markdown_row_per_command() -> None:
 
     assert len(lines) == len(ch.CLI_COMMANDS) + 2
     assert all(line.startswith("|") and line.endswith("|") for line in lines)
+
+
+class TestEveryGeneratedSectionReachesAMarker:
+    """Issue #1929: four generated sections were computed on every run and
+    discarded, because no target file carried their marker."""
+
+    def test_every_generated_section_has_a_marker_in_some_target_file(self) -> None:
+        from codebase_rag.readme_sections import generate_all_sections
+
+        # The expected side is what the FILES carry, scanned independently
+        # of the generator, so the assertion cannot be satisfied by the
+        # generator's own dict.
+        found: set[str] = set()
+        for relative_path in TARGET_FILES:
+            content = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+            found |= {m.group(2) for m in SECTION_PATTERN.finditer(content)}
+        generated = set(generate_all_sections(PROJECT_ROOT))
+        assert generated - found == set()
+        # And the scan is not vacuous: the four that were missing are there.
+        assert {
+            "node_schemas",
+            "relationship_schemas",
+            "cli_commands",
+            "makefile_commands",
+        } <= found
+
+    def test_an_unconsumed_section_is_named(self, tmp_path: Path) -> None:
+        page = tmp_path / "page.md"
+        page.write_text(
+            "<!-- SECTION:foo -->\nx\n<!-- /SECTION:foo -->", encoding="utf-8"
+        )
+        assert marked_sections(page.read_text(encoding="utf-8")) == {"foo"}
+        assert unconsumed_sections({"foo": "a", "bar": "b"}, [page]) == ["bar"]
+        assert unconsumed_sections({"foo": "a"}, [page]) == []
+
+    def test_main_fails_on_an_unconsumed_section(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        page = tmp_path / "page.md"
+        page.write_text(
+            "<!-- SECTION:foo -->\nold\n<!-- /SECTION:foo -->", encoding="utf-8"
+        )
+        monkeypatch.setattr(generate_readme, "PROJECT_ROOT", tmp_path)
+        monkeypatch.setattr(generate_readme, "TARGET_FILES", ("page.md",))
+        monkeypatch.setattr(
+            "codebase_rag.readme_sections.generate_all_sections",
+            lambda _root: {"foo": "new", "orphan": "dropped"},
+        )
+        with pytest.raises(SystemExit) as raised:
+            generate_readme.main()
+        assert raised.value.code == 1
+        # The consumed section was still written before the failure.
+        assert "new" in page.read_text(encoding="utf-8")

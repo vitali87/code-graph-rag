@@ -25,12 +25,14 @@ from ...types_defs import (
     PropertyDict,
     RustTraitImpl,
 )
+from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -891,7 +893,7 @@ class ClassIngestMixin:
         # type declaration IS the written sibling, whichever of the pair the
         # child happens to be. More than one other means a 3+ arity family;
         # refuse rather than guess, matching every other ambiguity tier.
-        natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        natural = qn_markers.natural_qn(entry.child_qn)
         same_scope = [
             qn
             for qn in self.function_registry.variants(natural)
@@ -1156,6 +1158,17 @@ class ClassIngestMixin:
             language,
             class_props,
         )
+        if node_type == NodeType.ENUM:
+            # The variants ride with their enum the way fields ride with
+            # their owner (issue #1807).
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel.ENUM,
+                class_qn,
+                member_node,
+                language,
+                class_props,
+            )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent

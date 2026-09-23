@@ -202,4 +202,11 @@ def test_an_unreadable_but_present_target_is_not_treated_as_deleted(
     assert any(
         qn.startswith("proj.module_a") for qn in updater.function_registry.keys()
     ), "the unreadable target lost its definitions"
-    assert _cache(temp_repo).get("module_a.py") == before["module_a.py"]
+    # The entry survives, carrying the retry mark every unreadable path gets
+    # (#1983): the single-file run merges its entries over the previous
+    # cache. A kept digest would be re-parsed too, because a single-file run
+    # keeps the previous cache stamp and the edited file stays newer than it;
+    # the mark only adds one redundant re-parse of a file that was unreadable
+    # but unchanged (bot review).
+    assert before["module_a.py"] != cs.HASH_CACHE_UNREADABLE
+    assert _cache(temp_repo).get("module_a.py") == cs.HASH_CACHE_UNREADABLE
