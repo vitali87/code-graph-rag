@@ -415,6 +415,14 @@ class AppConfig(BaseSettings):
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
+    # Compaction discards old tool output to bound the context (#1500). It is
+    # on by default because an unbounded history eventually fails the request
+    # outright, but a mechanism that drops data must be declinable: set this
+    # false to keep every tool result and accept the ceiling.
+    CONTEXT_COMPACTION_ENABLED: bool = Field(
+        True, validation_alias="CGR_CONTEXT_COMPACTION_ENABLED"
+    )
+
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
     # Loopback by default: the StreamableHTTP endpoint has no built-in
