@@ -35,6 +35,7 @@ LABEL_TO_ONEOF_FIELD: dict[cs.NodeLabel, str] = {
     cs.NodeLabel.GLOSS: cs.ONEOF_GLOSS,
     cs.NodeLabel.PARAMETER: cs.ONEOF_PARAMETER,
     cs.NodeLabel.FIELD: cs.ONEOF_FIELD,
+    cs.NodeLabel.ENUM_VARIANT: cs.ONEOF_ENUM_VARIANT,
 }
 
 ONEOF_FIELD_TO_LABEL: dict[str, cs.NodeLabel] = {
