@@ -1435,19 +1435,12 @@ class CallResolver:
                 return result
             if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
                 return None
-
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
             if use_cache:
                 self._remember(cache_key, result)
             return result
-
-        if (
-            language == cs.SupportedLanguage.CSHARP
-            and self._csharp_dotted_path_shadowed(call_name, local_var_types)
-        ):
-            return None
 
         if result := self._try_resolve_same_module(call_name, module_qn, call_point):
             if use_cache:
@@ -2136,10 +2129,13 @@ class CallResolver:
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         if language == cs.SupportedLanguage.CSHARP:
-            if result := self._try_resolve_csharp_qualified_call(
+            result, decided = self._resolve_csharp_qualified_call(
                 call_name, module_qn, local_var_types
-            ):
+            )
+            if result is not None:
                 return result
+            if decided:
+                return None
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
         elif cs.CHAR_COLON in call_name:
@@ -2230,8 +2226,36 @@ class CallResolver:
             if cs.SEPARATOR_DOT not in member_name:
                 if inherited := self._resolve_inherited_method(class_qn, member_name):
                     return inherited, True
+            # A namespace-qualified type owns the path even when the member is
+            # missing; an unqualified value receiver may still be a field chain.
+            return None, True
+        if (
+            not is_global
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and self._csharp_path_starts_with_imported_namespace(parts, module_qn)
+        ):
             return None, True
         return None, False
+
+    def _csharp_path_starts_with_imported_namespace(
+        self, parts: list[str], module_qn: str
+    ) -> bool:
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        namespaces = {
+            namespace
+            for module_namespaces in self.import_processor._csharp_module_namespaces.values()
+            for namespace in module_namespaces
+        }
+        for cut in range(len(parts), 0, -1):
+            prefix = cs.SEPARATOR_DOT.join(parts[:cut])
+            local_name, separator, remainder = prefix.partition(cs.SEPARATOR_DOT)
+            imported = import_map.get(local_name)
+            if imported is None:
+                continue
+            expanded = f"{imported}{separator}{remainder}" if separator else imported
+            if expanded in namespaces:
+                return True
+        return False
 
     def _has_separator(self, call_name: str) -> bool:
         return (

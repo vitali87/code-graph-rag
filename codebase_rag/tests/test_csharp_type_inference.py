@@ -69,6 +69,7 @@ public class Widget {
     public static void AliasS() {}
     public static void DottedOnlyInOther() {}
     public static void GlobalS() {}
+    public static void DottedQualifiedMissDecoy() {}
 }
 """,
         encoding="utf-8",
@@ -104,7 +105,7 @@ public class Q {
         Z::GenericWidget<int>.GenericS();
     }
     public void RunDottedMissing() {
-        Z.Widget.DottedOnlyInOther();
+        Z.Widget.DottedQualifiedMissDecoy();
     }
     public void RunMissing() {
         Missing::MissingQualifiedDecoy();
@@ -153,7 +154,7 @@ public class Q {
     ), calls
     assert not any(
         source.endswith("Q.RunDottedMissing")
-        and target.endswith("Other.Widget.DottedOnlyInOther")
+        and target.endswith("Other.Widget.DottedQualifiedMissDecoy")
         for source, target in calls
     ), calls
     assert not any(target.endswith("Other.Widget") for _, target in instantiates), (
@@ -444,7 +445,8 @@ def test_local_value_shadows_dotted_type_receiver(
 ) -> None:
     (csharp_project / "Shadow.cs").write_text(
         """
-namespace Lib { public class Widget { public static void Ping() {} } }
+using Lib = AliasLib;
+namespace AliasLib { public class Widget { public static void Ping() {} } }
 namespace N {
     public class Widget { public void Ping() {} }
     public class Holder { public N.Widget Widget; }
