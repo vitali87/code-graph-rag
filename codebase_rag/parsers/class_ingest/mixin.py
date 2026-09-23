@@ -32,6 +32,7 @@ from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -1167,6 +1168,17 @@ class ClassIngestMixin:
             language,
             class_props,
         )
+        if node_type == NodeType.ENUM:
+            # The variants ride with their enum the way fields ride with
+            # their owner (issue #1807).
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel.ENUM,
+                class_qn,
+                member_node,
+                language,
+                class_props,
+            )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
