@@ -122,6 +122,7 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 | `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
+| `CGR_CONTEXT_COMPACTION_ENABLED` | `true` | Drop old tool output once the context passes the critical threshold, keeping a long session inside the model's window. Set to `false` to keep every tool result and accept the ceiling instead; the agent prints a notice whenever it compacts. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama
