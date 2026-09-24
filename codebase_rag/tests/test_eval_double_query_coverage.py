@@ -362,7 +362,7 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
         )
         assert store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md")
 
-        store._delete_module_subtree("doc.md")
+        store._delete_module_subtree("doc.md", "proj", "proj.")
 
         assert not store._nodes_at_path(cs.NodeLabel.SECTION.value, "doc.md"), (
             "the Section outlived its Module's re-parse, which production's "
@@ -395,7 +395,7 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
             (cs.NodeLabel.SECTION.value, cs.KEY_QUALIFIED_NAME, "proj.doc.Top.Nested"),
         )
 
-        store._delete_module_subtree("doc.md")
+        store._delete_module_subtree("doc.md", "proj", "proj.")
 
         survivors = {
             uid
@@ -406,3 +406,66 @@ class TestTheModuleSubtreeWalkMirrorsTheDeleteQuery:
         assert survivors == set(), (
             f"subsections outlived the re-parse: {sorted(survivors)}"
         )
+
+
+class TestTheModuleDeleteIsProjectScoped:
+    """CYPHER_DELETE_MODULE matches a module only when its qn is the project
+    name or starts with the project prefix; the double deleted every module
+    at the path, whichever project owned it (issue #2172)."""
+
+    @staticmethod
+    def _store_with(*modules: tuple[str, str]) -> _StatefulIngestor:
+        store = _StatefulIngestor()
+        for qn, path in modules:
+            store.ensure_node_batch(
+                cs.NodeLabel.MODULE.value,
+                {cs.KEY_QUALIFIED_NAME: qn, cs.KEY_PATH: path},
+            )
+        return store
+
+    @staticmethod
+    def _module_qns(store: _StatefulIngestor) -> set[str]:
+        return {
+            str(props[cs.KEY_QUALIFIED_NAME])
+            for (label, _uid), props in store.nodes.items()
+            if label == cs.NodeLabel.MODULE.value
+        }
+
+    @staticmethod
+    def _delete(store: _StatefulIngestor, path: str, project: str) -> None:
+        store.execute_write(
+            cs.CYPHER_DELETE_MODULE,
+            {
+                cs.KEY_PATH: path,
+                cs.KEY_PROJECT_NAME: project,
+                cs.KEY_PROJECT_PREFIX: f"{project}.",
+            },
+        )
+
+    def test_a_sibling_project_at_the_same_path_survives(self) -> None:
+        store = self._store_with(("svc.api", "api.py"), ("other.api", "api.py"))
+
+        self._delete(store, "api.py", "svc")
+
+        assert self._module_qns(store) == {"other.api"}
+
+    def test_the_named_project_alone_goes(self) -> None:
+        store = self._store_with(("svc.api", "api.py"), ("other.api", "api.py"))
+
+        self._delete(store, "api.py", "other")
+
+        assert self._module_qns(store) == {"svc.api"}
+
+    def test_a_root_module_whose_qn_is_the_project_name_goes(self) -> None:
+        store = self._store_with(("proj", "__init__.py"), ("other", "__init__.py"))
+
+        self._delete(store, "__init__.py", "proj")
+
+        assert self._module_qns(store) == {"other"}
+
+    def test_a_delete_without_a_project_scope_matches_nothing(self) -> None:
+        store = self._store_with(("proj.api", "api.py"))
+
+        store.execute_write(cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: "api.py"})
+
+        assert self._module_qns(store) == {"proj.api"}
