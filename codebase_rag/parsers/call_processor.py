@@ -5236,7 +5236,7 @@ class CallProcessor:
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or registry.get(class_qn) != NodeType.CLASS:
             return
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         is_ctor = leaf == simple
         is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         if not is_ctor and not is_dtor:
@@ -5399,16 +5399,25 @@ class CallProcessor:
         # neither has a call node, so both get the redirect. sorted(): the
         # target label is a hash-randomized StrEnum, so sort for determinism.
         registry = self._resolver.function_registry
-        targets = self._resolver.java_constructor_targets(
-            class_qn
-        ) | self._resolver.cpp_destructor_targets(class_qn)
-        for target_type, target_qn in sorted(targets):
-            for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+        emitted_target_qns: set[tuple[str, str]] = set()
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            targets = self._resolver.java_constructor_targets(
+                class_variant
+            ) | self._resolver.cpp_destructor_targets(class_variant)
+            for target_type, target_qn in sorted(targets):
+                target_key = (target_type, target_qn)
+                if target_key in emitted_target_qns:
+                    continue
+                emitted_target_qns.add(target_key)
+                for variant in registry.variants(target_qn):
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
 
     @staticmethod
     def _cpp_member_init_head_name(initializer: Node) -> str | None:

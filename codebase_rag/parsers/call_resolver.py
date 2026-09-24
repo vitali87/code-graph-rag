@@ -1076,7 +1076,9 @@ class CallResolver:
             if current in seen:
                 continue
             seen.add(current)
-            simple = current.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            simple = qn_markers.strip_dup_marker(
+                current.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
             dtor_qn = f"{current}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
             dtor_type = self.function_registry.get(dtor_qn)
             if dtor_type is not None:
