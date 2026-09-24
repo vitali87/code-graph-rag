@@ -984,6 +984,15 @@ KEY_HASHES = "hashes"
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
+# The text-quote anchor (issue #1808, stage five): digests of the subject's
+# own text with its name masked, and of the non-blank lines either side of
+# it. Versioned like the hash so a later format is never compared to this one.
+KEY_ANCHOR_QUOTE = "anchor_quote"
+KEY_ANCHOR_PREFIX = "anchor_prefix"
+KEY_ANCHOR_SUFFIX = "anchor_suffix"
+ANCHOR_QUOTE_VERSION = "aq1:"
+# Non-blank lines of context digested on each side of a definition.
+ANCHOR_CONTEXT_LINES = 3
 KEY_WRITE_ID = "write_id"
 KEY_CANDIDATES = "candidates"
 KEY_ORPHANED = "orphaned"

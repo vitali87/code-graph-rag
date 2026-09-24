@@ -36,11 +36,12 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
 from . import graph_query
+from .gloss_anchor import SourceReader, TextAnchor, text_anchor
 from .graph_query import QueryFn, SymbolRow
 from .types_defs import PropertyDict, ResultRow
 
@@ -144,13 +145,54 @@ def _split_mentions(mentions: str | None) -> list[str]:
     return [part.strip() for part in mentions.split(cs.CHAR_COMMA) if part.strip()]
 
 
-def _target_hash(fetch_all: QueryFn, project_name: str, target_qn: str) -> str | None:
+class _TargetFacts(NamedTuple):
+    """What the subject's own node says at write time."""
+
+    target_hash: str | None
+    anchor: TextAnchor | None
+
+
+def _target_facts(
+    fetch_all: QueryFn,
+    project_name: str,
+    target_qn: str,
+    read_source: SourceReader | None,
+) -> _TargetFacts:
     rows = fetch_all(
         cq.CYPHER_GLOSS_TARGET,
         {cs.KEY_QN: target_qn, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
     )
-    value = rows[0].get(cs.KEY_TARGET_HASH) if rows else None
-    return value if isinstance(value, str) else None
+    if not rows:
+        return _TargetFacts(None, None)
+    row = rows[0]
+    value = row.get(cs.KEY_TARGET_HASH)
+    return _TargetFacts(
+        value if isinstance(value, str) else None,
+        _anchor_of(row, project_name, read_source),
+    )
+
+
+def _anchor_of(
+    row: ResultRow, project_name: str, read_source: SourceReader | None
+) -> TextAnchor | None:
+    # The quote needs the subject's text, which only a caller rooted at the
+    # project's own checkout can supply; without one the note carries no
+    # quote and the repair chain stops at the hash tier for it.
+    path = row.get(cs.KEY_PATH)
+    start = row.get(cs.KEY_START_LINE)
+    end = row.get(cs.KEY_END_LINE)
+    name = row.get(cs.KEY_NAME)
+    if (
+        read_source is None
+        or not isinstance(path, str)
+        or not isinstance(start, int)
+        or not isinstance(end, int)
+    ):
+        return None
+    source = read_source(project_name, path)
+    if source is None:
+        return None
+    return text_anchor(source, name if isinstance(name, str) else None, start, end)
 
 
 def _gloss_row(row: ResultRow) -> GlossRow:
@@ -205,6 +247,7 @@ def write_gloss(
     mentions: str | None = None,
     author: str | None = None,
     commit_sha: str | None = None,
+    read_source: SourceReader | None = None,
 ) -> GlossRow | GlossRefusal:
     """Attach a note to the definition `target` names and return it as stored.
 
@@ -215,7 +258,9 @@ def write_gloss(
     author and creation time, and replaces its mentions. `mentions` is a
     comma-separated list of further definitions the note talks about; each
     becomes a `MENTIONS` edge and each is held to the same resolution rule as
-    the subject.
+    the subject. `read_source` supplies the subject's file text so the note
+    can record its text-quote anchor (`gloss_anchor`); without it, or when
+    the file cannot be read, the note simply carries no quote.
     """
     text = body.strip()
     if not text:
@@ -244,6 +289,7 @@ def write_gloss(
 
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
+    facts = _target_facts(fetch_all, project_name, target_qn, read_source)
     # A None here unsets the property (Cypher SET with null), so a gloss on a
     # target without a fingerprint, or written outside a checkout, simply
     # lacks that property rather than carrying a placeholder.
@@ -258,7 +304,10 @@ def write_gloss(
         cs.KEY_CREATED_BY: (author or "").strip() or cs.GLOSS_DEFAULT_AUTHOR,
         cs.KEY_CREATED_AT: datetime.now(UTC).isoformat(timespec="seconds"),
         cs.KEY_COMMIT_SHA: commit_sha or None,
-        cs.KEY_TARGET_HASH: _target_hash(fetch_all, project_name, target_qn),
+        cs.KEY_TARGET_HASH: facts.target_hash,
+        cs.KEY_ANCHOR_QUOTE: facts.anchor.quote if facts.anchor else None,
+        cs.KEY_ANCHOR_PREFIX: facts.anchor.prefix if facts.anchor else None,
+        cs.KEY_ANCHOR_SUFFIX: facts.anchor.suffix if facts.anchor else None,
         # Recorded, not derived: a project name may contain dots, so the
         # repair pass cannot read it back off `target_qn` (local review).
         cs.KEY_PROJECT_NAME: project_name,

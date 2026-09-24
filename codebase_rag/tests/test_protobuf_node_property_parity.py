@@ -67,7 +67,9 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     "Module": frozenset(
         {"absolute_path", "end_line", "start_line", "unresolved_specifiers"}
     ),
-    "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
+    "Class": frozenset(
+        {"anchor_hash", "absolute_path", "modifiers", "path", "start_col"}
+    ),
     "Field": frozenset({"absolute_path"}),
     "EnumVariant": frozenset({"absolute_path"}),
     # `positional_params` (issue #227) is the one entry here added with a
@@ -112,6 +114,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Interface": frozenset(
         {
+            "anchor_hash",
             "decorators",
             "docstring",
             "end_line",
@@ -123,6 +126,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Enum": frozenset(
         {
+            "anchor_hash",
             "decorators",
             "docstring",
             "end_line",
@@ -134,6 +138,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Type": frozenset(
         {
+            "anchor_hash",
             "absolute_path",
             "decorators",
             "docstring",
@@ -147,6 +152,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Union": frozenset(
         {
+            "anchor_hash",
             "absolute_path",
             "decorators",
             "docstring",
