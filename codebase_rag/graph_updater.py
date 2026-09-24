@@ -2105,6 +2105,12 @@ class GraphUpdater:
         # cleanup prunes the outdated endpoint node.
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        # With the registry unread, ownership degrades to the prefix rule and
+        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # emission only MERGEs, and the next healthy run cleans up
+        # (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
@@ -2136,6 +2142,10 @@ class GraphUpdater:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
         if not isinstance(self.ingestor, QueryProtocol):
+            return
+        # Same reason as the handler cleanup: a seeded module map can hold a
+        # sibling project's modules when the registry could not be read.
+        if self._registry_unread:
             return
         try:
             self.ingestor.execute_write(

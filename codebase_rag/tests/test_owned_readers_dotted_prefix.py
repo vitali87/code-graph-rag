@@ -117,3 +117,40 @@ def test_route_modules_read_nothing_when_the_registry_is_unread(
     down.__dict__.update(updater.ingestor.__dict__)
     blind = _updater(tmp_path / "svc", down, "svc")
     assert blind._graph_route_module_paths() == []
+
+
+class _RecordingStore(_StatefulIngestor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.written: list[str] = []
+
+    def execute_write(self, query, params=None):  # type: ignore[override]
+        self.written.append(query)
+        return super().execute_write(query, params)
+
+
+def test_neither_exposes_cleanup_deletes_when_the_registry_is_unread(
+    tmp_path: Path,
+) -> None:
+    """Both EXPOSES cleanups are deletes fed by readers the prefix rule can
+    mislead: the seeded module map and the rehydrated handler names. With the
+    registry unread neither delete runs, the whole cleanup deferred to the
+    next healthy run (CodeRabbit, PR #2129)."""
+    from codebase_rag.graph_updater import CYPHER_DELETE_HANDLER_EXPOSES
+    from codebase_rag.parsers.endpoint_routes import CYPHER_DELETE_MODULE_EXPOSES
+
+    store = _RecordingStore()
+    updater = _updater(tmp_path, store, "svc")
+    updater._registry_unread = True
+    updater._drop_stale_handler_exposes(["svc.v2.api.items"])
+    updater._drop_stale_module_exposes(["svc.v2.routes"])
+    assert not {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} & set(
+        store.written
+    ), store.written
+
+    updater._registry_unread = False
+    updater._drop_stale_handler_exposes(["svc.api.items"])
+    updater._drop_stale_module_exposes(["svc.routes"])
+    assert {CYPHER_DELETE_HANDLER_EXPOSES, CYPHER_DELETE_MODULE_EXPOSES} <= set(
+        store.written
+    ), store.written
