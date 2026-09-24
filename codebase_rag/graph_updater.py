@@ -1,5 +1,6 @@
 """Orchestrate parsing a repository into graph nodes and edges and ingest them."""
 
+import errno
 import hashlib
 import json
 import os
@@ -29,6 +30,8 @@ from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_namespaced_from_graph,
+    csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -165,6 +168,46 @@ type DirMtimesCache = dict[str, float]
 
 
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
+
+
+_PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+# Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
+# CPython maps to EINVAL rather than ELOOP (bot review).
+_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _is_gone_error(exc: OSError) -> bool:
+    return (
+        exc.errno in _PATH_GONE_ERRNOS
+        or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def _vanished(filepath: Path) -> bool:
+    """Whether an unreadable path is GONE rather than unreachable: the path
+    is absent, or a symlink whose target is. Judged without following the
+    link and without `exists()`, which reads a permission failure on the
+    file or its directory as absence (issue #1983)."""
+    # ENOTDIR here means an ancestor is now a regular file, so the path can
+    # never exist again; reading it as "not gone" kept its subtree through
+    # every orphan prune (bot review). Only a permission-style failure is
+    # left as unreachable.
+    try:
+        os.lstat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    if not filepath.is_symlink():
+        return False
+    # A link with no target at all is gone: dangling, a cycle, or a target
+    # path through a non-directory. Retrying one would mark the cache
+    # `unreadable` on every run for as long as the link stays broken (bot
+    # review). A link whose target exists but cannot be reached is not gone,
+    # and `Path.exists()` would raise on that (bot review).
+    try:
+        os.stat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    return False
 
 
 def _hash_file(filepath: Path) -> str:
@@ -936,6 +979,8 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Registered project names, read once per run (issue #1970).
+        self._registered_projects: list[str] | None = None
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1644,6 +1689,7 @@ class GraphUpdater:
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
         self._parser_changed = False
+        self._registered_projects = None
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2300,8 +2346,11 @@ class GraphUpdater:
             # A full build re-parses every file: ingest queues everything.
             return
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2338,7 +2387,10 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -2358,6 +2410,48 @@ class GraphUpdater:
                 )
             )
 
+    def _registered_project_names(self) -> list[str]:
+        """Every project the graph holds, longest name first, read once per
+        run. Degrades to this project alone, which keeps the prefix rule."""
+        if self._registered_projects is not None:
+            return self._registered_projects
+        names: set[str] = {self.project_name}
+        try:
+            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            rows = []
+        for row in rows:
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.add(name)
+        registered = sorted(names, key=lambda name: len(name), reverse=True)
+        self._registered_projects = registered
+        return registered
+
+    def _owns(self, qn: str) -> bool:
+        """Whether this project, not another whose name it is a dotted prefix
+        of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
+        $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
+        is the LONGEST registered project name the qn sits under, the way
+        `gloss_repair._projects_of` decides it (issue #1970)."""
+        if qn != self.project_name and not qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        for name in self._registered_project_names():
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == self.project_name
+        return True
+
+    def _owned_rows(self, rows: list[ResultRow], key: str) -> list[ResultRow]:
+        """`rows` whose `key` names a qualified name this project owns."""
+        return [
+            row
+            for row in rows
+            if isinstance(qn := row.get(key), str) and self._owns(qn)
+        ]
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2370,7 +2464,10 @@ class GraphUpdater:
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
+            )
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -2407,6 +2504,36 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # The C# declared-form index (issue #1629) is filled only by
+                # parsing; an unchanged type must stay reachable by `N.Widget`
+                # from a re-parsed base list or receiver (bot review).
+                if node_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ) and path.endswith(cs.EXT_CS):
+                    namespace = row.get(cs.KEY_NAMESPACE)
+                    namespaced = csharp_namespaced_from_graph(
+                        qn,
+                        path,
+                        self.project_name,
+                        namespace if isinstance(namespace, str) else None,
+                    )
+                    processor = self.factory.definition_processor
+                    # Rejoin the partial group parsing would have given it,
+                    # under the same key, so a declared name spanning
+                    # unchanged parts stays one type; a lone type's group of
+                    # one reads exactly as no group (bot review).
+                    if key := csharp_partial_key_from_graph(
+                        qn, path, self.project_name
+                    ):
+                        group = processor._csharp_partial_index.setdefault(key, [])
+                        group.append(qn)
+                        processor.csharp_partial_groups[qn] = group
+                    if namespaced:
+                        processor.csharp_class_namespaced[qn] = namespaced
+                        processor.csharp_namespaced_qns.setdefault(
+                            namespaced, set()
+                        ).add(qn)
                 # Persisted annotations of UNCHANGED definitions rejoin the
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
@@ -2432,8 +2559,9 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_MODULE_QNS, project_params
+            module_rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2498,6 +2626,13 @@ class GraphUpdater:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
@@ -2594,9 +2729,12 @@ class GraphUpdater:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_INHERITS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_INHERITS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
             )
         except Exception:
             if not self._is_full_build:
@@ -2652,9 +2790,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2693,9 +2834,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2744,7 +2888,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -3600,6 +3746,15 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # Same ownership, same reason (issue #1629): every C# class has
+            # an entry, not only the generic ones #1769's sweep covers.
+            namespaced = processor.csharp_class_namespaced.pop(qn, None)
+            if namespaced is not None:
+                carriers = processor.csharp_namespaced_qns.get(namespaced)
+                if carriers is not None:
+                    carriers.discard(qn)
+                    if not carriers:
+                        del processor.csharp_namespaced_qns[namespaced]
             # The owner record goes with them: it names a file this updater
             # no longer has, and keeping it would re-sweep the same qn on the
             # next deletion of a file that happens to reuse the module qn.
@@ -3636,11 +3791,17 @@ class GraphUpdater:
         except Exception:
             return None
         try:
+            # A row without a qualified name (an older reader's shape) keeps
+            # the prefix rule the query itself applied.
             return frozenset(
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
                 and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and (
+                    not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    or self._owns(qn)
+                )
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -3904,6 +4065,10 @@ class GraphUpdater:
                     return False
 
         for file_key, old_hash in old_hashes.items():
+            if old_hash == cs.HASH_CACHE_UNREADABLE:
+                # A file the last run could not read is retried by the next
+                # real pass, whatever its directory's mtime says (#1983).
+                return False
             file_path_str = f"{repo_str}/{file_key}"
             try:
                 stat = os.stat(file_path_str)
@@ -4246,8 +4411,23 @@ class GraphUpdater:
                         continue
                     unreadable_count += 1
                     unreadable_keys.add(file_key)
+                    # Marked for retry unless the path is GONE (vanished, or
+                    # a broken symlink): those would refuse the fast path on
+                    # every later run. A file that exists but cannot be
+                    # reached (a permission failure on it or its directory)
+                    # is marked; `exists()` alone reads such a file as gone
+                    # (bot review).
+                    if not _vanished(filepath):
+                        new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                     continue
-                if file_mtime <= cache_mtime:
+                # A file marked unreadable by the previous run is hashed
+                # whatever its mtime: the mark is not a digest, so the
+                # comparison below sees a change and the file is re-parsed
+                # as a KNOWN file, its old subtree deleted first (#1983).
+                if (
+                    file_mtime <= cache_mtime
+                    and old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
+                ):
                     new_hashes[file_key] = old_hashes[file_key]
                     current_file_keys.add(file_key)
                     skipped_count += 1
@@ -4264,6 +4444,8 @@ class GraphUpdater:
                     continue
                 unreadable_count += 1
                 unreadable_keys.add(file_key)
+                if not _vanished(filepath):
+                    new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             current_hash, file_bytes = hashed
             # The hash keys the CHECKED-IN source (cache invalidation follows
@@ -4568,6 +4750,14 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         if self._single_file is None:
             self._pending_hash_cache = (cache_path, new_hashes)
+            # A file this run could not read carries the unreadable mark in
+            # the cache: the next run's in-sync check refuses on it and the
+            # pass hashes it whatever its mtime, so it is retried as a KNOWN
+            # file with its old subtree deleted first (issue #1983).
+            if unreadable_keys:
+                logger.warning(
+                    ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
+                )
             self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         else:
             # Two different remedies, because the run has different standing
@@ -4630,13 +4820,23 @@ class GraphUpdater:
         # the fingerprint it parsed under; a single-file run did not, and
         # leaves the stale stamp for the next project run (issue #1977).
         # Only a run that actually covered the project may vouch for the
-        # parser it parsed under. A file this run could not read keeps its
-        # old subtree, and an unknown graph state means the delete-before-
-        # reingest could not be scoped; in both cases some old parser's
-        # edges survive. Stamping anyway makes the NEXT run read back a
-        # matching fingerprint, skip the staleness warning, and fast-path
-        # over exactly those rows -- permanently (bot review).
-        covered_the_project = not unreadable_keys and not self._graph_state_unknown
+        # parser it parsed under. An unknown graph state means the delete-
+        # before-reingest could not be scoped, so some old parser's edges
+        # survive, and stamping anyway makes the NEXT run read back a
+        # matching fingerprint and fast-path over exactly those rows --
+        # permanently (bot review). A file this run could not read keeps its
+        # old subtree too, but one carrying the unreadable mark cannot be
+        # fast-pathed over: the next run refuses the in-sync check on the
+        # mark and re-parses the file under the current parser, old subtree
+        # deleted first (#1983). Holding the stamp back for it would re-index
+        # every file to repair one. An unreadable file left UNMARKED (its
+        # path is gone) still holds the stamp back.
+        unmarked_unreadable = {
+            key
+            for key in unreadable_keys
+            if new_hashes.get(key) != cs.HASH_CACHE_UNREADABLE
+        }
+        covered_the_project = not unmarked_unreadable and not self._graph_state_unknown
         if covered_the_project and (
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
@@ -5617,6 +5817,8 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -5999,7 +6201,14 @@ class GraphUpdater:
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
-                if stale_kind or not (self.repo_path / path).exists():
+                # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
+                # re-raises PermissionError instead of reading it as
+                # absence, so a link whose target sits behind an
+                # unreadable directory aborted the whole run HERE -- after
+                # the unreadable branch had marked it for retry but before
+                # that marker could commit, so the retry this PR adds never
+                # landed (bot review on PR #1993).
+                if stale_kind or _vanished(self.repo_path / path):
                     # File/Folder deletes key on the absolute path: a sibling
                     # project's node can share the relative path (issue #897).
                     key = (

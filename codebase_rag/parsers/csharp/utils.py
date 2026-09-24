@@ -58,14 +58,75 @@ def _normalize_type_name(text: str) -> str:
     # binds), and whitespace, so a parameter signature is stable and matches
     # the registered, generic-free type names. Array brackets are kept (they
     # distinguish overloads).
-    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
+    normalized: list[str] = []
+    generic_depth = 0
+    for char in text:
+        if char == cs.CHAR_ANGLE_OPEN:
+            generic_depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
+            generic_depth -= 1
+        elif generic_depth == 0:
+            normalized.append(char)
+    return "".join(normalized).strip().rstrip(cs.CHAR_QUESTION_MARK)
+
+
+def strip_generic_arguments(text: str) -> str:
+    """A type path with every segment's generic arguments removed.
+
+    `Lib.Util<int>.Helper<T>` -> `Lib.Util.Helper`: unlike a cut at the
+    first `<`, a generic NON-LEAF segment keeps the segments after it.
+    """
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            out.append(ch)
+    return "".join(out).replace(" ", "")
+
+
+def leaf_type_segment(text: str) -> str:
+    """The last segment of a type path, split at the last dot OUTSIDE generic
+    arguments: `Lib.Helper<System.String>` -> `Helper<System.String>`, where a
+    plain rsplit would hand back `String>`.
+    """
+    depth = 0
+    cut = -1
+    for index, ch in enumerate(text):
+        if ch == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif ch == cs.CHAR_ANGLE_CLOSE:
+            depth = max(depth - 1, 0)
+        elif ch == cs.SEPARATOR_DOT and depth == 0:
+            cut = index
+    return text[cut + 1 :]
 
 
 def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
     # disambiguate same-simple-name generic/non-generic type declarations.
-    open_idx = text.find(cs.CHAR_ANGLE_OPEN)
+    leaf_start = 0
+    depth = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and depth:
+            depth -= 1
+        elif depth == 0:
+            if text.startswith(cs.SEPARATOR_DOUBLE_COLON, index):
+                leaf_start = index + len(cs.SEPARATOR_DOUBLE_COLON)
+                index += len(cs.SEPARATOR_DOUBLE_COLON) - 1
+            elif char == cs.SEPARATOR_DOT:
+                leaf_start = index + 1
+        index += 1
+
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN, leaf_start)
     if open_idx < 0:
         return 0
     depth = 0
@@ -134,6 +195,105 @@ def extract_parameter_type_names(method_node: Node) -> list[str]:
     return types
 
 
+_CSHARP_TYPE_DECLARATIONS = frozenset(
+    {
+        cs.TS_CSHARP_CLASS_DECLARATION,
+        cs.TS_CSHARP_STRUCT_DECLARATION,
+        cs.TS_CSHARP_RECORD_DECLARATION,
+        cs.TS_CSHARP_INTERFACE_DECLARATION,
+        cs.TS_CSHARP_ENUM_DECLARATION,
+    }
+)
+
+
+def _declared_name(node: Node) -> str | None:
+    name_node = node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+    if name_node is None or not name_node.text:
+        return None
+    return safe_decode_text(name_node)
+
+
+def _file_scoped_namespace(unit: Node) -> str | None:
+    # A file-scoped `namespace N;` is a SIBLING of the declarations it
+    # governs under the compilation unit, not their ancestor.
+    for child in unit.children:
+        if child.type == cs.TS_CSHARP_FILE_SCOPED_NAMESPACE_DECLARATION:
+            return _declared_name(child)
+    return None
+
+
+def _scope_of(node: Node) -> tuple[bool, str] | None:
+    # (is namespace, name) when `node` is a scope the qualified name walks.
+    if node.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+        name = _declared_name(node)
+        return (True, name) if name else None
+    if node.type in _CSHARP_TYPE_DECLARATIONS:
+        name = _declared_name(node)
+        return (False, name) if name else None
+    if node.type == cs.TS_CSHARP_COMPILATION_UNIT:
+        name = _file_scoped_namespace(node)
+        return (True, name) if name else None
+    return None
+
+
+def _enclosing_scopes(node: Node) -> tuple[list[str], list[str]]:
+    # (namespace segments, enclosing type names) of `node`, outermost first.
+    # Block namespaces are ancestors and nest; the file-scoped one is read
+    # from the compilation unit.
+    namespaces: list[str] = []
+    types: list[str] = []
+    current = node.parent
+    while current is not None:
+        scope = _scope_of(current)
+        if scope is not None:
+            (namespaces if scope[0] else types).append(scope[1])
+        current = current.parent
+    namespaces.reverse()
+    types.reverse()
+    return namespaces, types
+
+
+def declared_namespace(node: Node) -> str | None:
+    """The dotted namespace `node` is declared in, or None at the top level."""
+    namespaces, _types = _enclosing_scopes(node)
+    return cs.SEPARATOR_DOT.join(namespaces) if namespaces else None
+
+
+def namespace_qualified_name(type_node: Node) -> str | None:
+    """`N1.Outer.Widget` for a type declaration: namespace, enclosing types,
+    own name. Read from the declaration rather than the qualified name,
+    because a namespace the module's directory already spells is not in the
+    qn (issue #1629). None for a declaration with no name: its enclosing
+    path alone would be the key of the type that encloses it (bot review)."""
+    own = _declared_name(type_node)
+    if not own:
+        return None
+    namespaces, types = _enclosing_scopes(type_node)
+    return cs.SEPARATOR_DOT.join([*namespaces, *types, own])
+
+
+def unique_carrier(
+    carriers: set[str] | None, partial_groups: dict[str, list[str]]
+) -> str | None:
+    """The one class a declared name (`N.Widget`) names, or None.
+
+    Several carriers are either the parts of ONE partial type, any of which
+    spans the group, or two independent projects that each declare the name
+    in their own directory; the latter must not be merged across assembly
+    boundaries, so it is left unresolved like every other ambiguity here
+    (bot review on #1999).
+    """
+    if not carriers:
+        return None
+    if len(carriers) == 1:
+        return next(iter(carriers))
+    ordered = sorted(carriers)
+    group = partial_groups.get(ordered[0])
+    if group is not None and all(partial_groups.get(qn) is group for qn in ordered):
+        return ordered[0]
+    return None
+
+
 def extension_receiver_type(method_node: Node) -> str | None:
     # For an extension method, the normalized type of its receiver: the first
     # parameter, whose first modifier is `this` (`static int WordCount(this
@@ -164,8 +324,6 @@ def index_extension_method(
     store: dict[str, list[tuple[str, str, str, int]]],
     ingested_qn: str,
     method_node: Node,
-    class_qn: str,
-    module_qn: str | None,
 ) -> None:
     # Index an extension method by simple name + receiver type + declaring
     # namespace so a `recv.Ext()` call binds to the static method even though it
@@ -196,18 +354,10 @@ def index_extension_method(
     # The extension's declaring namespace (its class's namespace-qualified name
     # minus the class leaf) so an unqualified `this Widget` can resolve to
     # `<namespace>.Widget` against a qualified call receiver. Empty for a
-    # top-level (namespace-less) class.
-    ns_qualified_class = (
-        class_qn[len(module_qn) + 1 :]
-        if module_qn is not None
-        and class_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
-        else class_qn
-    )
-    ext_namespace = (
-        ns_qualified_class.rsplit(cs.SEPARATOR_DOT, 1)[0]
-        if cs.SEPARATOR_DOT in ns_qualified_class
-        else ""
-    )
+    # top-level (namespace-less) class. Read from the declaration: the qn no
+    # longer carries a namespace the directory spells (issue #1629).
+    namespaces, enclosing_types = _enclosing_scopes(method_node)
+    ext_namespace = cs.SEPARATOR_DOT.join([*namespaces, *enclosing_types[:-1]])
     store.setdefault(leaf, []).append(
         (ingested_qn, receiver_type, ext_namespace, receiver_arity)
     )

@@ -174,7 +174,7 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -525,11 +525,16 @@ def build_create_relationship_query(
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
+# A C# type's natural name is `<namespace>.<name>`, which its qualified name
+# no longer spells when the namespace mirrors the directory (issue #1629), so
+# the namespace property answers that lookup.
 CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
-  AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
+  AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name
+       OR (n.namespace IS NOT NULL AND n.namespace + '.' + n.name = $qn))
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
-       n.start_line AS start_line, n.end_line AS end_line"""
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.name AS name, n.namespace AS namespace"""
 CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line

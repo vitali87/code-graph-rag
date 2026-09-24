@@ -60,6 +60,16 @@ make pre-commit # Runs ALL pre-commit checks (mirrors CI)
 - Include tests for new functionality
 - Update documentation when necessary
 - Be responsive to feedback during code review
+- Show a user-visible change in the PR description (see below)
+
+### Show the change
+
+A pull request that changes something a user can see must show it working, in the PR description, before and after. This applies to humans and AI agents alike.
+
+- **What counts as user-visible:** CLI commands, output and prompts; MCP tool results; the nodes, relationships and properties the graph holds for a real snippet; the realtime watcher; the docs site and the README.
+- **How to show it:** a terminal change gets a GIF recorded with [VHS](https://github.com/charmbracelet/vhs), with the `.tape` file kept out of the repository. A graph, browser or docs change gets a screenshot. Record from the PR's own branch, running its own code.
+- **How to attach it:** embed it inline as a GitHub attachment, never committed. Reference the file in the body and let `gh` upload it: `gh pr create --attach ./after.png` or `gh pr edit <n> --attach ./after.png` (GitHub CLI 2.99 or later). A body line such as `![after](./after.png)` is rewritten to the uploaded `github.com/user-attachments` URL; without one the image is appended. By hand, drag or paste the file into the description.
+- **When nothing is visible:** an internal refactor, a test-only or CI-only change says so in one line instead, for example `No user-visible change: refactors the call resolver's cache key.`
 
 ### CI Pipeline
 
