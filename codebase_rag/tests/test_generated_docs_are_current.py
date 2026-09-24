@@ -29,9 +29,12 @@ REGENERATE = "uv run python scripts/generate_readme.py"
 EXPECTED_SECTIONS: dict[str, frozenset[str]] = {
     "README.md": frozenset({"latest_news"}),
     "docs/architecture/language-support.md": frozenset({"supported_languages"}),
-    "docs/architecture/graph-schema.md": frozenset({"language_mappings"}),
+    "docs/architecture/graph-schema.md": frozenset(
+        {"language_mappings", "node_schemas", "relationship_schemas"}
+    ),
     "docs/guide/mcp-server.md": frozenset({"mcp_tools"}),
     "docs/guide/interactive-querying.md": frozenset({"agentic_tools"}),
+    "docs/guide/cli-reference.md": frozenset({"cli_commands", "makefile_commands"}),
     "docs/getting-started/installation.md": frozenset({"dependencies"}),
 }
 
