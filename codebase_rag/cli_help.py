@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CONTEXT = "context"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -147,6 +148,16 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CONTEXT = (
+    "Print a graph-ranked context slice for a symbol, location or task within "
+    "a token budget: source, caller lines, callee signatures, types, tests, docs."
+)
+EXAMPLES_CONTEXT = (
+    "Examples:\n  cgr context myproj.pkg.util.helper\n"
+    "  cgr context pkg/util.py:12 --budget 2000"
+)
+HELP_CONTEXT_TARGET = "Qualified name, bare name, path:line, or a free-text task."
+HELP_CONTEXT_BUDGET = "Token budget for the slice."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -487,6 +498,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CONTEXT: CMD_CONTEXT,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
