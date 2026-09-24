@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import itertools
 import json
 import sys
@@ -7,7 +8,7 @@ from collections.abc import Callable, Collection
 from pathlib import Path
 
 from loguru import logger
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from rich.console import Console
 
 from codebase_rag import constants as cs
@@ -65,6 +66,7 @@ from codebase_rag.types_defs import (
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
+from codebase_rag.workspaces import WorkspaceConfig
 
 
 def _read_file_slice(full_path: Path, start: int, limit: int | None) -> str:
@@ -203,16 +205,24 @@ class MCPToolsRegistry:
     # never named, so the outstanding set cannot enumerate it. This says "the
     # damage is unbounded", and only a completed wipe retires it.
     _incomplete_unbounded: bool = False
+    # The workspace served, if any (issue #1494). A class default so a
+    # registry built without __init__ (the test doubles do) still has it.
+    workspace: WorkspaceConfig | None = None
 
     def __init__(
         self,
         project_root: str,
         ingestor: MemgraphIngestor,
         cypher_gen: CypherGenerator,
+        workspace: WorkspaceConfig | None = None,
     ) -> None:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        # The workspace this server serves, if one was loaded (issue #1494):
+        # an allow-list on top of the graph's own project check, never a
+        # substitute for it, and the source root for each of its repos.
+        self.workspace = workspace
         self._ingestor_lock = asyncio.Lock()
         # The updater that last indexed this root, kept warm so reingest()
         # resolves cross-file calls without re-reading the registry from the
@@ -310,6 +320,15 @@ class MCPToolsRegistry:
         # exposes no web-reaching tool for it to guard.
         self._find_duplicates_tool = create_find_duplicates_tool(self.ingestor)
         self._function_source_tool = create_get_function_source_tool(self.ingestor)
+        # Held to the workspace ONCE, here, so the direct MCP handlers and
+        # the agent's tool list share the guard: wrapping only the agent's
+        # copies left the MCP client itself served source from outside the
+        # allow-list (local review P1 on PR #1972). No-ops without a
+        # workspace.
+        self._code_tool = self._workspace_scoped_by_name(self._code_tool)
+        self._function_source_tool = self._workspace_scoped_by_node(
+            self._function_source_tool
+        )
 
         self._rag_agent: Agent | None = None
 
@@ -826,11 +845,179 @@ class MCPToolsRegistry:
             returns_json=True,
         )
 
+    def _agent_query_tool(self) -> Tool:
+        """The graph-query tool the agent gets: the workspace's, if any.
+
+        The pre-built tool is bound to the project this server's root
+        derives to, which a workspace need not contain, so through
+        `ask_agent` it answered for a project outside the allow-list (bot
+        review on PR #1972). With a workspace the tool is bound to the
+        workspace default; without a default it refuses naming the choices,
+        the same answer `query_code_graph` gives a bare request.
+        """
+        if self.workspace is None:
+            return self._query_tool
+        default, scope_error = self._workspace_scope(None)
+        # The workspace allow-list says which projects are SERVED, not which
+        # are INDEXED. Every other project-taking tool meets the graph's own
+        # unknown-project check later; this one binds the query tool up
+        # front, so a served-but-unindexed default produced an empty answer
+        # where the others refuse (Copilot, PR #1972).
+        if scope_error is None and default is not None:
+            indexed = self.ingestor.list_projects()
+            if default not in indexed:
+                scope_error = cs.MCP_UNKNOWN_PROJECT.format(
+                    project=default,
+                    known=cs.SEPARATOR_COMMA_SPACE.join(sorted(indexed)),
+                )
+                default = None
+        if scope_error is None and default is not None:
+            return create_query_tool(
+                ingestor=self.ingestor,
+                cypher_gen=self.cypher_gen,
+                console=self._stderr_console,
+                project_name=default,
+            )
+
+        def refuse(natural_language_query: str) -> str:
+            return str(scope_error)
+
+        return Tool(
+            refuse, name=td.AgenticToolName.QUERY_GRAPH, description=td.CODEBASE_QUERY
+        )
+
+    def _workspace_scoped_tool(self, tool: Tool) -> Tool:
+        """`tool` with its `project` argument held to the workspace allow-list
+        and default, for the agent; a no-op without a workspace. `wraps`
+        keeps the signature, which is the tool's schema."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(*args: object, **kwargs: object) -> object:
+            project, scope_error = self._workspace_scope(
+                kwargs.get(cs.MCPParamName.PROJECT)  # type: ignore[arg-type]
+            )
+            if scope_error is not None:
+                return scope_error
+            kwargs[cs.MCPParamName.PROJECT] = project
+            return await original(*args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
+    def _workspace_name_refusal(
+        self, qualified_name: str, indexed: list[str] | None = None
+    ) -> str | None:
+        """Why a qualified name is refused under a workspace: it belongs to
+        no served project. The agent's source readers take a name, not a
+        project, so the allow-list is applied to the name's project prefix
+        (bot review on PR #1972). `indexed` is the graph's project list,
+        read by the caller off the event loop; absent, it is read here."""
+        if self.workspace is None:
+            return None
+        names = self.workspace.project_names()
+        if indexed is None:
+            indexed = self.ingestor.list_projects()
+        owner = self._name_owner(qualified_name, [*names, *indexed])
+        if owner is not None and owner in names:
+            return None
+        return cs.MCP_NAME_OUTSIDE_WORKSPACE.format(
+            name=qualified_name,
+            workspace=self.workspace.name,
+            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    @staticmethod
+    def _name_owner(qualified_name: str, projects: list[str]) -> str | None:
+        # The name's project is the LONGEST indexed or served project name
+        # it sits under, not the first served one that is a prefix: with
+        # `foo` served and `foo.bar` indexed outside the workspace,
+        # `foo.bar.pkg.fn` belongs to `foo.bar` (bot review on PR #1972,
+        # the dotted-prefix class of issue #1970).
+        owners = [
+            (len(candidate), candidate)
+            for candidate in set(projects)
+            if qualified_name == candidate
+            or qualified_name.startswith(f"{candidate}{cs.SEPARATOR_DOT}")
+        ]
+        return max(owners)[1] if owners else None
+
+    def _workspace_source_refusal(self, qualified_name: str) -> str | None:
+        """Why a source read of `qualified_name` is refused under a
+        workspace: the name is outside it, or its project is served but the
+        graph does not show it indexed from the workspace's checkout. The
+        source readers read the graph-stored path, or fall back to this
+        server's root, so a moved repo or a stale graph would otherwise serve
+        an allowed name from outside the workspace; `definition` applies the
+        same stored-root proof (Copilot, PR #1972). Reads the graph: call it
+        off the event loop."""
+        if self.workspace is None:
+            return None
+        indexed = self.ingestor.list_projects()
+        refusal = self._workspace_name_refusal(qualified_name, indexed)
+        if refusal is not None:
+            return refusal
+        names = self.workspace.project_names()
+        owner = self._name_owner(qualified_name, [*names, *indexed])
+        if owner is not None and self._source_root_for(owner) is not None:
+            return None
+        return cs.MCP_WORKSPACE_SOURCE_UNPROVEN.format(
+            name=qualified_name, project=owner, workspace=self.workspace.name
+        )
+
+    def _workspace_scoped_by_name(self, tool: Tool) -> Tool:
+        """`tool`, taking a qualified name, refusing one outside the
+        workspace; a no-op without a workspace."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(
+            qualified_name: str, *args: object, **kwargs: object
+        ) -> object:
+            # The refusal reads the graph: off the event loop, which the
+            # direct handler holds under the ingestor lock (bot review).
+            refusal = await asyncio.to_thread(
+                self._workspace_source_refusal, qualified_name
+            )
+            if refusal is not None:
+                return refusal
+            return await original(qualified_name, *args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
+    def _workspace_scoped_by_node(self, tool: Tool) -> Tool:
+        """`tool`, taking a node id, refusing a node whose definition is
+        outside the workspace: the id is resolved to its qualified name first
+        (one read, only under a workspace); an id that resolves to nothing
+        is left to the tool, which reports it unavailable."""
+        if self.workspace is None:
+            return tool
+        original = tool.function
+
+        @functools.wraps(original)
+        async def scoped(node_id: int, *args: object, **kwargs: object) -> object:
+            rows = await asyncio.to_thread(
+                self.ingestor.fetch_all,
+                cq.CYPHER_GET_FUNCTION_SOURCE_LOCATION,
+                {cs.KEY_NODE_ID: node_id},
+            )
+            name = rows[0].get(cs.KEY_QUALIFIED_NAME) if rows else None
+            if isinstance(name, str):
+                refusal = await asyncio.to_thread(self._workspace_source_refusal, name)
+                if refusal is not None:
+                    return refusal
+            return await original(node_id, *args, **kwargs)
+
+        return Tool(scoped, name=tool.name, description=tool.description)
+
     @property
     def rag_agent(self) -> Agent:
         if self._rag_agent is None:
             tools = [
-                self._query_tool,
+                self._agent_query_tool(),
                 self._code_tool,
                 self._file_reader_tool,
                 self._file_writer_tool,
@@ -840,11 +1027,13 @@ class MCPToolsRegistry:
                 # The same instances the direct MCP tools use: a second copy
                 # would give the orchestrator its own roots cache and let the
                 # two routes disagree about a project indexed mid-session.
+                # Under a workspace the project-taking ones are wrapped so
+                # the agent cannot reach outside the allow-list (#1972).
                 self._function_source_tool,
-                self._find_duplicates_tool,
+                self._workspace_scoped_tool(self._find_duplicates_tool),
             ]
             if self._semantic_search_tool is not None:
-                tools.append(self._semantic_search_tool)
+                tools.append(self._workspace_scoped_tool(self._semantic_search_tool))
             if self._structural_available:
                 tools.append(self._structural_search_tool)
                 tools.append(self._structural_editor_tool)
@@ -863,7 +1052,9 @@ class MCPToolsRegistry:
     ) -> dict:
         from codebase_rag.flow_verdict import flow_reachability_verdict
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if project is None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         # The edge scan and coverage read must see one consistent graph:
         # index/update handlers hold this lock while they delete and
         # rebuild, and an interleaved read would mix generations. The guard
@@ -891,7 +1082,9 @@ class MCPToolsRegistry:
     async def explain_traceback(self, traceback_text: str) -> dict:
         from codebase_rag.crash_correlation import explain_traceback
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if project is None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.EXPLAIN_TRACEBACK
@@ -921,7 +1114,9 @@ class MCPToolsRegistry:
     async def rank_root_causes(self, traceback_text: str) -> dict:
         from codebase_rag.crash_correlation import rank_root_causes
 
-        project = derive_project_name(Path(self.project_root))
+        project, workspace_refusal = self._fixed_root_project()
+        if project is None:
+            return {cs.DICT_KEY_ERROR: workspace_refusal}
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
                 self._incomplete_refusal, project, cs.MCPToolName.RANK_ROOT_CAUSES
@@ -951,6 +1146,12 @@ class MCPToolsRegistry:
             # graph under this lock; an interleaved read mixes generations.
             async with self._ingestor_lock:
                 projects = await asyncio.to_thread(self.ingestor.list_projects)
+            # A workspace server lists the workspace's projects that are
+            # indexed: a workspace repo not yet in the graph is not a project
+            # a query can reach, and one outside the workspace is not served.
+            if self.workspace is not None:
+                allowed = set(self.workspace.project_names())
+                projects = [p for p in projects if p in allowed]
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
@@ -1023,6 +1224,12 @@ class MCPToolsRegistry:
 
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
+        # A workspace server may delete only what it serves (bot review on
+        # PR #1972): the destructive path takes the same allow-list as the
+        # reads, before any lock or write.
+        _scoped, scope_error = self._workspace_scope(project_name)
+        if scope_error is not None:
+            return DeleteProjectErrorResult(success=False, error=scope_error)
         try:
             async with self._ingestor_lock:
                 return await asyncio.to_thread(self._delete_project_sync, project_name)
@@ -2047,6 +2254,9 @@ class MCPToolsRegistry:
         # `search_embeddings`, which filters in the vector store. Only this
         # handler failed to forward it, so scoping here is plumbing rather
         # than a second filter (issue #1494).
+        project, scope_error = self._workspace_scope(project)
+        if scope_error is not None:
+            return scope_error
         if project is not None:
             known = await asyncio.to_thread(self.ingestor.list_projects)
             if project not in known:
@@ -2087,6 +2297,9 @@ class MCPToolsRegistry:
         and an interleaved read would report groups from one generation with
         coverage from another.
         """
+        project, scope_error = self._workspace_scope(project)
+        if scope_error is not None:
+            return scope_error
         dup_project = project or derive_project_name(Path(self.project_root))
         async with self._ingestor_lock:
             if refusal := await asyncio.to_thread(
@@ -2355,6 +2568,14 @@ class MCPToolsRegistry:
         # root derives to.
         try:
             async with self._ingestor_lock:
+                # The workspace allow-list is checked FIRST and narrows only:
+                # a name outside it is refused with the workspace's names,
+                # and a name inside it is still held to the graph's own
+                # check below, so an unindexed workspace repo reads as
+                # unknown rather than as a second, weaker path (issue #1494).
+                project, scope_error = self._workspace_scope(project)
+                if scope_error is not None:
+                    return {cs.DICT_KEY_ERROR: scope_error}
                 if project is not None:
                     known = await asyncio.to_thread(self.ingestor.list_projects)
                     if project not in known:
@@ -2411,14 +2632,90 @@ class MCPToolsRegistry:
             lambda name: graph_query.resolve(self.ingestor.fetch_all, name, target),
         )
 
+    def _workspace_scope(self, project: str | None) -> tuple[str | None, str | None]:
+        """(the project a request means, why it is refused) under a workspace.
+
+        The one decision every project-taking tool applies (issue #1494,
+        local review): a name outside the workspace is refused with the
+        workspace's names; a bare request takes the workspace default or is
+        refused naming the choices. Without a workspace nothing changes. The
+        graph's own unknown-project check still follows in every caller, so
+        an unindexed workspace repo reads as unknown, never as served.
+        """
+        if self.workspace is None:
+            return project, None
+        names = self.workspace.project_names()
+        if project is not None:
+            if project in names:
+                return project, None
+            return None, cs.MCP_PROJECT_OUTSIDE_WORKSPACE.format(
+                project=project,
+                workspace=self.workspace.name,
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
+        default = self._workspace_default_project()
+        if default is None:
+            return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+                workspace=self.workspace.name,
+                count=len(names),
+                known=cs.SEPARATOR_COMMA_SPACE.join(names),
+            )
+        return default, None
+
+    def _fixed_root_project(self) -> tuple[str, None] | tuple[None, str]:
+        """(project, refusal) for a handler that takes no `project` argument.
+
+        flow_verdict, explain_traceback and rank_root_causes derive their
+        project from this server's directory. Without a workspace that is
+        the whole world and the derivation stands. UNDER a workspace it is
+        not: `TARGET_REPO_PATH` may point at an indexed repo the workspace
+        does not serve, and a bare call would then answer from outside the
+        boundary. The workspace default applies, and an ambiguous one
+        refuses rather than guessing (Copilot, PR #1972).
+        """
+        if self.workspace is None:
+            return derive_project_name(Path(self.project_root)), None
+        default = self._workspace_default_project()
+        if default is not None:
+            return default, None
+        names = self.workspace.project_names()
+        return None, cs.MCP_WORKSPACE_DEFAULT_AMBIGUOUS.format(
+            workspace=self.workspace.name,
+            count=len(names),
+            known=cs.SEPARATOR_COMMA_SPACE.join(names),
+        )
+
+    def _workspace_default_project(self) -> str | None:
+        """The workspace project a request without `project` means.
+
+        The repo rooted at this server's directory, if the workspace has
+        one; else the only project, if it has one; else nothing, and the
+        caller must say which. Never a guess between several.
+        """
+        assert self.workspace is not None
+        root = Path(self.project_root).resolve()
+        for repo in self.workspace.repos:
+            if repo.repo_path() == root:
+                return repo.project_name
+        names = self.workspace.project_names()
+        return names[0] if len(names) == 1 else None
+
     def _source_root_for(self, project_name: str) -> Path | None:
         # Source is read from disk only when the selected project was indexed
         # from this server's repository (its Project node's stored root):
         # another project's definition carries a relative path that may also
         # exist here and would read the wrong file, and a matching name alone
         # does not prove the root, so its span is answered without source.
+        # A workspace names each repo's root, so its projects are answered
+        # from their own checkouts under the same stored-root proof.
+        candidate = Path(self.project_root)
+        if self.workspace is not None:
+            for repo in self.workspace.repos:
+                if repo.project_name == project_name:
+                    candidate = repo.repo_path()
+                    break
         return graph_query.source_root_for(
-            self.ingestor.fetch_all, project_name, Path(self.project_root)
+            self.ingestor.fetch_all, project_name, candidate
         )
 
     async def definition(
@@ -2809,8 +3106,17 @@ class MCPToolsRegistry:
     ) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
-            # Validated against the known projects first: a typo returning
-            # zero rows is indistinguishable from a genuine empty result.
+            # The workspace allow-list and default first (issue #1494), then
+            # the graph's own check: a typo returning zero rows is
+            # indistinguishable from a genuine empty result.
+            project, scope_error = self._workspace_scope(project)
+            if scope_error is not None:
+                return QueryResultDict(
+                    error=scope_error,
+                    query_used=cs.QUERY_NOT_AVAILABLE,
+                    results=[],
+                    summary=scope_error,
+                )
             if project is not None:
                 known = await asyncio.to_thread(self.ingestor.list_projects)
                 if project not in known:
@@ -2905,6 +3211,11 @@ class MCPToolsRegistry:
                         error=refusal, found=False, error_message=refusal
                     )
                 snippet = await self._code_tool.function(qualified_name=qualified_name)
+            if isinstance(snippet, str):
+                # The workspace guard answered instead of the retriever.
+                return CodeSnippetResultDict(
+                    error=snippet, found=False, error_message=snippet
+                )
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 return CodeSnippetResultDict(
@@ -3011,9 +3322,11 @@ def create_mcp_tools_registry(
     project_root: str,
     ingestor: MemgraphIngestor,
     cypher_gen: CypherGenerator,
+    workspace: WorkspaceConfig | None = None,
 ) -> MCPToolsRegistry:
     return MCPToolsRegistry(
         project_root=project_root,
         ingestor=ingestor,
         cypher_gen=cypher_gen,
+        workspace=workspace,
     )

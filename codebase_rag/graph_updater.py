@@ -1,5 +1,6 @@
 """Orchestrate parsing a repository into graph nodes and edges and ingest them."""
 
+import errno
 import hashlib
 import json
 import os
@@ -28,6 +29,8 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_namespaced_from_graph,
+    csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -104,6 +107,7 @@ from .types_defs import (
     ResultRow,
     SimpleNameLookup,
 )
+from .utils import qn_markers
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
@@ -163,6 +167,46 @@ type DirMtimesCache = dict[str, float]
 
 
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
+
+
+_PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+# Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
+# CPython maps to EINVAL rather than ELOOP (bot review).
+_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _is_gone_error(exc: OSError) -> bool:
+    return (
+        exc.errno in _PATH_GONE_ERRNOS
+        or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def _vanished(filepath: Path) -> bool:
+    """Whether an unreadable path is GONE rather than unreachable: the path
+    is absent, or a symlink whose target is. Judged without following the
+    link and without `exists()`, which reads a permission failure on the
+    file or its directory as absence (issue #1983)."""
+    # ENOTDIR here means an ancestor is now a regular file, so the path can
+    # never exist again; reading it as "not gone" kept its subtree through
+    # every orphan prune (bot review). Only a permission-style failure is
+    # left as unreachable.
+    try:
+        os.lstat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    if not filepath.is_symlink():
+        return False
+    # A link with no target at all is gone: dangling, a cycle, or a target
+    # path through a non-directory. Retrying one would mark the cache
+    # `unreadable` on every run for as long as the link stays broken (bot
+    # review). A link whose target exists but cannot be reached is not gone,
+    # and `Path.exists()` would raise on that (bot review).
+    try:
+        os.stat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    return False
 
 
 def _hash_file(filepath: Path) -> str:
@@ -744,9 +788,12 @@ def _touch_empty_json(cache_path: Path) -> None:
 
 
 def _natural_qn(qualified_name: str) -> str:
-    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment."""
-    head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
-    return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
+    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
+
+    Delegates so the marker grammar has one definition. Cutting at the first
+    `@` destroys a C# verbatim identifier (`@event` -> ``), issue #2017.
+    """
+    return qn_markers.natural_qn(qualified_name)
 
 
 _GLOSS_RELS = frozenset(
@@ -2456,6 +2503,36 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # The C# declared-form index (issue #1629) is filled only by
+                # parsing; an unchanged type must stay reachable by `N.Widget`
+                # from a re-parsed base list or receiver (bot review).
+                if node_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ) and path.endswith(cs.EXT_CS):
+                    namespace = row.get(cs.KEY_NAMESPACE)
+                    namespaced = csharp_namespaced_from_graph(
+                        qn,
+                        path,
+                        self.project_name,
+                        namespace if isinstance(namespace, str) else None,
+                    )
+                    processor = self.factory.definition_processor
+                    # Rejoin the partial group parsing would have given it,
+                    # under the same key, so a declared name spanning
+                    # unchanged parts stays one type; a lone type's group of
+                    # one reads exactly as no group (bot review).
+                    if key := csharp_partial_key_from_graph(
+                        qn, path, self.project_name
+                    ):
+                        group = processor._csharp_partial_index.setdefault(key, [])
+                        group.append(qn)
+                        processor.csharp_partial_groups[qn] = group
+                    if namespaced:
+                        processor.csharp_class_namespaced[qn] = namespaced
+                        processor.csharp_namespaced_qns.setdefault(
+                            namespaced, set()
+                        ).add(qn)
                 # Persisted annotations of UNCHANGED definitions rejoin the
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
@@ -3668,6 +3745,15 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # Same ownership, same reason (issue #1629): every C# class has
+            # an entry, not only the generic ones #1769's sweep covers.
+            namespaced = processor.csharp_class_namespaced.pop(qn, None)
+            if namespaced is not None:
+                carriers = processor.csharp_namespaced_qns.get(namespaced)
+                if carriers is not None:
+                    carriers.discard(qn)
+                    if not carriers:
+                        del processor.csharp_namespaced_qns[namespaced]
             # The owner record goes with them: it names a file this updater
             # no longer has, and keeping it would re-sweep the same qn on the
             # next deletion of a file that happens to reuse the module qn.
@@ -3987,6 +4073,10 @@ class GraphUpdater:
                     return False
 
         for file_key, old_hash in old_hashes.items():
+            if old_hash == cs.HASH_CACHE_UNREADABLE:
+                # A file the last run could not read is retried by the next
+                # real pass, whatever its directory's mtime says (#1983).
+                return False
             file_path_str = f"{repo_str}/{file_key}"
             try:
                 stat = os.stat(file_path_str)
@@ -3994,7 +4084,14 @@ class GraphUpdater:
                 return False
             if stat.st_mtime <= cache_mtime:
                 continue
-            if _hash_file(Path(file_path_str)) != old_hash:
+            try:
+                current_hash = _hash_file(Path(file_path_str))
+            except OSError:
+                # A cached file that can no longer be read is not "in sync":
+                # the batch pass counts it unreadable and leaves it out of
+                # the cache, where raising here ended the run (issue #1992).
+                return False
+            if current_hash != old_hash:
                 return False
         return True
 
@@ -4322,8 +4419,23 @@ class GraphUpdater:
                         continue
                     unreadable_count += 1
                     unreadable_keys.add(file_key)
+                    # Marked for retry unless the path is GONE (vanished, or
+                    # a broken symlink): those would refuse the fast path on
+                    # every later run. A file that exists but cannot be
+                    # reached (a permission failure on it or its directory)
+                    # is marked; `exists()` alone reads such a file as gone
+                    # (bot review).
+                    if not _vanished(filepath):
+                        new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                     continue
-                if file_mtime <= cache_mtime:
+                # A file marked unreadable by the previous run is hashed
+                # whatever its mtime: the mark is not a digest, so the
+                # comparison below sees a change and the file is re-parsed
+                # as a KNOWN file, its old subtree deleted first (#1983).
+                if (
+                    file_mtime <= cache_mtime
+                    and old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
+                ):
                     new_hashes[file_key] = old_hashes[file_key]
                     current_file_keys.add(file_key)
                     skipped_count += 1
@@ -4340,6 +4452,8 @@ class GraphUpdater:
                     continue
                 unreadable_count += 1
                 unreadable_keys.add(file_key)
+                if not _vanished(filepath):
+                    new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             current_hash, file_bytes = hashed
             # The hash keys the CHECKED-IN source (cache invalidation follows
@@ -4644,6 +4758,14 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         if self._single_file is None:
             self._pending_hash_cache = (cache_path, new_hashes)
+            # A file this run could not read carries the unreadable mark in
+            # the cache: the next run's in-sync check refuses on it and the
+            # pass hashes it whatever its mtime, so it is retried as a KNOWN
+            # file with its old subtree deleted first (issue #1983).
+            if unreadable_keys:
+                logger.warning(
+                    ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
+                )
             self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         else:
             # Two different remedies, because the run has different standing
@@ -4706,13 +4828,23 @@ class GraphUpdater:
         # the fingerprint it parsed under; a single-file run did not, and
         # leaves the stale stamp for the next project run (issue #1977).
         # Only a run that actually covered the project may vouch for the
-        # parser it parsed under. A file this run could not read keeps its
-        # old subtree, and an unknown graph state means the delete-before-
-        # reingest could not be scoped; in both cases some old parser's
-        # edges survive. Stamping anyway makes the NEXT run read back a
-        # matching fingerprint, skip the staleness warning, and fast-path
-        # over exactly those rows -- permanently (bot review).
-        covered_the_project = not unreadable_keys and not self._graph_state_unknown
+        # parser it parsed under. An unknown graph state means the delete-
+        # before-reingest could not be scoped, so some old parser's edges
+        # survive, and stamping anyway makes the NEXT run read back a
+        # matching fingerprint and fast-path over exactly those rows --
+        # permanently (bot review). A file this run could not read keeps its
+        # old subtree too, but one carrying the unreadable mark cannot be
+        # fast-pathed over: the next run refuses the in-sync check on the
+        # mark and re-parses the file under the current parser, old subtree
+        # deleted first (#1983). Holding the stamp back for it would re-index
+        # every file to repair one. An unreadable file left UNMARKED (its
+        # path is gone) still holds the stamp back.
+        unmarked_unreadable = {
+            key
+            for key in unreadable_keys
+            if new_hashes.get(key) != cs.HASH_CACHE_UNREADABLE
+        }
+        covered_the_project = not unmarked_unreadable and not self._graph_state_unknown
         if covered_the_project and (
             is_full_build or (self._parser_changed and self._single_file is None)
         ):
@@ -6050,7 +6182,14 @@ class GraphUpdater:
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
-                if stale_kind or not (self.repo_path / path).exists():
+                # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
+                # re-raises PermissionError instead of reading it as
+                # absence, so a link whose target sits behind an
+                # unreadable directory aborted the whole run HERE -- after
+                # the unreadable branch had marked it for retry but before
+                # that marker could commit, so the retry this PR adds never
+                # landed (bot review on PR #1993).
+                if stale_kind or _vanished(self.repo_path / path):
                     # File/Folder deletes key on the absolute path: a sibling
                     # project's node can share the relative path (issue #897).
                     key = (
