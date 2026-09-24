@@ -3612,35 +3612,13 @@ class CallResolver:
         # the resolver had emitted none.
         if local_var_types and prefix in local_var_types:
             return None
-        # An explicit `as` alias wins over the file-derived key: with
-        # `import 'helper.dart'; import 'other.dart' as helper;` the name
-        # `helper` in the source is other.dart, while import_mapping still
-        # holds helper.dart under that key so both IMPORTS edges survive
-        # (Greptile, PR #2040).
-        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
-        import_map = self.import_processor.import_mapping.get(module_qn, {})
-        targets = aliases.get(prefix) or (
-            [import_map[prefix]] if import_map.get(prefix) else []
-        )
         name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
-        if not targets or not name:
+        hit = self._unique_prefixed_definition(
+            self._dart_prefix_targets(prefix, module_qn), name
+        )
+        if hit is None:
             return None
-        # Imports sharing a prefix are searched together, and `p.Box` names
-        # the ONE library defining `Box`; a name several of them define is
-        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
-        hits = [
-            (target, qn, kind)
-            for target in targets
-            if (
-                kind := self.function_registry.get(
-                    qn := self._prefixed_qn(target, name)
-                )
-            )
-            is not None
-        ]
-        if len(hits) != 1:
-            return None
-        target, qn, kind = hits[0]
+        target, qn, kind = hit
         # The hop must be a CONSTRUCTION, so the imported module must define
         # that name as a CLASS. Accepting any registry entry bound a
         # `mod.factory()` whose factory is a FUNCTION to a same-named class in
@@ -3659,6 +3637,38 @@ class CallResolver:
         # PR #2040).
         returned = self.type_inference.method_return_types.get(qn)
         return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
+
+    def _dart_prefix_targets(self, prefix: str, module_qn: str) -> list[str]:
+        # An explicit `as` alias wins over the file-derived key: with
+        # `import 'helper.dart'; import 'other.dart' as helper;` the name
+        # `helper` in the source is other.dart, while import_mapping still
+        # holds helper.dart under that key so both IMPORTS edges survive
+        # (Greptile, PR #2040).
+        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return aliases.get(prefix) or (
+            [import_map[prefix]] if import_map.get(prefix) else []
+        )
+
+    def _unique_prefixed_definition(
+        self, targets: list[str], name: str
+    ) -> tuple[str, str, NodeType] | None:
+        # Imports sharing a prefix are searched together, and `p.Box` names
+        # the ONE library defining `Box`; a name several of them define is
+        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
+        if not targets or not name:
+            return None
+        hits = [
+            (target, qn, kind)
+            for target in targets
+            if (
+                kind := self.function_registry.get(
+                    qn := self._prefixed_qn(target, name)
+                )
+            )
+            is not None
+        ]
+        return hits[0] if len(hits) == 1 else None
 
     def _prefixed_qn(self, target: str, name: str) -> str:
         # `p.Box.named()` reaches the fold as prefix `p` and hop `Box.named`:
