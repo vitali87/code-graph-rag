@@ -85,7 +85,7 @@ A pull request that changes something a user can see must show it working, in th
 
 - **What counts as user-visible:** CLI commands, output and prompts; MCP tool results; the nodes, relationships and properties the graph holds for a real snippet; the realtime watcher; the docs site and the README.
 - **How to show it:** a terminal change gets a GIF recorded with [VHS](https://github.com/charmbracelet/vhs), with the `.tape` file kept out of the repository. A graph, browser or docs change gets a screenshot. Record from the PR's own branch, running its own code.
-- **How to attach it:** embed it inline as a GitHub attachment by dragging or pasting the file into the description. An agent uploads it through the description's file input in a browser session, such as Claude in Chrome's `file_upload` tool. Do not commit screenshots or recordings to the repository.
+- **How to attach it:** embed it inline as a GitHub attachment by dragging or pasting the file into the description. An agent does the same in a browser session: Claude in Chrome's `upload_image` puts a browser screenshot straight into the description's file input, and `file_upload` does it for a file on disk such as a VHS GIF. Do not commit screenshots or recordings to the repository.
 - **When nothing is visible:** an internal refactor, a test-only or CI-only change says so in one line instead, for example `No user-visible change: refactors the call resolver's cache key.`
 
 ### Continuous Integration
