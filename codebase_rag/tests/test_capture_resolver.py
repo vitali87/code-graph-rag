@@ -138,6 +138,7 @@ def test_an_optional_label_is_off_by_default_and_on_with_its_group() -> None:
     must_be_gated = {
         NL.CODE_SMELL: cs.CaptureGroup.FINDINGS,
         NL.CONSTANT: cs.CaptureGroup.CONSTANTS,
+        NL.ENUM_VARIANT: cs.CaptureGroup.ENUM_VARIANTS,
         NL.FIELD: cs.CaptureGroup.FIELDS,
         NL.GLOSS: cs.CaptureGroup.GLOSSES,
         NL.PARAMETER: cs.CaptureGroup.PARAMETERS,
