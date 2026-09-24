@@ -365,7 +365,9 @@ class TestAStaleProjectRootSaysSo:
         return stale_root, current_repo, ingestor
 
     @pytest.mark.asyncio
-    async def test_the_snippet_reader_names_the_stale_root(self, tmp_path: Path) -> None:
+    async def test_the_snippet_reader_names_the_stale_root(
+        self, tmp_path: Path
+    ) -> None:
         stale_root, current_repo, ingestor = self._stale_setup(tmp_path)
 
         result = await CodeRetriever(str(current_repo), ingestor).find_code_snippet(
