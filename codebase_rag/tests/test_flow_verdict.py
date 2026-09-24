@@ -17,6 +17,7 @@ from codebase_rag.flow_verdict import (
     FLOW_VERDICT_UNKNOWN,
     flow_reachability_verdict,
 )
+from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
@@ -27,6 +28,7 @@ def _query_fn(
     remote: list[tuple[str, str]] | None = None,
     other_edges: dict[str, list[tuple[str, str]]] | None = None,
     calls: list[tuple[str, dict | None]] | None = None,
+    projects: list[str] | None = None,
 ):
     """`remote` rows are (source, target) with the handler's project read
     off its name, as the graph has it; `other_edges` holds the flow edges of
@@ -48,6 +50,8 @@ def _query_fn(
             return [{"path": p} for p in gaps] if project == "p" else []
         if query == CYPHER_FLOW_REMOTE_EDGES:
             return [{"source": s, "target": t} for s, t in remote or []]
+        if query == CYPHER_LIST_PROJECTS and projects is not None:
+            return [{"name": name} for name in projects]
         raise AssertionError(query)
 
     return fetch_all
@@ -375,3 +379,25 @@ def test_inline_modules_are_never_spurious_coverage_gaps(
         assert props.get("flow_covered") is True or str(props["path"]).startswith(
             cs.INLINE_MODULE_PATH_PREFIX
         ), props
+
+
+def test_a_handler_in_a_dotted_project_loads_that_projects_edges() -> None:
+    """Project names may contain dots: `svc.v2.api.handler` belongs to
+    `svc.v2`, not to `svc` as its first segment says, so the walk must load
+    `svc.v2`'s flow edges to continue (bot review; the ownership rule of
+    #1970)."""
+    remote = [("svc.client.net", "svc.v2.api.handler")]
+    result = flow_reachability_verdict(
+        _query_fn(
+            [("svc.a.src", "svc.client.net")],
+            {},
+            remote=remote,
+            other_edges={"svc.v2": [("svc.v2.api.handler", "svc.v2.db.sink")]},
+            projects=["svc", "svc.v2"],
+        ),
+        "svc",
+        "svc.a.src",
+        "svc.v2.db.sink",
+    )
+    assert result.verdict == FLOW_VERDICT_FOUND
+    assert result.remote_hops == (("svc.client.net", "svc.v2.api.handler"),)

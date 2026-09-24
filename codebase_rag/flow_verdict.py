@@ -8,6 +8,7 @@ from collections import deque
 from typing import NamedTuple, Protocol
 
 from . import constants as cs
+from .cypher_queries import CYPHER_LIST_PROJECTS
 from .types_defs import PropertyDict, ResultRow
 
 FLOW_VERDICT_FOUND = "FOUND"
@@ -108,9 +109,10 @@ def flow_reachability_verdict(
             edges.setdefault(source, []).append(target)
             remote.setdefault(source, set()).add(target)
     loaded = {project_name}
+    projects = _registered_projects(fetch_all, project_name)
     while (
         entered := {
-            _project_of(target)
+            _project_of(target, projects)
             for resource in _reachable(edges, source_qn)
             for target in remote.get(resource, ())
         }
@@ -137,8 +139,8 @@ def flow_reachability_verdict(
             (resource, handler)
             for i, (resource, handler) in enumerate(zip(path, path[1:], strict=False))
             if handler in remote.get(resource, ())
-            and _project_of(handler)
-            != (_project_of(path[i - 1]) if i else project_name)
+            and _project_of(handler, projects)
+            != (_project_of(path[i - 1], projects) if i else project_name)
         )
         return FlowVerdict(FLOW_VERDICT_FOUND, tuple(path), (), hops)
 
@@ -162,7 +164,28 @@ def flow_reachability_verdict(
     return FlowVerdict(FLOW_VERDICT_NO_FLOW, (), ())
 
 
-def _project_of(qn: str) -> str:
+def _registered_projects(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+    """Every project the graph holds, longest name first. Degrades to this
+    project alone when the registry cannot be read."""
+    names = {project_name}
+    try:
+        rows = fetch_all(CYPHER_LIST_PROJECTS, None)
+    except Exception:
+        rows = []
+    names.update(
+        name for row in rows if isinstance(name := row.get(cs.KEY_NAME), str) and name
+    )
+    return tuple(sorted(names, key=len, reverse=True))
+
+
+def _project_of(qn: str, projects: tuple[str, ...]) -> str:
+    # The LONGEST registered name the qn sits under: project names may
+    # contain dots, so the first segment of `svc.v2.api.items` is `svc`, a
+    # different project (#1970). A qn no registered project owns falls back
+    # to its first segment, as before (bot review).
+    for name in projects:
+        if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+            return name
     return qn.split(cs.SEPARATOR_DOT, 1)[0]
 
 
