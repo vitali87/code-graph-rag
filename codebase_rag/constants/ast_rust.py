@@ -355,3 +355,10 @@ RS_FIELD_ELEMENT = "element"
 # Rust spells a `return x;` node return_expression, NOT return_statement:
 # the shared TS_RETURN_STATEMENT never matches it (issue #1365).
 TS_RS_RETURN_EXPRESSION = "return_expression"
+
+# `self: Box<Self>`: the receiver spelt as a typed `parameter` whose pattern
+# is the `self` node rather than a `self_parameter`.
+TS_RS_SELF = "self"
+# An enum body and its variants (issue #1807).
+TS_RS_ENUM_VARIANT_LIST = "enum_variant_list"
+TS_RS_ENUM_VARIANT = "enum_variant"

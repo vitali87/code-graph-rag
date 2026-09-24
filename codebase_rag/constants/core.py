@@ -93,12 +93,14 @@ DEFAULT_MAX_WAIT_SECONDS = 30
 
 CHAR_HYPHEN = "-"
 CHAR_UNDERSCORE = "_"
+CHAR_EQUALS = "="
 
 CHAR_SEMICOLON = ";"
 CHAR_COMMA = ","
 CHAR_COLON = ":"
 CHAR_ANGLE_OPEN = "<"
 CHAR_ANGLE_CLOSE = ">"
+CHAR_EQUALS = "="
 CHAR_PAREN_OPEN = "("
 CHAR_PAREN_CLOSE = ")"
 CHAR_QUESTION_MARK = "?"
@@ -169,6 +171,10 @@ SELF_RECEIVER_KEYWORDS = frozenset({"self", "cls", "this"})
 
 # Incremental update hash cache
 HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+# The cache entry of a file the run could not read: never a real digest, so
+# the next run hashes the file whatever its mtime and, finding no match,
+# re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
+HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"

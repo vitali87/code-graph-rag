@@ -107,11 +107,16 @@ LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA})
 # The provider-owned variable `validate_api_key` accepts INSTEAD of the role's
 # own `<ROLE>_API_KEY`. Module level so `cgr doctor` can name the same variable
 # the gate reads rather than restating the rule and drifting from it (#1910).
-# A provider absent here is satisfied only by the role variable.
+#
+# DERIVED from API_KEY_INFO rather than hand-kept, because a hand-kept subset is
+# what #1913 was: it left out OpenAI and Google, so the gate refused a
+# configuration naming the variable `format_missing_api_key_errors` had just
+# told the user to export, and that the provider itself reads
+# (`_resolve_api_key(api_key, cs.ENV_OPENAI_API_KEY)` at providers/base.py:181,
+# and ENV_GOOGLE_API_KEY at :116). One table means the gate, the error message
+# and `cgr doctor` cannot disagree about which variable counts.
 PROVIDER_ENV_KEYS = {
-    cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
-    cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
-    cs.Provider.MINIMAX: cs.ENV_MINIMAX_API_KEY,
+    provider: info["env_var"] for provider, info in API_KEY_INFO.items()
 }
 
 
@@ -409,6 +414,14 @@ class AppConfig(BaseSettings):
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    # Compaction discards old tool output to bound the context (#1500). It is
+    # on by default because an unbounded history eventually fails the request
+    # outright, but a mechanism that drops data must be declinable: set this
+    # false to keep every tool result and accept the ceiling.
+    CONTEXT_COMPACTION_ENABLED: bool = Field(
+        True, validation_alias="CGR_CONTEXT_COMPACTION_ENABLED"
+    )
 
     CGR_CAPTURE: str = Field("", validation_alias="CGR_CAPTURE")
 
