@@ -1371,9 +1371,16 @@ class CSharpTypeInferenceEngine:
         # declared-form index; the leading alias was expanded above, so
         # `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
         # (issues #2000, #2004).
-        if declared := unique_carrier(
-            self.csharp_namespaced_qns.get(expanded), self.csharp_partial_groups
-        ):
+        # `Widget` and `Widget<T>` share the declared form, so the written
+        # arity picks between them first (bot review).
+        carriers = self.csharp_namespaced_qns.get(expanded)
+        if carriers and len(carriers) > 1 and generic_arity is not None:
+            carriers = {
+                qn
+                for qn in carriers
+                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            } or carriers
+        if declared := unique_carrier(carriers, self.csharp_partial_groups):
             return declared
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [

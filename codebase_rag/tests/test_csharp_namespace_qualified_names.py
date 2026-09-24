@@ -572,3 +572,36 @@ class TestWrittenAndAliasedTypePaths:
             if rel == cs.RelationshipType.INSTANTIATES.value and str(source) == run
         }
         assert instantiates == {widget}, sorted(instantiates)
+
+
+class TestAWrittenPathPicksByArity:
+    """`Widget` and `Widget<T>` in one namespace share the declared form
+    `Zeta.Widget`; the written arity of a typed local picks between them
+    (bot review)."""
+
+    def test_each_arity_binds_its_own_type(self, tmp_path: Path) -> None:
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/Zeta/Widget.cs": (
+                    "namespace Zeta;\npublic class Widget { public void M() { } }\n"
+                ),
+                "src/Zeta/GenericWidget.cs": (
+                    "namespace Zeta;\npublic class Widget<T> { public void M() { } }\n"
+                ),
+                "src/App/Use.cs": (
+                    "namespace App;\npublic class Use\n{\n"
+                    "    public void Plain(Zeta.Widget w) { w.M(); }\n"
+                    "    public void Generic(Zeta.Widget<int> g) { g.M(); }\n}\n"
+                ),
+            },
+        )
+        calls = _calls(store)
+        assert (
+            "proj.src.App.Use.Use.Plain(Zeta.Widget)",
+            "proj.src.Zeta.Widget.Widget.M",
+        ) in calls, sorted(calls)
+        assert (
+            "proj.src.App.Use.Use.Generic(Zeta.Widget)",
+            "proj.src.Zeta.GenericWidget.Widget.M",
+        ) in calls, sorted(calls)
