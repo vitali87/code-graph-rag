@@ -6,7 +6,7 @@
 
 ## Demo
 
-<!-- A user-visible change shows itself working, before and after: a VHS GIF for a terminal change, a screenshot for a graph, browser or docs change. Drag or paste the file here so it embeds as a GitHub attachment; do not commit it. With nothing user-visible, replace this with one line: "No user-visible change: <why>". See CONTRIBUTING.md, "Show the change". -->
+<!-- A user-visible change shows itself working, before and after: a VHS GIF for a terminal change, a screenshot for a graph, browser or docs change. Attach it with `gh pr create --attach <file>` or `gh pr edit <n> --attach <file>` (or drag it in here); do not commit it. With nothing user-visible, replace this with one line: "No user-visible change: <why>". See CONTRIBUTING.md, "Show the change". -->
 
 ## Type of Change
 
