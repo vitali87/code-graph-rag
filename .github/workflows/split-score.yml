@@ -47,10 +47,14 @@ jobs:
           MAX_LOC: "400"
         run: |
           # The pinned action renders its report here and exposes no output
-          # naming the path; it is absent when the PR is under the limit.
+          # naming the path. It is absent when the PR is under the limit, and
+          # also when an over-limit PR yields no plan: that is still over.
           report="${RUNNER_TEMP}/pr-split-comment.md"
           if [ -f "$report" ]; then
             cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${TOTAL_LOC:-0}" -gt "$MAX_LOC" ]; then
+            echo "pr-split: ${TOTAL_LOC} LOC, over the ${MAX_LOC} LOC limit; no split plan could be generated (see the pr-split score step log)." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=PR over ${MAX_LOC} LOC::${TOTAL_LOC} LOC, over the ${MAX_LOC} LOC limit; pr-split could not generate a split plan. Consider splitting it by hand."
           else
             echo "pr-split: ${TOTAL_LOC} LOC, within the ${MAX_LOC} LOC limit." >> "$GITHUB_STEP_SUMMARY"
           fi
