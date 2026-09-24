@@ -151,6 +151,19 @@ claude mcp add --transport stdio code-graph-rag-frontend \
 !!! warning
     Only one repository can be indexed at a time per MCP instance. When you index a new repository, the previous repository's data is automatically cleared.
 
+### Serving a workspace
+
+One server can serve every repository of a [workspace](multi-project.md) instead of a single root. Pass `--workspace NAME`, or set `MCP_WORKSPACE=NAME` in the launch config's environment (an MCP client's config has an environment and no flags):
+
+```bash
+claude mcp add --transport stdio code-graph-rag-workspace \
+  --env MCP_WORKSPACE=my-workspace \
+  --env TARGET_REPO_PATH=/path/to/one/of/its/repos \
+  -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
+```
+
+A workspace server lists the workspace's indexed projects, refuses a `project` argument outside the workspace (naming the projects it serves), defaults a request without `project` to the repo rooted at `TARGET_REPO_PATH` or to the only repo, and reads source for each repo from its own root. The workspace narrows the choice only: a workspace repo that is not indexed is still refused as unknown, exactly as without a workspace.
+
 ## Troubleshooting
 
 | Issue | Solution |

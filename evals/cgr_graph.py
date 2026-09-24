@@ -106,6 +106,7 @@ _DEFINES_RELS = frozenset(
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
@@ -866,6 +867,9 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                        if cs.KEY_NAMESPACE in props
+                        else None,
                     }
                     defs.append(row)
                 return defs
@@ -951,9 +955,27 @@ class _StatefulIngestor:
                     qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
                     if qn == project_name or (prefix and qn.startswith(prefix)):
                         project_rows.append(
-                            {cs.KEY_PATH: _text(props.get(cs.KEY_PATH))}
+                            {
+                                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                                cs.KEY_QUALIFIED_NAME: qn,
+                            }
                         )
                 return project_rows
+            case cq.CYPHER_LIST_PROJECTS:
+                # Every Project node, by name (issue #1970): the updater
+                # decides ownership of a prefix-scoped row by the longest
+                # registered name.
+                return sorted(
+                    (
+                        {
+                            cs.KEY_NAME: _str(uid),
+                            cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH)),
+                        }
+                        for (label, uid), props in self.nodes.items()
+                        if label == cs.NodeLabel.PROJECT.value
+                    ),
+                    key=lambda row: str(row[cs.KEY_NAME]),
+                )
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
