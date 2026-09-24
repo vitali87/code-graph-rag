@@ -258,13 +258,26 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
             cs.KEY_QN: target,
         },
     )
-    symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
+    owned = [r for r in rows if owns(_text_qn(r))]
+    symbols = [_symbol_row(r) for r in owned]
+    # A C# type reached by `<namespace>.<name>` ranks with the dotted-suffix
+    # matches: that is the name its qualified name used to end with before
+    # the mirrored namespace was left out of it (issue #1629).
+    natural = {
+        str(r.get(cs.KEY_QUALIFIED_NAME, ""))
+        for r in owned
+        if r.get(cs.KEY_NAMESPACE)
+        and f"{r[cs.KEY_NAMESPACE]}{cs.SEPARATOR_DOT}{r.get(cs.KEY_NAME)}" == target
+    }
     exact = [s for s in symbols if s["qualified_name"] == target]
     suffix = [
         s
         for s in symbols
         if s["qualified_name"] != target
-        and s["qualified_name"].endswith(f"{cs.SEPARATOR_DOT}{target}")
+        and (
+            s["qualified_name"].endswith(f"{cs.SEPARATOR_DOT}{target}")
+            or s["qualified_name"] in natural
+        )
     ]
     by_name = [s for s in symbols if s not in exact and s not in suffix]
     ordered: list[SymbolRow] = []

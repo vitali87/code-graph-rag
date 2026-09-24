@@ -874,6 +874,7 @@ MCP_SERVER_NO_ROOT = (
 )
 MCP_SERVER_ROOT_RESOLVED = "[GraphCode MCP] Project root resolved to: {path}"
 MCP_SERVER_USING_ROOT = "[GraphCode MCP] Using project root: {path}"
+MCP_SERVER_WORKSPACE = "MCP server scoped to workspace {name!r} ({count} repos)"
 MCP_SERVER_CONFIG_ERROR = "[GraphCode MCP] Configuration error: {error}"
 MCP_SERVER_INIT_SERVICES = "[GraphCode MCP] Initializing services..."
 MCP_SERVER_INIT_SUCCESS = "[GraphCode MCP] Services initialized successfully"
@@ -1066,6 +1067,10 @@ FILE_UNREADABLE = (
     "Skipping unreadable file (broken symlink or removed): {path} ({error})"
 )
 INCREMENTAL_UNREADABLE = "Skipped {count} unreadable files (broken symlinks or removed)"
+INCREMENTAL_UNREADABLE_RETRY = (
+    "{count} unreadable file(s) are marked in the cache, so the next update "
+    "retries them whatever their directories' mtimes say"
+)
 
 # Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
