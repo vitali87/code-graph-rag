@@ -233,12 +233,12 @@ class CallResolver:
         # receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
         self._simple_resolution_cache: dict[
-            tuple[str, str], tuple[str, str] | None
+            tuple[str, str, bool], tuple[str, str] | None
         ] = {}
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
-        self._resolution_labels: dict[tuple[str, str], str] = {}
+        self._resolution_labels: dict[tuple[str, str, bool], str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
@@ -452,7 +452,11 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
+        """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
+        names a TYPE and the simple-name fallback must not offer a method or
+        function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
         return self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -464,6 +468,7 @@ class CallResolver:
                     caller_qn,
                     language,
                     call_point,
+                    constructing,
                 )
             ),
             call_name,
@@ -1227,6 +1232,7 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
         if language == cs.SupportedLanguage.PYTHON:
             handled, inline = self._resolve_inline_receiver_call(
@@ -1336,7 +1342,9 @@ class CallResolver:
         ):
             use_cache = False
         if use_cache:
-            cache_key = (call_name, module_qn)
+            # `new X()` and a bare `X()` in one module are different
+            # questions with different answers, so they never share a slot.
+            cache_key = (call_name, module_qn, constructing)
             if cache_key in self._simple_resolution_cache:
                 self.last_resolution = self._resolution_labels.get(
                     cache_key, cs.EdgeResolution.EXACT
@@ -1544,13 +1552,15 @@ class CallResolver:
                 self._remember(cache_key, None)
             return None
 
-        result = self._try_resolve_via_trie(call_name, module_qn, language, call_point)
+        result = self._try_resolve_via_trie(
+            call_name, module_qn, language, call_point, constructing
+        )
         if use_cache:
             self._remember(cache_key, result)
         return result
 
     def _remember(
-        self, cache_key: tuple[str, str], result: tuple[str, str] | None
+        self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
         self._resolution_labels[cache_key] = self.last_resolution
@@ -2837,6 +2847,7 @@ class CallResolver:
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
         search_name = _SEARCH_NAME_CACHE.get(call_name)
         if search_name is None:
@@ -2845,6 +2856,17 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn, call_point
         )
+        if constructing:
+            # `new X(...)` names a TYPE: a method or function that merely
+            # shares the name is never its target, however close by import
+            # distance it sits. A C# static factory `Some.LogEventProperty()`
+            # beside `class LogEventProperty` outranked the class once the
+            # class qn stopped repeating its namespace (issue #1629).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] == cs.NodeLabel.CLASS.value
+            ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak

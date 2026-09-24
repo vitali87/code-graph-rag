@@ -29,6 +29,8 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_namespaced_from_graph,
+    csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -2447,6 +2449,36 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # The C# declared-form index (issue #1629) is filled only by
+                # parsing; an unchanged type must stay reachable by `N.Widget`
+                # from a re-parsed base list or receiver (bot review).
+                if node_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ) and path.endswith(cs.EXT_CS):
+                    namespace = row.get(cs.KEY_NAMESPACE)
+                    namespaced = csharp_namespaced_from_graph(
+                        qn,
+                        path,
+                        self.project_name,
+                        namespace if isinstance(namespace, str) else None,
+                    )
+                    processor = self.factory.definition_processor
+                    # Rejoin the partial group parsing would have given it,
+                    # under the same key, so a declared name spanning
+                    # unchanged parts stays one type; a lone type's group of
+                    # one reads exactly as no group (bot review).
+                    if key := csharp_partial_key_from_graph(
+                        qn, path, self.project_name
+                    ):
+                        group = processor._csharp_partial_index.setdefault(key, [])
+                        group.append(qn)
+                        processor.csharp_partial_groups[qn] = group
+                    if namespaced:
+                        processor.csharp_class_namespaced[qn] = namespaced
+                        processor.csharp_namespaced_qns.setdefault(
+                            namespaced, set()
+                        ).add(qn)
                 # Persisted annotations of UNCHANGED definitions rejoin the
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
@@ -3640,6 +3672,15 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # Same ownership, same reason (issue #1629): every C# class has
+            # an entry, not only the generic ones #1769's sweep covers.
+            namespaced = processor.csharp_class_namespaced.pop(qn, None)
+            if namespaced is not None:
+                carriers = processor.csharp_namespaced_qns.get(namespaced)
+                if carriers is not None:
+                    carriers.discard(qn)
+                    if not carriers:
+                        del processor.csharp_namespaced_qns[namespaced]
             # The owner record goes with them: it names a file this updater
             # no longer has, and keeping it would re-sweep the same qn on the
             # next deletion of a file that happens to reuse the module qn.

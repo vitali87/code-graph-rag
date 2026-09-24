@@ -101,6 +101,7 @@ class CSharpTypeInferenceEngine:
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_class_generic_arity",
+        "csharp_class_namespaced",
         "csharp_method_return_types",
         "method_return_types",
         "function_locations",
@@ -128,6 +129,7 @@ class CSharpTypeInferenceEngine:
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_class_namespaced: dict[str, str] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -180,6 +182,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
+        )
+        self.csharp_class_namespaced = (
+            csharp_class_namespaced if csharp_class_namespaced is not None else {}
         )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
@@ -956,9 +961,14 @@ class CSharpTypeInferenceEngine:
         if qn is None:
             return None
         # `this` names the exact containing class, so keep its
-        # namespace-qualified form (`N1.Widget`, module prefix stripped) rather
-        # than the bare simple name: that lets the matcher bind an exact `this
-        # N1.Widget` extension even when another `N2.Widget` exists.
+        # namespace-qualified form (`N1.Widget`) rather than the bare simple
+        # name: that lets the matcher bind an exact `this N1.Widget` extension
+        # even when another `N2.Widget` exists. The form is recorded at
+        # ingest from the declaration, because a namespace the module's
+        # directory spells is no longer in the qn (issue #1629); the
+        # prefix-strip below is the fallback for a class ingested without it.
+        if (namespaced := self.csharp_class_namespaced.get(qn)) is not None:
+            return namespaced
         if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
             return qn[len(module_qn) + 1 :]
         return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
