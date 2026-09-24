@@ -106,6 +106,7 @@ _DEFINES_RELS = frozenset(
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
@@ -775,6 +776,9 @@ class _StatefulIngestor:
                         if isinstance(
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
+                        else None,
+                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                        if cs.KEY_NAMESPACE in props
                         else None,
                     }
                     defs.append(row)

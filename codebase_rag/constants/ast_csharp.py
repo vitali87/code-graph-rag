@@ -203,6 +203,7 @@ TS_CSHARP_USING_DIRECTIVE = "using_directive"
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
 TS_CSHARP_QUALIFIED_NAME = "qualified_name"
+TS_CSHARP_ALIAS_QUALIFIED_NAME = "alias_qualified_name"
 TS_CSHARP_IDENTIFIER = "identifier"
 
 # Expression body `=> expr` on methods, properties, and accessors.
@@ -342,3 +343,6 @@ TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"
 # the pattern or the bound name looks clean inside the branch.
 TS_CSHARP_IS_PATTERN = "is_pattern_expression"
 TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
+# An enum body and its members (issue #1807).
+TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
+TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"
