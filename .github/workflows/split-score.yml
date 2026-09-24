@@ -1,35 +1,29 @@
 name: PR Split Score
 
-# pull_request_target, not pull_request: a fork PR's `pull_request` run waits
-# at action_required until a maintainer approves it, so the contributor the
-# score exists for got no feedback until then. This is safe because nothing
-# from the PR runs: checkout takes the BASE, the action is pinned, and the
-# scorer fetches refs/pull/<n>/head only as git objects to diff. The token
-# stays read-only.
+# pull_request, never pull_request_target: scoring needs no privilege, so a
+# fork's read-only token is enough, and GitHub disables pull_request_target
+# by default in public repositories from 2026-11-02. Fork runs wait for
+# approval only for a first-time contributor (the repository's
+# fork-PR approval policy); a returning contributor is scored at once.
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] no PR code runs; read-only token, no secrets
+  pull_request:
     branches: [main]
 
 permissions:
   contents: read
 
 # A new push to the same PR supersedes the queued or running analysis of the
-# previous head. github.ref is the BASE branch under pull_request_target, so
-# the group keys on the PR number, or every PR would cancel every other one.
+# previous head; cancelling it keeps the runner queue for live heads.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   score:
     runs-on: ubuntu-latest
     steps:
-      # The base commit, detached. The default ref under pull_request_target
-      # is the base BRANCH, and the scorer's `git branch -f main` refuses to
-      # move a branch that is checked out.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
           persist-credentials: false
 
