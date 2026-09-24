@@ -522,3 +522,40 @@ def test_the_declared_form_is_rebuilt_from_the_graph(
     qn: str, path: str, namespace: str | None, expected: str | None
 ) -> None:
     assert csharp_namespaced_from_graph(qn, path, "proj", namespace) == expected
+
+
+def _twin_widgets(using: str) -> dict[str, str]:
+    widget = (
+        "namespace {ns};\n"
+        "public class Widget {{ public Widget(int n) {{ }} public static void S() {{ }} }}\n"
+    )
+    return {
+        "src/Zeta/Widget.cs": widget.format(ns="Zeta"),
+        "src/Other/Widget.cs": widget.format(ns="Other"),
+        "src/Zeta/Sub/Widget.cs": widget.format(ns="Zeta.Sub"),
+        "src/App/Plain.cs": (
+            f"{using}\nnamespace App;\npublic class Plain\n{{\n"
+            "    public void Run()\n    {\n"
+            "        var w = new Widget(1);\n        Widget.S();\n    }\n}\n"
+        ),
+    }
+
+
+class TestAUsingChoosesAmongSameNamedTypes:
+    """Same-named types in several namespaces tied on import distance and
+    broke on qn order, so a bare `Widget` under `using Zeta;` bound
+    `Other.Widget` (issue #2001)."""
+
+    @pytest.mark.parametrize("namespace", ["Zeta", "Other", "Zeta.Sub"])
+    def test_the_imported_namespace_wins(self, tmp_path: Path, namespace: str) -> None:
+        store = _index(tmp_path / "proj", _twin_widgets(f"using {namespace};"))
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = f"proj.src.{namespace}.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+        instantiates = {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == cs.RelationshipType.INSTANTIATES.value and str(source) == run
+        }
+        assert instantiates == {owner}, sorted(instantiates)

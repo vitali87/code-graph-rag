@@ -2880,6 +2880,8 @@ class CallResolver:
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
+        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
+            possible_matches = self._csharp_prefer_imported(possible_matches, module_qn)
 
         if len(possible_matches) == 1:
             best_candidate_qn = possible_matches[0]
@@ -2907,6 +2909,25 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _csharp_prefer_imported(self, candidates: list[str], module_qn: str) -> list[str]:
+        # Same-named C# types in two namespaces tied on import distance and
+        # broke on qn order, so `using Zeta;` + `new Widget()` bound
+        # `Other.Widget` (issue #2001). Keep the candidates whose owning type
+        # sits DIRECTLY in a namespace (or, for `using static`, a type) the
+        # file imports: C# does not import nested namespaces.
+        imported = set(self.import_processor.import_mapping.get(module_qn, {}).values())
+        if not imported:
+            return candidates
+        declared = self.type_inference.csharp_class_namespaced
+        preferred = []
+        for qn in candidates:
+            owner = qn
+            while owner and owner not in declared:
+                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
+            if owner and declared[owner].rpartition(cs.SEPARATOR_DOT)[0] in imported:
+                preferred.append(qn)
+        return preferred or candidates
 
     def _resolve_two_part_call(
         self,
