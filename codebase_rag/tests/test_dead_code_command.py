@@ -387,3 +387,21 @@ class TestDeadCodeCommand:
 
         assert result.exit_code == 0
         assert json.loads(result.output) == []
+
+
+def test_json_output_stays_parseable_with_the_single_project_notice(
+    runner: CliRunner, dead_rows: list[ResultRow]
+) -> None:
+    """The one-project notice for --no-endpoint-roots must not land in the
+    JSON stream (local review on the #1603 PR): it goes to stderr."""
+    mock_ingestor = _make_mock_ingestor(projects=["myproj"], fetch_result=dead_rows)
+    with patch("codebase_rag.cli.connect_memgraph", return_value=mock_ingestor):
+        result = runner.invoke(
+            app, ["dead-code", "--format", "json", "--no-endpoint-roots"]
+        )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert {row["qualified_name"] for row in payload} == {
+        "myproj.mod.orphan_one",
+        "myproj.mod.Thing.orphan_two",
+    }
