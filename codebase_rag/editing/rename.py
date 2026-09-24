@@ -44,7 +44,7 @@ from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
 from .patcher import Patcher, PatcherError, line_col_to_byte
-from .sites import AMBIGUOUS, call_node_at, hierarchy
+from .sites import AMBIGUOUS, call_node_at, calls_starting_at, hierarchy
 from .transaction import (
     EditTransaction,
     StagedTree,
@@ -211,11 +211,16 @@ def _callee_span(
     return func.start_byte, func.end_byte
 
 
-def _has_grammar(language: cs.SupportedLanguage | None) -> bool:
+def _calls_start_at(
+    source: bytes, language: cs.SupportedLanguage | None, line: int, col: int
+) -> bool:
     if language is None:
         return False
     parsers, _queries = load_parsers()
-    return parsers.get(language) is not None
+    parser = parsers.get(language)
+    if parser is None:
+        return False
+    return bool(calls_starting_at(parser.parse(source).root_node, line - 1, col))
 
 
 def _chain_links(
@@ -276,11 +281,13 @@ def _last_identifier(
     start = line_col_to_byte(source, line, col)
     end = line_col_to_byte(source, end_line, end_col)
     callee = _callee_span(source, language, line, col, end_line, end_col)
-    if callee is None and is_call and _has_grammar(language):
-        # The grammar parsed the file and found no call at the recorded
-        # position, so the index is stale here. The no-grammar fallback below
-        # would cut at the last `(` and pick the INNER callee of
-        # `helper(helper(1))` (bot review).
+    if callee is None and is_call and _calls_start_at(source, language, line, col):
+        # Calls DO start at the recorded position but none ends where the
+        # site recorded its end: the index is stale here. The no-grammar
+        # fallback below would cut at the last `(` and pick the INNER callee
+        # of `helper(helper(1))` (bot review). A position no call starts at
+        # (a grammar whose call node has no `function` field, such as Java's
+        # method_invocation) keeps the fallback.
         return _STALE_CALL
     if callee is not None and callee[0] == start:
         start, end = callee

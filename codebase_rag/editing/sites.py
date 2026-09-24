@@ -51,13 +51,13 @@ def call_node_at(
     names nothing: the position is stale, and rewriting a neighbour that
     happens to share the start would be a guess.
     """
-    calls = _calls_starting_at(root, line - 1, col)
+    calls = calls_starting_at(root, line - 1, col)
     if recorded_end is not None:
         return next((call for call in calls if call.end_point == recorded_end), None)
     return max(calls, key=lambda call: call.end_byte, default=None)
 
 
-def _calls_starting_at(root: Node, row: int, col: int) -> list[Node]:
+def calls_starting_at(root: Node, row: int, col: int) -> list[Node]:
     calls: list[Node] = []
     stack: list[Node] = [root]
     while stack:

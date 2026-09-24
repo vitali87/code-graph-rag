@@ -20,12 +20,19 @@ def test_a_valid_call_site_names_the_outer_callee() -> None:
 
 
 def test_a_stale_call_site_is_refused_not_guessed() -> None:
-    # The recorded call no longer starts at (2, 0): `y` does.
-    token = _last_identifier(SOURCE, 2, 0, 2, 21, "helper", LANG, is_call=True)
+    # Calls still start at (2, 4) but none ends at the recorded (2, 15).
+    token = _last_identifier(SOURCE, 2, 4, 2, 15, "helper", LANG, is_call=True)
     assert token == _STALE_CALL
 
 
+def test_a_position_no_call_starts_at_keeps_the_fallback() -> None:
+    # A grammar whose call node has no `function` field (Java) finds no call
+    # anywhere; that is not staleness, so the old fallback still answers.
+    token = _last_identifier(SOURCE, 2, 0, 2, 21, "helper", LANG, is_call=True)
+    assert token != _STALE_CALL
+
+
 def test_a_reference_site_is_not_treated_as_a_stale_call() -> None:
-    token = _last_identifier(SOURCE, 2, 0, 2, 21, "helper", LANG, is_call=False)
+    token = _last_identifier(SOURCE, 2, 4, 2, 15, "helper", LANG, is_call=False)
     assert token is not None
     assert token != _STALE_CALL
