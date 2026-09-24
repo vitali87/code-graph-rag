@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import platform
 import re
 import sys
+import sysconfig
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -142,6 +144,20 @@ MISSING_TEXT_ERROR = (
 UNREADABLE_BINARY_WARNING = (
     "warning: {path} could not be read as a PyInstaller archive; licences "
     "will not be filtered to the bundle's contents"
+)
+# The interpreter and the bootloader are in every binary but are not
+# distributions in the dependency closure, so they are credited from their own
+# install (#2174). CPython keeps LICENSE.txt in the stdlib directory on POSIX
+# (`lib/pythonX.Y/`) and at the install root on Windows (`Lib\` is the stdlib).
+CPYTHON_NAME = "CPython"
+CPYTHON_LICENSE = "PSF-2.0"
+CPYTHON_LICENSE_FILE = "LICENSE.txt"
+BOOTLOADER_NAME = "PyInstaller bootloader"
+BOOTLOADER_DISTRIBUTION = "pyinstaller"
+BOOTLOADER_LICENSE = "GPL-2.0-or-later WITH PyInstaller bootloader exception"
+MISSING_BOOTLOADER_ERROR = (
+    "pyinstaller is not installed, so the bootloader licence the binary "
+    "carries cannot be reproduced"
 )
 UNREADABLE_LICENSE_ERROR = (
     "{name} installs a licence at {path} that could not be read; the notice "
@@ -499,6 +515,65 @@ def _notice(dist: Distribution, bundled: frozenset[str] = frozenset()) -> Notice
     )
 
 
+def _cpython_license_path(stdlib: Path, base_prefix: Path) -> Path | None:
+    for candidate in (
+        stdlib / CPYTHON_LICENSE_FILE,
+        base_prefix / CPYTHON_LICENSE_FILE,
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def cpython_notice() -> Notice:
+    """The running interpreter's licence, which is the one PyInstaller bundles.
+
+    Returns a notice with no text when the file is missing or unreadable, so
+    the refusal in `main` names it rather than the notice omitting CPython.
+    """
+    path = _cpython_license_path(
+        Path(sysconfig.get_path("stdlib")), Path(sys.base_prefix)
+    )
+    texts: tuple[str, ...] = ()
+    if path is not None:
+        try:
+            body = path.read_text(encoding=ENCODING).strip()
+        except (OSError, UnicodeDecodeError):
+            body = ""
+        if body:
+            texts = (body,)
+    return Notice(
+        name=CPYTHON_NAME,
+        version=platform.python_version(),
+        license=CPYTHON_LICENSE,
+        texts=texts,
+    )
+
+
+def _pyinstaller_distribution() -> Distribution | None:
+    try:
+        return distribution(BOOTLOADER_DISTRIBUTION)
+    except PackageNotFoundError:
+        return None
+
+
+def bootloader_notice() -> Notice | None:
+    """PyInstaller's licence, which carries the bootloader exception.
+
+    The bootloader is compiled into every one-file binary; PyInstaller itself
+    is build tooling, so this is the only part of it the notice credits.
+    """
+    dist = _pyinstaller_distribution()
+    if dist is None:
+        return None
+    return Notice(
+        name=BOOTLOADER_NAME,
+        version=dist.version,
+        license=BOOTLOADER_LICENSE,
+        texts=_license_texts(dist),
+    )
+
+
 def collect_notices(
     dists: Iterable[Distribution], bundled: frozenset[str] = frozenset()
 ) -> list[Notice]:
@@ -550,8 +625,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         notices = collect_notices(runtime_closure().values(), bundled)
+        notices.append(cpython_notice())
+        bootloader = bootloader_notice()
     except UnreadableLicenseError as error:
         print(error, file=sys.stderr)  # noqa: T201
+        return 1
+
+    # A binary always carries the bootloader. Without `--binary` the notice is
+    # a preview of the closure, so the bootloader is credited only if present.
+    if bootloader is not None:
+        notices.append(bootloader)
+    elif args.binary is not None:
+        print(MISSING_BOOTLOADER_ERROR, file=sys.stderr)  # noqa: T201
         return 1
 
     # A notice without its licence text does not satisfy the licence it is
