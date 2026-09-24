@@ -1,28 +1,65 @@
 name: PR Split Score
 
+# pull_request_target, not pull_request: a fork PR's `pull_request` run waits
+# at action_required until a maintainer approves it, so the contributor the
+# score exists for got no feedback until then. This is safe because nothing
+# from the PR runs: checkout takes the BASE, the action is pinned, and the
+# scorer fetches refs/pull/<n>/head only as git objects to diff. The token
+# stays read-only.
 on:
-  pull_request:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no PR code runs; read-only token, no secrets
     branches: [main]
 
 permissions:
   contents: read
-  pull-requests: write
 
 # A new push to the same PR supersedes the queued or running analysis of the
-# previous head; cancelling it keeps the runner queue for live heads.
+# previous head. github.ref is the BASE branch under pull_request_target, so
+# the group keys on the PR number, or every PR would cancel every other one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}-{2}', github.event_name, github.sha, github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   score:
     runs-on: ubuntu-latest
     steps:
+      # The base commit, detached. The default ref under pull_request_target
+      # is the base BRANCH, and the scorer's `git branch -f main` refuses to
+      # move a branch that is checked out.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: pr-split score
+        id: score
         uses: vitali87/pr-split@95cdcd9748109351b2aa7129ede2269989d8f61c # v1.0.1
         with:
           max-loc: "400"
+          # No API call. The report needs none, and the comment write it
+          # replaces failed with a 403 on every oversized fork PR, since a
+          # fork's token is read-only: the one case the score is for.
+          post-comment: "false"
+
+      # The job summary and a warning annotation are written by the runner,
+      # not through the API, so they reach a fork's author the same as ours.
+      - name: Report
+        env:
+          TOTAL_LOC: ${{ steps.score.outputs.total-loc }}
+          TOTAL_GROUPS: ${{ steps.score.outputs.total-groups }}
+          SHOULD_SPLIT: ${{ steps.score.outputs.should-split }}
+          MAX_LOC: "400"
+        run: |
+          # The pinned action renders its report here and exposes no output
+          # naming the path; it is absent when the PR is under the limit.
+          report="${RUNNER_TEMP}/pr-split-comment.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "pr-split: ${TOTAL_LOC} LOC, within the ${MAX_LOC} LOC limit." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$SHOULD_SPLIT" = "true" ]; then
+            echo "::warning title=PR over ${MAX_LOC} LOC::${TOTAL_LOC} LOC; pr-split suggests ${TOTAL_GROUPS} smaller PRs. The plan is in this job's summary. Run pr-split split locally to create them."
+          fi
