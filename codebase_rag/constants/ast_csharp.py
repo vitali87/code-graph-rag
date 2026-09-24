@@ -154,6 +154,7 @@ TS_CSHARP_PARAMETER_LIST = "parameter_list"
 # implicit_type, inferred from the initializer. A field_declaration wraps a
 # variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
+TS_CSHARP_FOREACH_STATEMENT = "foreach_statement"
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
 TS_CSHARP_FIELD_DECLARATION = "field_declaration"
@@ -167,6 +168,8 @@ TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 # constructed type comes from the enclosing declaration (issue #773).
 TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION = "implicit_object_creation_expression"
 TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
+# The `base` receiver of a member access (`base.Handle`).
+TS_CSHARP_BASE = "base"
 # A conditional call `recv?.Method(...)`: the invocation's `function` field
 # is a conditional_access_expression whose member_binding_expression child
 # carries the method name.
@@ -205,6 +208,7 @@ TS_CSHARP_GLOBAL = "global"
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
 TS_CSHARP_QUALIFIED_NAME = "qualified_name"
+TS_CSHARP_ALIAS_QUALIFIED_NAME = "alias_qualified_name"
 TS_CSHARP_IDENTIFIER = "identifier"
 
 # Expression body `=> expr` on methods, properties, and accessors.
@@ -344,3 +348,6 @@ TS_CSHARP_DECLARATION_EXPRESSION = "declaration_expression"
 # the pattern or the bound name looks clean inside the branch.
 TS_CSHARP_IS_PATTERN = "is_pattern_expression"
 TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
+# An enum body and its members (issue #1807).
+TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
+TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"

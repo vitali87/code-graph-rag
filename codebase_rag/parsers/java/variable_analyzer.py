@@ -16,6 +16,7 @@ from .utils import (
     extract_field_info,
     extract_method_call_info,
     get_root_node_from_module_qn,
+    spread_element_type_node,
 )
 
 if TYPE_CHECKING:
@@ -127,11 +128,14 @@ class JavaVariableAnalyzerMixin:
         param_name = None
         param_type = None
 
+        # The element type by shape, not by `type_identifier` alone: a
+        # generic, array or primitive varargs bound no local before
+        # (issue #1974).
+        element = spread_element_type_node(param_node)
+        if element is not None and (decoded_text := safe_decode_text(element)):
+            param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
         for subchild in param_node.children:
-            if subchild.type == cs.TS_TYPE_IDENTIFIER:
-                if decoded_text := safe_decode_text(subchild):
-                    param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
-            elif subchild.type == cs.TS_VARIABLE_DECLARATOR:
+            if subchild.type == cs.TS_VARIABLE_DECLARATOR:
                 if name_node := subchild.child_by_field_name(cs.FIELD_NAME):
                     param_name = safe_decode_text(name_node)
 

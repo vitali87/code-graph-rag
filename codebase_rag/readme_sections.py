@@ -130,9 +130,7 @@ def format_relationship_schemas_table(schemas: list[tuple[str, str, str]]) -> st
 
 
 def format_cli_commands_table() -> str:
-    rows = [
-        [f"`codebase-rag {cmd.value}`", desc] for cmd, desc in ch.CLI_COMMANDS.items()
-    ]
+    rows = [[f"`cgr {cmd.value}`", desc] for cmd, desc in ch.CLI_COMMANDS.items()]
     return format_markdown_table(["Command", "Description"], rows)
 
 
