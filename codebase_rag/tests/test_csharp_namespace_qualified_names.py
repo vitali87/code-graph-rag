@@ -522,3 +522,53 @@ def test_the_declared_form_is_rebuilt_from_the_graph(
     qn: str, path: str, namespace: str | None, expected: str | None
 ) -> None:
     assert csharp_namespaced_from_graph(qn, path, "proj", namespace) == expected
+
+
+_ZETA_WIDGET = (
+    "namespace Zeta;\npublic class Widget\n{\n"
+    "    public Widget(int n) { }\n    public static void S() { }\n"
+    "    public void M() { }\n}\n"
+)
+
+
+class TestWrittenAndAliasedTypePaths:
+    """A type written with its namespace, through a type alias or through a
+    namespace alias names the DECLARED form, which a folded qn no longer ends
+    with; each emitted nothing (issues #2000, #2002, #2004)."""
+
+    @pytest.mark.parametrize(
+        ("using", "construct", "static"),
+        [
+            ("", "new Zeta.Widget(1)", "Zeta.Widget.S()"),  # #2000
+            ("using W = Zeta.Widget;\n", "new W(1)", "W.S()"),  # #2002
+            ("using Z = Zeta;\n", "new Z.Widget(1)", "Z.Widget.S()"),  # #2004
+        ],
+    )
+    def test_the_written_path_binds_the_type(
+        self, tmp_path: Path, using: str, construct: str, static: str
+    ) -> None:
+        store = _index(
+            tmp_path / "proj",
+            {
+                "src/Zeta/Widget.cs": _ZETA_WIDGET,
+                "src/App/Use.cs": (
+                    f"{using}namespace App;\npublic class Use\n{{\n"
+                    f"    public void Run()\n    {{\n        var w = {construct};\n"
+                    f"        {static};\n        w.M();\n    }}\n}}\n"
+                ),
+            },
+        )
+        run = "proj.src.App.Use.Use.Run"
+        widget = "proj.src.Zeta.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {
+            f"{widget}.Widget(int)",
+            f"{widget}.S",
+            f"{widget}.M",
+        }, sorted(targets)
+        instantiates = {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == cs.RelationshipType.INSTANTIATES.value and str(source) == run
+        }
+        assert instantiates == {widget}, sorted(instantiates)
