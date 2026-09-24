@@ -61,6 +61,9 @@ _IDENTIFIER_RE = r"(?<![\w])%s(?![\w])"
 
 _STRUCTURAL = "structural"
 _SITELESS = "siteless"
+# A call site whose recorded position no longer holds a call: the source
+# changed after indexing, so the site must be refused, not guessed at.
+_STALE_CALL = (-1, -1)
 # A same-named link of a fluent chain the index has no row for.
 _CHAIN = "chain"
 _MEMBER_NAME_TYPES = frozenset(
@@ -208,6 +211,13 @@ def _callee_span(
     return func.start_byte, func.end_byte
 
 
+def _has_grammar(language: cs.SupportedLanguage | None) -> bool:
+    if language is None:
+        return False
+    parsers, _queries = load_parsers()
+    return parsers.get(language) is not None
+
+
 def _chain_links(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -255,6 +265,7 @@ def _last_identifier(
     end_col: int,
     name: str,
     language: cs.SupportedLanguage | None = None,
+    is_call: bool = False,
 ) -> tuple[int, int] | None:
     """(line, col) of the token to rename inside a site span.
 
@@ -265,6 +276,12 @@ def _last_identifier(
     start = line_col_to_byte(source, line, col)
     end = line_col_to_byte(source, end_line, end_col)
     callee = _callee_span(source, language, line, col, end_line, end_col)
+    if callee is None and is_call and _has_grammar(language):
+        # The grammar parsed the file and found no call at the recorded
+        # position, so the index is stale here. The no-grammar fallback below
+        # would cut at the last `(` and pick the INNER callee of
+        # `helper(helper(1))` (bot review).
+        return _STALE_CALL
     if callee is not None and callee[0] == start:
         start, end = callee
     text = source[start:end].decode(cs.ENCODING_UTF8, errors="replace")
@@ -468,7 +485,20 @@ class Renamer:
             end_col if isinstance(end_col, int) else col + len(old_name),
             old_name,
             get_language_for_extension(Path(path).suffix),
+            is_call=kind == "call",
         )
+        if token == _STALE_CALL:
+            self._record_unlocatable(
+                sites,
+                unlocatable,
+                owner=owner,
+                path=path,
+                line=line,
+                col=col,
+                resolution="stale site",
+                site_resolution=_SITELESS,
+            )
+            return
         if token is None:
             # The site spells the symbol under an alias (`h(1, 2)` for
             # `import helper as h`); the alias keeps binding, so nothing to
