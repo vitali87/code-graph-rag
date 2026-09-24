@@ -457,3 +457,24 @@ def test_every_command_name_has_a_registry_entry() -> None:
     # CLI_COMMANDS feeds the generated command tables (README, help); a
     # CLICommandName member missing from it silently drops the command there.
     assert set(ch.CLI_COMMANDS) == set(ch.CLICommandName)
+
+
+def test_every_registered_command_is_named_in_the_enum() -> None:
+    """The enum must cover what the APP registers, not just what the table
+    repeats back.
+
+    `test_every_command_name_has_a_registry_entry` compares the table with
+    the enum, so a command missing from BOTH is invisible to it --
+    `verify-index` and `diff-index` were registered in `cli.py` and absent
+    from each, and the generated overview claimed to list every top-level
+    command while omitting them (Copilot, #1929).
+    """
+    registered = {
+        command.name for command in app.registered_commands if command.name is not None
+    }
+    # The fixture guard: a typer version that stops exposing names here
+    # would make the assertion below vacuous.
+    assert len(registered) > 1, registered
+    assert registered <= {member.value for member in ch.CLICommandName}, sorted(
+        registered - {member.value for member in ch.CLICommandName}
+    )

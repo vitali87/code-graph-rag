@@ -68,6 +68,36 @@ class DefinitionRow(SymbolRow):
     found: bool
 
 
+class EndpointRow(TypedDict):
+    endpoint: str
+    kind: str | None
+    label: str
+    handler: str
+    path: str | None
+    callers: int
+
+
+class EndpointCallerRow(TypedDict):
+    label: str
+    qualified_name: str
+    path: str | None
+    url: str | None
+    direction: str | None
+    endpoint: str
+    handler: str
+
+
+class RemoteDependencyRow(TypedDict):
+    label: str
+    qualified_name: str
+    path: str | None
+    url: str | None
+    direction: str | None
+    endpoint: str | None
+    handler: str | None
+    handler_project: str | None
+
+
 class CallSiteRow(TypedDict):
     label: str
     qualified_name: str
@@ -109,8 +139,45 @@ class TestReachRow(TypedDict):
     through: str
 
 
+def _owner_check(fetch_all: QueryFn, project_name: str) -> Callable[[str], bool]:
+    """Whether `project_name`, and not a longer-named registered project it
+    is a dotted prefix of, owns a qualified name (issue #1982).
+
+    Every read here is scoped by `STARTS WITH $project_prefix`, and `foo.`
+    selects `foo.bar`'s rows too. The owner is the LONGEST registered
+    project name the qn sits under, the way the updater and the gloss
+    repair decide it; the project list is read once per call, and a failed
+    read keeps the prefix rule rather than dropping every row.
+    """
+    prefix = _prefix(project_name)
+    names: set[str] = {project_name}
+    try:
+        rows = fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+    except Exception:
+        rows = []
+    for row in rows:
+        name = row.get(cs.KEY_NAME)
+        if isinstance(name, str) and name:
+            names.add(name)
+    longest_first = sorted(names, key=len, reverse=True)
+
+    def owns(qn: str) -> bool:
+        if qn != project_name and not qn.startswith(prefix):
+            return False
+        for name in longest_first:
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == project_name
+        return True
+
+    return owns
+
+
 def _prefix(project_name: str) -> str:
     return f"{project_name}{cs.SEPARATOR_DOT}"
+
+
+def _text_qn(row: ResultRow) -> str:
+    return str(row.get(cs.KEY_QUALIFIED_NAME, ""))
 
 
 def _opt_int(value: object) -> int | None:
@@ -161,6 +228,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
     returns the innermost definitions spanning that line.
     """
     prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     location = parse_location(target)
     if location is not None:
         path, line = location
@@ -172,7 +240,7 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
                 cs.KEY_LINE: line,
             },
         )
-        symbols = [_symbol_row(r) for r in rows]
+        symbols = [_symbol_row(r) for r in rows if owns(_text_qn(r))]
         # Innermost first: the tightest span is what the line "is in".
         symbols.sort(
             key=lambda s: (
@@ -190,13 +258,26 @@ def resolve(fetch_all: QueryFn, project_name: str, target: str) -> list[SymbolRo
             cs.KEY_QN: target,
         },
     )
-    symbols = [_symbol_row(r) for r in rows]
+    owned = [r for r in rows if owns(_text_qn(r))]
+    symbols = [_symbol_row(r) for r in owned]
+    # A C# type reached by `<namespace>.<name>` ranks with the dotted-suffix
+    # matches: that is the name its qualified name used to end with before
+    # the mirrored namespace was left out of it (issue #1629).
+    natural = {
+        str(r.get(cs.KEY_QUALIFIED_NAME, ""))
+        for r in owned
+        if r.get(cs.KEY_NAMESPACE)
+        and f"{r[cs.KEY_NAMESPACE]}{cs.SEPARATOR_DOT}{r.get(cs.KEY_NAME)}" == target
+    }
     exact = [s for s in symbols if s["qualified_name"] == target]
     suffix = [
         s
         for s in symbols
         if s["qualified_name"] != target
-        and s["qualified_name"].endswith(f"{cs.SEPARATOR_DOT}{target}")
+        and (
+            s["qualified_name"].endswith(f"{cs.SEPARATOR_DOT}{target}")
+            or s["qualified_name"] in natural
+        )
     ]
     by_name = [s for s in symbols if s not in exact and s not in suffix]
     ordered: list[SymbolRow] = []
@@ -244,6 +325,8 @@ def definition(
         cq.CYPHER_GRAPH_DEFINITION,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qualified_name},
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     if not rows:
         return DefinitionRow(
             label="",
@@ -315,6 +398,7 @@ def _walk_sites(
     # sites appear at the depth it was first reached and never again, so a
     # cycle terminates and the output stays a finite, ordered list.
     prefix = _prefix(project_name)
+    owns = _owner_check(fetch_all, project_name)
     seen: set[str] = {start}
     frontier: list[str] = [start]
     out: list[CallSiteRow] = []
@@ -322,8 +406,7 @@ def _walk_sites(
         next_frontier: list[str] = []
         for qn in sorted(frontier):
             rows = fetch_all(query, {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QN: qn})
-            for row in rows:
-                site = _site_row(row, level, qn)
+            for site in _owned_sites(rows, owns, level, qn):
                 out.append(site)
                 other = site["qualified_name"]
                 if other not in seen:
@@ -333,6 +416,14 @@ def _walk_sites(
         if not frontier:
             break
     return sorted(out, key=_site_sort_key)
+
+
+def _owned_sites(
+    rows: list[ResultRow], owns: Callable[[str], bool], level: int, through: str
+) -> list[CallSiteRow]:
+    """The sites among `rows` whose other endpoint this project owns: a
+    foreign row is neither reported nor a hop the walk continues through."""
+    return [_site_row(row, level, through) for row in rows if owns(_text_qn(row))]
 
 
 def callers(
@@ -366,6 +457,8 @@ def _related_rows(
     rows = fetch_all(
         query, {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: qn}
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     out = [
         RelatedRow(
             label=str(r.get(cs.KEY_LABEL, "")),
@@ -404,6 +497,8 @@ def importers(
         cq.CYPHER_GRAPH_IMPORTERS,
         {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: module_qn},
     )
+    owns = _owner_check(fetch_all, project_name)
+    rows = [r for r in rows if owns(_text_qn(r))]
     out = [
         ImporterRow(
             module=str(r.get(cs.KEY_QUALIFIED_NAME, "")),
@@ -467,8 +562,11 @@ class ReachIndex:
     ) -> ReachIndex:
         params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
         nodes: dict[_NodeId, PropertyDict] = {}
+        owns = _owner_check(fetch_all, project_name)
         for row in fetch_all(cq.CYPHER_DEAD_CODE_NODES, params):
             qn = str(row.get(cs.KEY_QUALIFIED_NAME) or "")
+            if not owns(qn):
+                continue
             if qn:
                 nodes[(str(row.get(cs.KEY_LABEL, "")), qn)] = _node_props(row)
         reverse: dict[str, set[str]] = {}
@@ -477,7 +575,9 @@ class ReachIndex:
                 continue
             src = str(row.get(cs.KEY_FROM_QN) or "")
             dst = str(row.get(cs.KEY_TO_QN) or "")
-            if src and dst:
+            # Both ends owned: a foreign caller must neither be reported
+            # nor be a hop the walk continues through (issue #1982).
+            if src and dst and owns(src) and owns(dst):
                 reverse.setdefault(dst, set()).add(src)
         return cls(nodes, reverse, test_patterns)
 
@@ -539,3 +639,93 @@ def tests_reaching(
     return ReachIndex.build(fetch_all, project_name, test_patterns).tests_reaching(
         qualified_name
     )
+
+
+# --- cross-service edges (issue #1603) ---------------------------------------
+
+
+def _endpoint_row(row: ResultRow) -> EndpointRow:
+    callers = row.get(cs.KEY_CALLERS)
+    return EndpointRow(
+        endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
+        kind=_opt_str(row.get(cs.KEY_KIND)),
+        label=str(row.get(cs.KEY_LABEL) or ""),
+        handler=str(row.get(cs.KEY_HANDLER) or ""),
+        path=_opt_str(row.get(cs.KEY_PATH)),
+        callers=callers if isinstance(callers, int) else 0,
+    )
+
+
+def _endpoint_caller_row(row: ResultRow) -> EndpointCallerRow:
+    return EndpointCallerRow(
+        label=str(row.get(cs.KEY_LABEL) or ""),
+        qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
+        path=_opt_str(row.get(cs.KEY_PATH)),
+        url=_opt_str(row.get(cs.KEY_URL)),
+        direction=_opt_str(row.get(cs.KEY_DIRECTION)),
+        endpoint=str(row.get(cs.KEY_ENDPOINT) or ""),
+        handler=str(row.get(cs.KEY_HANDLER) or ""),
+    )
+
+
+def endpoints(fetch_all: QueryFn, project_name: str) -> list[EndpointRow]:
+    """The endpoints a project exposes, each with its handler and how many
+    call sites in the whole graph reach it. Zero callers on a graph that
+    holds only this project means "none indexed", not "dead"."""
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    return [_endpoint_row(row) for row in fetch_all(cq.CYPHER_GRAPH_ENDPOINTS, params)]
+
+
+def endpoint_callers(
+    fetch_all: QueryFn, project_name: str, target: str
+) -> list[EndpointCallerRow]:
+    """Call sites, in any project, that reach the endpoint `target` names:
+    the handler's qualified name or the endpoint identity (`GET /users/{id}`).
+
+    Through a NETWORK resource that RESOLVES_TO the endpoint, or directly for
+    the RPC and dispatch kinds, which join without RESOLVES_TO.
+    """
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name), cs.KEY_QN: target}
+    rows = [
+        _endpoint_caller_row(row)
+        for query in (
+            cq.CYPHER_GRAPH_ENDPOINT_CALLERS,
+            cq.CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS,
+        )
+        for row in fetch_all(query, params)
+    ]
+    # Every field in the key: a caller that both reads and writes one URL is
+    # two rows, and two handlers can share a caller (bot review on PR #1975).
+    return sorted(
+        rows,
+        key=lambda r: (
+            r["qualified_name"],
+            r["url"] or "",
+            r["path"] or "",
+            r["direction"] or "",
+            r["endpoint"],
+            r["handler"],
+        ),
+    )
+
+
+def remote_dependencies(
+    fetch_all: QueryFn, project_name: str
+) -> list[RemoteDependencyRow]:
+    """Every network access a project makes, with the handler and project it
+    resolves to; an unresolved row (no endpoint) is a dependency the graph
+    cannot place -- a dynamic URL, or a service not indexed."""
+    params = {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
+    return [
+        RemoteDependencyRow(
+            label=str(row.get(cs.KEY_LABEL) or ""),
+            qualified_name=str(row.get(cs.KEY_QUALIFIED_NAME) or ""),
+            path=_opt_str(row.get(cs.KEY_PATH)),
+            url=_opt_str(row.get(cs.KEY_URL)),
+            direction=_opt_str(row.get(cs.KEY_DIRECTION)),
+            endpoint=_opt_str(row.get(cs.KEY_ENDPOINT)),
+            handler=_opt_str(row.get(cs.KEY_HANDLER)),
+            handler_project=_opt_str(row.get(cs.KEY_HANDLER_PROJECT)),
+        )
+        for row in fetch_all(cq.CYPHER_GRAPH_REMOTE_DEPENDENCIES, params)
+    ]

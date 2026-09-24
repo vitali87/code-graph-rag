@@ -16,6 +16,7 @@ from ...types_defs import (
     NodeType,
     SimpleNameLookup,
 )
+from ...utils import qn_markers
 from ..csharp_frontend import CallSiteKey
 from ..frontends.protocol import ResolvedCallSite
 from ..import_processor import ImportProcessor
@@ -100,6 +101,7 @@ class CSharpTypeInferenceEngine:
         "csharp_local_functions",
         "csharp_generic_methods",
         "csharp_class_generic_arity",
+        "csharp_class_namespaced",
         "csharp_method_return_types",
         "method_return_types",
         "function_locations",
@@ -127,6 +129,7 @@ class CSharpTypeInferenceEngine:
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
+        csharp_class_namespaced: dict[str, str] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -179,6 +182,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
+        )
+        self.csharp_class_namespaced = (
+            csharp_class_namespaced if csharp_class_namespaced is not None else {}
         )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
@@ -955,9 +961,14 @@ class CSharpTypeInferenceEngine:
         if qn is None:
             return None
         # `this` names the exact containing class, so keep its
-        # namespace-qualified form (`N1.Widget`, module prefix stripped) rather
-        # than the bare simple name: that lets the matcher bind an exact `this
-        # N1.Widget` extension even when another `N2.Widget` exists.
+        # namespace-qualified form (`N1.Widget`) rather than the bare simple
+        # name: that lets the matcher bind an exact `this N1.Widget` extension
+        # even when another `N2.Widget` exists. The form is recorded at
+        # ingest from the declaration, because a namespace the module's
+        # directory spells is no longer in the qn (issue #1629); the
+        # prefix-strip below is the fallback for a class ingested without it.
+        if (namespaced := self.csharp_class_namespaced.get(qn)) is not None:
+            return namespaced
         if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}"):
             return qn[len(module_qn) + 1 :]
         return qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
@@ -1189,6 +1200,29 @@ class CSharpTypeInferenceEngine:
                 if class_qn := self._containing_class_qn(caller_qn):
                     if ftype := self._field_type(class_qn, field):
                         return self._type_name_to_qn(ftype, module_qn)
+            if raw := safe_decode_text(receiver):
+                head, separator, tail = raw.partition(cs.SEPARATOR_DOT)
+                if (
+                    separator
+                    and cs.SEPARATOR_DOUBLE_COLON not in raw
+                    and head in local_var_types
+                ):
+                    current_qn = self._type_name_to_qn(local_var_types[head], module_qn)
+                    for field_name in tail.split(cs.SEPARATOR_DOT):
+                        if current_qn is None:
+                            break
+                        field_type = self._field_type(current_qn, field_name)
+                        if field_type is None:
+                            current_qn = None
+                            break
+                        current_qn = self._type_name_to_qn(field_type, module_qn)
+                    return current_qn
+                if qualified := self._qualified_type_name_to_qn(raw, module_qn):
+                    return qualified
+            return None
+        if receiver.type == cs.TS_CSHARP_ALIAS_QUALIFIED_NAME:
+            if raw := safe_decode_text(receiver):
+                return self._qualified_type_name_to_qn(raw, module_qn)
             return None
         if receiver.type == cs.TS_CSHARP_IDENTIFIER:
             name = safe_decode_text(receiver)
@@ -1205,6 +1239,53 @@ class CSharpTypeInferenceEngine:
                     return self._type_name_to_qn(ftype, module_qn)
             return self._type_name_to_qn(name, module_qn)
         return None
+
+    def _qualified_type_name_to_qn(
+        self,
+        type_name: str,
+        module_qn: str,
+        generic_arity: int | None = None,
+    ) -> str | None:
+        type_name, annotated_arity = split_type_ref(type_name)
+        if generic_arity is None:
+            generic_arity = annotated_arity or generic_arity_of_type_text(type_name)
+        type_name = _normalize_type_name(type_name)
+        expanded = type_name.replace("::", cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        is_global = expanded.startswith(global_prefix)
+        if is_global:
+            expanded = expanded[len(global_prefix) :]
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        first, separator, rest = expanded.partition(cs.SEPARATOR_DOT)
+        if not is_global and import_map and (mapped := import_map.get(first)):
+            expanded = f"{mapped}{separator}{rest}" if separator else mapped
+
+        if self.function_registry.get(expanded) in _TYPE_DECLS:
+            return expanded
+        leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        candidates = [
+            qn
+            for qn in self.simple_name_lookup.get(leaf, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+            and self._csharp_qualified_qn_matches(qn, expanded, module_qn)
+        ]
+        return self._disambiguate_type_candidates(candidates, generic_arity, module_qn)
+
+    def _csharp_qualified_qn_matches(
+        self, candidate_qn: str, expanded: str, module_qn: str
+    ) -> bool:
+        """Accept a complete type path rooted at a known repository module."""
+        natural_qn = qn_markers.natural_qn(candidate_qn)
+        if natural_qn == expanded:
+            return True
+        suffix = f"{cs.SEPARATOR_DOT}{expanded}"
+        if not natural_qn.endswith(suffix):
+            return False
+        prefix = natural_qn[: -len(suffix)]
+        return prefix in self.module_qn_to_file_path or prefix in (
+            self.project_name,
+            module_qn,
+        )
 
     def _containing_class_qn(self, caller_qn: str | None) -> str | None:
         if not caller_qn:
@@ -1224,6 +1305,8 @@ class CSharpTypeInferenceEngine:
         # Stored type refs carry their written generic arity CLR-style
         # (`Options`0` is implicit: plain means arity 0); parse it so twin
         # filtering works for every map-sourced reference.
+        if "::" in type_name or cs.SEPARATOR_DOT in type_name:
+            return self._qualified_type_name_to_qn(type_name, module_qn, generic_arity)
         if generic_arity is None:
             type_name, generic_arity = split_type_ref(type_name)
         # An already-qualified name that IS a registered type resolves directly,

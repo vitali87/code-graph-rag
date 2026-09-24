@@ -158,6 +158,14 @@ CHECK_NOT_INDEXED = (
 )
 
 CLI_DEADCODE_CONNECTING = "Scanning for unreachable functions and methods..."
+# With endpoint roots off, a handler is live only through an indexed caller;
+# a graph holding one project has no other project to call it from, so the
+# report means "no callers indexed", not "dead" (issue #1603).
+CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS = (
+    "--no-endpoint-roots with one project indexed: an endpoint reported here "
+    "has no callers INDEXED, which is not the same as dead. Index the services "
+    "that call it (each with --capture io) before reading it as dead."
+)
 CLI_DEADCODE_TABLE_TITLE = "Dead Code Candidates ({project_name})"
 CLI_DEADCODE_COL_KIND = "Kind"
 CLI_DEADCODE_COL_QUALIFIED_NAME = "Qualified Name"
@@ -469,6 +477,15 @@ STATUS_BAR_EDIT_ON = "on"
 STATUS_BAR_EDIT_OFF = "off"
 TOKEN_THRESHOLD_WARNING = 50
 TOKEN_THRESHOLD_CRITICAL = 80
+# Shown when compaction drops old tool output (#1500). Names the count and
+# the saving so the user can tell an intentional compaction from the agent
+# simply forgetting, and says the results are re-fetchable rather than lost.
+COMPACTION_NOTICE = (
+    "[dim]Compacted context: dropped {parts} earlier tool "
+    "result(s), freeing ~{tokens:,} tokens. Re-run a tool if you need its "
+    "output again; set CGR_CONTEXT_COMPACTION_ENABLED=false to disable.[/dim]"
+)
+
 TOKEN_COLOR_OK = "green"
 TOKEN_COLOR_WARNING = "yellow"
 TOKEN_COLOR_CRITICAL = "red"

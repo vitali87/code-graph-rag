@@ -25,6 +25,7 @@ from ..types_defs import (
     NodeType,
     PropertyDict,
 )
+from ..utils import qn_markers
 from ..utils.path_utils import cached_relative_path
 from .call_resolver import PY_EXTERNAL_TARGET, CallResolver
 from .class_ingest.identity import build_nested_qualified_name_for_class
@@ -324,6 +325,14 @@ _SEQUENCE_LIKE_COLLECTION_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset({cs.TS_
 _PY_VALUE_WRAPPER_TYPES = _PY_SEQUENCE_LITERAL_TYPES | frozenset(
     {cs.TS_PY_EXPRESSION_LIST, cs.TS_PARENTHESIZED_EXPRESSION}
 )
+# A Java/C# object creation: its call name is the constructed TYPE, so the
+# resolver must not offer a same-named method or function (issue #1629).
+_OBJECT_CREATION_NODE_TYPES = frozenset(
+    {
+        cs.TS_OBJECT_CREATION_EXPRESSION,
+        cs.TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION,
+    }
+)
 _CALLABLE_NODE_LABELS = (
     cs.NodeLabel.FUNCTION,
     cs.NodeLabel.METHOD,
@@ -451,10 +460,13 @@ def _scope_qn_candidates(scope_qn: str) -> list[str]:
     # -> `useStore`): the def pass registers nested/anon members under the
     # NATURAL qn while the caller may carry the variant suffix. Registry-guarded,
     # so a scope without a twin adds nothing.
-    last = scope_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-    if cs.DUP_QN_MARKER not in last:
+    # Compare against the STRIPPED form rather than testing for the marker
+    # character: a C# verbatim identifier (`@event`) contains it without
+    # carrying a marker, and would otherwise add a duplicate candidate that
+    # is merely the scope again (issue #2017).
+    natural = qn_markers.natural_qn(scope_qn)
+    if natural == scope_qn:
         return [scope_qn]
-    natural = scope_qn[: len(scope_qn) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
     return [scope_qn, natural]
 
 
@@ -573,6 +585,21 @@ def _find_call_arguments_node(call_node: Node) -> Node | None:
     )
     if args_node is not None:
         return args_node
+    if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
+        # `new X(...)`, `const X(...)`, `X<T>.named(...)` hold their
+        # `arguments` node directly.
+        return next(
+            (
+                child
+                for child in call_node.named_children
+                if child.type == cs.TS_DART_ARGUMENTS
+            ),
+            None,
+        )
+    if call_node.type == cs.TS_DART_RELATIONAL_EXPRESSION:
+        # `X<T>(arg)` mis-parsed as a chained comparison (issue #2010): the
+        # one argument is the parenthesised operand after the outer `>`.
+        return dart_utils.generic_call_argument(call_node)
     # Dart has no call-expression node: a selector/cascade_section wraps its
     # arguments in an argument_part holding the real `arguments` node one
     # level down.
@@ -769,12 +796,16 @@ def _go_variant_spans(
     spans: list[_Span | None] = []
     for index, variant in enumerate(variants):
         marker = variant.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if cs.DUP_QN_MARKER not in marker:
+        # The LAST `@`, not the first: a C# verbatim identifier opens with
+        # one that is part of the name, so `@event@12` names line 12 while
+        # a first-`@` split reads `event@12` and gives up (issue #2017).
+        # The no-marker branch tests the stripped form for the same reason.
+        if qn_markers.strip_dup_marker(marker) == marker:
             if index != 0:
                 return None
             spans.append(declarations[0][1])
             continue
-        suffix = marker.split(cs.DUP_QN_MARKER, 1)[1]
+        suffix = marker.rpartition(cs.DUP_QN_MARKER)[2]
         line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
         if not line_text.isdigit() or int(line_text) not in by_line:
             return None
@@ -3732,6 +3763,7 @@ class CallProcessor:
                         class_context,
                         caller_qn,
                         language,
+                        constructing=call_node.type in _OBJECT_CREATION_NODE_TYPES,
                     )
             elif (
                 language == cs.SupportedLanguage.PYTHON
@@ -3788,6 +3820,10 @@ class CallProcessor:
                     caller_qn,
                     language,
                     call_point=call_node.start_byte,
+                    # A Java/C# `new X(...)` names a type, never a method.
+                    constructing=language
+                    in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
+                    and call_node.type in _OBJECT_CREATION_NODE_TYPES,
                 )
             if callee_info and language == cs.SupportedLanguage.RUST:
                 # Rust macros and functions live in SEPARATE namespaces:
@@ -3958,6 +3994,35 @@ class CallProcessor:
 
             if language == cs.SupportedLanguage.CSHARP:
                 self._record_csharp_cross_module_use(module_qn, callee_qn)
+
+            if (
+                language == cs.SupportedLanguage.DART
+                and callee_type != class_label
+                and callee_qn in resolver.type_inference.dart_constructor_qns
+            ):
+                # A named constructor (`Box.of(1)`) resolves to its own METHOD,
+                # never to the class, so the class branch below never records
+                # the construction: INSTANTIATES the owning class here and let
+                # the method path keep the CALLS edge (issue #2012).
+                owner_qn = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                owner_variants = [
+                    variant
+                    for variant in resolver.function_registry.variants(owner_qn)
+                    if resolver.function_registry.get(variant) == NodeType.CLASS
+                ]
+                # Twin classes take the same stamp the class branch gives a
+                # two-candidate construction (local review).
+                self._resolution = (
+                    cs.EdgeResolution.OVERLOAD
+                    if len(owner_variants) > 1
+                    else resolver.last_resolution
+                )
+                for class_variant in owner_variants:
+                    ensure_rel(
+                        caller_spec,
+                        cs.RelationshipType.INSTANTIATES,
+                        (class_label, qn_key, class_variant),
+                    )
 
             if (
                 language == cs.SupportedLanguage.CPP
@@ -4155,10 +4220,20 @@ class CallProcessor:
                     if language == cs.SupportedLanguage.CPP:
                         self._emit_cpp_ctor_calls(caller_spec, callee_qn)
                         continue
+                    # Every class variant INSTANTIATES above, so every one
+                    # takes its constructors too: `Box@8` for `class Box<T>`
+                    # declares `Box@8.Box(T)`, which is not a variant of the
+                    # natural twin's `Box.Box` (issue #2007).
+                    # The same class-typed gate INSTANTIATES applies above: a
+                    # variant of another kind (a colliding function, a merged
+                    # namespace) has no constructor to redirect to.
                     ctor_edges = [
                         (ctor_type, variant)
+                        for class_variant in class_variants
+                        if resolver.function_registry.get(class_variant)
+                        in (None, NodeType.CLASS)
                         for ctor_type, ctor_qn in sorted(
-                            resolver.java_constructor_targets(callee_qn)
+                            resolver.java_constructor_targets(class_variant)
                         )
                         for variant in resolver.function_registry.variants(ctor_qn)
                     ]
@@ -5174,7 +5249,7 @@ class CallProcessor:
         class_qn, sep, leaf = caller_qn.rpartition(cs.SEPARATOR_DOT)
         if not sep or registry.get(class_qn) != NodeType.CLASS:
             return
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         is_ctor = leaf == simple
         is_dtor = leaf == f"{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
         if not is_ctor and not is_dtor:
@@ -5337,16 +5412,25 @@ class CallProcessor:
         # neither has a call node, so both get the redirect. sorted(): the
         # target label is a hash-randomized StrEnum, so sort for determinism.
         registry = self._resolver.function_registry
-        targets = self._resolver.java_constructor_targets(
-            class_qn
-        ) | self._resolver.cpp_destructor_targets(class_qn)
-        for target_type, target_qn in sorted(targets):
-            for variant in registry.variants(target_qn):
-                self._emit_rel(
-                    caller_spec,
-                    cs.RelationshipType.CALLS,
-                    (target_type, cs.KEY_QUALIFIED_NAME, variant),
-                )
+        emitted_target_qns: set[tuple[str, str]] = set()
+        for class_variant in registry.variants(class_qn):
+            variant_type = registry.get(class_variant)
+            if variant_type is not None and variant_type != NodeType.CLASS:
+                continue
+            targets = self._resolver.java_constructor_targets(
+                class_variant
+            ) | self._resolver.cpp_destructor_targets(class_variant)
+            for target_type, target_qn in sorted(targets):
+                target_key = (target_type, target_qn)
+                if target_key in emitted_target_qns:
+                    continue
+                emitted_target_qns.add(target_key)
+                for variant in registry.variants(target_qn):
+                    self._emit_rel(
+                        caller_spec,
+                        cs.RelationshipType.CALLS,
+                        (target_type, cs.KEY_QUALIFIED_NAME, variant),
+                    )
 
     @staticmethod
     def _cpp_member_init_head_name(initializer: Node) -> str | None:

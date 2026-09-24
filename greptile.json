@@ -1,0 +1,5 @@
+{
+  "strictness": 3,
+  "commentTypes": ["logic"],
+  "instructions": "Only comment on critical, major, or high-severity issues: concrete bugs, security vulnerabilities, data loss or corruption, race conditions, and breaking API changes. Do not comment on style, naming, formatting, comments, docstrings, or optional refactors. If nothing meets the bar, leave no comments."
+}
