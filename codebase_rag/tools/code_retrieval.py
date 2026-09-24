@@ -14,8 +14,8 @@ from ..schemas import CodeSnippet
 from ..services import QueryProtocol
 from ..taint import ReadContentRecord
 from ..utils.path_utils import (
-    absolute_path_within_project_root,
-    project_root_for_qualified_name,
+    SourceMiss,
+    locate_node_source,
     project_roots_from_rows,
 )
 from . import tool_descriptions as td
@@ -91,30 +91,24 @@ class CodeRetriever:
             # the property (issue #425), but must stay inside the node's
             # known project root too: a missing foreign source is not local.
             project_roots = await self._get_project_roots()
-            absolute_path_str = res.get("absolute_path")
-            if absolute_path_str and not absolute_path_within_project_root(
-                qualified_name, absolute_path_str, project_roots
-            ):
-                absolute_path_str = None
-            if absolute_path_str and Path(absolute_path_str).is_file():
-                full_path = Path(absolute_path_str)
-            else:
-                fallback_root = (
-                    project_root_for_qualified_name(qualified_name, project_roots)
-                    or self.project_root
-                )
-                full_path = (fallback_root / file_path_str).resolve()
-                if not full_path.is_relative_to(fallback_root):
-                    return CodeSnippet(
-                        qualified_name=qualified_name,
-                        source_code="",
-                        file_path=file_path_str,
-                        line_start=0,
-                        line_end=0,
-                        found=False,
-                        error_message=te.CODE_MISSING_LOCATION,
+            located = locate_node_source(
+                qualified_name,
+                res.get("absolute_path"),
+                file_path_str,
+                project_roots,
+                self.project_root,
+            )
+            if located.path is None:
+                if located.miss == SourceMiss.STALE_ROOT:
+                    error_message = te.CODE_STALE_PROJECT_ROOT.format(
+                        project=located.project, root=located.root
                     )
-            if not full_path.is_file():
+                elif located.miss == SourceMiss.OUTSIDE_ROOT:
+                    error_message = te.CODE_MISSING_LOCATION
+                else:
+                    error_message = te.CODE_SOURCE_FILE_MISSING.format(
+                        path=file_path_str
+                    )
                 return CodeSnippet(
                     qualified_name=qualified_name,
                     source_code="",
@@ -122,10 +116,9 @@ class CodeRetriever:
                     line_start=0,
                     line_end=0,
                     found=False,
-                    error_message=te.CODE_SOURCE_FILE_MISSING.format(
-                        path=file_path_str
-                    ),
+                    error_message=error_message,
                 )
+            full_path = located.path
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
