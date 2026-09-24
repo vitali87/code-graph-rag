@@ -129,7 +129,8 @@ message GraphCodeIndex {
       Gloss gloss = 22;
       Parameter parameter = 23;
       Field field = 24;
-      Constant constant = 25;
+      EnumVariant enum_variant = 25;
+      Constant constant = 26;
     }
   }
 
@@ -179,9 +180,11 @@ message GraphCodeIndex {
       OF_TYPE = 33;
       // Declared fields (issue #1805). OF_TYPE is shared with Parameter.
       HAS_FIELD = 34;
+      // Enum variants (issue #1807).
+      HAS_VARIANT = 35;
       // Module-level constants (issue #1806). OF_TYPE is shared with
       // Parameter and Field.
-      DEFINES_CONSTANT = 35;
+      DEFINES_CONSTANT = 36;
     }
 
     RelationshipType type = 1;
@@ -425,6 +428,24 @@ message GraphCodeIndex {
     string value = 8;
   }
 
+  // A variant an Enum declares (issue #1807).
+  message EnumVariant {
+    // Primary Key: <enum qn>.<name>
+    string qualified_name = 1;
+
+    string name = 2;
+    string path = 3;
+    // 4 would be absolute_path; not on the wire, like Field.
+    reserved 4;
+    int32 start_line = 5;
+    int32 start_col = 6;
+    // Position among the enum's variants, 0-based.
+    int32 index = 7;
+    // The discriminant as written after `=`, "" when there is none.
+    string value = 8;
+    string docstring = 9;
+  }
+
   // An external I/O resource a callable reads from or writes to
   // (file, network endpoint, database, stream, env var, ...).
   message Resource {
@@ -497,6 +518,8 @@ message GraphCodeIndex {
     int32 end_line = 5;
     repeated string decorators = 6;
     bool is_exported = 7;
+    // The namespace a C# type is declared in (issue #1629).
+    string namespace = 8;
   }
 
   message Interface {
@@ -506,6 +529,7 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string absolute_path = 4;
+    string namespace = 5;
   }
 
   message Enum {
@@ -515,6 +539,7 @@ message GraphCodeIndex {
     string name = 2;
     string path = 3;
     string absolute_path = 4;
+    string namespace = 5;
   }
 
   message Type {

@@ -12,7 +12,7 @@ from tree_sitter import Node, QueryCursor
 from ... import constants as cs
 from ... import logs
 from ...config import settings
-from ...language_spec import LanguageSpec
+from ...language_spec import LanguageSpec, module_directory_qn
 from ...types_defs import (
     ASTNode,
     CppDefinitionSpan,
@@ -25,12 +25,14 @@ from ...types_defs import (
     PropertyDict,
     RustTraitImpl,
 )
+from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
 from ..dart import utils as dart_utils
 from ..dart.type_inference import DartTypeInferenceEngine
+from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
@@ -175,6 +177,8 @@ class ClassIngestMixin:
     csharp_generic_methods: set[str]
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
+    csharp_class_namespaced: dict[str, str]
+    csharp_namespaced_qns: dict[str, set[str]]
     csharp_method_return_types: dict[str, tuple[str, int]]
     _csharp_partial_index: dict[str, list[str]]
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
@@ -863,7 +867,7 @@ class ClassIngestMixin:
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
-        resolved = self._resolve_class_name(raw_name, entry.module_qn)
+        resolved = self._resolve_class_name(raw_name, entry.module_qn, entry.language)
         if (
             resolved is not None
             # A simple-name sweep can land on the child itself; a
@@ -891,7 +895,7 @@ class ClassIngestMixin:
         # type declaration IS the written sibling, whichever of the pair the
         # child happens to be. More than one other means a 3+ arity family;
         # refuse rather than guess, matching every other ambiguity tier.
-        natural = entry.child_qn.split(cs.DUP_QN_MARKER, 1)[0]
+        natural = qn_markers.natural_qn(entry.child_qn)
         same_scope = [
             qn
             for qn in self.function_registry.variants(natural)
@@ -1099,6 +1103,14 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        if language == cs.SupportedLanguage.CSHARP:
+            # The declared namespace is the type's own property, whether or
+            # not the qn repeats it (issue #1629).
+            if namespace := csharp_utils.declared_namespace(class_node):
+                class_props[cs.KEY_NAMESPACE] = namespace
+            if namespaced := csharp_utils.namespace_qualified_name(class_node):
+                self.csharp_class_namespaced[class_qn] = namespaced
+                self.csharp_namespaced_qns.setdefault(namespaced, set()).add(class_qn)
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -1156,6 +1168,17 @@ class ClassIngestMixin:
             language,
             class_props,
         )
+        if node_type == NodeType.ENUM:
+            # The variants ride with their enum the way fields ride with
+            # their owner (issue #1807).
+            emit_declared_variants(
+                self.ingestor,
+                cs.NodeLabel.ENUM,
+                class_qn,
+                member_node,
+                language,
+                class_props,
+            )
         # When the opt-in Roslyn frontend ran, hand this type's exact base
         # classifications (keyed by its rel-path + start line) to the split so
         # INHERITS/IMPLEMENTS is semantic, not the I-prefix guess. Empty/absent
@@ -1288,13 +1311,23 @@ class ClassIngestMixin:
             # boundaries. Parts in different directories of one project fall
             # back to generic resolution (safe under-merge) rather than risk a
             # cross-project wrong edge.
+            # The directory comes from the file's own segment by name: a part
+            # with a dotted stem (`Widget.Designer.cs`) split from its sibling
+            # under a last-dot rule, and once base resolution refused any
+            # ambiguity that is not one partial group, the split lost the
+            # `: N.Widget` edge (bot review on #1999).
             if cs.TS_CSHARP_MODIFIER_PARTIAL in modifiers:
-                directory = (
-                    module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                    if cs.SEPARATOR_DOT in module_qn
-                    else module_qn
-                )
-                key = f"{directory}{cs.SEPARATOR_DOT}{class_qn[len(module_qn) + 1 :]}"
+                directory = module_directory_qn(module_qn, file_path) or module_qn
+                # A second same-name part in ONE file registers under a
+                # duplicate-suffixed qn (`Bench@24`); the marker is a
+                # registration artefact, not part of the declared name, so
+                # strip it or the two parts never share a group (issue #2014).
+                suffix = class_qn[len(module_qn) + 1 :]
+                head, sep, tail = suffix.rpartition(cs.DUP_QN_MARKER)
+                # Only a NUMERIC suffix is the marker: a verbatim identifier
+                # (`@event`) also opens with the character (local review).
+                declared = head if sep and tail[:1].isdigit() else suffix
+                key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)
                 self.csharp_partial_groups[class_qn] = group
@@ -1651,11 +1684,7 @@ class ClassIngestMixin:
                 # `recv.Ext()` call binds to the static method even though it
                 # lives on an unrelated static class (not in recv's hierarchy).
                 csharp_utils.index_extension_method(
-                    self.csharp_extension_methods,
-                    ingested_qn,
-                    method_node,
-                    class_qn,
-                    module_qn,
+                    self.csharp_extension_methods, ingested_qn, method_node
                 )
             # A Java method declared inside an anonymous class body
             # (`new Base(){ @Override m(){} }`) is ingested here under the enclosing
@@ -2035,9 +2064,24 @@ class ClassIngestMixin:
                         (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, qn),
                     )
 
-    def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        return resolve_class_name(
+    def _resolve_class_name(
+        self,
+        class_name: str,
+        module_qn: str,
+        language: cs.SupportedLanguage | None = None,
+    ) -> str | None:
+        resolved = resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
+        )
+        if resolved is not None or language != cs.SupportedLanguage.CSHARP:
+            return resolved
+        # A namespace-qualified C# name (`Zeta.BaseC` in a base list) used to
+        # match the tail of the class qn; a namespace the directory spells is
+        # no longer in it, so the declared form is looked up instead, for a
+        # C# reference only: a Python `Zeta.BaseC` is not this index's
+        # business (issue #1629, bot review).
+        return csharp_utils.unique_carrier(
+            self.csharp_namespaced_qns.get(class_name), self.csharp_partial_groups
         )
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:

@@ -517,6 +517,11 @@ class DeadCodeConfig(NamedTuple):
     # Drop CALLS/REFERENCES edges below this confidence before the walk
     # (issue #1526); None keeps every edge.
     min_resolution: str | None = None
+    # A route handler is a root by its decorator alone (the default, right
+    # for a single-project graph where nothing can call it). Off, a handler
+    # exposing an endpoint is live only if an indexed call site reaches that
+    # endpoint, so an endpoint nobody calls is reported (issue #1603).
+    endpoint_roots: bool = True
 
 
 class AstFingerprintResult(NamedTuple):
@@ -950,6 +955,11 @@ _FIELD_NODE_PROPS = (
     "modifiers: list[string]?, is_static: boolean?, docstring: string?}"
 )
 
+_ENUM_VARIANT_NODE_PROPS = (
+    "{qualified_name: string, name: string, path: string, absolute_path: string, "
+    "start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}"
+)
+
 # A module-level constant (issue #1806). `value` is the right-hand side as
 # written, absent when it is longer than CONSTANT_VALUE_MAX_CHARS.
 _CONSTANT_NODE_PROPS = (
@@ -983,7 +993,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+        "{qualified_name: string, name: string, modifiers: list[string], decorators: list[string], path: string, absolute_path: string, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
@@ -995,11 +1005,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.INTERFACE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.ENUM,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, modifiers: list[string]?, decorators: list[string]?, start_col: int?, start_line: int?, end_line: int?, docstring: string?, is_exported: boolean?, namespace: string?}",
     ),
     NodeSchema(
         NodeLabel.TYPE,
@@ -1037,6 +1047,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.GLOSS, _GLOSS_NODE_PROPS),
     NodeSchema(NodeLabel.PARAMETER, _PARAMETER_NODE_PROPS),
     NodeSchema(NodeLabel.FIELD, _FIELD_NODE_PROPS),
+    NodeSchema(NodeLabel.ENUM_VARIANT, _ENUM_VARIANT_NODE_PROPS),
     NodeSchema(NodeLabel.CONSTANT, _CONSTANT_NODE_PROPS),
 )
 
@@ -1067,6 +1078,13 @@ RELATIONSHIP_PROPERTY_SCHEMAS: tuple[RelationshipPropertySchema, ...] = (
     RelationshipPropertySchema(
         (RelationshipType.FLOWS_TO,),
         "{kind: string, via: string?}",
+    ),
+    # Declaration order of the variant within its enum, so a query can restore
+    # the source order the graph does not otherwise preserve. Always written
+    # (issue #1807), hence no `?`.
+    RelationshipPropertySchema(
+        (RelationshipType.HAS_VARIANT,),
+        "{index: int}",
     ),
 )
 
@@ -1283,6 +1301,11 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     ),
     # Only a Module declares one today: a class-level member is a Field
     # (issue #1805), so the two labels never share a qualified name.
+    RelationshipSchema(
+        (NodeLabel.ENUM,),
+        RelationshipType.HAS_VARIANT,
+        (NodeLabel.ENUM_VARIANT,),
+    ),
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.DEFINES_CONSTANT,
