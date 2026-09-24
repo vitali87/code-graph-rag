@@ -978,6 +978,8 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Registered project names, read once per run (issue #1970).
+        self._registered_projects: list[str] | None = None
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1686,6 +1688,7 @@ class GraphUpdater:
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
         self._parser_changed = False
+        self._registered_projects = None
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2342,8 +2345,11 @@ class GraphUpdater:
             # A full build re-parses every file: ingest queues everything.
             return
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2380,7 +2386,10 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -2400,6 +2409,48 @@ class GraphUpdater:
                 )
             )
 
+    def _registered_project_names(self) -> list[str]:
+        """Every project the graph holds, longest name first, read once per
+        run. Degrades to this project alone, which keeps the prefix rule."""
+        if self._registered_projects is not None:
+            return self._registered_projects
+        names: set[str] = {self.project_name}
+        try:
+            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            rows = []
+        for row in rows:
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.add(name)
+        registered = sorted(names, key=lambda name: len(name), reverse=True)
+        self._registered_projects = registered
+        return registered
+
+    def _owns(self, qn: str) -> bool:
+        """Whether this project, not another whose name it is a dotted prefix
+        of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
+        $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
+        is the LONGEST registered project name the qn sits under, the way
+        `gloss_repair._projects_of` decides it (issue #1970)."""
+        if qn != self.project_name and not qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        for name in self._registered_project_names():
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == self.project_name
+        return True
+
+    def _owned_rows(self, rows: list[ResultRow], key: str) -> list[ResultRow]:
+        """`rows` whose `key` names a qualified name this project owns."""
+        return [
+            row
+            for row in rows
+            if isinstance(qn := row.get(key), str) and self._owns(qn)
+        ]
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2412,7 +2463,10 @@ class GraphUpdater:
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
+            )
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -2504,8 +2558,9 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_MODULE_QNS, project_params
+            module_rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2570,6 +2625,13 @@ class GraphUpdater:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
@@ -2666,9 +2728,12 @@ class GraphUpdater:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_INHERITS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_INHERITS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
             )
         except Exception:
             if not self._is_full_build:
@@ -2724,9 +2789,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2765,9 +2833,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2816,7 +2887,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -3717,11 +3790,17 @@ class GraphUpdater:
         except Exception:
             return None
         try:
+            # A row without a qualified name (an older reader's shape) keeps
+            # the prefix rule the query itself applied.
             return frozenset(
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
                 and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and (
+                    not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    or self._owns(qn)
+                )
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -5737,6 +5816,8 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
