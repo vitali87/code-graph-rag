@@ -5,9 +5,6 @@ from enum import StrEnum
 INIT_PY = "__init__.py"
 
 ENCODING_UTF8 = "utf-8"
-# Any UTF encoding can carry the whole of Unicode; the check Rich itself
-# uses to decide whether a stream can show box-drawing characters.
-ENCODING_UTF_PREFIX = "utf"
 # Longest UTF-8 sequence, so a window this size either side of a name spans
 # any single character that could legitimately sit next to it.
 UTF8_MAX_SEQUENCE_BYTES = 4
