@@ -2910,7 +2910,9 @@ class CallResolver:
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
-    def _csharp_prefer_imported(self, candidates: list[str], module_qn: str) -> list[str]:
+    def _csharp_prefer_imported(
+        self, candidates: list[str], module_qn: str
+    ) -> list[str]:
         # Same-named C# types in two namespaces tied on import distance and
         # broke on qn order, so `using Zeta;` + `new Widget()` bound
         # `Other.Widget` (issue #2001). Keep the candidates whose owning type
