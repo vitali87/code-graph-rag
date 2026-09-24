@@ -2915,20 +2915,33 @@ class CallResolver:
     ) -> list[str]:
         # Same-named C# types in two namespaces tied on import distance and
         # broke on qn order, so `using Zeta;` + `new Widget()` bound
-        # `Other.Widget` (issue #2001). Keep the candidates whose owning type
-        # sits DIRECTLY in a namespace (or, for `using static`, a type) the
-        # file imports: C# does not import nested namespaces.
-        imported = set(self.import_processor.import_mapping.get(module_qn, {}).values())
-        if not imported:
-            return candidates
+        # `Other.Widget` (issue #2001). C# name lookup searches the caller's
+        # own namespace, innermost first, before any `using`, so a candidate
+        # there wins outright (bot review); otherwise the candidates whose
+        # owning type sits DIRECTLY in a namespace (or, for `using static`,
+        # a type) the file imports: C# does not import nested namespaces.
         declared = self.type_inference.csharp_class_namespaced
-        preferred = []
+        containers: dict[str, str] = {}
         for qn in candidates:
             owner = qn
             while owner and owner not in declared:
                 owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
-            if owner and declared[owner].rpartition(cs.SEPARATOR_DOT)[0] in imported:
-                preferred.append(qn)
+            if owner:
+                containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+        enclosing: set[str] = set()
+        for namespace in self.import_processor._csharp_module_namespaces.get(
+            module_qn, {}
+        ):
+            parts = namespace.split(cs.SEPARATOR_DOT)
+            enclosing.update(
+                cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)
+            )
+        local = [qn for qn in candidates if containers.get(qn) in enclosing]
+        if local:
+            innermost = max(len(containers[qn]) for qn in local)
+            return [qn for qn in local if len(containers[qn]) == innermost]
+        imported = set(self.import_processor.import_mapping.get(module_qn, {}).values())
+        preferred = [qn for qn in candidates if containers.get(qn) in imported]
         return preferred or candidates
 
     def _resolve_two_part_call(

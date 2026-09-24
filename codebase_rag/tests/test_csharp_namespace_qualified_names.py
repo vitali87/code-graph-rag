@@ -559,3 +559,18 @@ class TestAUsingChoosesAmongSameNamedTypes:
             if rel == cs.RelationshipType.INSTANTIATES.value and str(source) == run
         }
         assert instantiates == {owner}, sorted(instantiates)
+
+    def test_the_callers_own_namespace_wins_over_a_using(self, tmp_path: Path) -> None:
+        """C# looks up the caller's namespace before any `using`, so an
+        `App.Widget` declared in another file beats `Zeta.Widget` for a
+        caller in `namespace App` (bot review)."""
+        files = _twin_widgets("using Zeta;")
+        files["src/App/Widget.cs"] = (
+            "namespace App;\n"
+            "public class Widget { public Widget(int n) { } public static void S() { } }\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = "proj.src.App.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
