@@ -37,6 +37,7 @@ jobs:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -146,20 +147,109 @@ jobs:
 
           if [ "$ci_count" -eq 0 ]; then
             echo
+            # Say WHY, per run, rather than asserting absence. `ci_count`
+            # reaches 0 through several different states -- no ci.yml run
+            # at this head at all, one that ran for another PR after a
+            # shared-head rebase, one whose PR association could not be
+            # resolved -- and each wants a different response. Reporting
+            # only the first sends a reader to `gh workflow run` when the
+            # run already exists (issue #1948); the listing above shows it
+            # while the error denies it.
+            ci_at_head=$(echo "$runs" | jq -r \
+              --arg sha "$HEAD_SHA" --arg branch "$HEAD_BRANCH" \
+              --arg head_repo "$HEAD_REPO" --argjson pr "$PR_NUMBER" '
+                [.[] | select(.path == ".github/workflows/ci.yml")] as $ci
+                | if ($ci | length) == 0 then
+                    "  no ci.yml run exists at this head"
+                  else
+                    $ci[] | "  ci.yml run: status=\(.status)/\(.conclusion // "pending")"
+                      + " source=\(.head_repo):\(.head_branch) PRs=\(.prs|tostring)"
+                      + " -- excluded because "
+                      + (if (.head_sha != $sha) then "its head SHA differs"
+                         elif (.head_branch != $branch or .head_repo != $head_repo)
+                           then "it belongs to another source branch or repository"
+                         elif ((.prs | index($pr)) | not)
+                           then (if (.prs | length) == 0
+                                 then "it carries no PR association and the source-branch fallback did not resolve it to this PR"
+                                 else "its PR association names \(.prs|tostring), not this PR" end)
+                         else "of an unrecognised condition" end)
+                  end' 2>/dev/null) || ci_at_head="  (could not summarise runs)"
+            echo "Why no run counted for this PR:"
+            echo "$ci_at_head"
+            # Compute the remedy's state in jq, from the DATA. Grepping the
+            # rendered reason text re-derives state from a string that
+            # interpolates head_branch, so a branch literally named
+            # `status=queued` would flip the advice -- and a status the
+            # grep does not list (`requested`, `pending`) would silently
+            # fall through to the absent-case remedy.
+            #
+            # `awaitable` asks whether a run could EVER be counted, which
+            # is deliberately NOT `ci_count`'s question ("can it be counted
+            # now"). The two must differ: `ci_count` ignores status, so any
+            # run it counts exits the gate at 0 before this code runs.
+            # Making the predicates identical would leave `pending`
+            # unreachable and the whole branch dead.
+            #
+            # So the conditions here are exactly those a run can never
+            # outgrow. A same-repo run and a `push`-event run can never
+            # gain a PR association, and a run created before the PR can
+            # never satisfy the fallback's `created_at >= pr_created_at`,
+            # so none of the three is worth waiting for. What is
+            # deliberately absent is whether the fork fallback has ALREADY
+            # resolved: ambiguous branch history can settle (the other PR
+            # closes, the branch stops being shared) while the run keeps
+            # its identity, so a still-queued fork run stays awaitable.
+            #
+            # An explicit association is also absent, because a run naming
+            # this PR is counted by `ci_count` and never reaches here.
+            ci_state=$(echo "$ci_runs" | jq -r \
+              --argjson pr "$PR_NUMBER" --arg head_repo "$HEAD_REPO" \
+              --arg repo "$REPO" --arg pr_created "$PR_CREATED_AT" '
+                def awaitable:
+                  (.prs | length) == 0 and .event == "pull_request"
+                  and $head_repo != $repo
+                  and ($pr_created == "" or .created_at >= $pr_created);
+                [.[] | select(awaitable and .status != "completed")]
+                | if length > 0 then "pending" else "absent" end' \
+              2>/dev/null) || ci_state="absent"
+            echo
             echo "::error::No 'CI' workflow run matches PR #$PR_NUMBER at head $HEAD_SHA."
             echo "This PR has not been verified by the test suite at the commit"
             echo "being merged. A superseded run drops off the PR, leaving"
             echo "whatever happened to run at the current head -- often CodeQL"
             echo "alone -- which reads as a clean result (issue #1582)."
             echo
-            echo "Ensure ci.yml runs for this pull request's base branch."
-            echo "Fork runs without PR associations require a source branch"
-            echo "used by this PR alone; reused or shared branches are ambiguous."
-            echo
-            echo "Note: pushing an empty commit is NOT sufficient on a branch"
-            echo "whose base is not main -- it creates a new head, CodeQL"
-            echo "re-runs green, and the page looks freshly validated while no"
-            echo "test has run."
+            # The remedy depends on the state above. Dispatching a run is
+            # right only when none exists; when one is queued or waiting on
+            # fork approval, a second dispatch adds a run without releasing
+            # the first.
+            if [ "$ci_state" = "absent" ]; then
+              echo "Ensure ci.yml runs for this pull request's base branch."
+              echo "Trigger one with:"
+              echo "  gh workflow run ci.yml --ref <branch>"
+              echo
+              echo "Note: pushing an empty commit is NOT sufficient on a branch"
+              echo "whose base is not main -- it creates a new head, CodeQL"
+              echo "re-runs green, and the page looks freshly validated while no"
+              echo "test has run."
+            elif [ "$ci_state" = "pending" ]; then
+              echo "A ci.yml run exists at this head but has not completed."
+              echo "Do NOT dispatch another; it would not release this one."
+              echo "On a fork PR this usually means the run is awaiting"
+              echo "maintainer approval -- sibling runs reporting"
+              echo "completed/action_required are the tell."
+              if [ -z "${pr_created_at:-}" ]; then
+                echo
+                echo "The branch history above did not resolve this run to"
+                echo "this PR, so the run cannot be counted YET. That can"
+                echo "still clear on its own (a PR sharing the branch closes)."
+                echo "If it does not, push this branch to a fresh branch name"
+                echo "used by no other PR."
+              fi
+            else
+              echo "Fork runs without PR associations require a source branch"
+              echo "used by this PR alone; reused or shared branches are ambiguous."
+            fi
             exit 1
           fi
 

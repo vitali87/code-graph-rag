@@ -219,6 +219,32 @@ MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
     "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
 )
+MCP_PARAM_ENDPOINT_TARGET = (
+    "The handler's qualified name, or the endpoint identity as `endpoints` "
+    "lists it (`GET /users/{id}`)."
+)
+MCP_ENDPOINTS = (
+    "The endpoints a project exposes (routes, RPC methods, dispatch keys), one "
+    "row per endpoint with its identity (`GET /users/{id}`), kind, handler, "
+    "file and how many call sites in the whole graph reach it through "
+    "RESOLVES_TO or a direct access. Zero callers on a graph holding only this "
+    "project means none are indexed, not that the endpoint is dead; index the "
+    "calling services with `--capture io` first. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_ENDPOINT_CALLERS = (
+    "Call sites, in any indexed project, that reach one endpoint: `target` is "
+    "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
+    "Each row names the caller, its file, the URL it accesses and the direction "
+    "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
+    "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
+    "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_REMOTE_DEPENDENCIES = (
+    "Every network access a project makes, one row per call site and URL, with "
+    "the endpoint, handler and project it resolves to when one is indexed; a "
+    "row with no endpoint is a dependency the graph cannot place (a dynamic "
+    "URL, or a service not indexed). " + _MCP_DETERMINISTIC_NOTE
+)
 MCP_TESTS_REACHING = (
     "Test functions and methods from which a qualified name is reachable "
     "through CALLS / REFERENCES / INSTANTIATES, with the distance and the "
@@ -472,6 +498,9 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.OVERRIDES: MCP_OVERRIDES,
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
+    MCPToolName.ENDPOINTS: MCP_ENDPOINTS,
+    MCPToolName.ENDPOINT_CALLERS: MCP_ENDPOINT_CALLERS,
+    MCPToolName.REMOTE_DEPENDENCIES: MCP_REMOTE_DEPENDENCIES,
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,

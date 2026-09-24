@@ -54,7 +54,7 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .config import ModelConfig, load_ignore_patterns, settings
-from .context_pruning import prune_old_tool_results
+from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
@@ -653,6 +653,71 @@ def _record_and_print_turn_usage(
     app_context.console.print(dim(line))
 
 
+def _compact_context_if_needed(
+    message_history: list[ModelMessage],
+    context_pct: float,
+    app_context: AppContext,
+) -> None:
+    """Drop old tool output when the context is critical, and say so (#1500).
+
+    Extracted from `_run_agent_response_loop` rather than inlined: the two
+    guards below added enough nesting to take that function past SonarCloud's
+    cognitive-complexity limit (S3776, 19 against 15 allowed), and the loop is
+    about driving the agent, not about compaction policy.
+
+    The setting gates the WHOLE block, not just the pruner. Passing
+    `enabled=False` further down still costs a full `list()` copy and a
+    `describe_prune` walk of the entire history on every turn above the
+    threshold -- measured at 2.5ms per turn on an 8000-message history, paid
+    only by users who turned the feature off, and growing with exactly the
+    history that opting out leaves unbounded (Copilot, #2106).
+    """
+    if not (
+        settings.CONTEXT_COMPACTION_ENABLED
+        and context_pct >= cs.TOKEN_THRESHOLD_CRITICAL
+    ):
+        return
+
+    # `enabled=` is redundant under the guard above and kept deliberately: the
+    # pruner must refuse on its own, so a future edit to the guard cannot
+    # silently re-enable compaction for a user who declined it.
+    pruned_history = prune_old_tool_results(
+        message_history,
+        enabled=settings.CONTEXT_COMPACTION_ENABLED,
+    )
+    # A DECLINED prune returns the very same list, and comparing it against a
+    # snapshot walks the whole history to discover what identity already
+    # proves: nothing changed. Measured at 2.27ms per turn on an 8000-message
+    # history, and paid on EVERY turn above the threshold until the floor is
+    # finally met -- which is most of them, since the floor is what holds
+    # compaction back (Copilot, #2106). The snapshot cannot serve as the
+    # identity check itself: `list()` always builds a new object, so
+    # `describe_prune`'s own `after is before` shortcut can never fire here.
+    if pruned_history is not message_history:
+        # Snapshot before the rewrite: `describe_prune` compares the two, and
+        # the slice assignment below overwrites what it would compare against.
+        # A shallow copy is enough because the pruner replaces parts rather
+        # than mutating them in place. Taken INSIDE the branch so a declined
+        # prune copies nothing.
+        before_prune = list(message_history)
+        # Assign THROUGH the slice: callers hold this same list and the loop
+        # mutates it in place, so rebinding would prune a copy and leave the
+        # conversation untouched -- a call site that satisfies a reachability
+        # check while doing nothing.
+        message_history[:] = pruned_history
+        # Say so. Compaction the user cannot see is indistinguishable from the
+        # agent forgetting, and they cannot report or work around what they
+        # were never told about (#1500).
+        prune_report = describe_prune(before_prune, message_history)
+        if prune_report.pruned:
+            app_context.console.print(
+                cs.COMPACTION_NOTICE.format(
+                    parts=prune_report.dropped_parts,
+                    tokens=prune_report.recovered_tokens,
+                )
+            )
+
+
 async def _run_agent_response_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -726,12 +791,7 @@ async def _run_agent_response_loop(
         # falls back to a local estimate, so the threshold is reachable
         # whatever the session is talking to.
         _, _, context_pct = _token_usage()
-        if context_pct >= cs.TOKEN_THRESHOLD_CRITICAL:
-            # Assign THROUGH the slice: callers hold this same list and the
-            # loop mutates it in place, so rebinding would prune a copy and
-            # leave the conversation untouched -- a call site that satisfies a
-            # reachability check while doing nothing.
-            message_history[:] = prune_old_tool_results(message_history)
+        _compact_context_if_needed(message_history, context_pct, app_context)
 
         _spawn_context_refresh(list(message_history))
 

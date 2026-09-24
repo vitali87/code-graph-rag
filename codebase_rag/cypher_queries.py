@@ -174,7 +174,7 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
-OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD*]->(defined)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
 DETACH DELETE p, container, defined
 """
 
@@ -332,9 +332,9 @@ _DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
 MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
 OPTIONAL MATCH (m:Module)-[*]-(n)
-RETURN n.name AS name, n.start_line AS start, n.end_line AS end, m.path AS path,
+RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
-ORDER BY labels(n)[0], m.path, n.start_line
+ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line
 LIMIT 1
 """
 
@@ -516,11 +516,16 @@ def build_create_relationship_query(
 # Deterministic graph queries for agents (issue #1523). All project-scoped
 # through $project_prefix; walks of depth > 1 run client-side in
 # codebase_rag/graph_query.py so each query stays linear.
+# A C# type's natural name is `<namespace>.<name>`, which its qualified name
+# no longer spells when the namespace mirrors the directory (issue #1629), so
+# the namespace property answers that lookup.
 CYPHER_GRAPH_RESOLVE_NAME = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix
-  AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name)
+  AND (n.qualified_name = $qn OR n.qualified_name ENDS WITH $suffix OR n.name = $name
+       OR (n.namespace IS NOT NULL AND n.namespace + '.' + n.name = $qn))
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
-       n.start_line AS start_line, n.end_line AS end_line"""
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.name AS name, n.namespace AS namespace"""
 CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
@@ -737,6 +742,59 @@ RETURN labels(callee)[0] AS label, callee.qualified_name AS qualified_name,
        callee.path AS path, r.line AS line, r.col AS col, r.end_line AS end_line,
        r.end_col AS end_col, r.arg_count AS arg_count, r.kwarg_names AS kwarg_names,
        r.resolution AS resolution"""
+# Cross-service edges as reads (issue #1603). The writers (`EXPOSES` from a
+# handler to its ENDPOINT/RPC/DISPATCH resource, `RESOLVES_TO` from a client
+# NETWORK resource to the endpoint, `READS_FROM`/`WRITES_TO` from a call site
+# to a resource) existed without a consumer. A caller reaches an endpoint
+# either through a NETWORK resource that RESOLVES_TO it, or directly for the
+# RPC and dispatch kinds, which join without RESOLVES_TO. Callers are counted
+# ACROSS projects by design: the endpoint's own project is scoped by the
+# handler, the callers may live anywhere in the shared graph.
+# "Is called" is asked with OPTIONAL MATCH plus a count, not a pattern
+# predicate in WHERE (Memgraph 3).
+CYPHER_GRAPH_ENDPOINTS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+WITH h, e, count(DISTINCT c) AS resolved
+OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+RETURN e.name AS endpoint, e.kind AS kind, labels(h)[0] AS label,
+       h.qualified_name AS handler, h.path AS path,
+       resolved + count(DISTINCT d) AS callers
+ORDER BY endpoint, handler"""
+# `$qn` names the handler or the endpoint identity (`GET /users/{id}`).
+CYPHER_GRAPH_ENDPOINT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+  AND (h.qualified_name = $qn OR e.name = $qn)
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler"""
+CYPHER_GRAPH_ENDPOINT_DIRECT_CALLERS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+  AND (h.qualified_name = $qn OR e.name = $qn)
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(e)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       e.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler"""
+# Every NETWORK access a project makes, with the handler it resolves to when
+# one does; an unresolved row (null endpoint) is a dependency the graph
+# cannot place, which is itself the answer to "what does this depend on".
+CYPHER_GRAPH_REMOTE_DEPENDENCIES = """MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})
+WHERE c.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (n)-[:RESOLVES_TO]->(e:Resource)<-[:EXPOSES]-(h)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url, type(r) AS direction, e.name AS endpoint,
+       h.qualified_name AS handler, e.project AS handler_project
+ORDER BY qualified_name, url, handler"""
+# The dead-code walk's view of the same joins: per exposing handler, how many
+# call sites reach its resource (through RESOLVES_TO, or directly).
+CYPHER_DEAD_CODE_ENDPOINT_LINKS = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name STARTS WITH $project_prefix
+OPTIONAL MATCH (c)-[:READS_FROM|WRITES_TO]->(n:Resource)-[:RESOLVES_TO]->(e)
+WITH h, e, count(DISTINCT c) AS resolved
+OPTIONAL MATCH (d)-[:READS_FROM|WRITES_TO]->(e)
+RETURN h.qualified_name AS handler, e.name AS endpoint,
+       resolved + count(DISTINCT d) AS callers"""
 CYPHER_GRAPH_IMPLEMENTORS = """MATCH (impl)-[r:INHERITS|IMPLEMENTS]->(base)
 WHERE base.qualified_name = $qn AND impl.qualified_name STARTS WITH $project_prefix
 RETURN labels(impl)[0] AS label, impl.qualified_name AS qualified_name,

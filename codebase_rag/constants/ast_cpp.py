@@ -41,6 +41,10 @@ class CppNodeType(StrEnum):
     PARAMETER_LIST = "parameter_list"
     PARAMETER_DECLARATION = "parameter_declaration"
     OPTIONAL_PARAMETER_DECLARATION = "optional_parameter_declaration"
+    # `Args&&... args`: a template parameter pack, one variadic slot whose
+    # name sits inside the variadic_declarator.
+    VARIADIC_PARAMETER_DECLARATION = "variadic_parameter_declaration"
+    VARIADIC_DECLARATOR = "variadic_declarator"
     INIT_DECLARATOR = "init_declarator"
     TEMPLATE_TYPE = "template_type"
     FIELD_EXPRESSION = "field_expression"
@@ -268,3 +272,6 @@ TS_CPP_LAMBDA_CAPTURE_SPECIFIER = "lambda_capture_specifier"
 TS_CPP_LAMBDA_DEFAULT_CAPTURE = "lambda_default_capture"
 # `[name = expr]` init-capture: binds its leading identifier in the lambda.
 TS_CPP_LAMBDA_CAPTURE_INITIALIZER = "lambda_capture_initializer"
+# A C or C++ enum body and its enumerators (issue #1807).
+TS_ENUMERATOR_LIST = "enumerator_list"
+TS_ENUMERATOR = "enumerator"
