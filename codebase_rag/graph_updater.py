@@ -3689,12 +3689,13 @@ class GraphUpdater:
     def _prune_class_keyed_maps(
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
-        """Drop a removed file's entries from `class_inheritance` and
-        `class_field_types`.
+        """Drop a removed file's entries from `class_inheritance`,
+        `class_field_types` and the C# partial groups.
 
-        Both are keyed by a CLASS qn and neither was ever mentioned in
-        `remove_file_from_state`, so a deleted file's rows outlived it on a
-        reused updater (issue #1772). That is a wrong answer rather than a
+        All three are keyed by a CLASS qn; the first two were never mentioned
+        in `remove_file_from_state`, so a deleted file's rows outlived it on a
+        reused updater (issue #1772), and the partial groups were not either
+        (issue #2016). That is a wrong answer rather than a
         missing one: `class_field_types` types a receiver reached through a
         field, and `class_inheritance` is walked to reach base-class members
         and drives the OVERRIDES arbitration -- both at a class that is gone.
@@ -3745,6 +3746,16 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # A partial part leaves its group too. The group list is the
+            # very list `_csharp_partial_index` holds under the syntactic
+            # key, so removing the part there keeps both views in step;
+            # without this a re-parse appended the part again and a deleted
+            # part kept typing its siblings' members (issue #2016).
+            if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
+                # One pass, and IN PLACE: the list is the very object
+                # `_csharp_partial_index` holds, so rebinding a new list
+                # would leave that view holding the old one (bot review).
+                group[:] = [part for part in group if part != qn]
             # Same ownership, same reason (issue #1629): every C# class has
             # an entry, not only the generic ones #1769's sweep covers.
             namespaced = processor.csharp_class_namespaced.pop(qn, None)
