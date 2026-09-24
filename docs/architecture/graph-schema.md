@@ -35,6 +35,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Gloss | `{qualified_name: string, kind: string, status: string, body: string, created_by: string, created_at: string, commit_sha: string?, target_qn: string, target_hash: string?, anchor_quote: string?, anchor_prefix: string?, anchor_suffix: string?, anchor_state: string, moved_from: string?, candidate_qns: list[string]?, project: string?, write_id: string?, mention_qns: list[string]?}` |
 | Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
 | Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
+| EnumVariant | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -83,6 +84,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Gloss | MENTIONS | Module, Class, Function, Method, Interface, Enum, Type, Union |
 | Function, Method | HAS_PARAMETER | Parameter |
 | Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
+| Enum | HAS_VARIANT | EnumVariant |
 | Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 

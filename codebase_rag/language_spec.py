@@ -277,20 +277,42 @@ def csharp_namespaced_from_graph(
     is dropped as the parsed form never carries it (bot review on #1999).
     A module qn that is neither of the two path spellings is not guessed.
     """
+    split = _csharp_graph_scope(qn, path, project_name)
+    if split is None:
+        return None
+    directory, suffix = split
+    scoped = [strip_dup_marker(part) for part in suffix.split(cs.SEPARATOR_DOT)]
+    if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
+        scoped.insert(0, namespace)
+    return cs.SEPARATOR_DOT.join(scoped)
+
+
+def csharp_partial_key_from_graph(qn: str, path: str, project_name: str) -> str | None:
+    """The partial-group key parsing gives a C# type, for one read back from
+    the graph: its declaring directory plus its declared name, marker
+    stripped. Whether the type was `partial` is not stored, so an unchanged
+    part must rejoin its siblings by this key or a declared name spanning
+    two unchanged parts reads as two projects (bot review on #1999).
+    """
+    split = _csharp_graph_scope(qn, path, project_name)
+    if split is None:
+        return None
+    directory, suffix = split
+    return f"{directory}{cs.SEPARATOR_DOT}{strip_dup_marker(suffix)}"
+
+
+def _csharp_graph_scope(
+    qn: str, path: str, project_name: str
+) -> tuple[str, str] | None:
+    # The type's directory qn and its qn below the file's own segment.
     rel = PurePosixPath(path)
     stem = module_stem(rel.name)
     directory = cs.SEPARATOR_DOT.join([project_name, *rel.parent.parts])
     # The `<stem>.<ext>` spelling first: the bare stem is its prefix.
     for own in (f"{stem}{cs.SEPARATOR_DOT}{rel.suffix.lstrip('.')}", stem):
         prefix = f"{directory}{cs.SEPARATOR_DOT}{own}{cs.SEPARATOR_DOT}"
-        if not qn.startswith(prefix):
-            continue
-        scoped = [
-            strip_dup_marker(part) for part in qn[len(prefix) :].split(cs.SEPARATOR_DOT)
-        ]
-        if namespace and directory.endswith(f"{cs.SEPARATOR_DOT}{namespace}"):
-            scoped.insert(0, namespace)
-        return cs.SEPARATOR_DOT.join(scoped)
+        if qn.startswith(prefix):
+            return directory, qn[len(prefix) :]
     return None
 
 

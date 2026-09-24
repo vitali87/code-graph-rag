@@ -30,6 +30,7 @@ from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
     csharp_namespaced_from_graph,
+    csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -2462,8 +2463,18 @@ class GraphUpdater:
                         self.project_name,
                         namespace if isinstance(namespace, str) else None,
                     )
+                    processor = self.factory.definition_processor
+                    # Rejoin the partial group parsing would have given it,
+                    # under the same key, so a declared name spanning
+                    # unchanged parts stays one type; a lone type's group of
+                    # one reads exactly as no group (bot review).
+                    if key := csharp_partial_key_from_graph(
+                        qn, path, self.project_name
+                    ):
+                        group = processor._csharp_partial_index.setdefault(key, [])
+                        group.append(qn)
+                        processor.csharp_partial_groups[qn] = group
                     if namespaced:
-                        processor = self.factory.definition_processor
                         processor.csharp_class_namespaced[qn] = namespaced
                         processor.csharp_namespaced_qns.setdefault(
                             namespaced, set()

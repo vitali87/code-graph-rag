@@ -454,6 +454,44 @@ class TestWrittenNamespaceQualifiedNames:
         }
         assert edge in inherits, sorted(inherits)
 
+    def test_an_incremental_run_binds_a_base_split_across_unchanged_parts(
+        self, tmp_path: Path
+    ) -> None:
+        """Two unchanged parts of one partial type are both rehydrated into
+        the declared-form index; without their partial group, `: N.Widget`
+        read them as two projects and bound nothing (bot review)."""
+        root = tmp_path / "proj"
+        part = "namespace N;\n\npublic partial class Widget { }\n"
+        q_source = "namespace C;\n\npublic class Q : N.Widget { }\n"
+        _write(
+            root,
+            {
+                "src/N/Widget.cs": part,
+                "src/N/Widget.Designer.cs": part,
+                "src/C/Q.cs": q_source,
+            },
+        )
+        parsers, queries = load_parsers()
+        store = _StatefulIngestor()
+        for force in (True, False):
+            GraphUpdater(
+                ingestor=store,  # type: ignore[arg-type]
+                repo_path=root,
+                parsers=parsers,
+                queries=queries,
+            ).run(force=force)
+            # Re-parses Q.cs alone; both Widget parts are rehydrated.
+            (root / "src/C/Q.cs").write_text(q_source + "// touched\n")
+        inherits = {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == "INHERITS" and str(source) == "proj.src.C.Q.Q"
+        }
+        assert inherits & {
+            "proj.src.N.Widget.Widget",
+            "proj.src.N.Widget.Designer.Widget",
+        }, sorted(inherits)
+
 
 @pytest.mark.parametrize(
     ("qn", "path", "namespace", "expected"),
