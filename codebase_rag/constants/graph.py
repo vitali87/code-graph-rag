@@ -722,11 +722,6 @@ CYPHER_FILE_CONTAINERS = (
 # The module names a project records, by file path, for the incremental
 # requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
 # holds every project, and filtering in Python read them all (bot review).
-CYPHER_PROJECT_MODULE_QNS = (
-    "MATCH (m:Module) WHERE m.qualified_name = $project_name "
-    "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path, m.qualified_name AS qualified_name"
-)
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )

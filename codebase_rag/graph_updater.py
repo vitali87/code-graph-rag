@@ -2362,15 +2362,17 @@ class GraphUpdater:
         # under the wrong owner, so the outage aborts it.
         try:
             rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_MODULE_QNS,
+                cs.CYPHER_PROJECT_MODULE_PATHS,
                 {
                     cs.KEY_PROJECT_NAME: self.project_name,
                     cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
                 },
             )
-        except Exception:
+        except Exception as exc:
             if not self._is_full_build:
-                raise
+                # The module paths are unknown, the same outage the reingest
+                # guard reports, so it says so rather than leaking the raw error.
+                raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN) from exc
             logger.warning(ls.REHYDRATE_QUERY_FAILED)
             return {}
         found: dict[str, str] = {}

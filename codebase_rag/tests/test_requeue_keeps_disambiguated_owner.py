@@ -144,7 +144,7 @@ class _ModuleRows:
     def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
         # Scoped in the query, not in Python: the shared graph holds every
         # project's modules (bot review on PR #1967).
-        assert query == cs.CYPHER_PROJECT_MODULE_QNS
+        assert query == cs.CYPHER_PROJECT_MODULE_PATHS
         assert params == {cs.KEY_PROJECT_NAME: "proj", cs.KEY_PROJECT_PREFIX: "proj."}
         self.reads += 1
         if self.fail:

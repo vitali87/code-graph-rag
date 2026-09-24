@@ -871,26 +871,6 @@ class _StatefulIngestor:
                             }
                         )
                 return project_rows
-            case cs.CYPHER_PROJECT_MODULE_QNS:
-                scoped_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
-                scoped_prefix = (
-                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
-                )
-                scoped_rows: list[ResultRow] = []
-                for (label, _uid), props in self.nodes.items():
-                    if label != _MODULE_LABEL:
-                        continue
-                    module_qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
-                    if module_qn == scoped_name or (
-                        scoped_prefix and module_qn.startswith(scoped_prefix)
-                    ):
-                        scoped_rows.append(
-                            {
-                                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
-                                cs.KEY_QUALIFIED_NAME: module_qn,
-                            }
-                        )
-                return scoped_rows
             case cq.CYPHER_LIST_PROJECTS:
                 # Every Project node, by name (issue #1970): the updater
                 # decides ownership of a prefix-scoped row by the longest
