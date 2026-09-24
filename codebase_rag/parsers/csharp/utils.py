@@ -58,14 +58,40 @@ def _normalize_type_name(text: str) -> str:
     # binds), and whitespace, so a parameter signature is stable and matches
     # the registered, generic-free type names. Array brackets are kept (they
     # distinguish overloads).
-    return text.split(cs.CHAR_ANGLE_OPEN, 1)[0].strip().rstrip(cs.CHAR_QUESTION_MARK)
+    normalized: list[str] = []
+    generic_depth = 0
+    for char in text:
+        if char == cs.CHAR_ANGLE_OPEN:
+            generic_depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
+            generic_depth -= 1
+        elif generic_depth == 0:
+            normalized.append(char)
+    return "".join(normalized).strip().rstrip(cs.CHAR_QUESTION_MARK)
 
 
 def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
     # disambiguate same-simple-name generic/non-generic type declarations.
-    open_idx = text.find(cs.CHAR_ANGLE_OPEN)
+    leaf_start = 0
+    depth = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == cs.CHAR_ANGLE_OPEN:
+            depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and depth:
+            depth -= 1
+        elif depth == 0:
+            if text.startswith(cs.SEPARATOR_DOUBLE_COLON, index):
+                leaf_start = index + len(cs.SEPARATOR_DOUBLE_COLON)
+                index += len(cs.SEPARATOR_DOUBLE_COLON) - 1
+            elif char == cs.SEPARATOR_DOT:
+                leaf_start = index + 1
+        index += 1
+
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN, leaf_start)
     if open_idx < 0:
         return 0
     depth = 0

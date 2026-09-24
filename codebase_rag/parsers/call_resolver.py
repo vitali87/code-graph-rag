@@ -67,6 +67,24 @@ def _split_receiver_chain(expr: str) -> list[str]:
     return parts
 
 
+def _split_csharp_qualified_path(path: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    generic_depth = 0
+    for char in path:
+        if char == cs.CHAR_ANGLE_OPEN:
+            generic_depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
+            generic_depth -= 1
+        if char == cs.SEPARATOR_DOT and generic_depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
 PY_EXTERNAL_TARGET: tuple[str, str] = ("", "")
 
 # PHP folds A-Z only when comparing namespace and function names, so
@@ -452,6 +470,7 @@ class CallResolver:
             module_qn,
             class_context,
             local_var_types,
+            language,
         )
 
     def _receiver_is_untyped_shadow(
@@ -514,6 +533,7 @@ class CallResolver:
         module_qn: str,
         class_context: str | None = None,
         local_var_types: dict[str, str] | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         """Drop a CLASS answer for `value.Name()` -- a value never constructs.
 
@@ -549,6 +569,13 @@ class CallResolver:
         # key inside the receiver expression (`xs[1:2].Error()`), and exempting
         # on it let the defect straight through.
         if cs.SEPARATOR_DOUBLE_COLON in receiver:
+            return result
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and self._try_resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+        ):
             return result
         if self._receiver_names_a_type_or_module(
             receiver, module_qn, result[1], class_context, local_var_types
@@ -1400,6 +1427,16 @@ class CallResolver:
         ):
             return None
 
+        if language == cs.SupportedLanguage.CSHARP and (
+            cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
+        ):
+            result, decided = self._resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+            if result is not None:
+                return result
+            if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
+                return None
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
@@ -2093,6 +2130,14 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.CSHARP:
+            result, decided = self._resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+            if result is not None:
+                return result
+            if decided:
+                return None
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
         elif cs.CHAR_COLON in call_name:
@@ -2124,6 +2169,95 @@ class CallResolver:
         return self._resolve_multi_part_call(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _try_resolve_csharp_qualified_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[str, str] | None:
+        result, _ = self._resolve_csharp_qualified_call(
+            call_name, module_qn, local_var_types
+        )
+        return result
+
+    def _csharp_dotted_path_shadowed(
+        self, call_name: str, local_var_types: dict[str, str] | None
+    ) -> bool:
+        return bool(
+            local_var_types
+            and cs.SEPARATOR_DOT in call_name
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and not call_name.startswith(f"global{cs.SEPARATOR_DOT}")
+            and call_name.split(cs.SEPARATOR_DOT, 1)[0] in local_var_types
+        )
+
+    def _resolve_csharp_qualified_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[tuple[str, str] | None, bool]:
+        if self._csharp_dotted_path_shadowed(call_name, local_var_types):
+            return None, False
+        path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        is_global = path.startswith(global_prefix)
+        if path.startswith(global_prefix):
+            path = path[len(global_prefix) :]
+        parts = _split_csharp_qualified_path(path)
+        if len(parts) < 2 or any(not part for part in parts):
+            return None, False
+
+        type_inference = self.type_inference.csharp_type_inference
+        for cut in range(len(parts), 0, -1):
+            type_path = cs.SEPARATOR_DOT.join(parts[:cut])
+            if is_global:
+                type_path = f"global{cs.SEPARATOR_DOUBLE_COLON}{type_path}"
+            class_qn = type_inference._qualified_type_name_to_qn(type_path, module_qn)
+            if class_qn is None:
+                continue
+            if cut == len(parts):
+                return (cs.NodeLabel.CLASS, class_qn), True
+            member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
+                cs.CHAR_ANGLE_OPEN, 1
+            )[0]
+            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
+            if method_qn in self.function_registry:
+                return (self.function_registry[method_qn], method_qn), True
+            if cs.SEPARATOR_DOT not in member_name:
+                if inherited := self._resolve_inherited_method(class_qn, member_name):
+                    return inherited, True
+            # A namespace-qualified type owns the path even when the member is
+            # missing; an unqualified value receiver may still be a field chain.
+            return None, True
+        if (
+            not is_global
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and self._csharp_path_starts_with_imported_namespace(parts, module_qn)
+        ):
+            return None, True
+        return None, False
+
+    def _csharp_path_starts_with_imported_namespace(
+        self, parts: list[str], module_qn: str
+    ) -> bool:
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        namespaces = {
+            namespace
+            for module_namespaces in self.import_processor._csharp_module_namespaces.values()
+            for namespace in module_namespaces
+        }
+        for cut in range(len(parts), 0, -1):
+            prefix = cs.SEPARATOR_DOT.join(parts[:cut])
+            local_name, separator, remainder = prefix.partition(cs.SEPARATOR_DOT)
+            imported = import_map.get(local_name)
+            if imported is None:
+                continue
+            expanded = f"{imported}{separator}{remainder}" if separator else imported
+            if expanded in namespaces:
+                return True
+        return False
 
     def _has_separator(self, call_name: str) -> bool:
         return (
