@@ -11,6 +11,7 @@ from codebase_rag.types_defs import (
     ResultRow,
     ResultValue,
 )
+from codebase_rag.utils import qn_markers
 
 from . import constants as ec
 from .ignore_rules import ignore_rules
@@ -105,6 +106,7 @@ _DEFINES_RELS = frozenset(
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
 }
 # Labels the C# partial-join and Go col-keyed rehydration queries select on.
@@ -775,6 +777,9 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                        if cs.KEY_NAMESPACE in props
+                        else None,
                     }
                     defs.append(row)
                 return defs
@@ -860,9 +865,27 @@ class _StatefulIngestor:
                     qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
                     if qn == project_name or (prefix and qn.startswith(prefix)):
                         project_rows.append(
-                            {cs.KEY_PATH: _text(props.get(cs.KEY_PATH))}
+                            {
+                                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                                cs.KEY_QUALIFIED_NAME: qn,
+                            }
                         )
                 return project_rows
+            case cq.CYPHER_LIST_PROJECTS:
+                # Every Project node, by name (issue #1970): the updater
+                # decides ownership of a prefix-scoped row by the longest
+                # registered name.
+                return sorted(
+                    (
+                        {
+                            cs.KEY_NAME: _str(uid),
+                            cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH)),
+                        }
+                        for (label, uid), props in self.nodes.items()
+                        if label == cs.NodeLabel.PROJECT.value
+                    ),
+                    key=lambda row: str(row[cs.KEY_NAME]),
+                )
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
@@ -1345,9 +1368,9 @@ def extract_cgr_lang_graph(
                 # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
                 # grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                    cs.DUP_QN_MARKER, 1
-                )[0]
+                target_name = qn_markers.strip_dup_marker(
+                    flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                )
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
@@ -1574,10 +1597,8 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if rel_type == cs.RelationshipType.INHERITS.value:
             # Same DUP_QN_MARKER strip as the multi-language reducer: a base
             # registered as a duplicate variant grades by its written name.
-            target = (
-                str(to_val)
-                .rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                .split(cs.DUP_QN_MARKER, 1)[0]
+            target = qn_markers.strip_dup_marker(
+                str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
             )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:

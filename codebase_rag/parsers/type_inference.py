@@ -63,6 +63,7 @@ class TypeInferenceEngine:
         "csharp_generic_methods",
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
+        "csharp_class_namespaced",
         "csharp_method_return_types",
         "function_locations",
         "_java_type_inference",
@@ -114,6 +115,7 @@ class TypeInferenceEngine:
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
+        csharp_class_namespaced: dict[str, str] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
         dart_extends_type_args: dict[str, list[str]] | None = None,
@@ -240,6 +242,9 @@ class TypeInferenceEngine:
         self.csharp_class_owner_module = (
             csharp_class_owner_module if csharp_class_owner_module is not None else {}
         )
+        self.csharp_class_namespaced = (
+            csharp_class_namespaced if csharp_class_namespaced is not None else {}
+        )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
         )
@@ -332,6 +337,7 @@ class TypeInferenceEngine:
                 csharp_local_functions=self.csharp_local_functions,
                 csharp_generic_methods=self.csharp_generic_methods,
                 csharp_class_generic_arity=self.csharp_class_generic_arity,
+                csharp_class_namespaced=self.csharp_class_namespaced,
                 csharp_method_return_types=self.csharp_method_return_types,
                 method_return_types=self.method_return_types,
                 function_locations=self.function_locations,
