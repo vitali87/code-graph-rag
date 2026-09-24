@@ -154,6 +154,7 @@ TS_CSHARP_PARAMETER_LIST = "parameter_list"
 # implicit_type, inferred from the initializer. A field_declaration wraps a
 # variable_declaration; a property_declaration exposes `type` and `name` directly.
 TS_CSHARP_VARIABLE_DECLARATION = "variable_declaration"
+TS_CSHARP_FOREACH_STATEMENT = "foreach_statement"
 TS_CSHARP_VARIABLE_DECLARATOR = "variable_declarator"
 TS_CSHARP_IMPLICIT_TYPE = "implicit_type"
 TS_CSHARP_FIELD_DECLARATION = "field_declaration"
@@ -167,6 +168,8 @@ TS_CSHARP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
 # constructed type comes from the enclosing declaration (issue #773).
 TS_CSHARP_IMPLICIT_OBJECT_CREATION_EXPRESSION = "implicit_object_creation_expression"
 TS_CSHARP_MEMBER_ACCESS_EXPRESSION = "member_access_expression"
+# The `base` receiver of a member access (`base.Handle`).
+TS_CSHARP_BASE = "base"
 # A conditional call `recv?.Method(...)`: the invocation's `function` field
 # is a conditional_access_expression whose member_binding_expression child
 # carries the method name.
