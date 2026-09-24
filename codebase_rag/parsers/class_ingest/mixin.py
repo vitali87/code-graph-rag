@@ -1322,11 +1322,10 @@ class ClassIngestMixin:
                 # duplicate-suffixed qn (`Bench@24`); the marker is a
                 # registration artefact, not part of the declared name, so
                 # strip it or the two parts never share a group (issue #2014).
-                suffix = class_qn[len(module_qn) + 1 :]
-                head, sep, tail = suffix.rpartition(cs.DUP_QN_MARKER)
-                # Only a NUMERIC suffix is the marker: a verbatim identifier
-                # (`@event`) also opens with the character (local review).
-                declared = head if sep and tail[:1].isdigit() else suffix
+                # The tail below the module, so only its END can carry the
+                # marker a registration appended; a verbatim identifier
+                # (`@event`) opens with the same character and is kept.
+                declared = qn_markers.strip_dup_marker(class_qn[len(module_qn) + 1 :])
                 key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)

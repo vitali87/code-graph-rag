@@ -244,7 +244,7 @@ def test_the_duplicate_marker_strip_keeps_a_verbatim_identifier() -> None:
     (Copilot, #1998). Driven directly: the end-to-end call resolves through
     the name trie and never reaches this filter.
     """
-    from codebase_rag.parsers.csharp.type_inference import _DUP_QN_MARKER_RE
+    from codebase_rag.utils.qn_markers import strip_all_markers
 
     written = "Lib.@event"
     suffix = f".{written}"
@@ -252,14 +252,14 @@ def test_the_duplicate_marker_strip_keeps_a_verbatim_identifier() -> None:
     # escape and a real registration marker are present.
     qn = "proj.src.Lib.Lib.@event@12"
 
-    assert _DUP_QN_MARKER_RE.sub("", qn) == "proj.src.Lib.Lib.@event"
-    assert _DUP_QN_MARKER_RE.sub("", qn).endswith(suffix)
+    assert strip_all_markers(qn) == "proj.src.Lib.Lib.@event"
+    assert strip_all_markers(qn).endswith(suffix)
     # The marker is still stripped where it really is one.
-    assert _DUP_QN_MARKER_RE.sub("", "proj.src.Lib.Lib.Helper@12_3") == (
+    assert strip_all_markers("proj.src.Lib.Lib.Helper@12_3") == (
         "proj.src.Lib.Lib.Helper"
     )
     # ...and a plain name is untouched.
-    assert _DUP_QN_MARKER_RE.sub("", "proj.src.Lib.Lib.Helper") == (
+    assert strip_all_markers("proj.src.Lib.Lib.Helper") == (
         "proj.src.Lib.Lib.Helper"
     )
 

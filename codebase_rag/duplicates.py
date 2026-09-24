@@ -28,6 +28,7 @@ from .types_defs import (
     PropertyValue,
     ResultRow,
 )
+from .utils import qn_markers
 
 
 class _Entry:
@@ -245,17 +246,6 @@ def _span_contains(outer: DuplicateMember, inner: DuplicateMember) -> bool:
     )
 
 
-# Registration artifacts on a qualified name ("@<line>", optionally
-# "_<col>"), never part of the written name; stripped before any
-# hierarchy comparison.
-_DUP_QN_MARKER_RE = re.compile(
-    re.escape(cs.DUP_QN_MARKER)
-    + r"\d+(?:"
-    + re.escape(cs.DUP_QN_COLUMN_MARKER)
-    + r"\d+)?"
-)
-
-
 # C#/Java qualified names carry a parameter signature ("Run(int)") that a
 # nested definition's qn does not repeat ("Run.Local"); stripped before the
 # hierarchy comparison, alongside the registration markers.
@@ -263,7 +253,9 @@ _QN_SIGNATURE_RE = re.compile(r"\([^()]*\)")
 
 
 def _qn_normalized(qn: str) -> str:
-    return _QN_SIGNATURE_RE.sub("", _DUP_QN_MARKER_RE.sub("", qn))
+    # Registration markers are stripped from every segment, not just the
+    # end: the comparison is over whole hierarchies.
+    return _QN_SIGNATURE_RE.sub("", qn_markers.strip_all_markers(qn))
 
 
 def _qn_within(outer_qn: str, inner_qn: str) -> bool:
