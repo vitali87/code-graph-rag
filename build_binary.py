@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,24 @@ def _build_package_args(pkg: PyInstallerPackage) -> list[str]:
     if pkg.hidden_import:
         args.extend([cs.PYINSTALLER_ARG_HIDDEN_IMPORT, pkg.hidden_import])
     return args
+
+
+def forbidden_bundle_entries(entries: list[str]) -> list[str]:
+    """Archive entries whose last path segment matches a forbidden pattern."""
+    patterns = [
+        re.compile(p, re.IGNORECASE) for p in cs.FORBIDDEN_BUNDLE_ENTRY_PATTERNS
+    ]
+    return sorted(
+        entry
+        for entry in entries
+        if any(p.fullmatch(re.split(r"[/\\]", entry)[-1]) for p in patterns)
+    )
+
+
+def _archive_entries(binary: Path) -> list[str]:
+    from PyInstaller.archive.readers import CArchiveReader
+
+    return list(CArchiveReader(str(binary)).toc)
 
 
 def build_binary() -> bool:
@@ -89,6 +108,13 @@ def build_binary() -> bool:
             size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
             logger.info(logs.BINARY_INFO.format(path=binary_path))
             logger.info(logs.BINARY_SIZE.format(size=size_mb))
+
+            forbidden = forbidden_bundle_entries(_archive_entries(binary_path))
+            if forbidden:
+                logger.error(
+                    logs.BUILD_FORBIDDEN_ENTRIES.format(entries=", ".join(forbidden))
+                )
+                return False
 
             os.chmod(binary_path, cs.BINARY_FILE_PERMISSION)
             logger.success(logs.BUILD_READY)

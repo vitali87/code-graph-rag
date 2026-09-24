@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from build_binary import _build_package_args, _get_treesitter_packages, build_binary
+from build_binary import (
+    _build_package_args,
+    _get_treesitter_packages,
+    build_binary,
+    forbidden_bundle_entries,
+)
 from codebase_rag import constants as cs
 from codebase_rag.constants import PyInstallerPackage
 
@@ -134,3 +139,62 @@ class TestBuildBinaryCommand:
         cmd = mock_run.call_args.args[0]
         metadata_pair = [cs.PYINSTALLER_ARG_COPY_METADATA, cs.PACKAGE_NAME]
         assert any(cmd[i : i + 2] == metadata_pair for i in range(len(cmd) - 1)), cmd
+
+    def test_excludes_gpl_readline_module(self) -> None:
+        with patch("build_binary.subprocess.run") as mock_run:
+            assert build_binary()
+
+        cmd = mock_run.call_args.args[0]
+        exclude_pair = [cs.PYINSTALLER_ARG_EXCLUDE_MODULE, "readline"]
+        assert any(cmd[i : i + 2] == exclude_pair for i in range(len(cmd) - 1)), cmd
+
+
+class TestForbiddenBundleEntries:
+    """The built archive is checked, not just the command that built it.
+
+    Entry names are the ones measured on the CI Linux binary (#2189), so the
+    patterns are tested against the shape PyInstaller actually writes.
+    """
+
+    LINUX_READLINE = [
+        "libreadline.so.8",
+        "python3.12/lib-dynload/readline.cpython-312-x86_64-linux-gnu.so",
+    ]
+    # macOS links the system libedit rather than GNU Readline, but the module
+    # is excluded on every platform, so its presence is still a failed build.
+    DARWIN_READLINE = ["python3.12/lib-dynload/readline.cpython-312-darwin.so"]
+    LINUX_CLEAN = [
+        "libssl.so.3",
+        "libtinfo.so.6",
+        "python3.12/lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
+        # A package whose name merely contains "readline" is not GNU Readline.
+        "pyreadline3/__init__.py",
+    ]
+
+    def test_reports_readline_library_and_extension(self) -> None:
+        found = forbidden_bundle_entries(self.LINUX_READLINE + self.LINUX_CLEAN)
+        assert found == sorted(self.LINUX_READLINE)
+
+    def test_reports_macos_readline_extension(self) -> None:
+        found = forbidden_bundle_entries(self.DARWIN_READLINE + self.LINUX_CLEAN)
+        assert found == self.DARWIN_READLINE
+
+    def test_clean_archive_reports_nothing(self) -> None:
+        assert forbidden_bundle_entries(self.LINUX_CLEAN) == []
+
+    def _build_with_entries(self, entries: list[str]) -> bool:
+        with (
+            patch("build_binary.subprocess.run"),
+            patch("build_binary._archive_entries", return_value=entries),
+            patch("build_binary.Path.exists", return_value=True),
+            patch("build_binary.Path.stat") as mock_stat,
+            patch("build_binary.os.chmod"),
+        ):
+            mock_stat.return_value.st_size = 1
+            return build_binary()
+
+    def test_build_fails_when_archive_carries_readline(self) -> None:
+        assert self._build_with_entries(self.LINUX_READLINE) is False
+
+    def test_build_succeeds_when_archive_is_clean(self) -> None:
+        assert self._build_with_entries(self.LINUX_CLEAN) is True
