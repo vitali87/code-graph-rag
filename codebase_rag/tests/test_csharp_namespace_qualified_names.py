@@ -574,3 +574,35 @@ class TestAUsingChoosesAmongSameNamedTypes:
         owner = "proj.src.App.Widget.Widget"
         targets = {target for source, target in _calls(store) if source == run}
         assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+
+    def test_a_sibling_namespace_in_the_callers_file_is_not_local(
+        self, tmp_path: Path
+    ) -> None:
+        """One file declaring `App` and `Other` does not make `Other` local
+        to a call site inside `App`, so `using Zeta;` still chooses
+        `Zeta.Widget` (bot review)."""
+        files = _twin_widgets("using Zeta;")
+        files["src/App/Plain.cs"] = (
+            "using Zeta;\nnamespace App\n{\n    public class Plain\n    {\n"
+            "        public void Run() { var w = new Widget(1); Widget.S(); }\n"
+            "    }\n}\nnamespace Other\n{\n    public class Unrelated { }\n}\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.App.Plain.Run"
+        owner = "proj.src.Zeta.Widget.Widget"
+        targets = {
+            target for source, target in _calls(store) if source.endswith("Plain.Run")
+        }
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, (run, sorted(targets))
+
+    def test_a_namespace_alias_does_not_import_its_target(self, tmp_path: Path) -> None:
+        """`using Alias = Other;` names `Other` only through `Alias.`, so an
+        unqualified `Widget` under it and `using Zeta;` is `Zeta.Widget`
+        (bot review)."""
+        store = _index(
+            tmp_path / "proj", _twin_widgets("using Alias = Other;\nusing Zeta;")
+        )
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = "proj.src.Zeta.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)

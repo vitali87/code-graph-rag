@@ -2928,19 +2928,38 @@ class CallResolver:
                 owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
             if owner:
                 containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+        # The call site's namespace chain is only known when the file declares
+        # ONE nested chain; with sibling namespaces (`App` and `Other` in one
+        # file) neither is local to every call site, so no local precedence
+        # applies rather than a guessed one (bot review).
+        declared_here = sorted(
+            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
+            key=len,
+        )
         enclosing: set[str] = set()
-        for namespace in self.import_processor._csharp_module_namespaces.get(
-            module_qn, {}
+        if declared_here and all(
+            declared_here[-1] == ns
+            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
+            for ns in declared_here
         ):
-            parts = namespace.split(cs.SEPARATOR_DOT)
-            enclosing.update(
+            parts = declared_here[-1].split(cs.SEPARATOR_DOT)
+            enclosing = {
                 cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)
-            )
+            }
         local = [qn for qn in candidates if containers.get(qn) in enclosing]
         if local:
             innermost = max(len(containers[qn]) for qn in local)
             return [qn for qn in local if len(containers[qn]) == innermost]
-        imported = set(self.import_processor.import_mapping.get(module_qn, {}).values())
+        # Only a directive whose local name is its target's own last segment
+        # makes names available unqualified (`using Zeta;`, `using static
+        # Zeta.Widget;`); an alias (`using Alias = Other;`) does not.
+        imported = {
+            target
+            for local_name, target in self.import_processor.import_mapping.get(
+                module_qn, {}
+            ).items()
+            if local_name == target.rpartition(cs.SEPARATOR_DOT)[2]
+        }
         preferred = [qn for qn in candidates if containers.get(qn) in imported]
         return preferred or candidates
 
