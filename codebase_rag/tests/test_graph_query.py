@@ -815,6 +815,52 @@ def test_cli_every_subcommand_is_registered() -> None:
     }
 
 
+def test_a_type_resolves_by_its_namespace_qualified_natural_name() -> None:
+    """`Serilog.ILogger` is the name a C# reader searches for, and the
+    interface's qualified name no longer ends with it once the mirrored
+    namespace is left out (issue #1629); the `namespace` property answers,
+    and the type ranks with the dotted-suffix matches rather than after
+    them."""
+    module = _node(
+        "Module", f"{P}.src.Serilog.ILogger", "src/Serilog/ILogger.cs", 1, 40
+    )
+    interface = _node(
+        "Interface", f"{P}.src.Serilog.ILogger.ILogger", "src/Serilog/ILogger.cs", 5, 38
+    )
+    interface[cs.KEY_NAMESPACE] = "Serilog"
+    other = _node(
+        "Class", f"{P}.src.Other.ILogger.ILogger", "src/Other/ILogger.cs", 1, 9
+    )
+    other[cs.KEY_NAMESPACE] = "Other"
+    nodes = [module, interface, other]
+
+    def fetch_all(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        assert query == cq.CYPHER_GRAPH_RESOLVE_NAME
+        p = params or {}
+        qn = str(p[cs.KEY_QN])
+        return [
+            n
+            for n in nodes
+            if str(n[cs.KEY_QUALIFIED_NAME]) == qn
+            or str(n[cs.KEY_QUALIFIED_NAME]).endswith(str(p[cs.KEY_SUFFIX]))
+            or n[cs.KEY_NAME] == p[cs.KEY_NAME]
+            or (
+                n.get(cs.KEY_NAMESPACE)
+                and f"{n[cs.KEY_NAMESPACE]}.{n[cs.KEY_NAME]}" == qn
+            )
+        ]
+
+    rows = graph_query.resolve(fetch_all, P, "Serilog.ILogger")
+    assert [r["qualified_name"] for r in rows] == [
+        f"{P}.src.Serilog.ILogger",
+        f"{P}.src.Serilog.ILogger.ILogger",
+        f"{P}.src.Other.ILogger.ILogger",
+    ]
+    assert rows[1]["label"] == "Interface"
+    # The other namespace's type matched by bare name only, so it ranks last.
+    assert graph_query.resolve(fetch_all, P, "Other.ILogger")[0]["label"] == "Class"
+
+
 def test_rows_of_a_project_extending_the_name_are_not_this_projects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
