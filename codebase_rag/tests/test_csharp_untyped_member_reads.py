@@ -259,9 +259,7 @@ def test_the_duplicate_marker_strip_keeps_a_verbatim_identifier() -> None:
         "proj.src.Lib.Lib.Helper"
     )
     # ...and a plain name is untouched.
-    assert strip_all_markers("proj.src.Lib.Lib.Helper") == (
-        "proj.src.Lib.Lib.Helper"
-    )
+    assert strip_all_markers("proj.src.Lib.Lib.Helper") == ("proj.src.Lib.Lib.Helper")
 
 
 FOREACH_SHADOW = {
