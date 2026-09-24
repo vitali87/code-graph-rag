@@ -4,6 +4,10 @@
 
 -
 
+## Demo
+
+<!-- A user-visible change shows itself working, before and after: a VHS GIF for a terminal change, a screenshot for a graph, browser or docs change. Drag or paste the file here so it embeds as a GitHub attachment; do not commit it. With nothing user-visible, replace this with one line: "No user-visible change: <why>". See CONTRIBUTING.md, "Show the change". -->
+
 ## Type of Change
 
 <!-- Check all that apply. -->
