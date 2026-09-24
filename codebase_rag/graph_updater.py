@@ -1,5 +1,6 @@
 """Orchestrate parsing a repository into graph nodes and edges and ingest them."""
 
+import errno
 import hashlib
 import json
 import os
@@ -28,6 +29,8 @@ from .function_registry import FunctionRegistryTrie
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
+    csharp_namespaced_from_graph,
+    csharp_partial_key_from_graph,
     get_language_for_extension,
     get_language_spec,
 )
@@ -104,6 +107,7 @@ from .types_defs import (
     ResultRow,
     SimpleNameLookup,
 )
+from .utils import qn_markers
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
 from .utils.path_utils import (
@@ -163,6 +167,46 @@ type DirMtimesCache = dict[str, float]
 
 
 _CPP_SPAN_FILE_EXTENSIONS = frozenset(cs.CPP_EXTENSIONS) | frozenset(cs.C_EXTENSIONS)
+
+
+_PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
+# Windows reports a reparse-point loop as ERROR_CANT_RESOLVE_FILENAME, which
+# CPython maps to EINVAL rather than ELOOP (bot review).
+_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _is_gone_error(exc: OSError) -> bool:
+    return (
+        exc.errno in _PATH_GONE_ERRNOS
+        or getattr(exc, "winerror", None) == _ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def _vanished(filepath: Path) -> bool:
+    """Whether an unreadable path is GONE rather than unreachable: the path
+    is absent, or a symlink whose target is. Judged without following the
+    link and without `exists()`, which reads a permission failure on the
+    file or its directory as absence (issue #1983)."""
+    # ENOTDIR here means an ancestor is now a regular file, so the path can
+    # never exist again; reading it as "not gone" kept its subtree through
+    # every orphan prune (bot review). Only a permission-style failure is
+    # left as unreachable.
+    try:
+        os.lstat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    if not filepath.is_symlink():
+        return False
+    # A link with no target at all is gone: dangling, a cycle, or a target
+    # path through a non-directory. Retrying one would mark the cache
+    # `unreadable` on every run for as long as the link stays broken (bot
+    # review). A link whose target exists but cannot be reached is not gone,
+    # and `Path.exists()` would raise on that (bot review).
+    try:
+        os.stat(filepath)
+    except OSError as exc:
+        return _is_gone_error(exc)
+    return False
 
 
 def _hash_file(filepath: Path) -> str:
@@ -744,9 +788,12 @@ def _touch_empty_json(cache_path: Path) -> None:
 
 
 def _natural_qn(qualified_name: str) -> str:
-    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment."""
-    head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
-    return f"{head}{sep}{last.split(cs.DUP_QN_MARKER, 1)[0]}"
+    """`pkg.T.M@3` -> `pkg.T.M`: the duplicate marker lives in the last segment.
+
+    Delegates so the marker grammar has one definition. Cutting at the first
+    `@` destroys a C# verbatim identifier (`@event` -> ``), issue #2017.
+    """
+    return qn_markers.natural_qn(qualified_name)
 
 
 _GLOSS_RELS = frozenset(
@@ -938,6 +985,10 @@ class GraphUpdater:
         # disk, so this run must ignore it in memory rather than trust it
         # (issue #1647).
         self._cache_discarded_in_memory: bool = False
+        # A parser input changed since the graph was built (issue #1977):
+        # the hash cache describes files parsed by other inputs, so this run
+        # ignores it and re-parses every file once. Set per run.
+        self._parser_changed: bool = False
         # Written at the post-flush commit point in `run`, never inside
         # `_process_files` (issue #1615).
         self._pending_hash_cache: tuple[Path, FileHashCache] | None = None
@@ -958,6 +1009,8 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Registered project names, read once per run (issue #1970).
+        self._registered_projects: list[str] | None = None
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1665,9 +1718,11 @@ class GraphUpdater:
         # that call would clear the flag it just raised and make the in-memory
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
+        self._parser_changed = False
+        self._registered_projects = None
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
-            self._warn_if_parser_changed()
+            self._reparse_all_if_parser_changed()
 
         # Discovery must precede the in-sync check: a build that appeared
         # since the cached run changes the eligible set, and the check walks
@@ -1860,14 +1915,15 @@ class GraphUpdater:
             )
 
         # The parser fingerprint commits here too, for the same reason
-        # (issue #1634). `_warn_if_parser_changed` compares the stored stamp
+        # (issue #1634). `_reparse_all_if_parser_changed` compares the stored stamp
         # with the current fingerprint to tell the user the graph was built by
         # different parser code; a stamp written inside `_process_files`, before
         # the flushes above, survived a full build that died in between and
         # claimed this parser's edges were in a graph that held none of them,
         # so the very run that failed was the one the warning stayed silent
-        # for. Set only by a full build (`_process_files`), so incremental runs
-        # keep the stale stamp and the warning with it.
+        # for. Set by a full build or a parser-changed re-index
+        # (`_process_files`), so ordinary incremental runs keep the stale
+        # stamp and the warning with it.
         if self._pending_parser_fingerprint is not None:
             _save_parser_fingerprint(
                 self.repo_path / cs.PARSER_FINGERPRINT_FILENAME,
@@ -2321,8 +2377,11 @@ class GraphUpdater:
             # A full build re-parses every file: ingest queues everything.
             return
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2359,7 +2418,10 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -2379,6 +2441,48 @@ class GraphUpdater:
                 )
             )
 
+    def _registered_project_names(self) -> list[str]:
+        """Every project the graph holds, longest name first, read once per
+        run. Degrades to this project alone, which keeps the prefix rule."""
+        if self._registered_projects is not None:
+            return self._registered_projects
+        names: set[str] = {self.project_name}
+        try:
+            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            rows = []
+        for row in rows:
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.add(name)
+        registered = sorted(names, key=lambda name: len(name), reverse=True)
+        self._registered_projects = registered
+        return registered
+
+    def _owns(self, qn: str) -> bool:
+        """Whether this project, not another whose name it is a dotted prefix
+        of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
+        $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
+        is the LONGEST registered project name the qn sits under, the way
+        `gloss_repair._projects_of` decides it (issue #1970)."""
+        if qn != self.project_name and not qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        for name in self._registered_project_names():
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == self.project_name
+        return True
+
+    def _owned_rows(self, rows: list[ResultRow], key: str) -> list[ResultRow]:
+        """`rows` whose `key` names a qualified name this project owns."""
+        return [
+            row
+            for row in rows
+            if isinstance(qn := row.get(key), str) and self._owns(qn)
+        ]
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2391,7 +2495,10 @@ class GraphUpdater:
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
+            )
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -2428,6 +2535,36 @@ class GraphUpdater:
             # after this and must reach bases in UNCHANGED headers).
             if isinstance(path := row.get(cs.KEY_PATH), str):
                 self.factory.definition_processor.rehydrated_definition_paths[qn] = path
+                # The C# declared-form index (issue #1629) is filled only by
+                # parsing; an unchanged type must stay reachable by `N.Widget`
+                # from a re-parsed base list or receiver (bot review).
+                if node_type not in (
+                    NodeType.FUNCTION,
+                    NodeType.METHOD,
+                ) and path.endswith(cs.EXT_CS):
+                    namespace = row.get(cs.KEY_NAMESPACE)
+                    namespaced = csharp_namespaced_from_graph(
+                        qn,
+                        path,
+                        self.project_name,
+                        namespace if isinstance(namespace, str) else None,
+                    )
+                    processor = self.factory.definition_processor
+                    # Rejoin the partial group parsing would have given it,
+                    # under the same key, so a declared name spanning
+                    # unchanged parts stays one type; a lone type's group of
+                    # one reads exactly as no group (bot review).
+                    if key := csharp_partial_key_from_graph(
+                        qn, path, self.project_name
+                    ):
+                        group = processor._csharp_partial_index.setdefault(key, [])
+                        group.append(qn)
+                        processor.csharp_partial_groups[qn] = group
+                    if namespaced:
+                        processor.csharp_class_namespaced[qn] = namespaced
+                        processor.csharp_namespaced_qns.setdefault(
+                            namespaced, set()
+                        ).add(qn)
                 # Persisted annotations of UNCHANGED definitions rejoin the
                 # type-edge queue (issue #1527): a changed file can add the
                 # first resolvable type an old annotation names, and MERGE
@@ -2453,8 +2590,9 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_MODULE_QNS, project_params
+            module_rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2519,6 +2657,13 @@ class GraphUpdater:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
@@ -2615,9 +2760,12 @@ class GraphUpdater:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_INHERITS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_INHERITS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
             )
         except Exception:
             if not self._is_full_build:
@@ -2673,9 +2821,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2714,9 +2865,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2765,7 +2919,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -3775,6 +3931,15 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # Same ownership, same reason (issue #1629): every C# class has
+            # an entry, not only the generic ones #1769's sweep covers.
+            namespaced = processor.csharp_class_namespaced.pop(qn, None)
+            if namespaced is not None:
+                carriers = processor.csharp_namespaced_qns.get(namespaced)
+                if carriers is not None:
+                    carriers.discard(qn)
+                    if not carriers:
+                        del processor.csharp_namespaced_qns[namespaced]
             # The owner record goes with them: it names a file this updater
             # no longer has, and keeping it would re-sweep the same qn on the
             # next deletion of a file that happens to reuse the module qn.
@@ -3811,11 +3976,17 @@ class GraphUpdater:
         except Exception:
             return None
         try:
+            # A row without a qualified name (an older reader's shape) keeps
+            # the prefix rule the query itself applied.
             return frozenset(
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
                 and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and (
+                    not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    or self._owns(qn)
+                )
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -3974,7 +4145,18 @@ class GraphUpdater:
                 self._cache_discarded_in_memory = True
                 logger.warning(ls.HASH_CACHE_DISCARD_FAILED, path=stale, error=e)
 
-    def _warn_if_parser_changed(self) -> None:
+    def _reparse_all_if_parser_changed(self) -> None:
+        """Ignore the hash cache for this run when a parser input changed.
+
+        The cache records which files the PREVIOUS inputs parsed; a file
+        unchanged since then would be skipped, and whatever the new inputs
+        emit for it (a property added to a node kind, a new edge) would
+        never be written until the file happened to change. Treating the
+        cache as dead re-parses every file once, and the completed run
+        stamps the new fingerprint, so the next run parses nothing again
+        (issue #1977). A re-parse only removes what a module DEFINES, so
+        this is not a clean rebuild; the warning says what survives.
+        """
         # No hash cache means a full build is coming: nothing to compare.
         if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
             return
@@ -3987,6 +4169,7 @@ class GraphUpdater:
         if stored is None or stored != compute_parser_fingerprint(
             repo_path=self.repo_path, capture=self.capture
         ):
+            self._parser_changed = True
             logger.warning(ls.PARSER_FINGERPRINT_MISMATCH)
 
     def _exclusions_match_last_run(self) -> bool:
@@ -4010,7 +4193,7 @@ class GraphUpdater:
             return True
         # A missing stamp means an index built before it existed, whose
         # exclusion set is unknown rather than known-equal -- the posture
-        # `_warn_if_parser_changed` takes for a missing fingerprint. Reported
+        # `_reparse_all_if_parser_changed` takes for a missing fingerprint. Reported
         # apart from a real change so a user seeing an unexpected full pass
         # can tell which of the two they are looking at.
         if stored is None:
@@ -4042,7 +4225,9 @@ class GraphUpdater:
         cache_mtime = _trustworthy_cache_mtime(cache_path)
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = (
-            {} if self._cache_discarded_in_memory else _load_hash_cache(cache_path)
+            {}
+            if self._cache_discarded_in_memory or self._parser_changed
+            else _load_hash_cache(cache_path)
         )
         old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
         if not old_hashes or not old_dir_mtimes:
@@ -4065,6 +4250,10 @@ class GraphUpdater:
                     return False
 
         for file_key, old_hash in old_hashes.items():
+            if old_hash == cs.HASH_CACHE_UNREADABLE:
+                # A file the last run could not read is retried by the next
+                # real pass, whatever its directory's mtime says (#1983).
+                return False
             file_path_str = f"{repo_str}/{file_key}"
             try:
                 stat = os.stat(file_path_str)
@@ -4072,7 +4261,14 @@ class GraphUpdater:
                 return False
             if stat.st_mtime <= cache_mtime:
                 continue
-            if _hash_file(Path(file_path_str)) != old_hash:
+            try:
+                current_hash = _hash_file(Path(file_path_str))
+            except OSError:
+                # A cached file that can no longer be read is not "in sync":
+                # the batch pass counts it unreadable and leaves it out of
+                # the cache, where raising here ended the run (issue #1992).
+                return False
+            if current_hash != old_hash:
                 return False
         return True
 
@@ -4237,7 +4433,25 @@ class GraphUpdater:
         }
         for stale_key in self._delombok_stale_keys:
             old_hashes.pop(stale_key, None)
-        is_full_build = (force or not old_hashes) and self._single_file is None
+        # `_parser_changed`: the cache names files the old inputs parsed, so
+        # every one of them is forced through a re-parse the same way an
+        # overlay change forces its files (issue #1977). Forced, not merely
+        # forgotten: a file dropped from `old_hashes` alone reads as NEW,
+        # skips delete-before-reingest and keeps its previous registry
+        # entries, so a reused updater registers each definition again as
+        # an `@N` duplicate (the delombok overlay test caught it in CI).
+        # Only when the cache named something: a cache file that loads empty
+        # (corrupt JSON, or one this run already discarded) leaves nothing to
+        # force, and that run stays the full build it always was, asking the
+        # graph what it holds (bot review).
+        reindex_all = self._parser_changed and bool(old_hashes)
+        if reindex_all:
+            forced_reparse_keys |= set(old_hashes)
+            old_hashes.clear()
+        # That run is a RE-INDEX of an indexed tree, not a first build.
+        is_full_build = (
+            force or (not old_hashes and not reindex_all)
+        ) and self._single_file is None
         self._is_full_build = is_full_build
         cache_mtime = (
             _trustworthy_cache_mtime(cache_path) if cache_path.is_file() else 0.0
@@ -4309,9 +4523,14 @@ class GraphUpdater:
         cacheless_single_file = (force or not old_hashes) and (
             self._single_file is not None
         )
+        # A parser-changed re-index asks too: the forced set names only what
+        # the cache named, and a file the graph holds but the cache omits
+        # would otherwise read as new and skip delete-before-reingest (bot
+        # review).
         preexisting_paths = (
             self._existing_module_paths()
             if is_full_build
+            or reindex_all
             or cacheless_single_file
             or not self._exclusions_match_last_run()
             else frozenset()
@@ -4377,8 +4596,23 @@ class GraphUpdater:
                         continue
                     unreadable_count += 1
                     unreadable_keys.add(file_key)
+                    # Marked for retry unless the path is GONE (vanished, or
+                    # a broken symlink): those would refuse the fast path on
+                    # every later run. A file that exists but cannot be
+                    # reached (a permission failure on it or its directory)
+                    # is marked; `exists()` alone reads such a file as gone
+                    # (bot review).
+                    if not _vanished(filepath):
+                        new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                     continue
-                if file_mtime <= cache_mtime:
+                # A file marked unreadable by the previous run is hashed
+                # whatever its mtime: the mark is not a digest, so the
+                # comparison below sees a change and the file is re-parsed
+                # as a KNOWN file, its old subtree deleted first (#1983).
+                if (
+                    file_mtime <= cache_mtime
+                    and old_hashes[file_key] != cs.HASH_CACHE_UNREADABLE
+                ):
                     new_hashes[file_key] = old_hashes[file_key]
                     current_file_keys.add(file_key)
                     skipped_count += 1
@@ -4395,6 +4629,8 @@ class GraphUpdater:
                     continue
                 unreadable_count += 1
                 unreadable_keys.add(file_key)
+                if not _vanished(filepath):
+                    new_hashes[file_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             current_hash, file_bytes = hashed
             # The hash keys the CHECKED-IN source (cache invalidation follows
@@ -4477,7 +4713,12 @@ class GraphUpdater:
         # property to rely on, so the scope rule is stated here.
         deleted_before_parse = (
             sorted(
-                (set(old_hashes) | self._delombok_stale_keys | graph_only_gone)
+                (
+                    set(old_hashes)
+                    | self._delombok_stale_keys
+                    | forced_reparse_keys
+                    | graph_only_gone
+                )
                 - eligible_by_key.keys()
                 - unreadable_keys
             )
@@ -4721,6 +4962,14 @@ class GraphUpdater:
         # delete. The subtree then stays in the graph until a full rebuild.
         if self._single_file is None:
             self._pending_hash_cache = (cache_path, new_hashes)
+            # A file this run could not read carries the unreadable mark in
+            # the cache: the next run's in-sync check refuses on it and the
+            # pass hashes it whatever its mtime, so it is retried as a KNOWN
+            # file with its old subtree deleted first (issue #1983).
+            if unreadable_keys:
+                logger.warning(
+                    ls.INCREMENTAL_UNREADABLE_RETRY, count=len(unreadable_keys)
+                )
             self._pending_dir_mtimes = (dir_mtimes_path, self._collected_dir_mtimes)
         else:
             # Two different remedies, because the run has different standing
@@ -4779,7 +5028,30 @@ class GraphUpdater:
         # in `run`, after the final flush (issue #1634): a build that dies
         # between here and that flush must leave no stamp, or its successor
         # reads its own fingerprint back and never warns.
-        if is_full_build:
+        # A parser-changed project run re-parsed every file too, so it stamps
+        # the fingerprint it parsed under; a single-file run did not, and
+        # leaves the stale stamp for the next project run (issue #1977).
+        # Only a run that actually covered the project may vouch for the
+        # parser it parsed under. An unknown graph state means the delete-
+        # before-reingest could not be scoped, so some old parser's edges
+        # survive, and stamping anyway makes the NEXT run read back a
+        # matching fingerprint and fast-path over exactly those rows --
+        # permanently (bot review). A file this run could not read keeps its
+        # old subtree too, but one carrying the unreadable mark cannot be
+        # fast-pathed over: the next run refuses the in-sync check on the
+        # mark and re-parses the file under the current parser, old subtree
+        # deleted first (#1983). Holding the stamp back for it would re-index
+        # every file to repair one. An unreadable file left UNMARKED (its
+        # path is gone) still holds the stamp back.
+        unmarked_unreadable = {
+            key
+            for key in unreadable_keys
+            if new_hashes.get(key) != cs.HASH_CACHE_UNREADABLE
+        }
+        covered_the_project = not unmarked_unreadable and not self._graph_state_unknown
+        if covered_the_project and (
+            is_full_build or (self._parser_changed and self._single_file is None)
+        ):
             self._pending_parser_fingerprint = compute_parser_fingerprint(
                 repo_path=self.repo_path, capture=self.capture
             )
@@ -5775,6 +6047,8 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -6137,7 +6411,14 @@ class GraphUpdater:
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
-                if stale_kind or not (self.repo_path / path).exists():
+                # `_vanished`, not `exists()`: since 3.12 `Path.exists()`
+                # re-raises PermissionError instead of reading it as
+                # absence, so a link whose target sits behind an
+                # unreadable directory aborted the whole run HERE -- after
+                # the unreadable branch had marked it for retry but before
+                # that marker could commit, so the retry this PR adds never
+                # landed (bot review on PR #1993).
+                if stale_kind or _vanished(self.repo_path / path):
                     # File/Folder deletes key on the absolute path: a sibling
                     # project's node can share the relative path (issue #897).
                     key = (

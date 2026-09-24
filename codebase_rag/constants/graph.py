@@ -34,6 +34,8 @@ KEY_START_LINE = "start_line"
 KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
+# An enum variant's discriminant as written (issue #1807).
+KEY_VALUE = "value"
 KEY_TYPE_NAME = "type_name"
 KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
@@ -196,6 +198,7 @@ ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
 ONEOF_FIELD = "field"
+ONEOF_ENUM_VARIANT = "enum_variant"
 
 
 class UniqueKeyType(StrEnum):
@@ -244,6 +247,8 @@ class NodeLabel(StrEnum):
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
     FIELD = "Field"
+    # A variant an Enum declares (issue #1807).
+    ENUM_VARIANT = "EnumVariant"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -281,6 +286,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENUM_VARIANT: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -337,6 +343,8 @@ class RelationshipType(StrEnum):
     # Function|Method -> Parameter, carrying {index} (issue #1804).
     HAS_PARAMETER = "HAS_PARAMETER"
     HAS_FIELD = "HAS_FIELD"
+    # Enum -> EnumVariant, carrying {index} (issue #1807).
+    HAS_VARIANT = "HAS_VARIANT"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
 
@@ -355,6 +363,7 @@ class CaptureGroup(StrEnum):
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
     FIELDS = "fields"
+    ENUM_VARIANTS = "enum_variants"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -435,6 +444,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     # whenever the `parameters` group is on -- one relationship, one switch --
     # and `fields` alone yields Field nodes and HAS_FIELD only.
     CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
+    # Opt-in like fields (issue #1807).
+    CaptureGroup.ENUM_VARIANTS: frozenset({RelationshipType.HAS_VARIANT}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -492,6 +503,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
     CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
+    CaptureGroup.ENUM_VARIANTS: frozenset({NodeLabel.ENUM_VARIANT}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -587,6 +599,10 @@ KEY_POSITIONAL_PARAMS = "positional_params"
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
+# The namespace a C# type is declared in, kept apart from the qualified
+# name because the qn leaves out a namespace the module's directory already
+# spells (issue #1629).
+KEY_NAMESPACE = "namespace"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -655,7 +671,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -690,7 +706,7 @@ CYPHER_PROJECT_MODULE_PATHS = (
     # whose module qn is the project name itself.
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path"
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_COUNT_PROJECT_MODULES = (
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
@@ -753,7 +769,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
-    "n.return_type AS return_type, n.param_types AS param_types"
+    "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.namespace AS namespace"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:

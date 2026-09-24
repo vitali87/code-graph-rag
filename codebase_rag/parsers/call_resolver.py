@@ -12,6 +12,7 @@ from .. import constants as cs
 from .. import logs as ls
 from ..language_spec import get_language_for_extension
 from ..types_defs import FunctionRegistryTrieProtocol, NodeType
+from ..utils import qn_markers
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
 from .rs import utils as rs_utils
@@ -58,6 +59,24 @@ def _split_receiver_chain(expr: str) -> list[str]:
         elif char in _CHAIN_CLOSE_BRACKETS:
             depth = max(0, depth - 1)
         if char == cs.SEPARATOR_DOT and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def _split_csharp_qualified_path(path: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    generic_depth = 0
+    for char in path:
+        if char == cs.CHAR_ANGLE_OPEN:
+            generic_depth += 1
+        elif char == cs.CHAR_ANGLE_CLOSE and generic_depth:
+            generic_depth -= 1
+        if char == cs.SEPARATOR_DOT and generic_depth == 0:
             parts.append("".join(current))
             current = []
         else:
@@ -214,12 +233,12 @@ class CallResolver:
         # receiver type name is mapped to a class (empty for other languages).
         self.type_aliases = type_aliases if type_aliases is not None else {}
         self._simple_resolution_cache: dict[
-            tuple[str, str], tuple[str, str] | None
+            tuple[str, str, bool], tuple[str, str] | None
         ] = {}
         # The branch that produced the last answer (issue #1526), memoised
         # beside the cache so a hit reports the same confidence as the miss.
         self.last_resolution: str = cs.EdgeResolution.EXACT
-        self._resolution_labels: dict[tuple[str, str], str] = {}
+        self._resolution_labels: dict[tuple[str, str, bool], str] = {}
         self._wildcard_cache: dict[int, list[tuple[str, str]]] = {}
         self._protocol_impl_cache: dict[str, str] | None = None
         self._field_bindings: dict[tuple[str, str], set[str]] = {}
@@ -433,7 +452,11 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
+        """`constructing`: the call is a Java/C# `new X(...)`, so `call_name`
+        names a TYPE and the simple-name fallback must not offer a method or
+        function that merely shares the name."""
         self.last_resolution = cs.EdgeResolution.EXACT
         return self._reject_class_via_value_receiver(
             self._redirect_protocol_method(
@@ -445,12 +468,14 @@ class CallResolver:
                     caller_qn,
                     language,
                     call_point,
+                    constructing,
                 )
             ),
             call_name,
             module_qn,
             class_context,
             local_var_types,
+            language,
         )
 
     def _receiver_is_untyped_shadow(
@@ -513,6 +538,7 @@ class CallResolver:
         module_qn: str,
         class_context: str | None = None,
         local_var_types: dict[str, str] | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
         """Drop a CLASS answer for `value.Name()` -- a value never constructs.
 
@@ -548,6 +574,13 @@ class CallResolver:
         # key inside the receiver expression (`xs[1:2].Error()`), and exempting
         # on it let the defect straight through.
         if cs.SEPARATOR_DOUBLE_COLON in receiver:
+            return result
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and self._try_resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+        ):
             return result
         if self._receiver_names_a_type_or_module(
             receiver, module_qn, result[1], class_context, local_var_types
@@ -851,12 +884,13 @@ class CallResolver:
         # def pass registers under the NATURAL qn (`command.decorator`);
         # probe the variant-stripped scope too, or the call falls to the
         # module trie and mis-binds to a sibling's same-named nested.
-        last = scope.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        if cs.DUP_QN_MARKER not in last:
+        # The stripped form, not the presence of the marker character: a C#
+        # verbatim identifier (`@event`) carries the character without a
+        # marker, and re-probing the identical scope is wasted work that can
+        # only re-bind what the caller already tried (issue #2017).
+        natural_scope = qn_markers.natural_qn(scope)
+        if natural_scope == scope:
             return None
-        natural_scope = (
-            scope[: len(scope) - len(last)] + last.split(cs.DUP_QN_MARKER, 1)[0]
-        )
         return self._scope_candidate(natural_scope, call_name, language)
 
     def _bare_call_allowed(
@@ -1043,7 +1077,7 @@ class CallResolver:
         # A duplicate-suffixed class (`Box@8` for `class Box<T>` beside `class
         # Box`) declares its constructor under its natural name, so the
         # marker is not part of the name to match (issue #2007).
-        simple = class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+        simple = qn_markers.strip_dup_marker(class_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
         targets: set[tuple[str, str]] = set()
         for qn, node_type in self.function_registry.find_with_prefix(class_qn):
             head = qn.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1074,7 +1108,9 @@ class CallResolver:
             if current in seen:
                 continue
             seen.add(current)
-            simple = current.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            simple = qn_markers.strip_dup_marker(
+                current.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            )
             dtor_qn = f"{current}{cs.SEPARATOR_DOT}{cs.CPP_DESTRUCTOR_PREFIX}{simple}"
             dtor_type = self.function_registry.get(dtor_qn)
             if dtor_type is not None:
@@ -1196,6 +1232,7 @@ class CallResolver:
         caller_qn: str | None = None,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
         if language == cs.SupportedLanguage.PYTHON:
             handled, inline = self._resolve_inline_receiver_call(
@@ -1305,7 +1342,9 @@ class CallResolver:
         ):
             use_cache = False
         if use_cache:
-            cache_key = (call_name, module_qn)
+            # `new X()` and a bare `X()` in one module are different
+            # questions with different answers, so they never share a slot.
+            cache_key = (call_name, module_qn, constructing)
             if cache_key in self._simple_resolution_cache:
                 self.last_resolution = self._resolution_labels.get(
                     cache_key, cs.EdgeResolution.EXACT
@@ -1396,6 +1435,16 @@ class CallResolver:
         ):
             return None
 
+        if language == cs.SupportedLanguage.CSHARP and (
+            cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
+        ):
+            result, decided = self._resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+            if result is not None:
+                return result
+            if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
+                return None
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):
@@ -1503,13 +1552,15 @@ class CallResolver:
                 self._remember(cache_key, None)
             return None
 
-        result = self._try_resolve_via_trie(call_name, module_qn, language, call_point)
+        result = self._try_resolve_via_trie(
+            call_name, module_qn, language, call_point, constructing
+        )
         if use_cache:
             self._remember(cache_key, result)
         return result
 
     def _remember(
-        self, cache_key: tuple[str, str], result: tuple[str, str] | None
+        self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
     ) -> None:
         self._simple_resolution_cache[cache_key] = result
         self._resolution_labels[cache_key] = self.last_resolution
@@ -2089,6 +2140,14 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
         language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, str] | None:
+        if language == cs.SupportedLanguage.CSHARP:
+            result, decided = self._resolve_csharp_qualified_call(
+                call_name, module_qn, local_var_types
+            )
+            if result is not None:
+                return result
+            if decided:
+                return None
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             separator = cs.SEPARATOR_DOUBLE_COLON
         elif cs.CHAR_COLON in call_name:
@@ -2120,6 +2179,95 @@ class CallResolver:
         return self._resolve_multi_part_call(
             parts, call_name, import_map, module_qn, local_var_types
         )
+
+    def _try_resolve_csharp_qualified_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[str, str] | None:
+        result, _ = self._resolve_csharp_qualified_call(
+            call_name, module_qn, local_var_types
+        )
+        return result
+
+    def _csharp_dotted_path_shadowed(
+        self, call_name: str, local_var_types: dict[str, str] | None
+    ) -> bool:
+        return bool(
+            local_var_types
+            and cs.SEPARATOR_DOT in call_name
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and not call_name.startswith(f"global{cs.SEPARATOR_DOT}")
+            and call_name.split(cs.SEPARATOR_DOT, 1)[0] in local_var_types
+        )
+
+    def _resolve_csharp_qualified_call(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+    ) -> tuple[tuple[str, str] | None, bool]:
+        if self._csharp_dotted_path_shadowed(call_name, local_var_types):
+            return None, False
+        path = call_name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
+        global_prefix = f"global{cs.SEPARATOR_DOT}"
+        is_global = path.startswith(global_prefix)
+        if path.startswith(global_prefix):
+            path = path[len(global_prefix) :]
+        parts = _split_csharp_qualified_path(path)
+        if len(parts) < 2 or any(not part for part in parts):
+            return None, False
+
+        type_inference = self.type_inference.csharp_type_inference
+        for cut in range(len(parts), 0, -1):
+            type_path = cs.SEPARATOR_DOT.join(parts[:cut])
+            if is_global:
+                type_path = f"global{cs.SEPARATOR_DOUBLE_COLON}{type_path}"
+            class_qn = type_inference._qualified_type_name_to_qn(type_path, module_qn)
+            if class_qn is None:
+                continue
+            if cut == len(parts):
+                return (cs.NodeLabel.CLASS, class_qn), True
+            member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
+                cs.CHAR_ANGLE_OPEN, 1
+            )[0]
+            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
+            if method_qn in self.function_registry:
+                return (self.function_registry[method_qn], method_qn), True
+            if cs.SEPARATOR_DOT not in member_name:
+                if inherited := self._resolve_inherited_method(class_qn, member_name):
+                    return inherited, True
+            # A namespace-qualified type owns the path even when the member is
+            # missing; an unqualified value receiver may still be a field chain.
+            return None, True
+        if (
+            not is_global
+            and cs.SEPARATOR_DOUBLE_COLON not in call_name
+            and self._csharp_path_starts_with_imported_namespace(parts, module_qn)
+        ):
+            return None, True
+        return None, False
+
+    def _csharp_path_starts_with_imported_namespace(
+        self, parts: list[str], module_qn: str
+    ) -> bool:
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        namespaces = {
+            namespace
+            for module_namespaces in self.import_processor._csharp_module_namespaces.values()
+            for namespace in module_namespaces
+        }
+        for cut in range(len(parts), 0, -1):
+            prefix = cs.SEPARATOR_DOT.join(parts[:cut])
+            local_name, separator, remainder = prefix.partition(cs.SEPARATOR_DOT)
+            imported = import_map.get(local_name)
+            if imported is None:
+                continue
+            expanded = f"{imported}{separator}{remainder}" if separator else imported
+            if expanded in namespaces:
+                return True
+        return False
 
     def _has_separator(self, call_name: str) -> bool:
         return (
@@ -2699,6 +2847,7 @@ class CallResolver:
         module_qn: str,
         language: cs.SupportedLanguage | None = None,
         call_point: int | None = None,
+        constructing: bool = False,
     ) -> tuple[str, str] | None:
         search_name = _SEARCH_NAME_CACHE.get(call_name)
         if search_name is None:
@@ -2707,6 +2856,17 @@ class CallResolver:
         possible_matches = self._nameable_candidates(
             self.function_registry.find_ending_with(search_name), module_qn, call_point
         )
+        if constructing:
+            # `new X(...)` names a TYPE: a method or function that merely
+            # shares the name is never its target, however close by import
+            # distance it sits. A C# static factory `Some.LogEventProperty()`
+            # beside `class LogEventProperty` outranked the class once the
+            # class qn stopped repeating its namespace (issue #1629).
+            possible_matches = [
+                qn
+                for qn in possible_matches
+                if self.function_registry[qn] == cs.NodeLabel.CLASS.value
+            ]
         if language == cs.SupportedLanguage.RUST and search_name == call_name:
             # A bare Rust path NEVER names a method (inherent methods need
             # self./Self::/Type::), so a same-named method must not soak
