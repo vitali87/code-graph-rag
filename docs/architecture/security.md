@@ -182,6 +182,16 @@ allowlist, dangerous-pattern checks and approval checks; file tools validate
 paths against the target project root. YOLO mode relaxes approval and allowlist
 checks, while destructive-path screening remains.
 
+Graph queries written by the model are treated as untrusted and must stay
+read-only. They are screened as text first: write keywords outside string
+literals, and any `CALL` to a procedure outside the read-only allowlist, even
+one hidden behind backticks or comments. The engine then enforces it. On
+Neo4j the query runs in a READ access-mode session, which the server refuses
+to write from. Memgraph has no read-only session, so the query is planned
+with `EXPLAIN` first and refused before it runs if the plan contains a write
+operator or a disallowed procedure. Ingestion and other built-in writes use
+fixed queries and are not affected.
+
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,
 project instructions, tool results and web summaries can influence model

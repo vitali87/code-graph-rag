@@ -92,6 +92,15 @@ LLM_DISALLOWED_PROCEDURE = (
     "MAGE allowlist. Query rejected: {query}"
 )
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
+READ_ONLY_WRITE_OPERATOR = (
+    "Refused to run a generated query: the database plans it with the "
+    "write operation '{operator}'. Query rejected: {query}"
+)
+READ_ONLY_PROCEDURE = (
+    "Refused to run a generated query: the database plans a CALL to "
+    "procedure '{name}', which is outside the read-only allowlist. "
+    "Query rejected: {query}"
+)
 LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
 LLM_INIT_RESEARCH = "Failed to initialize research sub-agent: {error}"
 
@@ -110,3 +119,7 @@ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 # Exception classes
 class LLMGenerationError(Exception):
     pass
+
+
+class ReadOnlyQueryError(Exception):
+    """An untrusted query would write, so it was never executed."""

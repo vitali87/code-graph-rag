@@ -169,8 +169,12 @@ class Neo4jDriver:
         self._driver: Driver = GraphDatabase.driver(uri, auth=auth)
         self._database = database
 
-    def connect(self) -> Neo4jConnection:
-        """Open a session.
+    def connect(self, read_only: bool = False) -> Neo4jConnection:
+        """Open a session; `read_only` makes the server refuse any write.
+
+        A READ access-mode session is enforced by Neo4j itself: a write
+        fails with `Neo.ClientError.Statement.AccessMode`, whatever the
+        statement text looks like.
 
         This does NOT prove the server is reachable. The Neo4j driver
         connects lazily: `GraphDatabase.driver()` and `session()` touch
@@ -184,7 +188,15 @@ class Neo4jDriver:
         `HealthChecker.check_memgraph_connection` runs `RETURN 1` for
         exactly this reason.
         """
-        return Neo4jConnection(self._driver.session(database=self._database))
+        if not read_only:
+            return Neo4jConnection(self._driver.session(database=self._database))
+        from neo4j import READ_ACCESS  # ty: ignore[unresolved-import]
+
+        return Neo4jConnection(
+            self._driver.session(
+                database=self._database, default_access_mode=READ_ACCESS
+            )
+        )
 
     def close(self) -> None:
         self._driver.close()

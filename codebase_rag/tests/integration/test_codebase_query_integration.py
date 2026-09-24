@@ -20,7 +20,7 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def mock_ingestor_with_sample_data() -> MagicMock:
     ingestor = MagicMock()
-    ingestor.fetch_all.return_value = [
+    ingestor.fetch_read_only.return_value = [
         {"name": "hello_world", "type": "Function", "module": "main"},
         {"name": "Calculator", "type": "Class", "module": "math_utils"},
         {"name": "add", "type": "Method", "class": "Calculator"},
@@ -75,7 +75,7 @@ class TestQueryToolEndToEnd:
         silent_console: Console,
     ) -> None:
         empty_ingestor = MagicMock()
-        empty_ingestor.fetch_all.return_value = []
+        empty_ingestor.fetch_read_only.return_value = []
         tool = create_query_tool(
             empty_ingestor,
             mock_cypher_gen_realistic,
@@ -111,7 +111,7 @@ class TestQueryToolEndToEnd:
         silent_console: Console,
     ) -> None:
         failing_ingestor = MagicMock()
-        failing_ingestor.fetch_all.side_effect = Exception("Connection refused")
+        failing_ingestor.fetch_read_only.side_effect = Exception("Connection refused")
         tool = create_query_tool(
             failing_ingestor,
             mock_cypher_gen_realistic,
@@ -193,7 +193,7 @@ class TestQueryResultStructure:
         silent_console: Console,
     ) -> None:
         typed_ingestor = MagicMock()
-        typed_ingestor.fetch_all.return_value = [
+        typed_ingestor.fetch_read_only.return_value = [
             {"name": "test", "count": 42, "active": True, "ratio": 3.14},
         ]
         tool = create_query_tool(

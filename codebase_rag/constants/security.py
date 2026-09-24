@@ -114,6 +114,31 @@ CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
         "wcc.",
     }
 )
+# Procedures inside the allowed families that still change the database,
+# verified against memgraph-mage 3.3: `schema.assert` creates and drops
+# indexes and constraints (mg.procedures() reports it as a READ procedure),
+# `graph_util.chain_nodes` creates relationships.
+CYPHER_DENIED_PROCEDURES: frozenset[str] = frozenset(
+    {
+        "schema.assert",
+        "graph_util.chain_nodes",
+    }
+)
+# Memgraph has no read-only session, so an untrusted query is planned with
+# EXPLAIN first and refused if any plan operator starts with one of these.
+# Prefixes rather than names, so a new variant (SetNestedProperty,
+# LoadParquet, ...) is refused without an update here.
+CYPHER_EXPLAIN_PREFIX = "EXPLAIN "
+CYPHER_PLAN_WRITE_OPERATOR_PREFIXES: tuple[str, ...] = (
+    "Create",
+    "Set",
+    "Remove",
+    "Delete",
+    "Detach",
+    "Merge",
+    "Foreach",
+    "Load",
+)
 
 # Shell command constants
 SHELL_CMD_GREP = "grep"

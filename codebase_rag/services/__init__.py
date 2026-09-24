@@ -27,6 +27,18 @@ class QueryProtocol(Protocol):
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None: ...
 
 
+@runtime_checkable
+class ReadOnlyQueryProtocol(QueryProtocol, Protocol):
+    """A graph that can also run an untrusted query without letting it write."""
+
+    def fetch_read_only(self, query: str) -> list[ResultRow]: ...
+
+
 from .filtering import FilteringIngestor  # noqa: E402
 
-__all__ = ["IngestorProtocol", "QueryProtocol", "FilteringIngestor"]
+__all__ = [
+    "IngestorProtocol",
+    "QueryProtocol",
+    "ReadOnlyQueryProtocol",
+    "FilteringIngestor",
+]
