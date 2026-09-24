@@ -526,7 +526,9 @@ def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
             (
                 fn
                 for fn in _enclosing_functions(declaration, scope)
-                if _binds_name(fn, text)
+                # A parameter is a binding too: `nonlocal v` inside a def
+                # nested in `middle(v)` names middle's parameter (bot review).
+                if _binds_name(fn, text) or text in set(_parameter_names(fn))
             ),
             None,
         )

@@ -416,3 +416,23 @@ def test_a_comprehension_variable_is_still_typed_for_its_own_body(
     )
 
     assert types["w"] == "Banner"
+
+
+def test_a_parameter_is_the_nearest_binder_of_a_nonlocal(tmp_path: Path) -> None:
+    """`middle(v: Banner)` binds `v` as a PARAMETER, so `inner`'s `nonlocal v`
+    names middle's parameter and outer's `v` keeps its own type. The owner
+    check read body bindings only, skipped middle, and admitted inner's
+    `for v in [Banner()]` into outer's map (bot review)."""
+    body = (
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    def middle(v: Banner):\n"
+        "        def inner():\n"
+        "            nonlocal v\n"
+        "            for v in [Banner()]:\n"
+        "                pass\n"
+        "        inner()\n"
+        "    middle(Banner())\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
