@@ -131,3 +131,17 @@ def test_scoped_edit_keeps_a_seed_from_an_untouched_file(
     _watch(updater).dispatch(FileModifiedEvent(str(lib)))
 
     assert edge in _calls(mock_ingestor), sorted(_calls(mock_ingestor))
+
+
+def test_forgetting_a_file_does_not_build_the_call_processor(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # An incremental run clears a changed file's state before the definition
+    # pass; building the processor there snapshots half-built state, which
+    # left C# methods ingested under bare, unnamespaced names.
+    _write(temp_repo, {"main.py": MAIN_TEMPLATE.format(arg="on_a")})
+    updater = _updater(temp_repo, mock_ingestor)
+
+    updater.remove_file_from_state(temp_repo / "main.py")
+
+    assert updater.factory._call_processor is None

@@ -3331,8 +3331,13 @@ class GraphUpdater:
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
         # Same for its callable-flow records: a re-parse re-records them on
-        # the walk, a deletion never does.
-        self.factory.call_processor.forget_callable_flow(file_path)
+        # the walk, a deletion never does. Through `_call_processor`, not the
+        # property: the property builds the processor on first access, and
+        # building it here, before the definition pass, snapshots half-built
+        # state (a C# method then ingested under a bare, unnamespaced name).
+        # With no processor yet there are no records to drop.
+        if self.factory._call_processor is not None:
+            self.factory._call_processor.forget_callable_flow(file_path)
 
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
