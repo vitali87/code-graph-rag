@@ -42,7 +42,22 @@ PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ARG_COPY_METADATA = "--copy-metadata"
 PYINSTALLER_ENTRY_POINT = "main.py"
 
-PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
+# On Linux the stdlib `readline` extension links GNU Readline, which is
+# GPL-3.0 (not LGPL), and PyInstaller bundles libreadline with it; on macOS
+# it links the system libedit instead. PyInstaller collects it only because
+# stdlib modules try `import readline` opportunistically, and interactive
+# input goes through prompt_toolkit, so it is excluded everywhere (#2189).
+PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
+
+# Archive entries a release binary must never carry, matched against the last
+# path segment of each TOC name. Checked on the built archive, so a new route
+# that pulls the library back in fails the build instead of shipping.
+FORBIDDEN_BUNDLE_ENTRY_PATTERNS = (
+    r"libreadline\.so(\.\d+)*",
+    r"libreadline(\.\d+)*\.dylib",
+    r"readline\.cpython-[^/\\]+\.so",
+    r"readline(\.cp\d+-[^/\\]+)?\.pyd",
+)
 
 TOML_KEY_PROJECT = "project"
 TOML_KEY_OPTIONAL_DEPS = "optional-dependencies"
