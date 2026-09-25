@@ -167,7 +167,7 @@ def flow_reachability_verdict(
 def _registered_projects(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
     """Every project the graph holds, longest name first. Degrades to this
     project alone when the registry cannot be read."""
-    names = {project_name}
+    names: set[str] = {project_name}
     try:
         rows = fetch_all(CYPHER_LIST_PROJECTS, None)
     except Exception:
@@ -175,7 +175,7 @@ def _registered_projects(fetch_all: QueryFn, project_name: str) -> tuple[str, ..
     names.update(
         name for row in rows if isinstance(name := row.get(cs.KEY_NAME), str) and name
     )
-    return tuple(sorted(names, key=len, reverse=True))
+    return tuple(sorted(names, key=lambda name: len(name), reverse=True))
 
 
 def _project_of(qn: str, projects: tuple[str, ...]) -> str:

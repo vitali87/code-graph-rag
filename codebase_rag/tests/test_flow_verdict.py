@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.capture import ALL_ENABLED
+from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.flow_verdict import (
     CYPHER_FLOW_COVERAGE_GAPS,
     CYPHER_FLOW_EDGES,
@@ -17,7 +18,6 @@ from codebase_rag.flow_verdict import (
     FLOW_VERDICT_UNKNOWN,
     flow_reachability_verdict,
 )
-from codebase_rag.cypher_queries import CYPHER_LIST_PROJECTS
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
