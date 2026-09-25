@@ -135,6 +135,17 @@ class RenameReport(NamedTuple):
 # --- site collection -----------------------------------------------------------
 
 
+def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    names = {
+        name
+        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        if isinstance(name := row.get(cs.KEY_NAME), str)
+        and name.startswith(requested_prefix)
+    }
+    return tuple(sorted(names))
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -1052,10 +1063,12 @@ class Renamer:
             for member in report.hierarchy
         ]
         pairs = list(parents)
+        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
                 cs.CYPHER_PARAM_PATHS: list(report.files),
             },
         ):

@@ -26,7 +26,10 @@ from .utils import (
     _normalize_type_name,
     annotate_type_ref,
     generic_arity_of_type_text,
+    leaf_type_segment,
     split_type_ref,
+    strip_generic_arguments,
+    unique_carrier,
 )
 
 if TYPE_CHECKING:
@@ -102,6 +105,7 @@ class CSharpTypeInferenceEngine:
         "csharp_generic_methods",
         "csharp_class_generic_arity",
         "csharp_class_namespaced",
+        "csharp_namespaced_qns",
         "csharp_method_return_types",
         "method_return_types",
         "function_locations",
@@ -130,6 +134,7 @@ class CSharpTypeInferenceEngine:
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
+        csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -185,6 +190,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_class_namespaced = (
             csharp_class_namespaced if csharp_class_namespaced is not None else {}
+        )
+        self.csharp_namespaced_qns = (
+            csharp_namespaced_qns if csharp_namespaced_qns is not None else {}
         )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
@@ -249,6 +257,65 @@ class CSharpTypeInferenceEngine:
             for declarator in decl.children:
                 if declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR:
                     self._record_local(declarator, declared, types, conflicted)
+
+    def _binds_local(self, node: Node, name: str) -> bool:
+        """Whether a local in scope at `node` binds `name`.
+
+        Two binders, both of which can leave the name out of
+        `local_var_types` and so read as a TYPE: a `foreach (var name in
+        ...)` loop, whose element type is not inferred, and a local declared
+        in an enclosing block whose initializer is not inferred
+        (`var Config = Ext.Make();`, Copilot, #2011).
+
+        The foreach binding is in scope in the loop BODY only; in the
+        collection expression `foreach (var Config in Config.All())` the
+        name is still the class (CodeRabbit, #2011). Only its IMPLICIT form
+        counts: an explicitly typed binding declares its type, reaches
+        `local_var_types`, and must keep resolving normally.
+        """
+        child: Node | None = None
+        current: Node | None = node
+        while current is not None:
+            if current.type == cs.TS_CSHARP_FOREACH_STATEMENT:
+                body = current.child_by_field_name(cs.FIELD_BODY)
+                bound = current.child_by_field_name(cs.FIELD_LEFT)
+                declared = current.child_by_field_name(cs.FIELD_TYPE)
+                implicit = declared is None or (
+                    declared.type == cs.TS_CSHARP_IMPLICIT_TYPE
+                )
+                if (
+                    child is not None
+                    and body is not None
+                    and child.id == body.id
+                    and bound is not None
+                    and implicit
+                    and safe_decode_text(bound) == name
+                ):
+                    return True
+            elif current.type == cs.TS_CSHARP_BLOCK and self._block_declares(
+                current, name
+            ):
+                return True
+            child, current = current, current.parent
+        return False
+
+    def _block_declares(self, block: Node, name: str) -> bool:
+        # A local declared directly in this block; C# forbids a use before
+        # its declaration, so its position within the block is no signal.
+        for statement in block.named_children:
+            for decl in statement.named_children:
+                if decl.type != cs.TS_CSHARP_VARIABLE_DECLARATION:
+                    continue
+                for declarator in decl.named_children:
+                    if (
+                        declarator.type == cs.TS_CSHARP_VARIABLE_DECLARATOR
+                        and safe_decode_text(
+                            declarator.child_by_field_name(cs.FIELD_NAME)
+                        )
+                        == name
+                    ):
+                        return True
+        return False
 
     def _declared_type_name(self, decl: Node) -> str | None:
         type_node = decl.child_by_field_name(cs.FIELD_TYPE)
@@ -527,6 +594,23 @@ class CSharpTypeInferenceEngine:
         # on an untyped receiver resolves to System.Object.
         if method_name in cs.CSHARP_OBJECT_VIRTUALS:
             return True
+        # A `foreach (var x in ...)` binding is a LOCAL whose element type is
+        # not inferred, so it never reaches `local_var_types`. Left to the
+        # checks below it read as an external TYPE when PascalCase and fell
+        # to the name trie otherwise, which bound the call to a registered
+        # class of the same name: `foreach (var Config in items) {
+        # Config.Each(); }` emitted an edge to `N.Config.Each` (Copilot,
+        # PR #1998). A local owns the name whatever its type, so the call is
+        # external to this graph, not a static call on that class.
+        bound = self._unwrap_receiver(receiver)
+        if bound is not None and bound.type == cs.TS_CSHARP_IDENTIFIER:
+            name = safe_decode_text(bound)
+            # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
+            # type, reaches local_var_types, and resolves normally -- this
+            # branch is never reached for it. Guarding on the `var` form
+            # keeps that path working.
+            if name and name not in local_var_types and self._binds_local(bound, name):
+                return True
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return False
@@ -1234,6 +1318,15 @@ class CSharpTypeInferenceEngine:
             type_name = local_var_types.get(name)
             if type_name is not None:
                 return self._type_name_to_qn(type_name, module_qn)
+            # A `foreach (var x in ...)` binding is a LOCAL whose type comes
+            # from the sequence and is not inferred, so it never reaches
+            # `local_var_types`. Falling through to the static branch below
+            # read the name as a TYPE: `foreach (var Config in items) {
+            # Config.Each(); }` emitted an edge to the registered class
+            # `N.Config` (Copilot, PR #1998). A local owns the name here
+            # whatever its type, so the receiver is unresolved, not static.
+            if self._binds_local(receiver, name):
+                return None
             if class_qn := self._containing_class_qn(caller_qn):
                 if ftype := self._field_type(class_qn, name):
                     return self._type_name_to_qn(ftype, module_qn)
@@ -1262,6 +1355,22 @@ class CSharpTypeInferenceEngine:
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
             return expanded
+        # The written path names the DECLARED form (`Zeta.Widget`), which a
+        # folded qn no longer ends with, so it is looked up in the
+        # declared-form index; the leading alias was expanded above, so
+        # `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
+        # (issues #2000, #2004).
+        # `Widget` and `Widget<T>` share the declared form, so the written
+        # arity picks between them first (bot review).
+        carriers = self.csharp_namespaced_qns.get(expanded)
+        if carriers and len(carriers) > 1 and generic_arity is not None:
+            carriers = {
+                qn
+                for qn in carriers
+                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            } or carriers
+        if declared := unique_carrier(carriers, self.csharp_partial_groups):
+            return declared
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [
             qn
@@ -1318,6 +1427,14 @@ class CSharpTypeInferenceEngine:
         if import_map and (mapped := import_map.get(simple)):
             if self.function_registry.get(mapped) in _TYPE_DECLS:
                 return mapped
+            # A type alias (`using W = Zeta.Widget;`) maps to a WRITTEN path,
+            # not a qn: resolve it as one (issue #2002).
+            if mapped != simple and (
+                aliased := self._qualified_type_name_to_qn(
+                    mapped, module_qn, generic_arity
+                )
+            ):
+                return aliased
         candidates = [
             qn
             for qn in self.simple_name_lookup.get(simple, set())
@@ -1452,6 +1569,91 @@ class CSharpTypeInferenceEngine:
         class_qn = self._containing_class_qn(caller_qn)
         if class_qn is None:
             return []
+        return self._method_group_on(class_qn, name)
+
+    def csharp_member_group_argument(
+        self,
+        arg_node: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> list[str]:
+        """The methods a `recv.Name` argument names as a method group.
+
+        Only on a receiver the engine can type, and only METHODS: a property
+        read is a value, and an untyped receiver (a foreach variable over a
+        BCL collection, a BCL value) names nothing, where the simple-name
+        fallback bound whichever first-party `Name` sat nearest (issue #1998).
+        """
+        if arg_node.type != cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            return []
+        receiver = arg_node.child_by_field_name(cs.TS_CSHARP_FIELD_EXPRESSION)
+        name = safe_decode_text(arg_node.child_by_field_name(cs.FIELD_NAME))
+        if receiver is None or not name:
+            return []
+        name = name.split(cs.CHAR_ANGLE_OPEN, 1)[0]
+        if receiver.type == cs.TS_CSHARP_BASE:
+            # `base.Handle`: the method group on the base chain (bot review).
+            own = self._containing_class_qn(caller_qn)
+            return sorted(
+                {
+                    qn
+                    for root in self._partial_roots(own or "")
+                    for base in self.class_inheritance.get(root, [])
+                    for qn in self._method_group_on(base, name)
+                }
+            )
+        class_qn = self._resolve_receiver_class_qn(
+            receiver, local_var_types, module_qn, caller_qn
+        )
+        if class_qn is None and receiver.type == cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION:
+            # `Outer.Inner.Go`, `Lib.Util.Helper`: a dotted receiver the
+            # receiver typing does not cover is a TYPE written with its
+            # enclosing type or namespace, but only when a registered type
+            # sits at exactly that written path. The last segment alone
+            # would also bind `Config.Default.Handle`, a property value
+            # chain, to an unrelated `Default` type (bot review).
+            class_qn = self._dotted_type_path_qn(
+                safe_decode_text(receiver) or "", module_qn
+            )
+        if class_qn is None:
+            return []
+        return self._method_group_on(class_qn, name)
+
+    def _dotted_type_path_qn(self, dotted: str, module_qn: str) -> str | None:
+        # A written type path (`Outer.Inner`, `myLib.Util.Helper`, generic
+        # arguments stripped from EVERY segment, so `Lib.Util<int>.Helper`
+        # keeps its leaf) names a registered type whose qn ends with the
+        # WHOLE path at a segment boundary; a namespace's case is no signal.
+        written = strip_generic_arguments(dotted)
+        if not written:
+            return None
+        if self.function_registry.get(written) in _TYPE_DECLS:
+            return written
+        simple = written.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{written}"
+        candidates = [
+            qn
+            for qn in self.simple_name_lookup.get(simple, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+            # A same-file twin carries a duplicate marker (`Helper@12`)
+            # after the path; the leaf's arity then picks between them.
+            # Matched as `@<digits>`, never a bare `@`: a C# verbatim
+            # identifier (`Lib.@Helper`) carries a leading `@` that IS part
+            # of the name, and splitting at the first one truncated the
+            # candidate to `Lib.`, rejecting the real type (Copilot, #1998).
+            and qn_markers.strip_all_markers(qn).endswith(suffix)
+        ]
+        # The leaf's own arity picks between same-name twins; the leaf is
+        # cut at the last dot outside generic arguments, so a qualified type
+        # argument (`Helper<System.String>`) keeps its arity (bot review).
+        return self._disambiguate_type_candidates(
+            candidates,
+            generic_arity_of_type_text(leaf_type_segment(dotted)),
+            module_qn,
+        )
+
+    def _method_group_on(self, class_qn: str, name: str) -> list[str]:
         seen: set[str] = set()
         out: list[str] = []
         queue = deque(self._partial_roots(class_qn))

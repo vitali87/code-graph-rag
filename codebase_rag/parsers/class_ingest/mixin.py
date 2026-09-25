@@ -27,6 +27,7 @@ from ...types_defs import (
 )
 from ...utils import qn_markers
 from ...utils.path_utils import cached_relative_path, cached_resolve_posix
+from ..anchor_hash import anchor_hash_props
 from ..cpp import CppTypeInferenceEngine
 from ..cpp import utils as cpp_utils
 from ..csharp import utils as csharp_utils
@@ -1103,6 +1104,12 @@ class ClassIngestMixin:
                 file_path, self.repo_path
             ).as_posix()
             class_props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        # A container's hash covers its whole subtree, the same reading as a
+        # function's: a note on a class is about the class as declared, and
+        # a member edit is a change under it. It makes a class note gradable
+        # (STALE/EXACT), movable by hash, and re-validatable by the quote
+        # move, which refuses a hash-less candidate (issue #1808).
+        class_props.update(anchor_hash_props(class_node, decorators))
         if language == cs.SupportedLanguage.CSHARP:
             # The declared namespace is the type's own property, whether or
             # not the qn repeats it (issue #1629).
@@ -1322,11 +1329,10 @@ class ClassIngestMixin:
                 # duplicate-suffixed qn (`Bench@24`); the marker is a
                 # registration artefact, not part of the declared name, so
                 # strip it or the two parts never share a group (issue #2014).
-                suffix = class_qn[len(module_qn) + 1 :]
-                head, sep, tail = suffix.rpartition(cs.DUP_QN_MARKER)
-                # Only a NUMERIC suffix is the marker: a verbatim identifier
-                # (`@event`) also opens with the character (local review).
-                declared = head if sep and tail[:1].isdigit() else suffix
+                # The tail below the module, so only its END can carry the
+                # marker a registration appended; a verbatim identifier
+                # (`@event`) opens with the same character and is kept.
+                declared = qn_markers.strip_dup_marker(class_qn[len(module_qn) + 1 :])
                 key = f"{directory}{cs.SEPARATOR_DOT}{declared}"
                 group = self._csharp_partial_index.setdefault(key, [])
                 group.append(class_qn)

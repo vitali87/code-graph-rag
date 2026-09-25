@@ -292,4 +292,48 @@ def test_indexed_functions_and_methods_carry_the_hash(tmp_path: Path) -> None:
     assert get_props[cs.KEY_ANCHOR_HASH].startswith(cs.ANCHOR_HASH_VERSION)
     # The class itself is not hashed in this stage: a note on it is not graded.
     _label, class_props = by_qn["proj.mod.Store"]
-    assert cs.KEY_ANCHOR_HASH not in class_props
+    # Containers carry the hash too now; the next test covers them.
+    assert class_props[cs.KEY_ANCHOR_HASH].startswith(cs.ANCHOR_HASH_VERSION)
+
+
+def test_indexed_containers_carry_the_hash_and_a_member_edit_flips_it(
+    tmp_path: Path,
+) -> None:
+    """Class, interface, enum, type and union nodes hash their whole subtree,
+    so a note on a class can be graded and moved like one on a function
+    (issue #1808, container hashing)."""
+    from codebase_rag.capture import resolve_capture
+    from evals.cgr_graph import _StatefulIngestor
+
+    def hashes(folder: str, src: str) -> dict[str, str]:
+        repo = tmp_path / folder
+        repo.mkdir()
+        (repo / "app.py").write_text(src)
+        (repo / "kinds.ts").write_text(
+            "export interface Shape { area(): number }\nexport enum Colour { Red }\n"
+            "export type Id = string\n"
+        )
+        parsers, queries = load_parsers()
+        store = _StatefulIngestor()
+        GraphUpdater(
+            ingestor=store,
+            repo_path=repo,
+            parsers=parsers,
+            queries=queries,
+            capture=resolve_capture([]),
+        ).run(force=True)
+        return {
+            str(props[cs.KEY_QUALIFIED_NAME]).split(".", 1)[1]: str(
+                props[cs.KEY_ANCHOR_HASH]
+            )
+            for (label, _uid), props in store.nodes.items()
+            if label in ("Class", "Interface", "Enum", "Type", "Union")
+            and cs.KEY_ANCHOR_HASH in props
+        }
+
+    before = hashes("one", "class Store:\n    def get(self):\n        return 1\n")
+    assert {"app.Store", "kinds.Shape", "kinds.Colour", "kinds.Id"} <= set(before)
+    assert all(h.startswith(cs.ANCHOR_HASH_VERSION) for h in before.values())
+    after = hashes("two", "class Store:\n    def get(self):\n        return 2\n")
+    assert after["app.Store"] != before["app.Store"]
+    assert after["kinds.Shape"] == before["kinds.Shape"]

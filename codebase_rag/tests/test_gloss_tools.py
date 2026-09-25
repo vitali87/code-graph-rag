@@ -51,7 +51,7 @@ def _node(
 NODES: list[ResultRow] = [
     _node("Module", f"{P}.app", "app.py", 1, 20),
     _node("Function", RUN, "app.py", 3, 8, anchor_hash="fp-run"),
-    _node("Class", STORE, "app.py", 10, 18),
+    _node("Class", STORE, "app.py", 10, 18, anchor_hash="fp-store"),
     _node("Method", STORE_GET, "app.py", 11, 13, anchor_hash="fp-store-get"),
     _node("Module", f"{P}.util", "util.py", 1, 10),
     _node("Function", UTIL_GET, "util.py", 1, 4),
@@ -106,7 +106,15 @@ class FakeGraph:
         elif query == cq.CYPHER_GLOSS_TARGET:
             n = self.nodes.get(str(p[cs.KEY_QN]))
             if n is not None:
-                out.append({cs.KEY_TARGET_HASH: n.get(cs.KEY_ANCHOR_HASH)})
+                out.append(
+                    {
+                        cs.KEY_TARGET_HASH: n.get(cs.KEY_ANCHOR_HASH),
+                        cs.KEY_NAME: n.get(cs.KEY_NAME),
+                        cs.KEY_PATH: n.get(cs.KEY_PATH),
+                        cs.KEY_START_LINE: n.get(cs.KEY_START_LINE),
+                        cs.KEY_END_LINE: n.get(cs.KEY_END_LINE),
+                    }
+                )
         elif query == cq.CYPHER_GLOSS_READ:
             key = str(p[cs.KEY_QN])
             if key in self.glosses:
@@ -436,8 +444,9 @@ def test_a_repeat_write_keeps_the_original_author_and_time() -> None:
 
 
 def test_a_target_without_a_fingerprint_stores_no_hash() -> None:
+    # `util.get` is the fixture definition indexed without a hash.
     graph = FakeGraph()
-    row = _write(graph, STORE)
+    row = _write(graph, UTIL_GET)
     assert row["target_hash"] is None
     assert cs.KEY_TARGET_HASH not in graph.glosses[row["qualified_name"]]
 
@@ -1091,3 +1100,160 @@ def test_a_gloss_whose_subject_did_not_survive_is_not_re_attached(
     )
     updater._restore_inbound_edges([_captured("Gloss", "gloss:abc", "ANNOTATES", RUN)])
     ingestor.ensure_relationship_batch.assert_not_called()
+
+
+# --- the text-quote anchor at write time (stage five) ------------------------
+
+APP_PY = (
+    "import os\n\n\ndef run(v):\n    y = helper(v)\n    return y * 2\n\n\n" + "\n" * 12
+)
+
+
+def _reader(files: dict[str, str]) -> tuple[list[tuple[str, str]], Any]:
+    from codebase_rag.gloss_anchor import ParsedSource, parse_source
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+    calls: list[tuple[str, str]] = []
+
+    def read(project: str, path: str) -> ParsedSource | None:
+        calls.append((project, path))
+        text = files.get(path)
+        if text is None:
+            return None
+        return ParsedSource(text, parse_source(parsers, Path(path), text))
+
+    return calls, read
+
+
+def test_a_note_records_its_subjects_text_quote_when_the_source_is_readable() -> None:
+    from codebase_rag.gloss_anchor import text_anchor
+
+    graph = FakeGraph()
+    calls, read = _reader({"app.py": APP_PY})
+    row = _write(graph, RUN, read_source=read)
+    assert not _is_refusal(row)
+    stored = graph.glosses[row["qualified_name"]]
+    # Expected from a parse of its own, so the reader's call list stays
+    # what the write alone produced.
+    _other_calls, parse_only = _reader({"app.py": APP_PY})
+    parsed = parse_only(P, "app.py")
+    assert parsed is not None
+    assert parsed.tree is not None
+    expected = text_anchor(parsed, "run", 3, 8)
+    assert expected is not None
+    assert stored[cs.KEY_ANCHOR_QUOTE] == expected.quote
+    assert stored[cs.KEY_ANCHOR_PREFIX] == expected.prefix
+    assert stored[cs.KEY_ANCHOR_SUFFIX] == expected.suffix
+    assert calls == [(P, "app.py")]
+
+
+def test_a_note_without_a_reader_or_without_the_file_carries_no_quote() -> None:
+    graph = FakeGraph()
+    row = _write(graph, RUN)
+    assert not _is_refusal(row)
+    assert cs.KEY_ANCHOR_QUOTE not in graph.glosses[row["qualified_name"]]
+    _calls, read = _reader({})
+    row = _write(graph, STORE_GET, read_source=read)
+    assert not _is_refusal(row)
+    assert cs.KEY_ANCHOR_QUOTE not in graph.glosses[row["qualified_name"]]
+
+
+def test_the_write_statement_records_the_three_anchor_fields() -> None:
+    q = cq.CYPHER_GLOSS_WRITE
+    for field in ("anchor_quote", "anchor_prefix", "anchor_suffix"):
+        assert f"g.{field} = ${field}" in q
+    for field in ("name", "path", "start_line", "end_line"):
+        assert f"AS {field}" in cq.CYPHER_GLOSS_TARGET
+
+
+def test_mcp_reads_the_subjects_source_only_from_its_own_checkout(
+    tmp_path: Path,
+) -> None:
+    # The checkout is one level down and a file is planted ABOVE it, so the
+    # escaping path exists on disk: a None for it comes from the root guard,
+    # not from a missing file (local review P2).
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "app.py").write_text("SECRET\n")
+    (repo / "app.py").write_text("x = 1\n")
+    foreign = _registry(FakeGraph(), repo)
+    assert foreign._source_reader_for(P) is None
+    own = _registry(FakeGraph(root=str(repo)), repo)
+    read = own._source_reader_for(P)
+    assert read is not None
+    parsed = read(P, "app.py")
+    assert parsed is not None
+    assert parsed.text == "x = 1\n"
+    # The registry fixture loads no grammars, so the parse is absent here;
+    # the updater test below covers a real parse.
+    assert parsed.tree is None
+    # Another project, a path that escapes the root, a missing file: None.
+    assert read("other", "app.py") is None
+    assert read(P, "../app.py") is None
+    assert read(P, "missing.py") is None
+
+
+@pytest.mark.anyio
+async def test_mcp_annotate_hands_the_reader_to_the_write(tmp_path: Path) -> None:
+    registry = _registry(FakeGraph(root=str(tmp_path)), tmp_path)
+    with patch("codebase_rag.mcp.tools.gloss.write_gloss") as write:
+        write.return_value = {"qualified_name": "k"}
+        await registry.annotate(
+            target=RUN, body=BODY, kind=cs.GlossKind.INVARIANT.value, project=P
+        )
+    assert callable(write.call_args.args[-1])
+
+
+def test_the_updater_reads_only_its_own_projects_files(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "app.py").write_text("SECRET\n")
+    (repo / "app.py").write_text("x = 1\n")
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, queries = load_parsers()
+    updater = GraphUpdater(
+        ingestor=_RecordingStore(),  # type: ignore[arg-type]
+        repo_path=repo,
+        parsers=parsers,
+        queries=queries,
+    )
+    (repo / "notes.txt").write_text("plain\n")
+    parsed = updater._read_project_source(updater.project_name, "app.py")
+    assert parsed is not None
+    assert parsed.text == "x = 1\n"
+    assert parsed.tree is not None
+    plain = updater._read_project_source(updater.project_name, "notes.txt")
+    assert plain is not None
+    assert plain.tree is None
+    assert updater._read_project_source("other", "app.py") is None
+    # The planted file above the root exists: None here is the guard.
+    assert updater._read_project_source(updater.project_name, "../app.py") is None
+    assert updater._read_project_source(updater.project_name, "missing.py") is None
+
+
+def test_the_reanchor_pass_hands_the_updater_reader_to_the_repair(
+    tmp_path: Path,
+) -> None:
+    store = _RecordingStore()
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path,
+        parsers={},
+        queries={},
+    )
+    with patch("codebase_rag.graph_updater.repair_unanchored") as repair:
+        updater._reanchor_glosses()
+    repair.assert_called_once_with(
+        store.fetch_all, store.execute_write, updater._read_project_source
+    )
+
+
+def test_a_class_note_records_the_class_hash() -> None:
+    """Containers carry `anchor_hash` now (issue #1808), so a note on a class
+    is graded and repaired like one on a function."""
+    graph = FakeGraph()
+    row = _write(graph, STORE)
+    assert not _is_refusal(row)
+    assert graph.glosses[row["qualified_name"]][cs.KEY_TARGET_HASH] == "fp-store"

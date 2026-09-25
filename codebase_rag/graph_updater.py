@@ -26,6 +26,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
@@ -978,6 +979,11 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Registered project names, read once per run (issue #1970).
+        self._registered_projects: list[str] | None = None
+        # Whether that read failed: the list then holds this project alone,
+        # which cannot tell a nested project's rows from this one's.
+        self._registry_unread = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1686,6 +1692,8 @@ class GraphUpdater:
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
         self._parser_changed = False
+        self._registered_projects = None
+        self._registry_unread = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2098,6 +2106,12 @@ class GraphUpdater:
         # cleanup prunes the outdated endpoint node.
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        # With the registry unread, ownership degrades to the prefix rule and
+        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # emission only MERGEs, and the next healthy run cleans up
+        # (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
@@ -2129,6 +2143,10 @@ class GraphUpdater:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
         if not isinstance(self.ingestor, QueryProtocol):
+            return
+        # Same reason as the handler cleanup: a seeded module map can hold a
+        # sibling project's modules when the registry could not be read.
+        if self._registry_unread:
             return
         try:
             self.ingestor.execute_write(
@@ -2212,8 +2230,15 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
+        # These modules feed the EXPOSES cleanup, a DELETE. With the registry
+        # unread, ownership degrades to the prefix rule and `svc.v2`'s
+        # modules pass as `svc`'s, so read nothing, as a failed module read
+        # does; the next healthy run cleans up (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return []
         return out
 
     def _rehydrated_route_handlers(
@@ -2227,7 +2252,8 @@ class GraphUpdater:
         except Exception:
             return []
         out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
-        for row in rows:
+        # `svc.` also selects `svc.v2`'s handlers (issue #2126).
+        for row in self._owned_rows(rows, cs.KEY_QUALIFIED_NAME):
             if not isinstance(row, dict):
                 continue
             entry = _route_handler_entry(row, already_pending, module_qns)
@@ -2270,7 +2296,8 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
         return out
 
@@ -2342,8 +2369,11 @@ class GraphUpdater:
             # A full build re-parses every file: ingest queues everything.
             return
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2380,7 +2410,10 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -2400,6 +2433,49 @@ class GraphUpdater:
                 )
             )
 
+    def _registered_project_names(self) -> list[str]:
+        """Every project the graph holds, longest name first, read once per
+        run. Degrades to this project alone, which keeps the prefix rule."""
+        if self._registered_projects is not None:
+            return self._registered_projects
+        names: set[str] = {self.project_name}
+        try:
+            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            self._registry_unread = True
+            rows = []
+        for row in rows:
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.add(name)
+        registered = sorted(names, key=str.__len__, reverse=True)
+        self._registered_projects = registered
+        return registered
+
+    def _owns(self, qn: str) -> bool:
+        """Whether this project, not another whose name it is a dotted prefix
+        of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
+        $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
+        is the LONGEST registered project name the qn sits under, the way
+        `gloss_repair._projects_of` decides it (issue #1970)."""
+        if qn != self.project_name and not qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        for name in self._registered_project_names():
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == self.project_name
+        return True
+
+    def _owned_rows(self, rows: list[ResultRow], key: str) -> list[ResultRow]:
+        """`rows` whose `key` names a qualified name this project owns."""
+        return [
+            row
+            for row in rows
+            if isinstance(qn := row.get(key), str) and self._owns(qn)
+        ]
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2412,7 +2488,10 @@ class GraphUpdater:
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
+            )
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -2504,8 +2583,9 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_MODULE_QNS, project_params
+            module_rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2570,6 +2650,13 @@ class GraphUpdater:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
@@ -2666,9 +2753,12 @@ class GraphUpdater:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_INHERITS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_INHERITS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
             )
         except Exception:
             if not self._is_full_build:
@@ -2724,9 +2814,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2765,9 +2858,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2816,7 +2912,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -3064,14 +3162,15 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
             return None
-        prefix = self.project_name + cs.SEPARATOR_DOT
         paths: set[str] = set()
         for row in rows:
             path = row.get(cs.KEY_PATH)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             if not isinstance(path, str) or not isinstance(qn, str):
                 continue
-            if qn == self.project_name or qn.startswith(prefix):
+            # Ownership, not the prefix: a package only `svc.v2` holds would
+            # otherwise count as one of `svc`'s (issue #2126).
+            if self._owns(qn):
                 paths.add(path)
         return paths
 
@@ -3616,12 +3715,13 @@ class GraphUpdater:
     def _prune_class_keyed_maps(
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
-        """Drop a removed file's entries from `class_inheritance` and
-        `class_field_types`.
+        """Drop a removed file's entries from `class_inheritance`,
+        `class_field_types` and the C# partial groups.
 
-        Both are keyed by a CLASS qn and neither was ever mentioned in
-        `remove_file_from_state`, so a deleted file's rows outlived it on a
-        reused updater (issue #1772). That is a wrong answer rather than a
+        All three are keyed by a CLASS qn; the first two were never mentioned
+        in `remove_file_from_state`, so a deleted file's rows outlived it on a
+        reused updater (issue #1772), and the partial groups were not either
+        (issue #2016). That is a wrong answer rather than a
         missing one: `class_field_types` types a receiver reached through a
         field, and `class_inheritance` is walked to reach base-class members
         and drives the OVERRIDES arbitration -- both at a class that is gone.
@@ -3672,6 +3772,16 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # A partial part leaves its group too. The group list is the
+            # very list `_csharp_partial_index` holds under the syntactic
+            # key, so removing the part there keeps both views in step;
+            # without this a re-parse appended the part again and a deleted
+            # part kept typing its siblings' members (issue #2016).
+            if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
+                # One pass, and IN PLACE: the list is the very object
+                # `_csharp_partial_index` holds, so rebinding a new list
+                # would leave that view holding the old one (bot review).
+                group[:] = [part for part in group if part != qn]
             # Same ownership, same reason (issue #1629): every C# class has
             # an entry, not only the generic ones #1769's sweep covers.
             namespaced = processor.csharp_class_namespaced.pop(qn, None)
@@ -3717,11 +3827,17 @@ class GraphUpdater:
         except Exception:
             return None
         try:
+            # A row without a qualified name (an older reader's shape) keeps
+            # the prefix rule the query itself applied.
             return frozenset(
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
                 and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and (
+                    not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    or self._owns(qn)
+                )
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -5737,6 +5853,9 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
+        self._registry_unread = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -5955,7 +6074,11 @@ class GraphUpdater:
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
-            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
+            repair_unanchored(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                self._read_project_source,
+            )
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
@@ -5963,6 +6086,26 @@ class GraphUpdater:
             self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
+
+    def _read_project_source(self, project_name: str, path: str) -> ParsedSource | None:
+        """A file of THIS updater's project, parsed, for the gloss quote tier.
+
+        Another project's definition carries a relative path that may exist
+        under this checkout too and would read the wrong file, so a note
+        about another project gets no source here (the `source_root_for`
+        rule). A path that escapes the root, or cannot be read, is None.
+        """
+        if project_name != self.project_name:
+            return None
+        root = self.repo_path.resolve()
+        target = (root / path).resolve()
+        if root not in (target, *target.parents):
+            return None
+        try:
+            text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+        except OSError:
+            return None
+        return ParsedSource(text, parse_source(self.parsers, target, text))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

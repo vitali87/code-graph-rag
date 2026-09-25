@@ -140,6 +140,7 @@ KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
 KEY_PROJECT_PREFIX = "project_prefix"
+KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
@@ -703,7 +704,7 @@ CYPHER_PROJECT_MODULE_PATHS = (
     # whose module qn is the project name itself.
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path"
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_COUNT_PROJECT_MODULES = (
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
@@ -987,6 +988,15 @@ KEY_HASHES = "hashes"
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
+# The text-quote anchor (issue #1808, stage five): digests of the subject's
+# own text with its name masked, and of the non-blank lines either side of
+# it. Versioned like the hash so a later format is never compared to this one.
+KEY_ANCHOR_QUOTE = "anchor_quote"
+KEY_ANCHOR_PREFIX = "anchor_prefix"
+KEY_ANCHOR_SUFFIX = "anchor_suffix"
+ANCHOR_QUOTE_VERSION = "aq1:"
+# Non-blank lines of context digested on each side of a definition.
+ANCHOR_CONTEXT_LINES = 3
 KEY_WRITE_ID = "write_id"
 KEY_CANDIDATES = "candidates"
 KEY_ORPHANED = "orphaned"
