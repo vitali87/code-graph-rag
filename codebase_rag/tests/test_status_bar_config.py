@@ -11,18 +11,21 @@ from codebase_rag import main as main_mod
 
 @pytest.fixture(autouse=True)
 def reset_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    main_mod.app_context.session.confirm_edits = True
-    main_mod.app_context.session.load_cgr_instructions = True
-    main_mod.app_context.session.target_repo = None
+    monkeypatch.setattr(main_mod.app_context.session, "confirm_edits", True)
+    monkeypatch.setattr(main_mod.app_context.session, "load_cgr_instructions", True)
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", None)
 
 
 @patch("codebase_rag.main.settings")
 def test_config_segments_always_shows_both_models(
     mock_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/myrepo")
+    monkeypatch.setattr(
+        main_mod.app_context.session, "target_repo", Path("/tmp/myrepo")
+    )
 
     segments = dict(main_mod._config_segments())
 
@@ -49,11 +52,12 @@ def test_config_segments_shows_distinct_models(
 @patch("codebase_rag.main.settings")
 def test_config_segments_reflects_session_flags(
     mock_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.confirm_edits = False
-    main_mod.app_context.session.load_cgr_instructions = False
+    monkeypatch.setattr(main_mod.app_context.session, "confirm_edits", False)
+    monkeypatch.setattr(main_mod.app_context.session, "load_cgr_instructions", False)
 
     segments = dict(main_mod._config_segments())
 
@@ -88,10 +92,13 @@ def test_abbreviated_repo_handles_none() -> None:
 @patch("codebase_rag.main.settings")
 def test_config_status_html_includes_model_and_repo(
     mock_settings: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/showme")
+    monkeypatch.setattr(
+        main_mod.app_context.session, "target_repo", Path("/tmp/showme")
+    )
 
     html = main_mod._config_status_html()
 
@@ -108,10 +115,11 @@ def test_status_bar_html_inlines_config_when_wide(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/x")
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", Path("/tmp/x"))
 
     html = main_mod._status_bar_label()
 
@@ -129,10 +137,11 @@ def test_status_bar_html_wraps_config_when_narrow(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/x")
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", Path("/tmp/x"))
 
     html = main_mod._status_bar_label()
 
@@ -150,10 +159,11 @@ def test_rich_status_bar_inlines_config_when_wide(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/x")
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", Path("/tmp/x"))
 
     rendered = main_mod._rich_status_bar().plain
     assert "\n" not in rendered
@@ -167,17 +177,20 @@ def test_rich_status_bar_wraps_config_when_narrow(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/x")
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", Path("/tmp/x"))
 
     rendered = main_mod._rich_status_bar().plain
     assert "\n" in rendered
 
 
-def test_git_state_returns_none_without_target_repo() -> None:
-    main_mod.app_context.session.target_repo = None
+def test_git_state_returns_none_without_target_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", None)
     assert main_mod._git_state() is None
 
 
@@ -186,7 +199,7 @@ def test_git_state_uses_target_repo_cwd(
 ) -> None:
     target = tmp_path / "target-repo"
     target.mkdir()
-    main_mod.app_context.session.target_repo = target
+    monkeypatch.setattr(main_mod.app_context.session, "target_repo", target)
 
     captured: dict[str, object] = {}
 
@@ -209,8 +222,12 @@ def test_git_state_uses_target_repo_cwd(
     assert is_dirty is True
 
 
-def test_git_state_returns_none_when_target_missing(tmp_path: Path) -> None:
-    main_mod.app_context.session.target_repo = tmp_path / "does-not-exist"
+def test_git_state_returns_none_when_target_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main_mod.app_context.session, "target_repo", tmp_path / "does-not-exist"
+    )
     assert main_mod._git_state() is None
 
 
@@ -221,10 +238,13 @@ def test_branch_appears_after_repo_when_inline(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/target")
+    monkeypatch.setattr(
+        main_mod.app_context.session, "target_repo", Path("/tmp/target")
+    )
 
     rendered = main_mod._rich_status_bar().plain
 
@@ -243,10 +263,13 @@ def test_status_bar_html_places_branch_after_repo_when_inline(
     mock_settings: MagicMock,
     _columns: MagicMock,
     _git: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_settings.active_orchestrator_config.model_id = "anthropic:claude-opus-4-7"
     mock_settings.active_cypher_config.model_id = "anthropic:claude-opus-4-7"
-    main_mod.app_context.session.target_repo = Path("/tmp/target")
+    monkeypatch.setattr(
+        main_mod.app_context.session, "target_repo", Path("/tmp/target")
+    )
 
     html = main_mod._status_bar_label()
     rendered = str(html.value) if hasattr(html, "value") else str(html)

@@ -338,7 +338,7 @@ def _load_jsonc(path: Path) -> dict | None:
             source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
         try:
             parsed = json.loads(source)
-        except (json.JSONDecodeError, ValueError):
+        except ValueError:  # json.JSONDecodeError is a ValueError
             continue
         return parsed if isinstance(parsed, dict) else None
     return None

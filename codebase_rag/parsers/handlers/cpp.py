@@ -52,10 +52,11 @@ class CppHandler(BaseLanguageHandler):
         return cpp_utils.is_exported(node)
 
     def extract_base_class_name(self, base_node: ASTNode) -> str | None:
-        if base_node.type == cs.TS_TEMPLATE_TYPE:
-            if (
-                name_node := base_node.child_by_field_name(cs.TS_FIELD_NAME)
-            ) and name_node.text:
-                return safe_decode_text(name_node)
+        if (
+            base_node.type == cs.TS_TEMPLATE_TYPE
+            and (name_node := base_node.child_by_field_name(cs.TS_FIELD_NAME))
+            and name_node.text
+        ):
+            return safe_decode_text(name_node)
 
         return safe_decode_text(base_node) if base_node.text else None

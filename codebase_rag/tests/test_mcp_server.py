@@ -24,18 +24,18 @@ class TestGetProjectRoot:
 
         assert result == test_path.resolve()
 
-    def test_uses_settings_when_env_not_set(self, tmp_path: Path) -> None:
+    def test_uses_settings_when_env_not_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that settings.TARGET_REPO_PATH is used when env var is not set."""
         test_path = tmp_path / "settings_repo"
         test_path.mkdir()
 
-        with patch.dict(os.environ, {}, clear=False):
-            if "TARGET_REPO_PATH" in os.environ:
-                del os.environ["TARGET_REPO_PATH"]
+        monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
 
-            with patch("codebase_rag.mcp.server.settings") as mock_settings:
-                mock_settings.TARGET_REPO_PATH = str(test_path)
-                result = get_project_root()
+        with patch("codebase_rag.mcp.server.settings") as mock_settings:
+            mock_settings.TARGET_REPO_PATH = str(test_path)
+            result = get_project_root()
 
         assert result == test_path.resolve()
 
@@ -161,17 +161,15 @@ class TestGetProjectRoot:
         assert result.exists()
         assert result.is_dir()
 
-    def test_works_with_actual_cwd(self) -> None:
+    def test_works_with_actual_cwd(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Integration test: verify it works with the actual current working directory."""
         actual_cwd = Path.cwd()
 
-        with patch.dict(os.environ, {}, clear=False):
-            if "TARGET_REPO_PATH" in os.environ:
-                del os.environ["TARGET_REPO_PATH"]
+        monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
 
-            with patch("codebase_rag.mcp.server.settings") as mock_settings:
-                mock_settings.TARGET_REPO_PATH = None
-                result = get_project_root()
+        with patch("codebase_rag.mcp.server.settings") as mock_settings:
+            mock_settings.TARGET_REPO_PATH = None
+            result = get_project_root()
 
         assert result == actual_cwd.resolve()
         assert result.exists()

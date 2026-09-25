@@ -2463,11 +2463,12 @@ class CallProcessor:
         path_parts: list[str] = []
         current = func_node.parent
         while current and current.type not in lang_config.class_node_types:
-            if current.type in lang_config.function_node_types:
-                if (name_node := current.child_by_field_name(cs.FIELD_NAME)) and (
-                    name_node.text is not None
-                ):
-                    path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
+            if (
+                current.type in lang_config.function_node_types
+                and (name_node := current.child_by_field_name(cs.FIELD_NAME))
+                and name_node.text is not None
+            ):
+                path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
             current = current.parent
         path_parts.reverse()
         if path_parts:

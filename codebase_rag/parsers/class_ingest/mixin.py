@@ -1049,27 +1049,27 @@ class ClassIngestMixin:
             type_spec is not None
             and type_spec.type in cs.CPP_TYPE_SPECIFIER_NODE_TYPES
             and type_spec.child_by_field_name(cs.FIELD_BODY) is None
+            and allow_defer
         ):
-            if allow_defer:
-                deferred_identity = id_.resolve_class_identity(
-                    class_node, module_qn, language, lang_config, file_path
-                )
-                if deferred_identity:
-                    self._deferred_forward_decls.append(
-                        _DeferredForwardDecl(
-                            class_node,
-                            deferred_identity[1],
-                            self._namespace_qn(deferred_identity[0], module_qn),
-                            module_qn,
-                            language,
-                            lang_queries,
-                            lang_config,
-                            file_path,
-                            sorted_func_nodes,
-                            func_node_starts,
-                        )
+            deferred_identity = id_.resolve_class_identity(
+                class_node, module_qn, language, lang_config, file_path
+            )
+            if deferred_identity:
+                self._deferred_forward_decls.append(
+                    _DeferredForwardDecl(
+                        class_node,
+                        deferred_identity[1],
+                        self._namespace_qn(deferred_identity[0], module_qn),
+                        module_qn,
+                        language,
+                        lang_queries,
+                        lang_config,
+                        file_path,
+                        sorted_func_nodes,
+                        func_node_starts,
                     )
-                return
+                )
+            return
 
         identity = id_.resolve_class_identity(
             class_node,
