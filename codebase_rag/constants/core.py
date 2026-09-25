@@ -71,6 +71,7 @@ class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
     DELETED = "deleted"
+    MOVED = "moved"
 
 
 REALTIME_LOGGER_FORMAT = (

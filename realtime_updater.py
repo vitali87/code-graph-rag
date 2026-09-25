@@ -7,7 +7,12 @@ from typing import Annotated, Protocol
 
 import typer
 from loguru import logger
-from watchdog.events import FileSystemEvent, FileSystemEventHandler
+from watchdog.events import (
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileSystemEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 from codebase_rag import cli_help as ch
@@ -184,8 +189,8 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # ┌─────────────────────────────────────────────────────────────────────┐
         # │                      Real-Time Graph Update Steps                   │
         # ├─────────────────────────────────────────────────────────────────────┤
-        # │ Step 1: Drop events for directories and ignored or irrelevant      │
-        # │         paths before they cost anything                            │
+        # │ Step 1: Split moves and directory events into per-file deletes     │
+        # │         and creates, then drop ignored or irrelevant paths         │
         # │ Step 2: Debounce, so a burst of saves to one file becomes one job  │
         # │ Step 3: Hand the changed and deleted paths to                      │
         # │         GraphUpdater.reingest, which deletes the old subtrees,     │
@@ -194,11 +199,48 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # │ Step 4: Log what was re-parsed, what depended on it, what was      │
         # │         removed, and how long it took                              │
         # └─────────────────────────────────────────────────────────────────────┘
-        src_path = event.src_path
-        if isinstance(src_path, bytes):
-            src_path = src_path.decode()
+        for file_event in self._file_events(event):
+            self._dispatch_file(file_event)
 
-        if event.is_directory or not self._is_relevant(src_path):
+    def _file_events(self, event: FileSystemEvent) -> list[FileSystemEvent]:
+        """Restate an event as the per-file deletions and creations it implies.
+
+        A move is a deletion of the source plus a creation of the destination:
+        editors that save atomically rename a temp file over the target, and a
+        rename must retract the old path as well as index the new one. Each
+        side then passes the ignore rules on its own, so a temp-file source is
+        dropped while its destination is indexed. A directory deleted or moved
+        away arrives as ONE event, and its files are gone from disk, so the
+        updater's record of what it indexed there supplies them.
+        """
+        src_path = _event_path(event.src_path)
+        if event.event_type == EventType.MOVED:
+            dest_path = _event_path(event.dest_path)
+            if not event.is_directory:
+                return [FileDeletedEvent(src_path), FileCreatedEvent(dest_path)]
+            return [
+                *self._deleted_under(src_path),
+                *(
+                    FileCreatedEvent(str(path))
+                    for path in sorted(Path(dest_path).rglob("*"))
+                    if path.is_file()
+                ),
+            ]
+        if not event.is_directory:
+            return [event]
+        if event.event_type == EventType.DELETED:
+            return self._deleted_under(src_path)
+        return []
+
+    def _deleted_under(self, directory: str) -> list[FileSystemEvent]:
+        return [
+            FileDeletedEvent(str(path))
+            for path in self.updater.indexed_files_under(Path(directory))
+        ]
+
+    def _dispatch_file(self, event: FileSystemEvent) -> None:
+        src_path = _event_path(event.src_path)
+        if not self._is_relevant(src_path):
             return
 
         if not self.debounce_enabled:
@@ -296,9 +338,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         the inbound edges) lives in GraphUpdater.reingest, shared with the
         MCP ``reingest`` tool (issue #1524).
         """
-        src_path = event.src_path
-        if isinstance(src_path, bytes):
-            src_path = src_path.decode()
+        src_path = _event_path(event.src_path)
 
         # Only process events that change file content; skip read-only events
         # like "opened" or "closed_no_write" that don't modify the file
@@ -346,6 +386,10 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._needs_full_rebuild = True
             return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+
+
+def _event_path(raw: bytes | str) -> str:
+    return raw.decode() if isinstance(raw, bytes) else raw
 
 
 def start_watcher(
