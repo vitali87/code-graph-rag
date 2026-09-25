@@ -125,7 +125,6 @@ CMD_CHECK = (
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
-    "\n  cgr check --base origin/main --isolated --fail-on-found"
 )
 HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
@@ -389,6 +388,13 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_WORKSPACE = (
+    "Serve the projects of workspace NAME: `list_projects` shows them, a "
+    "`project` argument, when given, must name one (omitted, the server "
+    "takes the project rooted at its directory, or the workspace's only "
+    "one), and source is read from each repo's own root. Also read from the "
+    "MCP_WORKSPACE environment variable."
+)
 
 HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."

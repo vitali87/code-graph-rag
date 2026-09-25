@@ -363,20 +363,17 @@ class TestFingerprintStamping:
         settled.run()
         assert settled._reparsed_file_keys == set()
 
-    def test_an_unreadable_file_holds_the_stamp_back(
+    def test_a_marked_unreadable_file_lets_the_stamp_through(
         self,
         py_project: Path,
         mock_ingestor: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A re-index that could not read every file has not covered the
-        project, so it must not vouch for the parser it ran under.
-
-        The unread file keeps the OLD parser's subtree. Stamping anyway
-        makes the next run read back a matching fingerprint, skip the
-        staleness warning and fast-path over exactly those rows, so the
-        stale subtree never gets re-parsed (bot review).
-        """
+        """The unread file keeps the OLD parser's subtree, but it carries the
+        unreadable mark, so the next run cannot fast-path over it: it
+        re-parses that file alone under the current parser (#1983). The
+        re-index may therefore vouch for its parser; holding the stamp back
+        would make the next run re-index every file to repair one."""
         (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
         _make_updater(py_project, mock_ingestor).run()
         _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
@@ -393,8 +390,48 @@ class TestFingerprintStamping:
         updater.run()
 
         stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
+        assert stored == compute_parser_fingerprint(repo_path=py_project)
+
+        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", real_hash)
+        retry = _make_updater(py_project, mock_ingestor)
+        assert retry._is_already_in_sync() is False
+        retry.run()
+        assert retry._reparsed_file_keys == {"module_b.py"}
+
+    def test_an_unmarked_unreadable_file_holds_the_stamp_back(
+        self,
+        py_project: Path,
+        mock_ingestor: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unreadable file whose path is judged gone gets no unreadable
+        mark, so nothing forces the next run to re-parse it. That re-index
+        has not covered the project and must not vouch for the parser it ran
+        under, or the next run reads back a matching fingerprint and
+        fast-paths over the old parser's rows (bot review)."""
+        (py_project / "module_b.py").write_text("def func_b():\n    pass\n")
+        _make_updater(py_project, mock_ingestor).run()
+        _fingerprint_path(py_project).write_text(STALE_FINGERPRINT, encoding="utf-8")
+
+        real_hash = graph_updater._hash_file_with_bytes
+        real_vanished = graph_updater._vanished
+
+        def refuse_module_b(filepath: Path) -> tuple[str, bytes] | None:
+            if filepath.name == "module_b.py":
+                return None
+            return real_hash(filepath)
+
+        def module_b_gone(filepath: Path) -> bool:
+            return filepath.name == "module_b.py" or real_vanished(filepath)
+
+        updater = _make_updater(py_project, mock_ingestor)
+        monkeypatch.setattr(graph_updater, "_hash_file_with_bytes", refuse_module_b)
+        monkeypatch.setattr(graph_updater, "_vanished", module_b_gone)
+        updater.run()
+
+        stored = _fingerprint_path(py_project).read_text(encoding="utf-8").strip()
         assert stored == STALE_FINGERPRINT, (
-            "a run that could not read every file must not refresh the stamp"
+            "a run with an unmarked unreadable file must not refresh the stamp"
         )
 
     def test_a_stale_stamp_re_indexes_rather_than_rebuilds(
