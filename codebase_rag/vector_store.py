@@ -406,13 +406,20 @@ class QdrantVectorStore:
         # the stale points survive. Validation is skipped because dropping a
         # collection with the wrong vector size is how a user recovers from it.
         client = get_qdrant_client(validate=False)
-        client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
-        client.create_collection(
-            collection_name=settings.QDRANT_COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
-            ),
-        )
+        try:
+            client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
+            client.create_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+                ),
+            )
+        except Exception:
+            # The client was cached unvalidated; if the rebuild failed the
+            # collection may still be the wrong size (or gone), so the next
+            # caller must open and validate afresh rather than reuse it.
+            close_vector_store_client()
+            raise
         logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:

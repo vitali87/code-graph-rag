@@ -193,6 +193,25 @@ def test_clear_all_embeddings_recreates_collection_with_other_dim(
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+@pytest.mark.parametrize("failing", ["delete_collection", "create_collection"])
+def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
+    reset_global_client: None, failing: str
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    instance = MagicMock()
+    instance.collection_exists.return_value = True
+    getattr(instance, failing).side_effect = RuntimeError("store is down")
+    with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
+        with patch("codebase_rag.vector_store.QdrantClient", return_value=instance):
+            with pytest.raises(RuntimeError):
+                vs.QdrantVectorStore().clear_all_embeddings()
+
+    assert vs._CLIENT is None
+    instance.close.assert_called_once()
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
