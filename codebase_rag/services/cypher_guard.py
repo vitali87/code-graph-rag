@@ -8,17 +8,19 @@ and the database:
   procedure CALLs. They run on `mask_literals_and_comments` output, so a
   keyword inside a string literal is not a false positive and a procedure
   name hidden behind backticks or a comment is still seen.
-* The engine itself, via `MemgraphIngestor.fetch_read_only`. Neo4j runs the
-  query in a READ access-mode session and refuses any write. Memgraph has
-  no read-only session, so the query is planned with EXPLAIN and
-  `check_memgraph_plan` refuses it if the planner reports a write operator
-  or a disallowed procedure. The plan names what will actually execute,
-  whatever the query text looks like.
+* The engine itself, via `MemgraphIngestor.fetch_read_only`: the query is
+  planned with EXPLAIN and `check_plan` refuses it if the planner reports a
+  write operator or a disallowed procedure. The plan names what will
+  actually execute, whatever the query text looks like. Neo4j also runs the
+  query in a READ access-mode session, but its driver documents that mode
+  as routing, not access control, so the plan check is the boundary on
+  both engines.
 """
 
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -116,25 +118,68 @@ def is_allowed_procedure(name: str) -> bool:
     )
 
 
-def check_memgraph_plan(plan_rows: list[str], query: str) -> None:
-    """Refuse a query whose Memgraph EXPLAIN plan would write.
+class PlanOperator(NamedTuple):
+    """One operator of an EXPLAIN plan, engine-neutral."""
 
-    Each row is one plan line such as ` * CreateNode` or
-    ` | * CallProcedure<pagerank.get> {node, rank}`; branch markers carry
-    no operator and are skipped.
+    name: str
+    # The called procedure, for a procedure-call operator whose name could
+    # be read; None otherwise.
+    procedure: str | None
+
+
+def memgraph_plan_operators(plan_rows: list[str]) -> list[PlanOperator]:
+    """Operators of a Memgraph EXPLAIN plan, one text row per operator.
+
+    Rows look like ` * CreateNode` or
+    ` | * CallProcedure<pagerank.get> {node, rank}`; branch markers carry no
+    operator and are skipped.
     """
+    operators = []
     for row in plan_rows:
         operator = _PLAN_OPERATOR.search(row)
         if operator is None:
             continue
-        if operator.group(0).startswith(cs.CYPHER_PLAN_WRITE_OPERATOR_PREFIXES):
-            raise ex.ReadOnlyQueryError(
-                ex.READ_ONLY_WRITE_OPERATOR.format(
-                    operator=operator.group(0), query=query
-                )
-            )
         procedure = _PLAN_PROCEDURE.search(row)
-        if procedure is not None and not is_allowed_procedure(procedure.group(1)):
+        operators.append(
+            PlanOperator(operator.group(0), procedure.group(1) if procedure else None)
+        )
+    return operators
+
+
+def neo4j_plan_operators(plan: list[tuple[str, str]]) -> list[PlanOperator]:
+    """Operators of a Neo4j EXPLAIN plan, as (operatorType, Details) pairs.
+
+    Neo4j suffixes each type with its runtime (`Create@neo4j`), and gives a
+    procedure call's signature in Details (`db.labels() :: (label :: STRING)`).
+    """
+    operators = []
+    for operator_type, details in plan:
+        name = operator_type.split(cs.CYPHER_PLAN_OPERATOR_RUNTIME_SEPARATOR, 1)[0]
+        procedure = None
+        if name in cs.CYPHER_PLAN_PROCEDURE_OPERATORS and details:
+            procedure = details.split(cs.CYPHER_PLAN_PROCEDURE_ARGS_OPEN, 1)[0].strip()
+        operators.append(PlanOperator(name, procedure or None))
+    return operators
+
+
+def check_plan(operators: list[PlanOperator], query: str) -> None:
+    """Refuse a query whose EXPLAIN plan would write, or cannot be judged.
+
+    Fails closed: an empty plan, or a procedure call whose name could not be
+    read, is refused rather than run on the assumption that it reads.
+    """
+    if not operators:
+        raise ex.ReadOnlyQueryError(ex.READ_ONLY_UNREADABLE_PLAN.format(query=query))
+    for operator in operators:
+        if operator.name.startswith(cs.CYPHER_PLAN_WRITE_OPERATOR_PREFIXES):
             raise ex.ReadOnlyQueryError(
-                ex.READ_ONLY_PROCEDURE.format(name=procedure.group(1), query=query)
+                ex.READ_ONLY_WRITE_OPERATOR.format(operator=operator.name, query=query)
+            )
+        if operator.name in cs.CYPHER_PLAN_PROCEDURE_OPERATORS and (
+            operator.procedure is None or not is_allowed_procedure(operator.procedure)
+        ):
+            raise ex.ReadOnlyQueryError(
+                ex.READ_ONLY_PROCEDURE.format(
+                    name=operator.procedure or operator.name, query=query
+                )
             )

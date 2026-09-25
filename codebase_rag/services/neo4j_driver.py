@@ -32,6 +32,7 @@ import types
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from .. import constants as cs
 from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 
 if TYPE_CHECKING:  # pragma: no cover - import cost only paid at type-check time
@@ -129,6 +130,24 @@ class Neo4jConnection:
 
     def cursor(self) -> Neo4jCursor:
         return Neo4jCursor(self._session)
+
+    def explain(self, query: str) -> list[tuple[str, str]]:
+        """Every operator of the query's EXPLAIN plan as (type, Details).
+
+        EXPLAIN plans without executing, so nothing in `query` runs here.
+        """
+        session_run = self._session.run
+        plan = session_run(cs.CYPHER_EXPLAIN_PREFIX + query).consume().plan
+        operators: list[tuple[str, str]] = []
+        pending = [plan] if plan else []
+        while pending:
+            node = pending.pop()
+            details = (node.get(cs.NEO4J_PLAN_ARGS) or {}).get(cs.NEO4J_PLAN_DETAILS)
+            operators.append(
+                (str(node.get(cs.NEO4J_PLAN_OPERATOR_TYPE, "")), str(details or ""))
+            )
+            pending.extend(node.get(cs.NEO4J_PLAN_CHILDREN) or [])
+        return operators
 
     def close(self) -> None:
         self._session.close()

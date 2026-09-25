@@ -141,6 +141,19 @@ CYPHER_MASKED_COMMENT = " "
 CYPHER_LINE_END = "\n"
 CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
 CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
+# The operator each engine plans for a procedure CALL: Memgraph's plan text
+# names it CallProcedure<name>, Neo4j's plan tree ProcedureCall with the
+# signature in its Details.
+CYPHER_PLAN_PROCEDURE_OPERATORS: frozenset[str] = frozenset(
+    {"CallProcedure", "ProcedureCall"}
+)
+# Neo4j tags each operator with its runtime (`Create@neo4j`).
+CYPHER_PLAN_OPERATOR_RUNTIME_SEPARATOR = "@"
+CYPHER_PLAN_PROCEDURE_ARGS_OPEN = "("
+NEO4J_PLAN_OPERATOR_TYPE = "operatorType"
+NEO4J_PLAN_ARGS = "args"
+NEO4J_PLAN_DETAILS = "Details"
+NEO4J_PLAN_CHILDREN = "children"
 CYPHER_PLAN_WRITE_OPERATOR_PREFIXES: tuple[str, ...] = (
     "Create",
     "Set",

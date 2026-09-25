@@ -69,7 +69,11 @@ from ..types_defs import (
     ResultRow,
 )
 from ..utils.path_utils import project_roots_from_rows
-from .cypher_guard import check_memgraph_plan
+from .cypher_guard import (
+    check_plan,
+    memgraph_plan_operators,
+    neo4j_plan_operators,
+)
 from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
@@ -755,10 +759,11 @@ class MemgraphIngestor:
         """Run an untrusted (LLM-generated) query so that it cannot write.
 
         The text checks in `services.llm` are the first layer; this is the
-        one that does not depend on reading the query text correctly. Neo4j
-        enforces it with a READ access-mode session. Memgraph has no such
-        session, so the query is planned with EXPLAIN and refused before it
-        runs if the plan writes or calls a disallowed procedure.
+        one that does not depend on reading the query text correctly. On both
+        engines the query is planned with EXPLAIN and refused before it runs
+        if the plan writes or calls a disallowed procedure. Neo4j additionally
+        runs it in a READ access-mode session, which its driver documents as a
+        routing hint rather than access control, so it is not relied on.
         """
         bounded_query = _apply_memory_limit(
             query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
@@ -766,11 +771,17 @@ class MemgraphIngestor:
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=None)
         if self._dialect.name == DIALECT_NEO4J:
             with self._neo4j_driver().connect(read_only=True) as conn:
+                check_plan(neo4j_plan_operators(conn.explain(bounded_query)), query)
                 cursor = conn.cursor()
                 cursor.execute(bounded_query)
                 return self._cursor_to_results(cursor)
         plan = self._execute_query(CYPHER_EXPLAIN_PREFIX + bounded_query)
-        check_memgraph_plan([str(next(iter(row.values()), "")) for row in plan], query)
+        check_plan(
+            memgraph_plan_operators(
+                [str(next(iter(row.values()), "")) for row in plan]
+            ),
+            query,
+        )
         return self._execute_query(bounded_query)
 
     def execute_write(

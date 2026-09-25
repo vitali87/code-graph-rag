@@ -96,6 +96,10 @@ READ_ONLY_WRITE_OPERATOR = (
     "Refused to run a generated query: the database plans it with the "
     "write operation '{operator}'. Query rejected: {query}"
 )
+READ_ONLY_UNREADABLE_PLAN = (
+    "Refused to run a generated query: the database returned no plan that "
+    "could be checked for writes. Query rejected: {query}"
+)
 READ_ONLY_PROCEDURE = (
     "Refused to run a generated query: the database plans a CALL to "
     "procedure '{name}', which is outside the read-only allowlist. "

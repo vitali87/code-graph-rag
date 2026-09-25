@@ -8,9 +8,11 @@ from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
 from codebase_rag.services.cypher_guard import (
-    check_memgraph_plan,
+    check_plan,
     is_allowed_procedure,
     mask_literals_and_comments,
+    memgraph_plan_operators,
+    neo4j_plan_operators,
 )
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import (
@@ -149,12 +151,16 @@ _SUBQUERY_WRITE_PLAN = [
 ]
 
 
+def _check_memgraph(rows: list[str], query: str) -> None:
+    check_plan(memgraph_plan_operators(rows), query)
+
+
 class TestCheckMemgraphPlan:
     def test_read_plan_passes(self) -> None:
-        check_memgraph_plan(_READ_PLAN, "q")
+        _check_memgraph(_READ_PLAN, "q")
 
     def test_allowed_procedure_passes(self) -> None:
-        check_memgraph_plan(_PAGERANK_PLAN, "q")
+        _check_memgraph(_PAGERANK_PLAN, "q")
 
     @pytest.mark.parametrize(
         "operator",
@@ -174,18 +180,18 @@ class TestCheckMemgraphPlan:
     )
     def test_write_operator_is_refused(self, operator: str) -> None:
         with pytest.raises(ex.ReadOnlyQueryError, match="write operation"):
-            check_memgraph_plan([" * EmptyResult", f" * {operator}", " * Once"], "q")
+            _check_memgraph([" * EmptyResult", f" * {operator}", " * Once"], "q")
 
     def test_write_inside_a_subquery_branch_is_refused(self) -> None:
         with pytest.raises(ex.ReadOnlyQueryError, match="CreateNode"):
-            check_memgraph_plan(_SUBQUERY_WRITE_PLAN, "q")
+            _check_memgraph(_SUBQUERY_WRITE_PLAN, "q")
 
     @pytest.mark.parametrize(
         "name", ["mg.create_module_file", "graph_util.chain_nodes", "schema.assert"]
     )
     def test_disallowed_procedure_is_refused(self, name: str) -> None:
         with pytest.raises(ex.ReadOnlyQueryError, match=name):
-            check_memgraph_plan([f" * CallProcedure<{name}> {{path}}"], "q")
+            _check_memgraph([f" * CallProcedure<{name}> {{path}}"], "q")
 
 
 class TestFetchReadOnlyOnMemgraph:
@@ -226,3 +232,59 @@ class TestFetchReadOnlyOnMemgraph:
             )
         executed.assert_called_once()
         assert executed.call_args.args[0].startswith(cs.CYPHER_EXPLAIN_PREFIX)
+
+
+class TestCheckPlanFailsClosed:
+    def test_an_empty_plan_is_refused(self) -> None:
+        with pytest.raises(ex.ReadOnlyQueryError, match="no plan"):
+            check_plan([], "q")
+
+    def test_a_procedure_call_without_a_readable_name_is_refused(self) -> None:
+        # A CallProcedure row in a shape the name pattern does not match.
+        with pytest.raises(ex.ReadOnlyQueryError, match="CallProcedure"):
+            _check_memgraph([" * CallProcedure pagerank.get"], "q")
+
+
+# Plans as neo4j 5.26 returns them for EXPLAIN, flattened to
+# (operatorType, Details).
+_NEO4J_READ_PLAN = [
+    ("ProduceResults@neo4j", "`n.name`"),
+    ("Projection@neo4j", "n.name AS `n.name`"),
+    ("Limit@neo4j", "3"),
+    ("AllNodesScan@neo4j", "n"),
+]
+
+
+class TestCheckNeo4jPlan:
+    def test_read_plan_passes(self) -> None:
+        check_plan(neo4j_plan_operators(_NEO4J_READ_PLAN), "q")
+
+    @pytest.mark.parametrize(
+        "operator",
+        [
+            ("DetachDelete@neo4j", "n"),
+            ("SetProperty@neo4j", "n.x = $autoint_0"),
+            ("Merge@neo4j", "CREATE (anon_0:X)"),
+            ("Create@neo4j", "(n:X)"),
+            ("RemoveLabels@neo4j", "n:L"),
+            ("Foreach@neo4j", "i IN [1], CREATE (anon_0:A)"),
+            ("LoadCSV@neo4j", "r"),
+        ],
+    )
+    def test_write_operator_is_refused(self, operator: tuple[str, str]) -> None:
+        plan = [("ProduceResults@neo4j", ""), operator, ("AllNodesScan@neo4j", "n")]
+        with pytest.raises(ex.ReadOnlyQueryError, match="write operation"):
+            check_plan(neo4j_plan_operators(plan), "q")
+
+    def test_procedure_name_is_read_from_the_signature(self) -> None:
+        plan = [("ProcedureCall@neo4j", "db.labels() :: (label :: STRING)")]
+        assert neo4j_plan_operators(plan)[0].procedure == "db.labels"
+        with pytest.raises(ex.ReadOnlyQueryError, match="db.labels"):
+            check_plan(neo4j_plan_operators(plan), "q")
+
+    def test_allowed_procedure_passes(self) -> None:
+        plan = [
+            ("ProduceResults@neo4j", "node"),
+            ("ProcedureCall@neo4j", "pagerank.get() :: (node :: NODE)"),
+        ]
+        check_plan(neo4j_plan_operators(plan), "q")

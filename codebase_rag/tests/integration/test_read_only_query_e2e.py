@@ -1,8 +1,9 @@
 """`fetch_read_only` against real engines: a generated query cannot write.
 
-Memgraph has no read-only session, so this checks the EXPLAIN plan guard
-refuses writes however the query text disguises them. Neo4j enforces a READ
-access-mode session server-side. The Neo4j tests skip without Docker or the
+Both engines plan the query with EXPLAIN first, so the plan guard refuses
+writes however the query text disguises them. Neo4j's READ access-mode
+session is kept, but it is routing, not access control, so the tests expect
+the plan guard's refusal on Neo4j too. The Neo4j tests skip without Docker or the
 optional `neo4j` package; `neo4j_container` handles both.
 """
 
@@ -52,8 +53,9 @@ def test_write_query_is_refused_and_changes_nothing(
     ingestor: MemgraphIngestor, query: str
 ) -> None:
     before = _node_count(ingestor)
-    # ReadOnlyQueryError on Memgraph, the driver's ClientError on Neo4j.
-    with pytest.raises(Exception):
+    # The plan check refuses it on both engines, before anything runs; on
+    # Neo4j it must not depend on the READ session, which is only routing.
+    with pytest.raises(ex.ReadOnlyQueryError):
         ingestor.fetch_read_only(query)
     assert _node_count(ingestor) == before
     assert ingestor.fetch_all("MATCH (n) WHERE n.pwned RETURN n") == []
