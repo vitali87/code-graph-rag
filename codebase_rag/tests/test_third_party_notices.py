@@ -1159,6 +1159,24 @@ class TestNativeNotices:
         with pytest.raises(notices.NativeLicenseError, match="libsqlite3.so.0"):
             notices.native_notices(frozenset({"libsqlite3.so.0"}))
 
+    @pytest.mark.parametrize("library", ["libssl.so.1.1", "libcrypto-1_1-x64.dll"])
+    def test_pre_3_openssl_is_not_given_the_apache_text(
+        self, notices: ModuleType, library: str
+    ) -> None:
+        """OpenSSL before 3.0 is under the OpenSSL/SSLeay licence, not Apache-2.0."""
+        with pytest.raises(notices.NativeLicenseError, match=library):
+            notices.native_notices(frozenset({library}))
+
+    def test_the_gcc_notice_carries_the_gpl_and_the_exception(
+        self, notices: ModuleType
+    ) -> None:
+        produced = notices.native_notices(frozenset({"libstdc++.so.6"}))
+
+        gcc = next(n for n in produced if n.name == "GCC runtime libraries")
+        assert "GCC RUNTIME LIBRARY EXCEPTION" in gcc.texts[0]
+        assert "GNU GENERAL PUBLIC LICENSE" in gcc.texts[0]
+        assert "Version 3, 29 June 2007" in gcc.texts[0]
+
     def test_a_missing_interpreter_licence_refuses_the_notice(
         self,
         notices: ModuleType,

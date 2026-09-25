@@ -206,8 +206,14 @@ NATIVE_COMPONENTS: tuple[NativeComponent, ...] = (
     NativeComponent(
         CPYTHON_COMPONENT, CPYTHON_LICENSE, (r"^libpython3", r"^python3\d*\.dll$"), None
     ),
+    # OpenSSL 3 only: releases before 3.0 are under the dual OpenSSL/SSLeay
+    # licence, so a 1.x library falls through to the unknown-library refusal
+    # rather than inheriting the Apache-2.0 text.
     NativeComponent(
-        "OpenSSL", "Apache-2.0", (r"^libssl[.-]", r"^libcrypto[.-]"), "OpenSSL.txt"
+        "OpenSSL",
+        "Apache-2.0",
+        (r"^lib(ssl|crypto)(\.so\.3($|\.)|\.3\.dylib$|-3(-x64)?\.dll$)",),
+        "OpenSSL.txt",
     ),
     NativeComponent("libffi", "MIT", (r"^libffi[.-]",), "libffi.txt"),
     NativeComponent("Expat", "MIT", (r"^libexpat[.-]",), "expat.txt"),
