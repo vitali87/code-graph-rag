@@ -593,7 +593,11 @@ SHELL_GIT_EXEC_LONG_OPTIONS: dict[str, frozenset[str]] = {
     "difftool": frozenset({"--extcmd", "--tool"}),
     "mergetool": frozenset({"--tool"}),
     "grep": frozenset({"--open-files-in-pager"}),
-    "clone": frozenset({"--upload-pack"}),
+    # --template copies hooks from an arbitrary directory into the new
+    # repository: under clone they ran during the checkout, under init on the
+    # next commit (both verified). What runs is a hook, not the value itself.
+    "clone": frozenset({"--upload-pack", "--template"}),
+    "init": frozenset({"--template"}),
     "fetch": frozenset({"--upload-pack"}),
     "pull": frozenset({"--upload-pack"}),
     "ls-remote": frozenset({"--upload-pack", "--exec"}),
@@ -635,6 +639,19 @@ SHELL_GIT_VALUE_SHORT_FLAGS: dict[str, frozenset[str]] = {
     "instaweb": frozenset({"p", "m"}),
     "web--browse": frozenset({"c"}),
 }
+
+# A subcommand's own option that sets config in the repository it creates.
+# `git clone -c core.hooksPath=DIR` (and `--config`, `--conf=`, `-ckey=val`,
+# `-qc key=val`) ran a hook during the clone, and `-c core.sshCommand=PROG`
+# ran PROG, all verified. It is the per-command twin of the top-level `git
+# -c`, so the value goes through the same exec-key test and a harmless key
+# keeps working. fetch, pull, init and submodule have no such option (per
+# `git <cmd> -h` under 2.43).
+SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS: dict[str, str] = {"clone": "--config"}
+SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS: dict[str, str] = {"clone": "c"}
+# `--c` is ambiguous under clone (--checkout), so git refuses it; `--co` is
+# the shortest abbreviation git resolves to --config.
+SHELL_GIT_CONFIG_OPTION_MIN_ABBREV = 4
 
 # Real options that are a prefix of, or extend, a program-running one and
 # must keep working. An exact option name wins over an abbreviation in every
@@ -709,6 +726,11 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "uploadpack.packobjectshook",
         "ssh.variant",
         "init.templatedir",
+        # Not a program, but the switch that lets an `ext::<command>` URL run
+        # its command: git refuses the ext transport by default, and `clone
+        # -c protocol.allow=always ext::PROG` ran PROG (verified).
+        "protocol.allow",
+        "protocol.ext.allow",
     }
 )
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,

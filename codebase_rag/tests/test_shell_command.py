@@ -2001,6 +2001,74 @@ def test_git_exec_option_lookalikes_still_run(segment: str) -> None:
     )
 
 
+# Subcommand-level config and template options. Those marked "verified" ran a
+# marker-touching hook or program in a scratch dir under git 2.43.
+_GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE = (
+    "git clone -c core.hooksPath=/tmp/h src d",  # verified
+    "git clone --config core.hooksPath=/tmp/h src d",  # verified
+    "git clone --config=core.hooksPath=/tmp/h src d",  # verified
+    "git clone -ccore.hooksPath=/tmp/h src d",  # verified
+    "git clone --conf=core.hooksPath=/tmp/h src d",  # verified
+    "git clone -qc core.hooksPath=/tmp/h src d",  # verified
+    "git clone -qccore.hooksPath=/tmp/h src d",
+    "git clone -c core.sshCommand=id ssh://h/x d",  # verified
+    "git clone -c protocol.allow=always ext::id d",  # verified
+    "git clone -c protocol.ext.allow=always ext::id d",
+    "git clone -c include.path=/tmp/x src d",
+    "git clone -c core.fsmonitor=id src d",
+    "git -C . clone --co core.hooksPath=/tmp/h src d",
+    "git clone --template=/tmp/t src d",  # verified
+    "git clone --template /tmp/t src d",  # verified
+    "git clone --temp=/tmp/t src d",  # verified
+    "git init --template=/tmp/t d",  # verified, hook ran on the next commit
+    "git init --temp /tmp/t d",  # verified
+)
+
+
+@pytest.mark.parametrize("segment", _GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE)
+def test_git_subcommand_config_and_template_are_blocked(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a program-running git clone/init option was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize("segment", _GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE)
+async def test_git_subcommand_config_and_template_are_blocked_under_yolo(
+    segment: str, temp_project_root: Path
+) -> None:
+    commander = ShellCommander(str(temp_project_root), timeout=5, is_yolo=lambda: True)
+    result = await commander.execute(segment)
+    assert result.return_code != 0, result.stdout
+    assert "names a program git will run" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary clone/init, and config keys git never runs, must survive.
+        "git clone https://x/y",
+        "git clone https://x/y dir",
+        "git clone --depth 1 https://x/y",
+        "git clone -c core.autocrlf=false https://x/y",
+        "git clone --config=http.sslVerify=true https://x/y",
+        "git clone -qc core.autocrlf=false https://x/y",
+        "git clone -c protocol.file.allow=always https://x/y",
+        "git clone --checkout https://x/y",
+        "git clone --no-template https://x/y",
+        "git clone -- -c core.hooksPath=x",
+        "git init",
+        "git init -q --bare d",
+        "git init -b main d",
+        "git commit -c HEAD",
+        "git fetch --tags origin",
+    ),
+)
+def test_git_subcommand_config_lookalikes_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary git was blocked: {segment}"
+    )
+
+
 @pytest.mark.parametrize(
     "key",
     (

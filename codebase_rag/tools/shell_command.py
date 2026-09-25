@@ -700,13 +700,26 @@ def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
     short_flags = cs.SHELL_GIT_EXEC_SHORT_FLAGS.get(subcommand, frozenset())
     value_flags = cs.SHELL_GIT_VALUE_SHORT_FLAGS.get(subcommand, frozenset())
     lookalikes = cs.SHELL_GIT_EXEC_OPTION_LOOKALIKES.get(subcommand, frozenset())
+    config_long = cs.SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS.get(subcommand)
+    config_short = cs.SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS.get(subcommand)
 
-    for arg in cmd_parts[index + 1 :]:
+    args = cmd_parts[index + 1 :]
+    for position, arg in enumerate(args):
         if arg == "--":
             break
+        following = args[position + 1] if position + 1 < len(args) else ""
         if arg.startswith("--"):
             name = _flag_name(arg)
             if name in lookalikes or len(name) <= 2:
+                continue
+            if (
+                config_long
+                and len(name) >= cs.SHELL_GIT_CONFIG_OPTION_MIN_ABBREV
+                and config_long.startswith(name)
+            ):
+                setting = arg.split("=", 1)[1] if "=" in arg else following
+                if key := _git_exec_config_setting(setting):
+                    return f"{subcommand} {name} {key}"
                 continue
             # Prefix one way is an abbreviation; the other way is the
             # scripted subcommands' `--tool*` case patterns, which take
@@ -715,14 +728,33 @@ def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
                 if option.startswith(name) or name.startswith(option):
                     return f"{subcommand} {name}"
             continue
-        if not arg.startswith("-") or not short_flags:
+        if not arg.startswith("-") or not (short_flags or config_short):
             continue
-        for letter in arg[1:]:
+        for offset, letter in enumerate(arg[1:], start=2):
             if letter in short_flags:
                 return f"{subcommand} -{letter}"
+            if letter == config_short:
+                # The rest of the cluster is the key=value, or the next token
+                # is when the letter ends it: `-qc core.hooksPath=d`.
+                setting = arg[offset:] or following
+                if key := _git_exec_config_setting(setting):
+                    return f"{subcommand} -{letter} {key}"
+                break
             if letter in value_flags:
                 break
     return None
+
+
+def _git_exec_config_setting(setting: str) -> str | None:
+    """The key of a subcommand-level `key=value` whose value git runs.
+
+    `git clone -c core.hooksPath=DIR` writes the key into the new repository
+    before checkout, so its hooks run during the clone itself (verified): the
+    same reach as the top-level `git -c` that `_git_dash_c_exec_key` checks.
+    Harmless keys (`-c core.autocrlf=false`) stay allowed.
+    """
+    key = setting.split("=", 1)[0]
+    return key if key and _is_git_config_exec_key(key) else None
 
 
 def _sed_awaits_operand(script: str) -> bool:
