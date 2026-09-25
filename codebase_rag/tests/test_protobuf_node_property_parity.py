@@ -69,6 +69,7 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     ),
     "Class": frozenset({"absolute_path", "modifiers", "path", "start_col"}),
     "Field": frozenset({"absolute_path"}),
+    "EnumVariant": frozenset({"absolute_path"}),
     # Same reason as Field: a Constant records `absolute_path` on the node
     # but must not export it, or the canonical format differs per checkout.
     "Constant": frozenset({"absolute_path"}),

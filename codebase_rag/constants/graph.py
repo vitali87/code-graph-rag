@@ -34,6 +34,8 @@ KEY_START_LINE = "start_line"
 KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
+# An enum variant's discriminant as written (issue #1807).
+KEY_VALUE = "value"
 KEY_TYPE_NAME = "type_name"
 KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
@@ -197,6 +199,7 @@ ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
 ONEOF_FIELD = "field"
+ONEOF_ENUM_VARIANT = "enum_variant"
 ONEOF_CONSTANT = "constant"
 
 
@@ -246,6 +249,8 @@ class NodeLabel(StrEnum):
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
     FIELD = "Field"
+    # A variant an Enum declares (issue #1807).
+    ENUM_VARIANT = "EnumVariant"
     # A named constant a Module declares (issue #1806). Python module
     # scope only for now; a class-level member is a Field (#1805).
     CONSTANT = "Constant"
@@ -286,6 +291,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENUM_VARIANT: UniqueKeyType.QUALIFIED_NAME,
     # <module qn>.<NAME>: a rename is a new constant, not an update of
     # this one, the same as every other qualified-name-keyed label.
     NodeLabel.CONSTANT: UniqueKeyType.QUALIFIED_NAME,
@@ -345,6 +351,8 @@ class RelationshipType(StrEnum):
     # Function|Method -> Parameter, carrying {index} (issue #1804).
     HAS_PARAMETER = "HAS_PARAMETER"
     HAS_FIELD = "HAS_FIELD"
+    # Enum -> EnumVariant, carrying {index} (issue #1807).
+    HAS_VARIANT = "HAS_VARIANT"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
     # Module -> Constant (issue #1806). Named for the declaring side like
@@ -367,6 +375,7 @@ class CaptureGroup(StrEnum):
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
     FIELDS = "fields"
+    ENUM_VARIANTS = "enum_variants"
     CONSTANTS = "constants"
 
 
@@ -448,6 +457,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     # whenever the `parameters` group is on -- one relationship, one switch --
     # and `fields` alone yields Field nodes and HAS_FIELD only.
     CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
+    # Opt-in like fields (issue #1807).
+    CaptureGroup.ENUM_VARIANTS: frozenset({RelationshipType.HAS_VARIANT}),
     # Opt-in (issue #1806), like parameters and fields. OF_TYPE is NOT
     # listed here for the same reason it is not under `fields`: every
     # relationship belongs to exactly one group, and OF_TYPE is already
@@ -512,6 +523,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
     CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
+    CaptureGroup.ENUM_VARIANTS: frozenset({NodeLabel.ENUM_VARIANT}),
     CaptureGroup.CONSTANTS: frozenset({NodeLabel.CONSTANT}),
 }
 
@@ -608,6 +620,10 @@ KEY_POSITIONAL_PARAMS = "positional_params"
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
+# The namespace a C# type is declared in, kept apart from the qualified
+# name because the qn leaves out a namespace the module's directory already
+# spells (issue #1629).
+KEY_NAMESPACE = "namespace"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -677,7 +693,7 @@ CYPHER_DELETE_MODULE = (
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
     "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER"
-    "|HAS_FIELD|DEFINES_CONSTANT*0..]->(c) "
+    "|HAS_FIELD|HAS_VARIANT|DEFINES_CONSTANT*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -712,7 +728,7 @@ CYPHER_PROJECT_MODULE_PATHS = (
     # whose module qn is the project name itself.
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path"
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_COUNT_PROJECT_MODULES = (
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
@@ -784,7 +800,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
-    "n.return_type AS return_type, n.param_types AS param_types"
+    "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.namespace AS namespace"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -969,6 +986,15 @@ KEY_TARGET_QN = "target_qn"
 # Gloss nodes (issue #1808): the properties an agent-authored note carries and
 # the keys its read tools answer with.
 KEY_KIND = "kind"
+# Cross-service rows (issue #1603): the handler behind an endpoint, the
+# endpoint's identity (`GET /users/{id}`), the client URL, the direction of
+# the client's access and the count of call sites reaching the endpoint.
+KEY_HANDLER = "handler"
+KEY_ENDPOINT = "endpoint"
+KEY_URL = "url"
+KEY_DIRECTION = "direction"
+KEY_CALLERS = "callers"
+KEY_HANDLER_PROJECT = "handler_project"
 KEY_STATUS = "status"
 KEY_BODY = "body"
 KEY_CREATED_BY = "created_by"
