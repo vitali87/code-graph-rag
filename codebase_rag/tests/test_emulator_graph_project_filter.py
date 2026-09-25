@@ -76,3 +76,14 @@ def test_an_external_callee_is_not_returned() -> None:
     _node(store, _EXT, "requests")
     _edge(store, (_FN, "proj.a.f"), cs.RelationshipType.CALLS.value, (_EXT, "requests"))
     assert _names(store, cq.CYPHER_GRAPH_CALLEES, "proj.a.f") == set()
+
+
+def test_a_type_outside_the_project_is_not_a_context_type() -> None:
+    """`CYPHER_CONTEXT_TYPES` filters the type by the project prefix too."""
+    store = _StatefulIngestor()
+    cls = cs.NodeLabel.CLASS.value
+    _node(store, _FN, "proj.a.f")
+    for qn in ("proj.m.Mine", "vendor.m.Theirs"):
+        _node(store, cls, qn)
+        _edge(store, (_FN, "proj.a.f"), cs.RelationshipType.RETURNS.value, (cls, qn))
+    assert _names(store, cq.CYPHER_CONTEXT_TYPES, "proj.a.f") == {"proj.m.Mine"}

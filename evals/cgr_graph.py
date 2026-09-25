@@ -680,7 +680,7 @@ class _StatefulIngestor:
             for source in self._graph_node_ids(qn):
                 for edge in self._out.get(source, ()):
                     target = (edge[3], edge[4])
-                    if edge[2] not in wanted or target not in self.nodes:
+                    if edge[2] not in wanted or not self._in_project(target, prefix):
                         continue
                     if (edge[2], _str(edge[4])) in seen:
                         continue
