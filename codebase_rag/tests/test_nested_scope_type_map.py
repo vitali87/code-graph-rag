@@ -324,3 +324,173 @@ def test_a_nonlocal_still_reaches_past_a_scope_that_does_not_bind_it(
     )
 
     assert types["v"] == "Banner"
+
+
+def test_a_nonlocal_does_not_admit_a_deeper_scope_that_does_not_declare_it(
+    tmp_path: Path,
+) -> None:
+    """`middle`'s `nonlocal v` rebinds outer's `v`, but `inner` declares
+    nothing, so its `v = Banner()` is inner's own local. Admission is per
+    binding: the declaration must sit in the binding's OWN body (#2124).
+    `middle` deliberately does not assign `v`; if it did, a later `Widget`
+    would hide the leaked `Banner`."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    def middle() -> None:\n"
+        "        nonlocal v\n"
+        "        def inner() -> int:\n"
+        "            v = Banner()\n"
+        "            return v.render()\n"
+        "        v.render()\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Widget"
+
+
+def test_a_nested_for_target_does_not_type_the_outer_name(tmp_path: Path) -> None:
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    def inner() -> None:\n"
+        "        for v in [Banner()]:\n"
+        "            pass\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Widget"
+
+
+def test_a_nonlocal_for_target_does_type_the_outer_name(tmp_path: Path) -> None:
+    """The `nonlocal` exception covers a `for` target as it covers an
+    assignment: the control that keeps the test above from passing for an
+    implementation that drops every nested loop."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    def inner() -> None:\n"
+        "        nonlocal v\n"
+        "        for v in [Banner()]:\n"
+        "            pass\n"
+        "    inner()\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Banner"
+
+
+def test_a_comprehension_variable_does_not_type_the_functions_own_name(
+    tmp_path: Path,
+) -> None:
+    """A comprehension has its own scope in Python 3, so its `v` is not the
+    function's `v`, and it cannot declare `nonlocal` (#2124)."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> int:\n"
+        "    v = Widget()\n"
+        "    xs = [v for v in [Banner()]]\n"
+        "    return v.render()\n",
+        "outer",
+    )
+
+    assert types["v"] == "Widget"
+
+
+def test_a_comprehension_variable_is_still_typed_for_its_own_body(
+    tmp_path: Path,
+) -> None:
+    """The control: with no function binding of the same name, the
+    comprehension's variable keeps typing calls inside its own body
+    (`[w.render() for w in ...]`), which reads the function's map."""
+    types = _local_types(
+        tmp_path,
+        "def outer() -> list[int]:\n    return [w.render() for w in [Banner()]]\n",
+        "outer",
+    )
+
+    assert types["w"] == "Banner"
+
+
+def test_a_parameter_is_the_nearest_binder_of_a_nonlocal(tmp_path: Path) -> None:
+    """`middle(v: Banner)` binds `v` as a PARAMETER, so `inner`'s `nonlocal v`
+    names middle's parameter and outer's `v` keeps its own type. The owner
+    check read body bindings only, skipped middle, and admitted inner's
+    `for v in [Banner()]` into outer's map (bot review)."""
+    body = (
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    def middle(v: Banner):\n"
+        "        def inner():\n"
+        "            nonlocal v\n"
+        "            for v in [Banner()]:\n"
+        "                pass\n"
+        "        inner()\n"
+        "    middle(Banner())\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
+
+
+def test_a_forwarding_nonlocal_does_not_own_the_name(tmp_path: Path) -> None:
+    """`middle` declares `nonlocal v` and assigns it, so middle FORWARDS
+    outer's `v`; `inner`'s `nonlocal v` therefore reaches outer too. Only
+    inner's `Banner()` is typeable (outer's `v` is an untyped parameter and
+    middle's value is unknown), so the answer does not depend on the order
+    the assignments are visited (bot review)."""
+    body = (
+        "def outer(v):\n"
+        "    def middle():\n"
+        "        nonlocal v\n"
+        "        v = unknown()\n"
+        "        def inner():\n"
+        "            nonlocal v\n"
+        "            v = Banner()\n"
+        "        inner()\n"
+        "    middle()\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer").get("v") == "Banner"
+
+
+def test_a_class_nonlocal_binds_the_nearest_enclosing_function(tmp_path: Path) -> None:
+    """A class body's `nonlocal v` binds the nearest enclosing FUNCTION,
+    `middle`, which binds `v` itself; outer's `v` keeps its own type. The
+    search skipped the first enclosing function rather than the declaring
+    scope, which here is the class (bot review)."""
+    body = (
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    def middle():\n"
+        "        v = Widget()\n"
+        "        class Holder:\n"
+        "            nonlocal v\n"
+        "            v = Banner()\n"
+        "        return v\n"
+        "    middle()\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
+
+
+def test_a_comprehension_overlapping_one_name_still_types_the_others(
+    tmp_path: Path,
+) -> None:
+    """Comprehension targets are filtered one by one: `v` shadows the
+    function's own `v` and is skipped, while `w` keeps its type (#2201)."""
+    types = _local_types(
+        tmp_path,
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    return [(v, w.render()) for v in [Banner()] for w in [Banner()]]\n",
+        "outer",
+    )
+
+    assert types.get("w") == "Banner", types
+    assert types["v"] == "Widget", types
