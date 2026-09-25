@@ -36,6 +36,7 @@ The knowledge graph uses a unified schema across all supported languages.
 | Parameter | `{qualified_name: string, name: string, index: int, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, is_variadic: boolean?, has_default: boolean?}` |
 | Field | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, modifiers: list[string]?, is_static: boolean?, docstring: string?}` |
 | EnumVariant | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, index: int, value: string?, docstring: string?}` |
+| Constant | `{qualified_name: string, name: string, path: string, absolute_path: string, start_line: int?, start_col: int?, type_name: string?, value: string?}` |
 <!-- /SECTION:node_schemas -->
 
 `ExternalModule` stands for an imported module that lives outside the repository (a third-party or stdlib target of `IMPORTS`, or a positively-external base class target of `INHERITS`/`IMPLEMENTS`).
@@ -85,7 +86,8 @@ The knowledge graph uses a unified schema across all supported languages.
 | Function, Method | HAS_PARAMETER | Parameter |
 | Class, Interface, Enum, Type, Union | HAS_FIELD | Field |
 | Enum | HAS_VARIANT | EnumVariant |
-| Parameter, Field | OF_TYPE | Class, Interface, Enum, Type, Union |
+| Module | DEFINES_CONSTANT | Constant |
+| Parameter, Field, Constant | OF_TYPE | Class, Interface, Enum, Type, Union |
 <!-- /SECTION:relationship_schemas -->
 
 `REFERENCES` records a non-call mention of a callable or class (a function passed as a value, a callback stored in a dict). `INSTANTIATES` records a class being constructed. Both belong to the default `calls` capture group. The findings relationships (`IMPLEMENTS_PATTERN`, `HAS_SMELL`, `HAS_VULNERABILITY`) are opt-in with the `findings` capture group.
