@@ -9,6 +9,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
@@ -685,6 +686,30 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
     return _git_subcommand_exec_option(cmd_parts)
 
 
+class _GitExecTables(NamedTuple):
+    """The program-running option spellings of one git subcommand."""
+
+    subcommand: str
+    long_options: frozenset[str]
+    short_flags: frozenset[str]
+    value_flags: frozenset[str]
+    lookalikes: frozenset[str]
+    config_long: str | None
+    config_short: str | None
+
+
+def _git_exec_tables(subcommand: str) -> _GitExecTables:
+    return _GitExecTables(
+        subcommand,
+        cs.SHELL_GIT_EXEC_LONG_OPTIONS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_EXEC_SHORT_FLAGS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_VALUE_SHORT_FLAGS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_EXEC_OPTION_LOOKALIKES.get(subcommand, frozenset()),
+        cs.SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS.get(subcommand),
+        cs.SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS.get(subcommand),
+    )
+
+
 def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
     """A program-running subcommand option in a spelling the exact match misses.
 
@@ -695,14 +720,7 @@ def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
     index = _git_subcommand_index(cmd_parts)
     if index is None:
         return None
-    subcommand = cmd_parts[index]
-    long_options = cs.SHELL_GIT_EXEC_LONG_OPTIONS.get(subcommand, frozenset())
-    short_flags = cs.SHELL_GIT_EXEC_SHORT_FLAGS.get(subcommand, frozenset())
-    value_flags = cs.SHELL_GIT_VALUE_SHORT_FLAGS.get(subcommand, frozenset())
-    lookalikes = cs.SHELL_GIT_EXEC_OPTION_LOOKALIKES.get(subcommand, frozenset())
-    config_long = cs.SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS.get(subcommand)
-    config_short = cs.SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS.get(subcommand)
-
+    tables = _git_exec_tables(cmd_parts[index])
     args = cmd_parts[index + 1 :]
     for position, arg in enumerate(args):
         # `--` ends the options only when nothing before it can claim it as a
@@ -710,44 +728,59 @@ def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
         # Which options take a value is not fully tabulated, so any option in
         # front keeps the scan going; a dash-leading pathspec after such a
         # `--` is refused, which is the safe direction.
-        previous = args[position - 1] if position else subcommand
+        previous = args[position - 1] if position else tables.subcommand
         if arg == "--" and not previous.startswith("-"):
             break
         following = args[position + 1] if position + 1 < len(args) else ""
         if arg.startswith("--"):
-            name = _flag_name(arg)
-            if name in lookalikes or len(name) <= 2:
-                continue
-            if (
-                config_long
-                and len(name) >= cs.SHELL_GIT_CONFIG_OPTION_MIN_ABBREV
-                and config_long.startswith(name)
-            ):
-                setting = arg.split("=", 1)[1] if "=" in arg else following
-                if key := _git_exec_config_setting(setting):
-                    return f"{subcommand} {name} {key}"
-                continue
-            # Prefix one way is an abbreviation; the other way is the
-            # scripted subcommands' `--tool*` case patterns, which take
-            # `--toolx=prog` as `--tool=prog`.
-            for option in long_options:
-                if option.startswith(name) or name.startswith(option):
-                    return f"{subcommand} {name}"
-            continue
-        if not arg.startswith("-") or not (short_flags or config_short):
-            continue
-        for offset, letter in enumerate(arg[1:], start=2):
-            if letter in short_flags:
-                return f"{subcommand} -{letter}"
-            if letter == config_short:
-                # The rest of the cluster is the key=value, or the next token
-                # is when the letter ends it: `-qc core.hooksPath=d`.
-                setting = arg[offset:] or following
-                if key := _git_exec_config_setting(setting):
-                    return f"{subcommand} -{letter} {key}"
-                break
-            if letter in value_flags:
-                break
+            hit = _git_long_exec_option(arg, following, tables)
+        elif arg.startswith("-"):
+            hit = _git_short_exec_option(arg, following, tables)
+        else:
+            hit = None
+        if hit:
+            return hit
+    return None
+
+
+def _git_long_exec_option(
+    arg: str, following: str, tables: _GitExecTables
+) -> str | None:
+    name = _flag_name(arg)
+    if name in tables.lookalikes or len(name) <= 2:
+        return None
+    if (
+        tables.config_long
+        and len(name) >= cs.SHELL_GIT_CONFIG_OPTION_MIN_ABBREV
+        and tables.config_long.startswith(name)
+    ):
+        setting = arg.split("=", 1)[1] if "=" in arg else following
+        key = _git_exec_config_setting(setting)
+        return f"{tables.subcommand} {name} {key}" if key else None
+    # Prefix one way is an abbreviation; the other way is the scripted
+    # subcommands' `--tool*` case patterns, which take `--toolx=prog` as
+    # `--tool=prog`.
+    if any(
+        option.startswith(name) or name.startswith(option)
+        for option in tables.long_options
+    ):
+        return f"{tables.subcommand} {name}"
+    return None
+
+
+def _git_short_exec_option(
+    arg: str, following: str, tables: _GitExecTables
+) -> str | None:
+    for offset, letter in enumerate(arg[1:], start=2):
+        if letter in tables.short_flags:
+            return f"{tables.subcommand} -{letter}"
+        if letter == tables.config_short:
+            # The rest of the cluster is the key=value, or the next token is
+            # when the letter ends it: `-qc core.hooksPath=d`.
+            key = _git_exec_config_setting(arg[offset:] or following)
+            return f"{tables.subcommand} -{letter} {key}" if key else None
+        if letter in tables.value_flags:
+            return None
     return None
 
 
