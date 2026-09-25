@@ -135,6 +135,15 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
         "the Java facts resolve against the method name-token locations "
         "Pass 2 registered (issue #1181)",
     ),
+    # -- inside Pass 2 --
+    (
+        "_delete_stale_subtrees",
+        "_process_single_file",
+        "earlier:before any file of this run is parsed",
+        "a dependent re-parsed while a deleted or replaced file's module is "
+        "still in the graph resolves into it instead of taking the fallback "
+        "a clean index takes (issues #1569, #1584)",
+    ),
     # -- the deferred-resolution pipeline --
     (
         "_rehydrate_registry_from_graph",
@@ -269,7 +278,10 @@ _ORDER: tuple[tuple[str, str, str, str], ...] = (
 # where it is defined -- see `_execution_positions`. Ordering by definition
 # line would be wrong in both directions, because the helper is defined
 # above `run` and invoked from the middle of it.
-_DELEGATES = ("_resolve_deferred_definitions",)
+#
+# `_process_files` is Pass 2 itself. Its own ordering (the stale subtrees go
+# before any file re-parses) is pinned below, so its body is scanned too.
+_DELEGATES = ("_resolve_deferred_definitions", "_process_files")
 
 
 def _class_body() -> list[ast.FunctionDef]:
