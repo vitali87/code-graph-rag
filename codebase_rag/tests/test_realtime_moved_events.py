@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from watchdog.events import (
@@ -164,11 +164,7 @@ class TestDirectoryEvents:
         mock_updater.indexed_files_under.assert_not_called()
 
     def test_directory_move_does_not_walk_ignored_subdirectories(
-        self,
-        handler: CodeChangeEventHandler,
-        mock_updater: MagicMock,
-        temp_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
         new = _write(temp_repo / "new" / "a.py")
         _write(temp_repo / "new" / "node_modules" / "dep" / "index.js")
@@ -176,32 +172,33 @@ class TestDirectoryEvents:
         walked: list[str] = []
         real_walk = realtime_updater.os.walk
 
-        def recording_walk(top: Path) -> Iterator[tuple[str, list[str], list[str]]]:
-            for entry in real_walk(top):
+        def recording_walk(
+            top: str, *args: bool, **kwargs: bool
+        ) -> Iterator[tuple[str, list[str], list[str]]]:
+            for entry in real_walk(top, *args, **kwargs):
                 walked.append(entry[0])
                 yield entry
 
-        monkeypatch.setattr(realtime_updater.os, "walk", recording_walk)
-        handler.dispatch(DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new")))
+        # Patched only around the dispatch: `os` is shared, and on Windows the
+        # temp_repo teardown's rmtree walks with `os.walk` too.
+        with patch.object(realtime_updater.os, "walk", recording_walk):
+            handler.dispatch(
+                DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new"))
+            )
         mock_updater.reingest.assert_called_once_with((new,))
         assert walked == [str(temp_repo / "new")]
 
     def test_directory_moved_under_an_ignored_path_is_not_walked(
-        self,
-        handler: CodeChangeEventHandler,
-        mock_updater: MagicMock,
-        temp_repo: Path,
-        monkeypatch: pytest.MonkeyPatch,
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
     ) -> None:
         _write(temp_repo / "node_modules" / "pkg" / "a.py")
         mock_updater.indexed_files_under.return_value = []
-        walk = MagicMock()
-        monkeypatch.setattr(realtime_updater.os, "walk", walk)
-        handler.dispatch(
-            DirMovedEvent(
-                str(temp_repo / "pkg"), str(temp_repo / "node_modules" / "pkg")
+        with patch.object(realtime_updater.os, "walk") as walk:
+            handler.dispatch(
+                DirMovedEvent(
+                    str(temp_repo / "pkg"), str(temp_repo / "node_modules" / "pkg")
+                )
             )
-        )
         walk.assert_not_called()
         mock_updater.reingest.assert_not_called()
 
