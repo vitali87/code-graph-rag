@@ -3591,6 +3591,16 @@ class CallResolver:
         # construction the registry knows.
         if len(parts) < 2:
             return None
+        # The bare `p.Box.named(1)` (no `new`) has no construction node, so
+        # the class and its named constructor arrive as two hops; rejoined,
+        # they take the path `new p.Box.named(1)` takes (issue #2084).
+        if (
+            language == cs.SupportedLanguage.DART
+            and len(parts) >= 3
+            and cs.CHAR_PAREN_OPEN not in parts[1]
+            and cs.CHAR_PAREN_OPEN in parts[2]
+        ):
+            parts = [parts[0], f"{parts[1]}{cs.SEPARATOR_DOT}{parts[2]}", *parts[3:]]
         prefix, hop = parts[0], parts[1]
         if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
             return None

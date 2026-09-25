@@ -879,3 +879,47 @@ def test_a_name_both_prefixed_libraries_define_is_not_guessed(tmp_path: Path) ->
     rels = _rels(_run(tmp_path, files))
     assert not _has(rels, ".app.genGet", REFERENCES, ".b.Box.height"), rels
     assert not _has(rels, ".app.genGet", REFERENCES, ".a.Box.height"), rels
+
+
+_NAMED_BOX = (
+    "class Box {\n  Box(int v);\n  Box.named(int v);\n  int get height => 2;\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("header", "call"),
+    [
+        ("import 'lib.dart' as p;\n", "p.Box.named(1).height"),
+        ("import 'lib.dart';\n", "Box.named(1).height"),
+    ],
+)
+def test_a_named_constructor_without_new_types_by_its_class(
+    tmp_path: Path, header: str, call: str
+) -> None:
+    """The bare named-constructor form, prefixed or not, has no construction
+    node: it is an identifier and flat selectors (#2084)."""
+    files = {
+        "lib.dart": _NAMED_BOX,
+        "app.dart": f"{header}int bareNamed() {{ return {call}; }}\n",
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.bareNamed", REFERENCES, ".Box.height"), rels
+
+
+def test_a_same_module_static_field_chain_is_not_a_construction(
+    tmp_path: Path,
+) -> None:
+    """`Foo.bar.baz()` reads the static field `bar`, so it never binds
+    `Foo.baz`: the #2084 rejoin applies to import prefixes only."""
+    files = {
+        "app.dart": (
+            "class Other { int baz() => 1; }\n"
+            "class Foo {\n  static Other bar = Other();\n  int baz() => 2;\n}\n"
+            "int use() { return Foo.bar.baz(); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not any(
+        str(src).endswith(".app.use") and str(dst).endswith(".Foo.baz")
+        for src, _rel, dst in rels
+    ), rels
