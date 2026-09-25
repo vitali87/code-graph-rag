@@ -137,6 +137,27 @@ PROVIDER_ENV_KEYS = {
 }
 
 
+def provider_default_kwargs(provider: str) -> ModelConfigKwargs:
+    """The settings `provider` starts from when chosen on the command line.
+
+    Nothing of the config it replaces carries over: a key, endpoint or cloud
+    project set for one provider means nothing to another, and the key is
+    sent to the new vendor as it stands (#2195). The key is the one the
+    provider itself falls back to (`_resolve_api_key` in providers/base.py),
+    so the token counter, which reads `api_key` directly, sends the same one.
+    """
+    env_var = PROVIDER_ENV_KEYS.get(provider.lower())
+    return ModelConfigKwargs(
+        api_key=normalised_credential(os.environ.get(env_var)) if env_var else None,
+        endpoint=None,
+        project_id=None,
+        region=cs.DEFAULT_REGION,
+        provider_type=None,
+        thinking_budget=None,
+        service_account_file=None,
+    )
+
+
 @dataclass
 class ModelConfig:
     provider: str

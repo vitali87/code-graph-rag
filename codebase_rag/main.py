@@ -53,7 +53,12 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import ModelConfig, load_ignore_patterns, settings
+from .config import (
+    ModelConfig,
+    load_ignore_patterns,
+    provider_default_kwargs,
+    settings,
+)
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
@@ -1718,7 +1723,12 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
 
-    kwargs = current_config.to_update_kwargs()
+    # Only a model change keeps the configured key, endpoint and project;
+    # another provider starts from its own defaults (#2195).
+    if provider == current_config.provider:
+        kwargs = current_config.to_update_kwargs()
+    else:
+        kwargs = provider_default_kwargs(provider)
 
     if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
         kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
