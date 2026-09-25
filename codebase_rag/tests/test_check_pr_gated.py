@@ -781,3 +781,49 @@ def test_an_unbound_requirement_makes_no_check_runs_call(
     monkeypatch.setattr(check_pr_gated, "head_check_runs", unexpected)
     reasons, _ = _gate_a_green_pr(monkeypatch, _GREEN)
     assert reasons == []
+
+
+def test_a_foreign_apps_red_rollup_run_does_not_outvote_the_bound_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rollup names no App, so its latest run of a bound name may be
+    another App's; the bound App's green run decides (bot review on #2155)."""
+    monkeypatch.setattr(
+        check_pr_gated,
+        "head_check_runs",
+        lambda _h, _n: [_app_run(_BOUND_APP), _app_run(_OTHER_APP, "failure")],
+    )
+    rollup = [
+        check_run(REQUIRED_CONTEXT, "SUCCESS"),
+        check_run(REQUIRED_CONTEXT, "FAILURE"),
+    ]
+    reasons, _ = _gate_a_green_pr(monkeypatch, rollup, protection=_CLASSIC_BOUND)
+    assert reasons == []
+
+
+def test_a_bound_names_failing_status_still_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitHub requires a same-name commit status to pass too, so scoping
+    the check runs to the App leaves the status judged."""
+    bound = "Lint"
+    monkeypatch.setattr(
+        check_pr_gated,
+        "head_check_runs",
+        lambda _h, name: [{**_app_run(_BOUND_APP), "name": name}],
+    )
+    protection = {
+        "required_status_checks": {
+            "contexts": [REQUIRED_CONTEXT, bound],
+            "checks": [{"context": bound, "app_id": _BOUND_APP}],
+        },
+        "enforce_admins": {"enabled": False},
+    }
+    rollup = [*_GREEN, check_run(bound, "SUCCESS"), status_context(bound, "FAILURE")]
+    reasons, _ = _gate_a_green_pr(monkeypatch, rollup, protection=protection)
+    assert reasons == [
+        f"'{bound}' (required by classic branch protection) concluded FAILURE"
+    ]
+    # Without the status, the bound App's green run is enough.
+    reasons, _ = _gate_a_green_pr(monkeypatch, rollup[:2], protection=protection)
+    assert reasons == []

@@ -972,6 +972,24 @@ def entry_outcome(entry: dict[str, object]) -> str:
     return str(entry.get("conclusion") or entry.get("state") or "").upper()
 
 
+def without_bound_check_runs(
+    rollup: list[dict[str, object]], bound: set[str]
+) -> list[dict[str, object]]:
+    """`rollup` minus the check runs of App-bound names.
+
+    The rollup names no App, so its latest check run of a bound name may be
+    another App's, and a foreign red run would outvote the bound App's green
+    one (bot review on PR #2155). `app_binding_reasons` judges those runs
+    with their App; a same-name commit status stays, since GitHub requires
+    it to pass as well.
+    """
+    return [
+        entry
+        for entry in rollup
+        if not (context_name(entry) in bound and entry.get("__typename") == "CheckRun")
+    ]
+
+
 def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[str]:
     """Why the classic-required context `name` is not satisfied, if it is not.
 
@@ -1217,6 +1235,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                 "taken on trust here (issue #1944)"
             )
 
+    bindings = required_app_bindings(rules, protection)
+    judged = without_bound_check_runs(rollup, set(bindings))
+
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
         reasons.append(
@@ -1224,7 +1245,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
         )
     else:
-        for entry in rollup:
+        for entry in judged:
             if context_name(entry) != REQUIRED_CONTEXT:
                 continue
             if not is_concluded(entry):
@@ -1239,11 +1260,16 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     for name in classic_contexts:
         if name == REQUIRED_CONTEXT:
             continue
-        reasons.extend(classic_context_reasons(name, rollup))
+        if name in bindings and not any(
+            context_name(entry) == name for entry in judged
+        ):
+            # Only check runs carry the name; the binding below judges them.
+            continue
+        reasons.extend(classic_context_reasons(name, judged))
 
     # A binding to one App narrows what satisfies a name further. Read only
     # for a name that has one, so an unbound repo makes no extra call.
-    for name, apps in sorted(required_app_bindings(rules, protection).items()):
+    for name, apps in sorted(bindings.items()):
         reasons.extend(app_binding_reasons(name, apps, head_check_runs(head, name)))
 
     absent_jobs = missing_aggregated_jobs(rollup)
