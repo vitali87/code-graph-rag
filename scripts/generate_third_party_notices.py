@@ -258,6 +258,10 @@ UNKNOWN_NATIVE_ERROR = (
     "the binary bundles native libraries with no licence entry: {files}; add "
     "them to NATIVE_COMPONENTS with their upstream licence text"
 )
+UNREADABLE_NATIVE_ERROR = (
+    "{path} could not be read as a PyInstaller archive, so its native "
+    "libraries cannot be checked for copyleft or missing licence entries"
+)
 MISSING_CPYTHON_LICENSE_ERROR = (
     "no CPython {file} found under {paths}; the interpreter is bundled in every "
     "binary and its licence must be reproduced"
@@ -725,6 +729,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.binary is not None:
         bundled = bundled_components(args.binary)
         libraries = native_libraries(args.binary)
+        # Unlike the package filter above, there is no safe fallback here: an
+        # unread inventory would skip the readline and unknown-library checks
+        # and still write a notice, so refuse instead.
+        if libraries is None:
+            print(UNREADABLE_NATIVE_ERROR.format(path=args.binary), file=sys.stderr)  # noqa: T201
+            return 1
         if not bundled:
             # Unreadable is not empty. Say so, because the notice silently
             # reverts to the unfiltered wheel contents.

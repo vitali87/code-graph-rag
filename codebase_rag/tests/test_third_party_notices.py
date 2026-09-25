@@ -1209,3 +1209,21 @@ class TestNativeNoticesEndToEnd:
 
         assert not output.exists()
         assert "GNU Readline" in capsys.readouterr().err
+
+    def test_main_refuses_a_binary_it_cannot_inventory(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An unread inventory must not pass as one with nothing to check."""
+        not_a_binary = tmp_path / "plain.txt"
+        not_a_binary.write_text("not an archive")
+        output = tmp_path / "notices.txt"
+
+        assert (
+            notices.main(["--output", str(output), "--binary", str(not_a_binary)]) == 1
+        )
+
+        assert not output.exists()
+        assert "native libraries cannot be checked" in capsys.readouterr().err
