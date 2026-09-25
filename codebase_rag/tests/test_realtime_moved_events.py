@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -219,6 +220,44 @@ class TestDirectoryEvents:
         mock_updater.indexed_files_under.return_value = []
         handler.dispatch(FileDeletedEvent(str(temp_repo / "a.py")))
         mock_updater.reingest.assert_called_once_with((), deleted=(temp_repo / "a.py",))
+
+
+class TestExpansionFailures:
+    # Expanding a directory event reads the hash cache and walks the
+    # destination. When either fails, the files it covers are unknown, so the
+    # watcher re-indexes everything instead of updating part of the graph,
+    # and nothing escapes the watchdog callback.
+
+    def test_an_unreadable_hash_cache_triggers_a_full_rebuild(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        mock_updater.indexed_files_under.side_effect = UnicodeDecodeError(
+            "utf-8", b"\xff", 0, 1, "invalid start byte"
+        )
+        handler.dispatch(DirDeletedEvent(str(temp_repo / "pkg")))
+        mock_updater.run.assert_called_once_with(force=True)
+        mock_updater.reingest.assert_not_called()
+
+    def test_a_destination_directory_that_cannot_be_listed_triggers_a_full_rebuild(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        _write(temp_repo / "new" / "a.py")
+        _write(temp_repo / "new" / "locked" / "b.py")
+        mock_updater.indexed_files_under.return_value = []
+        real_scandir = realtime_updater.os.scandir
+
+        def scandir(path: str) -> Iterator[os.DirEntry[str]]:
+            if Path(path).name == "locked":
+                raise PermissionError(path)
+            return real_scandir(path)
+
+        # Scoped for the same reason as the walk patches above.
+        with patch.object(realtime_updater.os, "scandir", scandir):
+            handler.dispatch(
+                DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new"))
+            )
+        mock_updater.run.assert_called_once_with(force=True)
+        mock_updater.reingest.assert_not_called()
 
 
 class TestIndexedFilesUnder:

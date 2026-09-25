@@ -200,7 +200,19 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # │ Step 4: Log what was re-parsed, what depended on it, what was      │
         # │         removed, and how long it took                              │
         # └─────────────────────────────────────────────────────────────────────┘
-        for file_event in self._file_events(event):
+        try:
+            file_events = self._file_events(event)
+        except (OSError, ValueError) as exc:
+            # Expanding a directory event reads the hash cache and walks the
+            # destination. If either fails, the files it covers are unknown,
+            # so re-index everything rather than update part of the graph.
+            # Nothing may escape here: this runs in the watchdog callback.
+            logger.error(logs.WATCHER_EXPANSION_FAILED.format(error=exc))
+            with self._update_lock:
+                self._needs_full_rebuild = True
+                self._rebuild_after_failure()
+            return
+        for file_event in file_events:
             self._dispatch_file(file_event)
 
     def _file_events(self, event: FileSystemEvent) -> list[FileSystemEvent]:
@@ -255,7 +267,7 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         ):
             return []
         files: list[Path] = []
-        for current, dirs, names in os.walk(root):
+        for current, dirs, names in os.walk(root, onerror=_raise_walk_error):
             dirs[:] = [name for name in dirs if name not in self.ignore_patterns]
             files.extend(Path(current) / name for name in names)
         return [FileCreatedEvent(str(path)) for path in sorted(files) if path.is_file()]
@@ -408,6 +420,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             self._needs_full_rebuild = True
             return
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
+
+
+def _raise_walk_error(error: OSError) -> None:
+    # os.walk skips a directory it cannot list unless told otherwise, which
+    # would index a moved directory only in part.
+    raise error
 
 
 def _event_path(raw: bytes | str) -> str:
