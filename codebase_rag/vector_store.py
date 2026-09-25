@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from . import exceptions as ex
 from . import logs as ls
 from .config import settings
 from .constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME, VectorStoreBackend
@@ -147,7 +148,7 @@ def _ensure_client_backend(backend: VectorStoreBackend) -> None:
         close_vector_store_client()
 
 
-def get_qdrant_client() -> Any:
+def get_qdrant_client(validate: bool = True) -> Any:
     global _CLIENT, _CLIENT_BACKEND
     if QdrantClient is None:
         raise RuntimeError("qdrant-client is not installed")
@@ -155,24 +156,58 @@ def get_qdrant_client() -> Any:
     _ensure_client_backend(VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
-            _CLIENT = QdrantClient(url=settings.QDRANT_URL)
+            client = QdrantClient(url=settings.QDRANT_URL)
         else:
             try:
-                _CLIENT = QdrantClient(path=settings.QDRANT_DB_PATH)
+                client = QdrantClient(path=settings.QDRANT_DB_PATH)
             except Exception as e:
                 logger.error(
                     ls.QDRANT_LOCK_ERROR.format(path=settings.QDRANT_DB_PATH, error=e)
                 )
                 raise
+        try:
+            _ensure_qdrant_collection(client, validate)
+        except Exception:
+            # Close and do not cache: a cached client would skip validation
+            # on the next call, and embedded Qdrant keeps its folder locked.
+            client.close()
+            raise
+        _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
-        if not _CLIENT.collection_exists(settings.QDRANT_COLLECTION_NAME):
-            _CLIENT.create_collection(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
-                ),
-            )
     return _CLIENT
+
+
+def _ensure_qdrant_collection(client: Any, validate: bool) -> None:
+    if not client.collection_exists(settings.QDRANT_COLLECTION_NAME):
+        client.create_collection(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=settings.QDRANT_VECTOR_DIM, distance=Distance.COSINE
+            ),
+        )
+        return
+    if validate:
+        _validate_qdrant_collection(client)
+
+
+def _validate_qdrant_collection(client: Any) -> None:
+    # A collection left by a different embedding provider keeps its old
+    # vector size; without this check the mismatch only surfaces as an
+    # opaque upsert error after the whole graph has been parsed.
+    info = client.get_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
+    vectors = info.config.params.vectors
+    # Named-vector collections (a dict) are not created by this module, so
+    # only the single unnamed-vector layout is checked.
+    if not isinstance(vectors, VectorParams):
+        return
+    if vectors.size != settings.QDRANT_VECTOR_DIM:
+        raise ValueError(
+            ex.QDRANT_VECTOR_DIM_MISMATCH.format(
+                collection=settings.QDRANT_COLLECTION_NAME,
+                dim=vectors.size,
+                expected=settings.QDRANT_VECTOR_DIM,
+            )
+        )
 
 
 def _milvus_client_kwargs() -> dict[str, str]:
@@ -366,8 +401,9 @@ class QdrantVectorStore:
         # rebuild reassigns; stale points crowd out live hits and can map
         # onto unrelated nodes, so the whole collection must go. Failures
         # propagate: a swallowed error would let clean report success while
-        # the stale points survive.
-        client = get_qdrant_client()
+        # the stale points survive. Validation is skipped because dropping a
+        # collection with the wrong vector size is how a user recovers from it.
+        client = get_qdrant_client(validate=False)
         client.delete_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
         client.create_collection(
             collection_name=settings.QDRANT_COLLECTION_NAME,

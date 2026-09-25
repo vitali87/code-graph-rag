@@ -68,6 +68,13 @@ MODEL_ID_UNKNOWN_NO_MATCH = (
     "Unknown {provider} model {model_id!r}. Known {provider} models: {known}"
 )
 
+# Vector store errors
+QDRANT_VECTOR_DIM_MISMATCH = (
+    "Qdrant collection '{collection}' has vector dimension {dim}, expected "
+    "{expected}. Set QDRANT_VECTOR_DIM to the embedding model's output size, "
+    "or re-index with --clean to rebuild the collection with the new size."
+)
+
 # Graph loading errors
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 FAILED_TO_LOAD_DATA = "Failed to load data from file"
