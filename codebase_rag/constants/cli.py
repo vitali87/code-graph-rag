@@ -498,6 +498,15 @@ STATUS_BAR_EDIT_ON = "on"
 STATUS_BAR_EDIT_OFF = "off"
 TOKEN_THRESHOLD_WARNING = 50
 TOKEN_THRESHOLD_CRITICAL = 80
+# Shown when compaction drops old tool output (#1500). Names the count and
+# the saving so the user can tell an intentional compaction from the agent
+# simply forgetting, and says the results are re-fetchable rather than lost.
+COMPACTION_NOTICE = (
+    "[dim]Compacted context: dropped {parts} earlier tool "
+    "result(s), freeing ~{tokens:,} tokens. Re-run a tool if you need its "
+    "output again; set CGR_CONTEXT_COMPACTION_ENABLED=false to disable.[/dim]"
+)
+
 TOKEN_COLOR_OK = "green"
 TOKEN_COLOR_WARNING = "yellow"
 TOKEN_COLOR_CRITICAL = "red"
