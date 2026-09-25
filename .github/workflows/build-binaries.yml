@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: dist/code-graph-rag-*
           fail_on_unmatched_files: true
@@ -168,7 +168,7 @@ jobs:
           done
 
       - name: Upload signatures to release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: artifacts/*.sigstore.json
           fail_on_unmatched_files: false
@@ -186,7 +186,7 @@ jobs:
         run: cp "${{ steps.attest.outputs.bundle-path }}" artifacts/multiple.intoto.jsonl
 
       - name: Upload provenance to release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: artifacts/multiple.intoto.jsonl
           fail_on_unmatched_files: false
