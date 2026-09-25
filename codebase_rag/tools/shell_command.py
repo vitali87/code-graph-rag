@@ -705,7 +705,13 @@ def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
 
     args = cmd_parts[index + 1 :]
     for position, arg in enumerate(args):
-        if arg == "--":
+        # `--` ends the options only when nothing before it can claim it as a
+        # value: `grep -e -- -Oprog` gives `--` to -e and still parses -Oprog.
+        # Which options take a value is not fully tabulated, so any option in
+        # front keeps the scan going; a dash-leading pathspec after such a
+        # `--` is refused, which is the safe direction.
+        previous = args[position - 1] if position else subcommand
+        if arg == "--" and not previous.startswith("-"):
             break
         following = args[position + 1] if position + 1 < len(args) else ""
         if arg.startswith("--"):

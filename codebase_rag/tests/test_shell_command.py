@@ -1927,6 +1927,11 @@ _GIT_EXEC_OPTION_SPELLINGS = (
     "git mergetool -t x",
     "git mergetool --toolx=id",
     "git grep -Oecho hello",  # verified
+    # A value-taking option claims the `--`, so git still parses what follows.
+    "git grep -e -- -Oecho",  # verified
+    "git grep -n -e -- -Oecho",
+    "git grep --regexp -- -Oecho",
+    "git clone --branch -- -ccore.hooksPath=x https://x/y",
     "git grep -O hello",
     "git grep -nOid x",  # verified
     "git grep --open=id x",  # verified
@@ -1979,6 +1984,7 @@ async def test_git_exec_option_spellings_are_blocked_under_yolo(
         "git grep -eOops",
         "git grep --or -e a -e b",
         "git grep -- -O",
+        "git grep foo -- -Oname",
         "git log -x",
         "git diff -x",
         "git fetch -u origin",
