@@ -243,11 +243,45 @@ def _site(row: ResultRow) -> CallSite:
     )
 
 
-def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Snapshot:
+def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+    """Return registered project names that can own a longer qualified name."""
+    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    names = {
+        name
+        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        if isinstance(name := row.get(cs.KEY_NAME), str)
+        and name.startswith(requested_prefix)
+    }
+    return tuple(sorted(names))
+
+
+def _has_longer_project_owner(
+    qualified_name: str, longer_project_prefixes: Iterable[str]
+) -> bool:
+    return any(
+        qualified_name == project_name
+        or qualified_name.startswith(f"{project_name}{cs.SEPARATOR_DOT}")
+        for project_name in longer_project_prefixes
+    )
+
+
+def snapshot(
+    fetch_all: QueryFn,
+    project_name: str,
+    paths: Iterable[str],
+    *,
+    longer_project_prefixes: tuple[str, ...] | None = None,
+) -> Snapshot:
     """Read the subgraph of `paths` (repo-relative) and the module imports."""
     path_list = sorted(set(paths))
+    longer_prefixes = (
+        _longer_project_prefixes(fetch_all, project_name)
+        if longer_project_prefixes is None
+        else longer_project_prefixes
+    )
     params: PropertyDict = {
         cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+        cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
         cs.CYPHER_PARAM_PATHS: list(path_list),
     }
     definitions: dict[str, Definition] = {}
@@ -265,7 +299,11 @@ def snapshot(fetch_all: QueryFn, project_name: str, paths: Iterable[str]) -> Sna
     if missing:
         for row in fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS_BY_QN,
-            {cs.KEY_QNS: missing, cs.KEY_PROJECT_PREFIX: _prefix(project_name)},
+            {
+                cs.KEY_QNS: missing,
+                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_prefixes),
+            },
         ):
             definition = _definition(row)
             if definition.qualified_name:
@@ -769,15 +807,26 @@ def _new_duplicates(
     fetch_all: QueryFn,
     project_name: str,
     fresh: Iterable[str],
+    longer_project_prefixes: tuple[str, ...] = (),
     threshold: float = cs.DUPLICATES_DEFAULT_THRESHOLD,
     min_nodes: int = cs.DUPLICATES_DEFAULT_MIN_NODES,
 ) -> list[NewDuplicate]:
     fresh_set = set(fresh)
     if not fresh_set:
         return []
-    rows = fetch_all(
-        cq.CYPHER_DUPLICATE_FINGERPRINTS, {cs.KEY_PROJECT_PREFIX: _prefix(project_name)}
-    )
+    rows = [
+        row
+        for row in fetch_all(
+            cq.CYPHER_DUPLICATE_FINGERPRINTS,
+            {
+                cs.KEY_PROJECT_PREFIX: _prefix(project_name),
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+            },
+        )
+        if not _has_longer_project_owner(
+            _text(row.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+        )
+    ]
     shapes = [
         s for s in (_shape(r) for r in rows) if s.fingerprint and s.nodes >= min_nodes
     ]
@@ -894,7 +943,12 @@ class _Reach(NamedTuple):
     nodes: dict[_NodeId, PropertyDict]
 
 
-def _walk_callers(fetch_all: QueryFn, prefix: str, targets: set[str]) -> _Reach:
+def _walk_callers(
+    fetch_all: QueryFn,
+    prefix: str,
+    targets: set[str],
+    longer_project_prefixes: tuple[str, ...],
+) -> _Reach:
     """Multi-source backward BFS, one indexed query per hop.
 
     The cost is proportional to what is reached rather than to the project:
@@ -910,7 +964,11 @@ def _walk_callers(fetch_all: QueryFn, prefix: str, targets: set[str]) -> _Reach:
             break
         rows = fetch_all(
             cq.CYPHER_DELTA_CALLERS_OF,
-            {cs.KEY_PROJECT_PREFIX: prefix, cs.KEY_QNS: frontier},
+            {
+                cs.KEY_PROJECT_PREFIX: prefix,
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+                cs.KEY_QNS: frontier,
+            },
         )
         next_frontier: list[str] = []
         for row in sorted(
@@ -932,7 +990,10 @@ def _walk_callers(fetch_all: QueryFn, prefix: str, targets: set[str]) -> _Reach:
 
 
 def _rust_inputs(
-    fetch_all: QueryFn, prefix: str, reached: dict[_NodeId, PropertyDict]
+    fetch_all: QueryFn,
+    prefix: str,
+    reached: dict[_NodeId, PropertyDict],
+    longer_project_prefixes: tuple[str, ...],
 ) -> tuple[set[str], dict[str, list[tuple[int, int]]]]:
     rust_paths = sorted(
         {
@@ -944,14 +1005,24 @@ def _rust_inputs(
     if not rust_paths:
         return set(), {}
     modules: dict[_NodeId, PropertyDict] = {}
-    for row in fetch_all(cq.CYPHER_DELTA_RUST_MODULES, {cs.KEY_PROJECT_PREFIX: prefix}):
+    for row in fetch_all(
+        cq.CYPHER_DELTA_RUST_MODULES,
+        {
+            cs.KEY_PROJECT_PREFIX: prefix,
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+        },
+    ):
         qn = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qn:
             modules[(_text(row.get(cs.KEY_LABEL)), qn)] = _node_props(row)
     functions: dict[_NodeId, PropertyDict] = {}
     for row in fetch_all(
         cq.CYPHER_DELTA_RUST_TEST_FNS,
-        {cs.KEY_PROJECT_PREFIX: prefix, cs.CYPHER_PARAM_PATHS: rust_paths},
+        {
+            cs.KEY_PROJECT_PREFIX: prefix,
+            cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
+            cs.CYPHER_PARAM_PATHS: rust_paths,
+        },
     ):
         qn = _text(row.get(cs.KEY_QUALIFIED_NAME))
         if qn:
@@ -960,11 +1031,21 @@ def _rust_inputs(
 
 
 def _tests_reaching(
-    fetch_all: QueryFn, project_name: str, targets: Iterable[str]
+    fetch_all: QueryFn,
+    project_name: str,
+    targets: Iterable[str],
+    longer_project_prefixes: tuple[str, ...] | None = None,
 ) -> list[TestReach]:
     prefix = _prefix(project_name)
-    reach = _walk_callers(fetch_all, prefix, set(targets))
-    rust_modules, rust_spans = _rust_inputs(fetch_all, prefix, reach.nodes)
+    longer_prefixes = (
+        _longer_project_prefixes(fetch_all, project_name)
+        if longer_project_prefixes is None
+        else longer_project_prefixes
+    )
+    reach = _walk_callers(fetch_all, prefix, set(targets), longer_prefixes)
+    rust_modules, rust_spans = _rust_inputs(
+        fetch_all, prefix, reach.nodes, longer_prefixes
+    )
     out: list[TestReach] = []
     for (_label, raw_qn), props in reach.nodes.items():
         qn = str(raw_qn)
@@ -1003,6 +1084,8 @@ def structural_delta(
     report: ReingestReport | None = None,
     repo_root: Path | None = None,
     declared_renames: frozenset[tuple[str, str]] = frozenset(),
+    *,
+    longer_project_prefixes: tuple[str, ...] | None = None,
 ) -> StructuralDelta:
     """Diff two snapshots of the same paths, then look up what they touch.
 
@@ -1011,6 +1094,11 @@ def structural_delta(
     container -- and are empty for a plain write, which really is inferring.
     """
     started = time.perf_counter()
+    longer_prefixes = (
+        _longer_project_prefixes(fetch_all, project_name)
+        if longer_project_prefixes is None
+        else longer_project_prefixes
+    )
     symbols = _symbols(before, after, declared_renames)
     fresh = set(symbols["added"]) | set(symbols["changed"])
     fresh |= {r["new"] for r in symbols["renamed"]}
@@ -1029,10 +1117,12 @@ def structural_delta(
         dangling_callers=_dangling(before, after, symbols),
         signature_changes=_signature_changes(before, after, symbols, repo_root),
         arity_findings=_arity_findings(after, repo_root),
-        new_duplicates=_new_duplicates(fetch_all, project_name, fresh),
+        new_duplicates=_new_duplicates(fetch_all, project_name, fresh, longer_prefixes),
         new_import_cycles=_new_import_cycles(before, after),
         stale_importers=_stale_importers(after, symbols),
-        tests_reaching=_tests_reaching(fetch_all, project_name, touched)
+        tests_reaching=_tests_reaching(
+            fetch_all, project_name, touched, longer_prefixes
+        )
         if touched
         else [],
         call_sites=SiteCounts(
@@ -1110,11 +1200,22 @@ def observe(
     """
     path_list = sorted(set(paths))
     started = time.perf_counter()
-    before = snapshot(fetch_all, project_name, path_list)
+    longer_prefixes = _longer_project_prefixes(fetch_all, project_name)
+    before = snapshot(
+        fetch_all,
+        project_name,
+        path_list,
+        longer_project_prefixes=longer_prefixes,
+    )
     apply_started = time.perf_counter()
     report = apply()
     reingest_ms = (time.perf_counter() - apply_started) * 1000
-    after = snapshot(fetch_all, project_name, path_list)
+    after = snapshot(
+        fetch_all,
+        project_name,
+        path_list,
+        longer_project_prefixes=longer_prefixes,
+    )
     delta = structural_delta(
         fetch_all,
         project_name,
@@ -1123,6 +1224,7 @@ def observe(
         report,
         repo_root,
         declared_renames=declared_renames,
+        longer_project_prefixes=longer_prefixes,
     )
     # The re-ingest's own clock covers only its inner work; the caller sees
     # the wall time of the whole apply step, and `delta_ms` is everything

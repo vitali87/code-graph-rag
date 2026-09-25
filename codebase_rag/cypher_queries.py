@@ -316,6 +316,15 @@ _GRAPH_DEFINITION_LABELS = "|".join(
     sorted(label.value for label in DEFINITION_NODE_LABELS)
 )
 _SNIPPET_LABELS = "|".join(sorted(label.value for label in SNIPPET_NODE_LABELS))
+# The quote tier's candidates. A Module is a definition label but never
+# carries an `anchor_hash`, so the quote move could never bind one: a sole
+# module match would hold its note unattached on every pass instead of
+# grading it LOST (Copilot, PR #1966).
+_QUOTE_SPAN_LABELS = "|".join(
+    sorted(
+        label.value for label in DEFINITION_NODE_LABELS if label is not NodeLabel.MODULE
+    )
+)
 
 # A lookup keyed on qualified_name alone can match more than one node: identity
 # constraints are label-scoped, so a Method and a Field may share `<owner>.<name>`.
@@ -560,9 +569,12 @@ LIMIT 1"""
 _GLOSS = NodeLabel.GLOSS.value
 _ANNOTATES = RelationshipType.ANNOTATES.value
 _MENTIONS = RelationshipType.MENTIONS.value
+# The hash the note records, plus what the text-quote anchor needs: the
+# subject's simple name (masked out of the quote) and its span in its file.
 CYPHER_GLOSS_TARGET = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name = $qn AND n.qualified_name STARTS WITH $project_prefix
-RETURN n.anchor_hash AS target_hash
+RETURN n.anchor_hash AS target_hash, n.name AS name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line
 {_DEFINITION_TIEBREAK}
 LIMIT 1"""
 # The key is deterministic in (subject, kind, body), so a repeat write of a
@@ -581,6 +593,8 @@ ON CREATE SET g.created_by = $created_by, g.created_at = $created_at
 SET g.kind = $kind, g.status = $status, g.body = $body,
     g.commit_sha = $commit_sha, g.target_qn = $target_qn,
     g.target_hash = $target_hash, g.anchor_state = $anchor_state,
+    g.anchor_quote = $anchor_quote, g.anchor_prefix = $anchor_prefix,
+    g.anchor_suffix = $anchor_suffix,
     g.write_id = $write_id, g.mention_qns = $mention_qns,
     g.project = $project_name, g.moved_from = null, g.candidate_qns = null
 WITH g, t, mentioned
@@ -635,7 +649,8 @@ WHERE subjects = 0
 RETURN g.qualified_name AS qualified_name, g.target_qn AS target_qn,
        g.target_hash AS target_hash, g.anchor_state AS anchor_state,
        g.moved_from AS moved_from, g.candidate_qns AS candidate_qns,
-       g.project AS project"""
+       g.project AS project, g.anchor_quote AS anchor_quote,
+       g.anchor_prefix AS anchor_prefix, g.anchor_suffix AS anchor_suffix"""
 CYPHER_DEFINITIONS_BY_ANCHOR_HASH = f"""MATCH (t:{_GRAPH_DEFINITION_LABELS})
 WHERE t.anchor_hash IN $hashes AND t.qualified_name STARTS WITH $project_prefix
 RETURN t.qualified_name AS qualified_name, t.anchor_hash AS anchor_hash"""
@@ -667,6 +682,49 @@ SET g.anchor_state = CASE WHEN origin = t.qualified_name
     THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
     g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END,
     g.target_qn = t.qualified_name, g.candidate_qns = null
+MERGE (g)-[:{_ANNOTATES}]->(t)"""
+# The text-quote tier (stage five) needs every definition's name and span
+# in a project, to digest each one's current text the way the note's quote
+# was digested when it was written. Read once per project per pass, and
+# only when a note has reached this tier.
+CYPHER_DEFINITION_SPANS = f"""MATCH (t:{_QUOTE_SPAN_LABELS})
+WHERE t.qualified_name STARTS WITH $project_prefix
+  AND t.path IS NOT NULL AND t.start_line IS NOT NULL AND t.end_line IS NOT NULL
+RETURN t.qualified_name AS qualified_name, t.name AS name, t.path AS path,
+       t.start_line AS start_line, t.end_line AS end_line,
+       t.anchor_hash AS anchor_hash"""
+# The quote tier's move: the same shape as `CYPHER_GLOSS_MOVE`, bound by the
+# candidate's qualified name rather than its hash, since the hash is exactly
+# what a rename changed. It re-validates exactly one PHYSICAL node under
+# that name and that the note is still unattached, so a same-name pair is
+# refused and a concurrent attach is left alone. The recorded `target_hash`
+# is NOT replaced: the name is part of the hash, so a renamed definition
+# grades STALE right after, which is the truthful reading of a signature
+# change; `moved_from` keeps the move visible beside it. The prefix and
+# suffix are re-recorded for the new location so the next tie-break reads
+# the note's current neighbours; the quote is unchanged by construction.
+# The candidate is re-validated as the index saw it -- same file, same
+# span, same NON-NULL hash -- so a definition another updater replaced
+# between the span read and this write is not bound on the strength of its
+# name alone. A label without a hash (a class, until containers are hashed)
+# cannot be re-validated and is never bound here: null on both sides read as
+# equal would have bound a rewritten body (bot review, PR #1966, twice).
+CYPHER_GLOSS_MOVE_TO_QN = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
+MATCH (t:{_GRAPH_DEFINITION_LABELS})
+WHERE t.qualified_name = $target_qn AND t.qualified_name STARTS WITH $project_prefix
+  AND t.path = $path AND t.start_line = $start_line AND t.end_line = $end_line
+  AND t.anchor_hash IS NOT NULL AND t.anchor_hash = $anchor_hash
+WITH g, collect(t) AS targets
+WHERE size(targets) = 1
+WITH g, targets[0] AS t, coalesce(g.moved_from, g.target_qn) AS origin
+OPTIONAL MATCH (g)-[held:{_ANNOTATES}]->()
+WITH g, t, origin, count(held) AS subjects
+WHERE subjects = 0
+SET g.anchor_state = CASE WHEN origin = t.qualified_name
+    THEN '{_STATE_EXACT}' ELSE '{_STATE_MOVED}' END,
+    g.moved_from = CASE WHEN origin = t.qualified_name THEN null ELSE origin END,
+    g.target_qn = t.qualified_name, g.candidate_qns = null,
+    g.anchor_prefix = $anchor_prefix, g.anchor_suffix = $anchor_suffix
 MERGE (g)-[:{_ANNOTATES}]->(t)"""
 CYPHER_GLOSS_MARK = f"""MATCH (g:{_GLOSS} {{qualified_name: $qn}})
 SET g.anchor_state = $anchor_state, g.candidate_qns = $candidate_qns"""
@@ -824,7 +882,11 @@ _DELTA_DEFINITION_FIELDS = """RETURN labels(n)[0] AS label, n.qualified_name AS 
        n.ast_fingerprint_nodes AS ast_fingerprint_nodes,
        n.ast_branch_fingerprints AS ast_branch_fingerprints"""
 CYPHER_DELTA_DEFINITIONS = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE n.qualified_name <> longer_project
+            AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
+  AND n.path IN $paths
 {_DELTA_DEFINITION_FIELDS}"""
 # The callees of the touched files' sites that live elsewhere: their
 # declared parameters decide the arity verdict of each site.
@@ -835,9 +897,15 @@ WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
 CYPHER_DELTA_DEFINITIONS_BY_QN = f"""MATCH (n:{_DELTA_DEFINITION_LABELS})
 WHERE n.qualified_name IN $qns
   AND n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE n.qualified_name <> longer_project
+            AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
 {_DELTA_DEFINITION_FIELDS}"""
 CYPHER_DELTA_SITES = """MATCH (a)-[r:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE a.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE a.qualified_name <> longer_project
+            AND NOT a.qualified_name STARTS WITH (longer_project + '.'))
   AND (a.path IN $paths OR b.path IN $paths)
 RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        b.qualified_name AS to_qn, b.path AS to_path, r.line AS line, r.col AS col,
@@ -846,25 +914,42 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
 # qualified names, with the properties the test classifier reads.
 CYPHER_DELTA_CALLERS_OF = """MATCH (a)-[:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE a.qualified_name <> longer_project
+            AND NOT a.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT labels(a)[0] AS label, a.qualified_name AS qualified_name,
        a.name AS name, a.path AS path, a.start_line AS start_line,
        a.end_line AS end_line, a.decorators AS decorators,
        a.is_exported AS is_exported, b.qualified_name AS to_qn"""
 # Rust test classification inputs, fetched only when the walk reaches Rust.
 CYPHER_DELTA_RUST_MODULES = """MATCH (m:Module)
-WHERE m.qualified_name STARTS WITH $project_prefix AND m.path ENDS WITH '.rs'
+WHERE m.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE m.qualified_name <> longer_project
+            AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
+  AND m.path ENDS WITH '.rs'
 RETURN labels(m)[0] AS label, m.qualified_name AS qualified_name, m.name AS name,
        m.path AS path, m.decorators AS decorators,
        m.rust_cfg_test_mods AS rust_cfg_test_mods,
        m.rust_ungated_mods AS rust_ungated_mods"""
 CYPHER_DELTA_RUST_TEST_FNS = """MATCH (n:Function|Method)
-WHERE n.qualified_name STARTS WITH $project_prefix AND n.path IN $paths
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE n.qualified_name <> longer_project
+            AND NOT n.qualified_name STARTS WITH (longer_project + '.'))
+  AND n.path IN $paths
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.name AS name,
        n.path AS path, n.start_line AS start_line, n.end_line AS end_line,
        n.decorators AS decorators"""
 CYPHER_DELTA_MODULE_IMPORTS = """MATCH (m:Module)-[:IMPORTS]->(t:Module)
 WHERE m.qualified_name STARTS WITH $project_prefix
   AND t.qualified_name STARTS WITH $project_prefix
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE m.qualified_name <> longer_project
+            AND NOT m.qualified_name STARTS WITH (longer_project + '.'))
+  AND ALL(longer_project IN $longer_project_prefixes
+          WHERE t.qualified_name <> longer_project
+            AND NOT t.qualified_name STARTS WITH (longer_project + '.'))
 RETURN DISTINCT m.qualified_name AS from_qn, m.path AS from_path,
        t.qualified_name AS to_qn"""
 CYPHER_GRAPH_IMPORTERS = """MATCH (m:Module)-[r:IMPORTS]->(target)

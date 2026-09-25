@@ -44,9 +44,12 @@ def test_the_marks_have_the_values_the_tables_promise() -> None:
     assert (cs.HEALTH_MARK_PASS_ASCII, cs.HEALTH_MARK_FAIL_ASCII) == ("PASS", "FAIL")
 
 
-def test_a_stream_that_can_carry_the_glyphs_gets_them() -> None:
-    assert status_mark(True, "utf-8") == cs.HEALTH_MARK_PASS
-    assert status_mark(False, "utf-8") == cs.HEALTH_MARK_FAIL
+@pytest.mark.parametrize("encoding", ["utf-8", "cp65001"])
+def test_a_stream_that_can_carry_the_glyphs_gets_them(encoding: str) -> None:
+    """`cp65001` is Windows' UTF-8 code page: the codec carries the glyphs
+    though the name does not start with "utf" (#2120)."""
+    assert status_mark(True, encoding) == cs.HEALTH_MARK_PASS
+    assert status_mark(False, encoding) == cs.HEALTH_MARK_FAIL
 
 
 @pytest.mark.parametrize("encoding", [_UNSUPPORTING, "ascii", "latin-1"])
