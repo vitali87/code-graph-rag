@@ -818,7 +818,7 @@ def emit_parameter_type_edges(
                 source,
                 cs.RelationshipType.OF_TYPE,
                 (
-                    str(resolver._registry[target_qn]),
+                    resolver.label_for(target_qn),
                     cs.KEY_QUALIFIED_NAME,
                     target_qn,
                 ),
