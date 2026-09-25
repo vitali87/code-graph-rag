@@ -160,3 +160,13 @@ class TestIndexedFilesUnder:
             temp_repo / "pkg" / "a.py",
             temp_repo / "pkg" / "sub" / "b.py",
         ]
+
+    @pytest.mark.parametrize("where", ["outside", "root"])
+    def test_a_directory_that_is_not_inside_the_repo_names_no_files(
+        self, temp_repo: Path, mock_ingestor: MagicMock, tmp_path: Path, where: str
+    ) -> None:
+        _write(temp_repo / "main.py")
+        updater = create_and_run_updater(temp_repo, mock_ingestor)
+        # The repo root itself is not a subdirectory whose files went away.
+        directory = tmp_path / "elsewhere" if where == "outside" else temp_repo
+        assert updater.indexed_files_under(directory) == []
