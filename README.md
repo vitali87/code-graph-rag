@@ -213,3 +213,5 @@ For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooti
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Third-party components and their licences are credited on the [Credits page](https://docs.code-graph-rag.com/credits/).

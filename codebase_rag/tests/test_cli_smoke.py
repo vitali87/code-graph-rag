@@ -87,8 +87,13 @@ def test_version_flag() -> None:
         assert result.returncode == 0, (
             f"{flag} exited with code {result.returncode}: {result.stderr}"
         )
-        expected = cs.CLI_MSG_VERSION.format(
-            package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
+        expected = "\n".join(
+            [
+                cs.CLI_MSG_VERSION.format(
+                    package=cs.PACKAGE_NAME, version=get_version(cs.PACKAGE_NAME)
+                ),
+                cs.CLI_MSG_CREDITS.format(url=cs.CREDITS_URL),
+            ]
         )
         assert result.stdout.strip() == expected, (
             f"{flag} output did not match expected format: {repr(result.stdout)}"
