@@ -290,9 +290,14 @@ class _StatefulIngestor:
         """
         if len(edge) == 6:
             return dict(self.edge_props.get(edge, {}))  # type: ignore[arg-type]
+        # Only the source node's own adjacency can hold the edge's sites, so
+        # read that rather than rebuilding every edge in the store per call
+        # (issue #2116).
         merged: PropertyDict = {}
+        endpoint = tuple(edge)
         for keyed in sorted(
-            (e for e in self.keyed_edges if e[:5] == tuple(edge)), key=repr
+            (e for e in self._out.get((edge[0], edge[1]), ()) if e[:5] == endpoint),
+            key=repr,
         ):
             merged.update(self.edge_props.get(keyed, {}))
         return merged
@@ -1183,13 +1188,20 @@ class _StatefulIngestor:
                     continue
                 pairs = [(None, (to_label, to_val))]
             else:
-                # Module -DEFINES-> container -DEFINES_METHOD-> Method.
+                # Module -DEFINES-> container -DEFINES_METHOD-> Method, read
+                # from the container's own adjacency: scanning every edge per
+                # container made this quadratic (issue #2116). A method
+                # reached through several sites appears once, as in `edges`.
                 pairs = [
-                    (to_val, (m_label, m_val))
-                    for (c_label, c_val, m_rel, m_label, m_val) in self.edges
-                    if m_rel == cs.RelationshipType.DEFINES_METHOD.value
-                    and (c_label, c_val) == (to_label, to_val)
-                    and m_label == target_label
+                    (to_val, method)
+                    for method in {
+                        (m_label, m_val)
+                        for _cl, _cv, m_rel, m_label, m_val, _site in self._out.get(
+                            (to_label, to_val), ()
+                        )
+                        if m_rel == cs.RelationshipType.DEFINES_METHOD.value
+                        and m_label == target_label
+                    }
                 ]
             for container_qn, node_id in pairs:
                 props = self.nodes.get(node_id)
