@@ -30,12 +30,14 @@ from __future__ import annotations
 
 import types
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 
 if TYPE_CHECKING:  # pragma: no cover - import cost only paid at type-check time
-    from neo4j import Driver, Session  # ty: ignore[unresolved-import]
+    from collections.abc import Callable
+
+    from neo4j import Driver, Result, Session  # ty: ignore[unresolved-import]
 
 
 class _Column:
@@ -87,11 +89,12 @@ class Neo4jCursor:
         # never interpolated.
         #
         # Not suppressed with a `ty: ignore`: `neo4j` is an optional
-        # extra, so the environment CI type-checks in cannot resolve
-        # `Session` and reports any narrower directive here as unused.
-        # `run` is looked up through a local to keep that difference from
-        # turning into a checker error in one environment or the other.
-        session_run = self._session.run
+        # extra, so an environment without it cannot resolve `Session` and
+        # reports any narrower directive here as unused. `run` is cast to a
+        # plain callable instead. Looking it up through an untyped local was
+        # tried first, but ty still inferred the bound method's
+        # `LiteralString` signature whenever `neo4j` was importable (#2191).
+        session_run = cast("Callable[..., Result]", self._session.run)
         result = session_run(query, parameters)
         self._keys = list(result.keys())
         # Materialise before the result is invalidated by the next

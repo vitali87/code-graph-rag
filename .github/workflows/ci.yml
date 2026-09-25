@@ -104,6 +104,14 @@ jobs:
         run: |
           uv run ty check codebase_rag --exclude codebase_rag/tests/
 
+      # With the optional `neo4j` extra installed, ty resolves the driver and
+      # checks its `LiteralString` signatures, which the step above cannot see
+      # (#2191). Checking both environments keeps each one honest.
+      - name: Run type checking with the neo4j extra
+        run: |
+          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
+          uv run ty check codebase_rag --exclude codebase_rag/tests/
+
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
