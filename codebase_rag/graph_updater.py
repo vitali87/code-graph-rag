@@ -6057,6 +6057,27 @@ class GraphUpdater:
                     error=unlink_error,
                 )
 
+    def indexed_files_under(self, directory: Path) -> list[Path]:
+        """Files the last run or re-ingest indexed beneath `directory`.
+
+        A deleted or moved-away directory arrives from the watcher as one
+        event and its files are no longer on disk to list. The hash cache is
+        the record every run and `reingest` keep of what they indexed, so it
+        names exactly the files whose nodes must now go.
+        """
+        try:
+            prefix = directory.relative_to(self.repo_path).as_posix()
+        except ValueError:
+            return []
+        if prefix == ".":
+            return []
+        hashes = _load_hash_cache(self.repo_path / cs.HASH_CACHE_FILENAME)
+        return [
+            self.repo_path / key
+            for key in sorted(hashes)
+            if key.startswith(prefix + "/")
+        ]
+
     def reingest(
         self,
         paths: Iterable[Path | str],
