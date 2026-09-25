@@ -23,14 +23,9 @@ import re
 from .. import constants as cs
 from .. import exceptions as ex
 
-_QUOTES = ("'", '"')
 _BACKTICK = cs.CYPHER_BACKTICK
-_LINE_COMMENT = "//"
-_BLOCK_COMMENT_OPEN = "/*"
-_BLOCK_COMMENT_CLOSE = "*/"
-
-_PLAN_OPERATOR = re.compile(r"[A-Za-z]+")
-_PLAN_PROCEDURE = re.compile(r"CallProcedure<([^>]*)>")
+_PLAN_OPERATOR = re.compile(cs.CYPHER_PLAN_OPERATOR_PATTERN)
+_PLAN_PROCEDURE = re.compile(cs.CYPHER_PLAN_PROCEDURE_PATTERN)
 
 
 def mask_literals_and_comments(query: str) -> str:
@@ -48,23 +43,25 @@ def mask_literals_and_comments(query: str) -> str:
     i = 0
     n = len(query)
     while i < n:
-        if query.startswith(_LINE_COMMENT, i):
-            end = query.find("\n", i)
+        if query.startswith(cs.CYPHER_LINE_COMMENT, i):
+            end = query.find(cs.CYPHER_LINE_END, i)
             i = n if end == -1 else end
-            out.append(" ")
-        elif query.startswith(_BLOCK_COMMENT_OPEN, i):
-            end = query.find(_BLOCK_COMMENT_CLOSE, i + len(_BLOCK_COMMENT_OPEN))
+            out.append(cs.CYPHER_MASKED_COMMENT)
+        elif query.startswith(cs.CYPHER_BLOCK_COMMENT_OPEN, i):
+            end = query.find(
+                cs.CYPHER_BLOCK_COMMENT_CLOSE, i + len(cs.CYPHER_BLOCK_COMMENT_OPEN)
+            )
             if end == -1:
                 out.append(query[i:])
                 break
-            i = end + len(_BLOCK_COMMENT_CLOSE)
-            out.append(" ")
-        elif query[i] in _QUOTES:
+            i = end + len(cs.CYPHER_BLOCK_COMMENT_CLOSE)
+            out.append(cs.CYPHER_MASKED_COMMENT)
+        elif query[i] in cs.CYPHER_STRING_QUOTES:
             end = _string_end(query, i)
             if end == -1:
                 out.append(query[i:])
                 break
-            out.append("''")
+            out.append(cs.CYPHER_MASKED_LITERAL)
             i = end + 1
         elif query[i] == _BACKTICK:
             end, name = _backtick_identifier(query, i)
@@ -84,7 +81,7 @@ def _string_end(query: str, start: int) -> int:
     quote = query[start]
     i = start + 1
     while i < len(query):
-        if query[i] == "\\":
+        if query[i] == cs.CYPHER_STRING_ESCAPE:
             i += 2
             continue
         if query[i] == quote:

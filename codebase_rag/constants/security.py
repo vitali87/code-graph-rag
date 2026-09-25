@@ -129,6 +129,18 @@ CYPHER_DENIED_PROCEDURES: frozenset[str] = frozenset(
 # Prefixes rather than names, so a new variant (SetNestedProperty,
 # LoadParquet, ...) is refused without an update here.
 CYPHER_EXPLAIN_PREFIX = "EXPLAIN "
+# Lexical pieces of Cypher that `cypher_guard` masks before inspecting a
+# generated query.
+CYPHER_STRING_QUOTES: tuple[str, ...] = ("'", '"')
+CYPHER_STRING_ESCAPE = "\\"
+CYPHER_LINE_COMMENT = "//"
+CYPHER_BLOCK_COMMENT_OPEN = "/*"
+CYPHER_BLOCK_COMMENT_CLOSE = "*/"
+CYPHER_MASKED_LITERAL = "''"
+CYPHER_MASKED_COMMENT = " "
+CYPHER_LINE_END = "\n"
+CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
+CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
 CYPHER_PLAN_WRITE_OPERATOR_PREFIXES: tuple[str, ...] = (
     "Create",
     "Set",

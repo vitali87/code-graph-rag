@@ -17,6 +17,7 @@ from codebase_rag.services.llm import (
     _validate_call_procedures,
     _validate_cypher_read_only,
 )
+from codebase_rag.types_defs import PropertyDict
 
 
 class TestMaskLiteralsAndComments:
@@ -194,7 +195,7 @@ class TestFetchReadOnlyOnMemgraph:
         executed = MagicMock()
 
         def fake_execute(
-            self: MemgraphIngestor, query: str, params: object = None
+            self: MemgraphIngestor, query: str, params: PropertyDict | None = None
         ) -> list[dict[str, str]]:
             executed(query)
             if query.startswith(cs.CYPHER_EXPLAIN_PREFIX):
