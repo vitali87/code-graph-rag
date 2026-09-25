@@ -202,6 +202,8 @@ TS_CSHARP_NESTED_SCOPE_TYPES = (
 
 # Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"
+TS_CSHARP_STATIC = "static"
+TS_CSHARP_GLOBAL = "global"
 
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
