@@ -58,7 +58,7 @@ from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
-from .services import QueryProtocol
+from .services import ReadOnlyQueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import (
     CypherGenerator,
@@ -1992,7 +1992,7 @@ def _cli_query_scope(active_projects: list[str] | None) -> str | None:
 
 def _initialize_services_and_agent(
     repo_path: str,
-    ingestor: QueryProtocol,
+    ingestor: ReadOnlyQueryProtocol,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     """Build the orchestrator, its tools, and the shared session services.

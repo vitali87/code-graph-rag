@@ -114,6 +114,127 @@ CYPHER_ALLOWED_PROCEDURE_PREFIXES: frozenset[str] = frozenset(
         "wcc.",
     }
 )
+# Procedures inside the allowed families that still change the database,
+# verified against memgraph-mage 3.3: `schema.assert` creates and drops
+# indexes and constraints (mg.procedures() reports it as a READ procedure),
+# `graph_util.chain_nodes` creates relationships.
+CYPHER_DENIED_PROCEDURES: frozenset[str] = frozenset(
+    {
+        "schema.assert",
+        "graph_util.chain_nodes",
+    }
+)
+CYPHER_EXPLAIN_PREFIX = "EXPLAIN "
+# Lexical pieces of Cypher that `cypher_guard` masks before inspecting a
+# generated query.
+CYPHER_STRING_QUOTES: tuple[str, ...] = ("'", '"')
+CYPHER_STRING_ESCAPE = "\\"
+CYPHER_LINE_COMMENT = "//"
+CYPHER_BLOCK_COMMENT_OPEN = "/*"
+CYPHER_BLOCK_COMMENT_CLOSE = "*/"
+CYPHER_MASKED_LITERAL = "''"
+CYPHER_MASKED_COMMENT = " "
+CYPHER_LINE_END = "\n"
+CYPHER_PLAN_OPERATOR_PATTERN = r"[A-Za-z]+"
+CYPHER_PLAN_PROCEDURE_PATTERN = r"CallProcedure<([^>]*)>"
+# The operator each engine plans for a procedure CALL: Memgraph's plan text
+# names it CallProcedure<name>, Neo4j's plan tree ProcedureCall with the
+# signature in its Details.
+CYPHER_PLAN_PROCEDURE_OPERATORS: frozenset[str] = frozenset(
+    {"CallProcedure", "ProcedureCall"}
+)
+# Neo4j tags each operator with its runtime (`Create@neo4j`).
+CYPHER_PLAN_OPERATOR_RUNTIME_SEPARATOR = "@"
+CYPHER_PLAN_PROCEDURE_ARGS_OPEN = "("
+NEO4J_PLAN_OPERATOR_TYPE = "operatorType"
+NEO4J_PLAN_ARGS = "args"
+NEO4J_PLAN_DETAILS = "Details"
+NEO4J_PLAN_CHILDREN = "children"
+# An untrusted query is planned with EXPLAIN and runs only if every plan
+# operator is known to read. An allowlist, not a list of writes, so an
+# operator this list has never seen (a new write, or a write under a new
+# name) is refused rather than run. Names are the bare operator: Neo4j's
+# `Expand(All)@neo4j` is checked as `Expand`. Taken from each engine's
+# operator reference and checked against the plans of the query shapes the
+# Cypher prompt asks for (memgraph 3.3, neo4j 5.26).
+CYPHER_PLAN_READ_OPERATORS: frozenset[str] = frozenset(
+    {
+        # Both engines
+        "Apply",
+        "Distinct",
+        "Filter",
+        "Limit",
+        "Optional",
+        "RollUpApply",
+        "Skip",
+        "Union",
+        "Unwind",
+        # Memgraph
+        "Accumulate",
+        "Aggregate",
+        "BFSExpand",
+        "Cartesian",
+        "ConstructNamedPath",
+        "EdgeUniquenessFilter",
+        "EmptyResult",
+        "EvaluatePatternFilter",
+        "Expand",
+        "ExpandVariable",
+        "HashJoin",
+        "IndexedJoin",
+        "Once",
+        "OrderBy",
+        "OutputTable",
+        "OutputTableStream",
+        "Produce",
+        # Neo4j
+        "AntiConditionalApply",
+        "AntiSemiApply",
+        "Argument",
+        "ArgumentTracker",
+        "BFSPruningVarLengthExpand",
+        "CacheProperties",
+        "CartesianProduct",
+        "ConditionalApply",
+        "EagerAggregation",
+        "ExhaustiveLimit",
+        "LetAntiSemiApply",
+        "LetSelectOrAntiSemiApply",
+        "LetSelectOrSemiApply",
+        "LetSemiApply",
+        "NodeCountFromCountStore",
+        "NodeHashJoin",
+        "NodeLeftOuterHashJoin",
+        "NodeRightOuterHashJoin",
+        "NullifyMetadata",
+        "OptionalExpand",
+        "OrderedAggregation",
+        "OrderedDistinct",
+        "PartialSort",
+        "PartialTop",
+        "PartitionedUnwind",
+        "ProduceResults",
+        "Projection",
+        "RelationshipCountFromCountStore",
+        "SelectOrAntiSemiApply",
+        "SelectOrSemiApply",
+        "SemiApply",
+        "ShortestPath",
+        "Sort",
+        "StatefulShortestPath",
+        "Top",
+        "Top1WithTies",
+        "TriadicBuild",
+        "TriadicFilter",
+        "TriadicSelection",
+        "ValueHashJoin",
+        "VarLengthExpand",
+    }
+)
+# Scans and seeks only read, and both engines name many variants of them
+# (Memgraph `ScanAllByLabelProperties`, Neo4j `NodeUniqueIndexSeekByRange`).
+CYPHER_PLAN_READ_OPERATOR_PREFIXES: tuple[str, ...] = ("ScanAll", "Assert")
+CYPHER_PLAN_READ_OPERATOR_SUFFIXES: tuple[str, ...] = ("Scan", "Seek", "SeekByRange")
 
 # Shell command constants
 SHELL_CMD_GREP = "grep"

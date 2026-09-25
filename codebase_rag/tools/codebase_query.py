@@ -25,7 +25,7 @@ from ..constants import (
     QUERY_SUMMARY_UNSCOPEABLE,
 )
 from ..schemas import QueryGraphData
-from ..services import QueryProtocol
+from ..services import ReadOnlyQueryProtocol
 from ..services.llm import CypherGenerator
 from ..types_defs import ResultRow
 from ..utils.token_utils import truncate_results_by_tokens
@@ -686,7 +686,7 @@ def _names_another_project(value: object, prefix: str) -> bool:
 
 
 def create_query_tool(
-    ingestor: QueryProtocol,
+    ingestor: ReadOnlyQueryProtocol,
     cypher_gen: CypherGenerator,
     console: Console | None = None,
     project_name: str | None = None,
@@ -725,7 +725,7 @@ def create_query_tool(
                 )
 
             results = await asyncio.wait_for(
-                asyncio.to_thread(ingestor.fetch_all, cypher_query),
+                asyncio.to_thread(ingestor.fetch_read_only, cypher_query),
                 timeout=settings.QUERY_TIMEOUT_S,
             )
 

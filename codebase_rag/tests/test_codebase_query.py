@@ -20,7 +20,7 @@ def anyio_backend(request: pytest.FixtureRequest) -> str:
 @pytest.fixture
 def mock_ingestor() -> MagicMock:
     ingestor = MagicMock()
-    ingestor.fetch_all.return_value = [
+    ingestor.fetch_read_only.return_value = [
         {"name": "func1", "type": "Function"},
         {"name": "func2", "type": "Method"},
     ]
@@ -76,7 +76,7 @@ class TestCreateQueryTool:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_cypher_gen.generate = AsyncMock(return_value="MATCH (n) RETURN n")
-        mock_ingestor.fetch_all.return_value = [{"name": "example"}]
+        mock_ingestor.fetch_read_only.return_value = [{"name": "example"}]
 
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=None)
         await tool.function(natural_language_query="Find all functions")
@@ -110,7 +110,7 @@ class TestQueryCodebaseKnowledgeGraph:
         await tool.function(natural_language_query="Show me all classes")
         mock_cypher_gen.generate.assert_called_once_with("Show me all classes")
 
-    async def test_query_calls_ingestor_fetch_all(
+    async def test_query_calls_ingestor_fetch_read_only(
         self,
         mock_ingestor: MagicMock,
         mock_cypher_gen: MagicMock,
@@ -118,7 +118,7 @@ class TestQueryCodebaseKnowledgeGraph:
     ) -> None:
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
         await tool.function(natural_language_query="Find functions")
-        mock_ingestor.fetch_all.assert_called_once_with("MATCH (n) RETURN n")
+        mock_ingestor.fetch_read_only.assert_called_once_with("MATCH (n) RETURN n")
 
     async def test_empty_results_returns_zero_count(
         self,
@@ -126,7 +126,7 @@ class TestQueryCodebaseKnowledgeGraph:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.return_value = []
+        mock_ingestor.fetch_read_only.return_value = []
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
         result = await tool.function(natural_language_query="Find nonexistent")
         assert result.results == []
@@ -155,7 +155,9 @@ class TestQueryCodebaseKnowledgeGraph:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.side_effect = Exception("Database connection failed")
+        mock_ingestor.fetch_read_only.side_effect = Exception(
+            "Database connection failed"
+        )
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
         result = await tool.function(natural_language_query="Find functions")
         assert result.results == []
@@ -173,7 +175,7 @@ class TestQueryCodebaseKnowledgeGraph:
         from codebase_rag.config import settings
 
         monkeypatch.setattr(settings, "QUERY_TIMEOUT_S", 0.05)
-        mock_ingestor.fetch_all.side_effect = lambda *a, **k: time.sleep(1.0)
+        mock_ingestor.fetch_read_only.side_effect = lambda *a, **k: time.sleep(1.0)
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
         result = await tool.function(natural_language_query="long running query")
         assert result.results == []
@@ -201,7 +203,7 @@ class TestQueryResultFormatting:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.return_value = [
+        mock_ingestor.fetch_read_only.return_value = [
             {"name": "a"},
             {"name": "b"},
             {"name": "c"},
@@ -218,7 +220,7 @@ class TestQueryWithVariousDataTypes:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.return_value = [
+        mock_ingestor.fetch_read_only.return_value = [
             {"name": "func1", "description": None},
         ]
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
@@ -231,7 +233,7 @@ class TestQueryWithVariousDataTypes:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.return_value = [
+        mock_ingestor.fetch_read_only.return_value = [
             {"name": "func1", "is_async": True},
             {"name": "func2", "is_async": False},
         ]
@@ -245,7 +247,7 @@ class TestQueryWithVariousDataTypes:
         mock_cypher_gen: MagicMock,
         mock_console: Console,
     ) -> None:
-        mock_ingestor.fetch_all.return_value = [
+        mock_ingestor.fetch_read_only.return_value = [
             {"name": "func1", "line_count": 42, "complexity": 3.14},
         ]
         tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)

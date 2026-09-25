@@ -19,6 +19,7 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
+    CYPHER_EXPLAIN_PREFIX,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
@@ -68,6 +69,11 @@ from ..types_defs import (
     ResultRow,
 )
 from ..utils.path_utils import project_roots_from_rows
+from .cypher_guard import (
+    check_plan,
+    memgraph_plan_operators,
+    neo4j_plan_operators,
+)
 from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
@@ -748,6 +754,36 @@ class MemgraphIngestor:
         )
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
         return self._execute_query(bounded_query, params)
+
+    def fetch_read_only(self, query: str) -> list[ResultRow]:
+        """Run an untrusted (LLM-generated) query so that it cannot write.
+
+        The text checks in `services.llm` are the first layer; this is the
+        one that does not depend on reading the query text correctly. On both
+        engines the query is planned with EXPLAIN and refused before it runs
+        unless every planned operator is a known read and every procedure is
+        allowed. Neo4j additionally runs it in a READ access-mode session,
+        which its driver documents as a routing hint rather than access
+        control, so it is not relied on.
+        """
+        bounded_query = _apply_memory_limit(
+            query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
+        )
+        logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=None)
+        if self._dialect.name == DIALECT_NEO4J:
+            with self._neo4j_driver().connect(read_only=True) as conn:
+                check_plan(neo4j_plan_operators(conn.explain(bounded_query)), query)
+                cursor = conn.cursor()
+                cursor.execute(bounded_query)
+                return self._cursor_to_results(cursor)
+        plan = self._execute_query(CYPHER_EXPLAIN_PREFIX + bounded_query)
+        check_plan(
+            memgraph_plan_operators(
+                [str(next(iter(row.values()), "")) for row in plan]
+            ),
+            query,
+        )
+        return self._execute_query(bounded_query)
 
     def execute_write(
         self, query: str, params: dict[str, PropertyValue] | None = None

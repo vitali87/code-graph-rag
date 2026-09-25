@@ -32,6 +32,7 @@ import types
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from .. import constants as cs
 from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 
 if TYPE_CHECKING:  # pragma: no cover - import cost only paid at type-check time
@@ -130,6 +131,24 @@ class Neo4jConnection:
     def cursor(self) -> Neo4jCursor:
         return Neo4jCursor(self._session)
 
+    def explain(self, query: str) -> list[tuple[str, str]]:
+        """Every operator of the query's EXPLAIN plan as (type, Details).
+
+        EXPLAIN plans without executing, so nothing in `query` runs here.
+        """
+        session_run = self._session.run
+        plan = session_run(cs.CYPHER_EXPLAIN_PREFIX + query).consume().plan
+        operators: list[tuple[str, str]] = []
+        pending = [plan] if plan else []
+        while pending:
+            node = pending.pop()
+            details = (node.get(cs.NEO4J_PLAN_ARGS) or {}).get(cs.NEO4J_PLAN_DETAILS)
+            operators.append(
+                (str(node.get(cs.NEO4J_PLAN_OPERATOR_TYPE, "")), str(details or ""))
+            )
+            pending.extend(node.get(cs.NEO4J_PLAN_CHILDREN) or [])
+        return operators
+
     def close(self) -> None:
         self._session.close()
 
@@ -169,8 +188,12 @@ class Neo4jDriver:
         self._driver: Driver = GraphDatabase.driver(uri, auth=auth)
         self._database = database
 
-    def connect(self) -> Neo4jConnection:
-        """Open a session.
+    def connect(self, read_only: bool = False) -> Neo4jConnection:
+        """Open a session; `read_only` makes the server refuse any write.
+
+        A READ access-mode session is enforced by Neo4j itself: a write
+        fails with `Neo.ClientError.Statement.AccessMode`, whatever the
+        statement text looks like.
 
         This does NOT prove the server is reachable. The Neo4j driver
         connects lazily: `GraphDatabase.driver()` and `session()` touch
@@ -184,7 +207,15 @@ class Neo4jDriver:
         `HealthChecker.check_memgraph_connection` runs `RETURN 1` for
         exactly this reason.
         """
-        return Neo4jConnection(self._driver.session(database=self._database))
+        if not read_only:
+            return Neo4jConnection(self._driver.session(database=self._database))
+        from neo4j import READ_ACCESS  # ty: ignore[unresolved-import]
+
+        return Neo4jConnection(
+            self._driver.session(
+                database=self._database, default_access_mode=READ_ACCESS
+            )
+        )
 
     def close(self) -> None:
         self._driver.close()
