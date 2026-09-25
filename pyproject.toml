@@ -90,6 +90,7 @@ codebase_rag = [
     "parsers/java_frontend/javac/cgr/*.java",
     "parsers/ast_grep_patterns/*.yaml",
     "analyzers/ast_grep_rules/*/*.yaml",
+    "queries/highlights/*.scm",
 ]
 
 [project.optional-dependencies]
