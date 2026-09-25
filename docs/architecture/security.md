@@ -52,8 +52,9 @@ The controls and remaining risks are described below.
 ## Trust boundaries and threat model
 
 The main data flows are repository files into parsers and stores; retrieved
-content and questions into agents and configured providers; tool requests back
-to the host; and MCP requests from clients into the server. Release automation
+content and questions into agents and configured providers; research queries
+out to the configured web-search backend (DuckDuckGo by default, or Serpdive);
+tool requests back to the host; and MCP requests from clients into the server. Release automation
 is a separate trust boundary between project changes and distributed artifacts.
 
 | Threat | Existing protection | Remaining risk and operator action |
