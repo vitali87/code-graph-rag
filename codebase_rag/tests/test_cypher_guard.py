@@ -275,8 +275,9 @@ class TestCheckNeo4jPlan:
 
     def test_an_operator_the_allowlist_has_never_seen_is_refused(self) -> None:
         plan = [("ProduceResults@neo4j", ""), ("SetNodePropertiesFromMap@neo4j", "")]
+        operators = neo4j_plan_operators(plan)
         with pytest.raises(ex.ReadOnlyQueryError, match="SetNodePropertiesFromMap"):
-            check_plan(neo4j_plan_operators(plan), "q")
+            check_plan(operators, "q")
 
     @pytest.mark.parametrize(
         "operator",
@@ -292,14 +293,16 @@ class TestCheckNeo4jPlan:
     )
     def test_write_operator_is_refused(self, operator: tuple[str, str]) -> None:
         plan = [("ProduceResults@neo4j", ""), operator, ("AllNodesScan@neo4j", "n")]
+        operators = neo4j_plan_operators(plan)
         with pytest.raises(ex.ReadOnlyQueryError, match="not known to be read-only"):
-            check_plan(neo4j_plan_operators(plan), "q")
+            check_plan(operators, "q")
 
     def test_procedure_name_is_read_from_the_signature(self) -> None:
         plan = [("ProcedureCall@neo4j", "db.labels() :: (label :: STRING)")]
-        assert neo4j_plan_operators(plan)[0].procedure == "db.labels"
+        operators = neo4j_plan_operators(plan)
+        assert operators[0].procedure == "db.labels"
         with pytest.raises(ex.ReadOnlyQueryError, match="db.labels"):
-            check_plan(neo4j_plan_operators(plan), "q")
+            check_plan(operators, "q")
 
     def test_allowed_procedure_passes(self) -> None:
         plan = [

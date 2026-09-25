@@ -43,39 +43,38 @@ def mask_literals_and_comments(query: str) -> str:
     """
     out: list[str] = []
     i = 0
-    n = len(query)
-    while i < n:
-        if query.startswith(cs.CYPHER_LINE_COMMENT, i):
-            end = query.find(cs.CYPHER_LINE_END, i)
-            i = n if end == -1 else end
-            out.append(cs.CYPHER_MASKED_COMMENT)
-        elif query.startswith(cs.CYPHER_BLOCK_COMMENT_OPEN, i):
-            end = query.find(
-                cs.CYPHER_BLOCK_COMMENT_CLOSE, i + len(cs.CYPHER_BLOCK_COMMENT_OPEN)
-            )
-            if end == -1:
-                out.append(query[i:])
-                break
-            i = end + len(cs.CYPHER_BLOCK_COMMENT_CLOSE)
-            out.append(cs.CYPHER_MASKED_COMMENT)
-        elif query[i] in cs.CYPHER_STRING_QUOTES:
-            end = _string_end(query, i)
-            if end == -1:
-                out.append(query[i:])
-                break
-            out.append(cs.CYPHER_MASKED_LITERAL)
-            i = end + 1
-        elif query[i] == _BACKTICK:
-            end, name = _backtick_identifier(query, i)
-            if end == -1:
-                out.append(query[i:])
-                break
-            out.append(name)
-            i = end + 1
-        else:
-            out.append(query[i])
-            i += 1
+    while i < len(query):
+        masked, end = _mask_token(query, i)
+        if end == -1:
+            out.append(query[i:])
+            break
+        out.append(masked)
+        i = end
     return "".join(out)
+
+
+def _mask_token(query: str, start: int) -> tuple[str, int]:
+    """Masked text of the token at `start` and the index after it.
+
+    The index is -1 when the token is an unterminated literal or comment.
+    """
+    if query.startswith(cs.CYPHER_LINE_COMMENT, start):
+        end = query.find(cs.CYPHER_LINE_END, start)
+        return cs.CYPHER_MASKED_COMMENT, len(query) if end == -1 else end
+    if query.startswith(cs.CYPHER_BLOCK_COMMENT_OPEN, start):
+        end = query.find(
+            cs.CYPHER_BLOCK_COMMENT_CLOSE, start + len(cs.CYPHER_BLOCK_COMMENT_OPEN)
+        )
+        if end == -1:
+            return "", -1
+        return cs.CYPHER_MASKED_COMMENT, end + len(cs.CYPHER_BLOCK_COMMENT_CLOSE)
+    if query[start] in cs.CYPHER_STRING_QUOTES:
+        end = _string_end(query, start)
+        return cs.CYPHER_MASKED_LITERAL, -1 if end == -1 else end + 1
+    if query[start] == _BACKTICK:
+        end, name = _backtick_identifier(query, start)
+        return name, -1 if end == -1 else end + 1
+    return query[start], start + 1
 
 
 def _string_end(query: str, start: int) -> int:
