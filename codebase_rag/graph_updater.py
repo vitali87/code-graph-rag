@@ -1858,6 +1858,13 @@ class GraphUpdater:
         # this run deleted or renamed, so every run starts Pass 3 with empty
         # caches, as the watcher's per-event pass already does (issue #1575).
         self.factory.call_processor.reset_resolution_caches()
+        # A run that re-parses every file re-walks every file, so the
+        # callable-flow records start empty: a reused updater's records for a
+        # file deleted since would otherwise keep emitting its call sites'
+        # edges. An incremental run keeps them, since finalize still needs the
+        # seeds of files it does not re-walk.
+        if self._is_full_build:
+            self.factory.call_processor.reset_callable_flow()
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
@@ -3511,6 +3518,14 @@ class GraphUpdater:
         self._parsed_files = [
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
+        # Same for its callable-flow records: a re-parse re-records them on
+        # the walk, a deletion never does. Through `_call_processor`, not the
+        # property: the property builds the processor on first access, and
+        # building it here, before the definition pass, snapshots half-built
+        # state (a C# method then ingested under a bare, unnamespaced name).
+        # With no processor yet there are no records to drop.
+        if self.factory._call_processor is not None:
+            self.factory._call_processor.forget_callable_flow(file_path)
 
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
