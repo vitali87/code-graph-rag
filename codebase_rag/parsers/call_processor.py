@@ -7170,6 +7170,7 @@ class CallProcessor:
                 local_var_types,
                 class_context,
                 caller_qn,
+                language=cs.SupportedLanguage.DART,
                 call_point=call_point,
             )
             if not resolved:

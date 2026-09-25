@@ -3502,7 +3502,7 @@ class CallResolver:
             )
         elif (
             folded := self._fold_import_prefix_hop(
-                parts, module_qn, local_var_types, call_point
+                parts, module_qn, local_var_types, call_point, language
             )
         ) is not None:
             # `p.Box(1).height` under `import '...' as p;`: the base names an
@@ -3581,6 +3581,7 @@ class CallResolver:
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
         call_point: int | None = None,
+        language: cs.SupportedLanguage | None = None,
     ) -> tuple[str, list[str]] | None:
         # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
         # collapses to that class: the prefix carries no type of its own, and
@@ -3601,9 +3602,14 @@ class CallResolver:
         # the CLASS itself and the hop is its named constructor, so the
         # receiver's type is the base (issue #2033). Checked before the
         # import map, since a class in this module is not an import.
-        if not (
-            local_var_types and prefix in local_var_types
-        ) and self._names_own_constructible(prefix, module_qn):
+        # Dart only: elsewhere `Foo.create()` is a static FACTORY whose
+        # recorded return type the chain must keep, and folding it to `Foo`
+        # dropped that hop (bot review).
+        if (
+            language == cs.SupportedLanguage.DART
+            and not (local_var_types and prefix in local_var_types)
+            and self._names_own_constructible(prefix, module_qn)
+        ):
             return prefix, parts[1:]
         # A local or parameter of that name SHADOWS the import prefix, so the
         # base is that variable and the chain is not a prefixed construction
