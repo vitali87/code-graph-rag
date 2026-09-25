@@ -7,6 +7,7 @@ from codebase_rag import tool_errors as te
 from codebase_rag.tools.web_search import (
     DuckDuckGoBackend,
     SerpdiveBackend,
+    SerplyBackend,
     WebSearcher,
     create_web_search_tool,
     make_web_searcher,
@@ -66,16 +67,47 @@ def captured(monkeypatch) -> dict:
             }
         )
 
+    def fake_get(url, **kwargs):
+        sent.update(url=url, **kwargs)
+        response = sent.pop("_response", None)
+        if response is not None:
+            return response
+        return FakeResponse(
+            {
+                "results": [
+                    {
+                        "link": "https://docs.example.com/a",
+                        "title": None,  # a result with no title
+                        "description": "the snippet of the page",
+                        "position": 1,
+                    },
+                    {
+                        "link": "https://docs.example.com/b",
+                        "title": "Second source",
+                        "description": "more snippet text",
+                        "position": 2,
+                    },
+                ],
+                "total": 2,
+            }
+        )
+
     import httpx
 
     monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.delenv("WEB_SEARCH_PROVIDER", raising=False)
     monkeypatch.delenv("SERPDIVE_API_KEY", raising=False)
+    monkeypatch.delenv("SERPLY_API_KEY", raising=False)
     return sent
 
 
 def serpdive() -> WebSearcher:
     return WebSearcher(SerpdiveBackend("sd_live_x"))
+
+
+def serply() -> WebSearcher:
+    return WebSearcher(SerplyBackend("sp_live_x"))
 
 
 def duckduckgo() -> WebSearcher:
@@ -181,6 +213,17 @@ class TestProviderSelection:
         monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serpdive")
         assert isinstance(make_web_searcher().backend, DuckDuckGoBackend)
 
+    def test_serply_is_selectable_with_a_key(self, captured: dict, monkeypatch):
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serply")
+        monkeypatch.setenv("SERPLY_API_KEY", "sp_live_x")
+        assert isinstance(make_web_searcher().backend, SerplyBackend)
+
+    def test_serply_without_a_key_falls_back_to_keyless(
+        self, captured: dict, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("WEB_SEARCH_PROVIDER", "serply")
+        assert isinstance(make_web_searcher().backend, DuckDuckGoBackend)
+
     def test_unknown_provider_falls_back_to_keyless(
         self, captured: dict, monkeypatch
     ) -> None:
@@ -259,7 +302,74 @@ class TestSerpdiveBackend:
         assert serpdive().search_web("q") == te.WEB_SEARCH_BAD_RESPONSE
 
 
-@pytest.mark.parametrize("make", [serpdive, duckduckgo])
+class TestSerplyBackend:
+    def test_search_returns_google_results_with_snippets(self, captured: dict) -> None:
+        out = serply().search_web("pydantic-ai tool api", max_results=2)
+
+        assert captured["url"] == "https://api.serply.io/v1/search"
+        assert captured["headers"]["X-Api-Key"] == "sp_live_x"
+        assert captured["headers"]["User-Agent"] == "code-graph-rag"
+        assert captured["params"] == {"q": "pydantic-ai tool api", "num": 2}
+        # the link is what the agent cites, the snippet is what it reads
+        assert "https://docs.example.com/a" in out
+        assert "the snippet of the page" in out
+        # a null title must never surface as "None"
+        assert "None" not in out
+        assert "Second source" in out
+        assert "https://docs.example.com/b" in out
+
+    def test_request_selects_no_plan_or_tier(self, captured: dict) -> None:
+        """The key alone identifies the account; nothing in the request can
+        pick a paid option."""
+        serply().search_web("q")
+        assert set(captured["params"]) == {"q", "num"}
+
+    def test_max_results_is_clamped(self, captured: dict) -> None:
+        serply().search_web("q", max_results=99)
+        assert captured["params"]["num"] == 10
+        serply().search_web("q", max_results=0)
+        assert captured["params"]["num"] == 1
+
+    def test_no_results_is_a_message_not_an_error(self, captured: dict) -> None:
+        captured["_response"] = FakeResponse({"results": [], "total": 0})
+        assert serply().search_web("q") == te.WEB_SEARCH_NO_RESULTS.format(query="q")
+
+    def test_overdelivering_provider_is_sliced_to_the_request(
+        self, captured: dict
+    ) -> None:
+        captured["_response"] = FakeResponse(
+            {
+                "results": [
+                    {"link": "https://docs.example.com/a", "title": "A"},
+                    {"link": "https://docs.example.com/b", "title": "B"},
+                ]
+            }
+        )
+        out = serply().search_web("q", max_results=1)
+        assert "https://docs.example.com/a" in out
+        assert "https://docs.example.com/b" not in out
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            ["not", "a", "dict"],
+            {"results": "not a list"},
+            {"results": [{"link": "https://ok"}, "not a dict"]},
+            {},
+            {"results": [{"url": "https://ok", "title": "no link field"}]},
+            {"results": [{"link": None, "title": "no link"}]},
+            {"results": [{"link": "https://ok", "description": ["not", "a", "str"]}]},
+            {"results": [{"link": "https://ok", "title": 42}]},
+        ],
+    )
+    def test_malformed_payload_is_reported_not_raised(
+        self, captured: dict, payload
+    ) -> None:
+        captured["_response"] = FakeResponse(payload)
+        assert serply().search_web("q") == te.WEB_SEARCH_BAD_RESPONSE
+
+
+@pytest.mark.parametrize("make", [serpdive, serply, duckduckgo])
 class TestSharedGuards:
     def test_empty_query_is_refused_without_a_call(self, captured: dict, make) -> None:
         assert make().search_web("   ") == te.WEB_SEARCH_EMPTY_QUERY
@@ -276,6 +386,7 @@ class TestSharedGuards:
             raise httpx.ConnectError("network down")
 
         monkeypatch.setattr(httpx, "post", boom)
+        monkeypatch.setattr(httpx, "get", boom)
         assert make().search_web("q") == te.WEB_SEARCH_UNREACHABLE
 
 

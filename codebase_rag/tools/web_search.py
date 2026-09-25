@@ -19,9 +19,11 @@ from . import tool_descriptions as td
 # the ones that need a key. The default provider needs no account at all.
 WEB_SEARCH_PROVIDER_ENV = "WEB_SEARCH_PROVIDER"
 SERPDIVE_API_KEY_ENV = "SERPDIVE_API_KEY"
+SERPLY_API_KEY_ENV = "SERPLY_API_KEY"
 
 _TIMEOUT = 30.0
 _MAX_RESULTS = 10
+_USER_AGENT = "code-graph-rag"
 
 # Keyless default. DuckDuckGo's HTML endpoint needs no account, so the tool
 # works out of the box; richer backends are opt-in through WEB_SEARCH_PROVIDER.
@@ -50,6 +52,11 @@ def _query_digest(query: str) -> str:
 SERPDIVE_URL = "https://api.serpdive.com/v1/search"
 SERPDIVE_FREE_TIER = "krill"
 
+# Keys are created at https://serply.io (free tier, no card) and the API is
+# described at https://serply.io/docs. The request selects no plan or tier.
+SERPLY_URL = "https://api.serply.io/v1/search"
+SERPLY_API_KEY_HEADER = "X-Api-Key"
+
 
 class DuckDuckGoBackend:
     """Keyless ranked results with snippets from DuckDuckGo's HTML endpoint."""
@@ -64,7 +71,7 @@ class DuckDuckGoBackend:
             response = httpx.post(
                 DUCKDUCKGO_URL,
                 data={"q": query},
-                headers={"User-Agent": "code-graph-rag"},
+                headers={"User-Agent": _USER_AGENT},
                 timeout=_TIMEOUT,
                 follow_redirects=True,
             )
@@ -144,6 +151,73 @@ def _has_valid_fields(result: dict) -> bool:
     return isinstance(result.get("url"), str) and all(
         result.get(key) is None or isinstance(result.get(key), str)
         for key in ("title", "content", "date")
+    )
+
+
+class SerplyBackend:
+    """Google's ranked results, each with a title, link and snippet, via Serply."""
+
+    __slots__ = ("api_key",)
+    name = "serply"
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def fetch(self, query: str, max_results: int) -> list[dict] | str:
+        import httpx
+
+        try:
+            response = httpx.get(
+                SERPLY_URL,
+                params={"q": query, "num": max_results},
+                headers={
+                    SERPLY_API_KEY_HEADER: self.api_key,
+                    "User-Agent": _USER_AGENT,
+                },
+                timeout=_TIMEOUT,
+            )
+        except Exception as e:
+            logger.error(
+                ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
+            )
+            return te.WEB_SEARCH_UNREACHABLE
+        if response.status_code != 200:
+            logger.error(
+                ls.WEB_SEARCH_HTTP_ERROR.format(
+                    status=response.status_code, digest=_query_digest(query)
+                )
+            )
+            return te.WEB_SEARCH_FAILED.format(status=response.status_code)
+
+        try:
+            payload = response.json()
+        except Exception as e:
+            logger.error(
+                ls.WEB_SEARCH_ERROR.format(digest=_query_digest(query), error=e)
+            )
+            return te.WEB_SEARCH_BAD_RESPONSE
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list) or any(
+            not isinstance(r, dict) or not _has_valid_serply_fields(r) for r in results
+        ):
+            logger.error(ls.WEB_SEARCH_BAD_SHAPE.format(digest=_query_digest(query)))
+            return te.WEB_SEARCH_BAD_RESPONSE
+        # Serply names the fields after Google's result page; the formatter
+        # reads the same url/title/content shape from every backend.
+        return [
+            {
+                "url": r["link"],
+                "title": r.get("title"),
+                "content": r.get("description"),
+            }
+            for r in results
+        ]
+
+
+def _has_valid_serply_fields(result: dict) -> bool:
+    return isinstance(result.get("link"), str) and all(
+        result.get(key) is None or isinstance(result.get(key), str)
+        for key in ("title", "description")
     )
 
 
@@ -233,7 +307,9 @@ class WebSearcher:
 
     __slots__ = ("backend",)
 
-    def __init__(self, backend: DuckDuckGoBackend | SerpdiveBackend) -> None:
+    def __init__(
+        self, backend: DuckDuckGoBackend | SerpdiveBackend | SerplyBackend
+    ) -> None:
         """Wrap a search backend."""
         self.backend = backend
 
@@ -275,7 +351,8 @@ def make_web_searcher() -> WebSearcher:
     """Build the searcher for the configured backend.
 
     Keyless DuckDuckGo by default; WEB_SEARCH_PROVIDER=serpdive with
-    SERPDIVE_API_KEY opts into Serpdive.
+    SERPDIVE_API_KEY opts into Serpdive, and WEB_SEARCH_PROVIDER=serply with
+    SERPLY_API_KEY opts into Serply.
     """
     provider = (
         os.environ.get(WEB_SEARCH_PROVIDER_ENV, DuckDuckGoBackend.name).strip().lower()
@@ -283,6 +360,10 @@ def make_web_searcher() -> WebSearcher:
     if provider == SerpdiveBackend.name:
         if api_key := os.environ.get(SERPDIVE_API_KEY_ENV):
             return WebSearcher(SerpdiveBackend(api_key))
+        logger.warning(ls.WEB_SEARCH_KEYLESS_FALLBACK.format(provider=provider))
+    elif provider == SerplyBackend.name:
+        if api_key := os.environ.get(SERPLY_API_KEY_ENV):
+            return WebSearcher(SerplyBackend(api_key))
         logger.warning(ls.WEB_SEARCH_KEYLESS_FALLBACK.format(provider=provider))
     elif provider != DuckDuckGoBackend.name:
         logger.warning(ls.WEB_SEARCH_UNKNOWN_PROVIDER.format(provider=provider))

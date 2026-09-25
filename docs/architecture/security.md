@@ -53,7 +53,7 @@ The controls and remaining risks are described below.
 
 The main data flows are repository files into parsers and stores; retrieved
 content and questions into agents and configured providers; research queries
-out to the configured web-search backend (DuckDuckGo by default, or Serpdive);
+out to the configured web-search backend (DuckDuckGo by default, Serpdive or Serply);
 tool requests back to the host; and MCP requests from clients into the server. Release automation
 is a separate trust boundary between project changes and distributed artifacts.
 
@@ -128,8 +128,8 @@ Application-level data paths include:
   `CGR_EMBEDDING_PROVIDER=openai` sends code to the configured remote embedding
   service.
 - **Web research:** CLI research can send queries to an external search backend.
-  DuckDuckGo is the keyless default; Serpdive is configurable. No search API key
-  is required for this network path to be available.
+  DuckDuckGo is the keyless default; Serpdive and Serply are configurable. No
+  search API key is required for this network path to be available.
 
 The CLI [research boundary](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/tools/research.py)
 checks queries before calling the research agent, and the search tool checks
