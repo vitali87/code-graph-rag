@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import time
@@ -215,21 +216,24 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         """
         src_path = _event_path(event.src_path)
         if event.event_type == EventType.MOVED:
+            # Watchdog follows a directory move with synthetic moves of
+            # everything inside it; the directory's own event already
+            # restated those files, so repeating them would re-ingest twice.
+            if event.is_synthetic:
+                return []
             dest_path = _event_path(event.dest_path)
             if not event.is_directory:
                 return [FileDeletedEvent(src_path), FileCreatedEvent(dest_path)]
-            return [
-                *self._deleted_under(src_path),
-                *(
-                    FileCreatedEvent(str(path))
-                    for path in sorted(Path(dest_path).rglob("*"))
-                    if path.is_file()
-                ),
-            ]
+            return [*self._deleted_under(src_path), *self._created_under(dest_path)]
+        if event.event_type == EventType.DELETED:
+            # Windows reports a deleted directory as a file deletion, so the
+            # indexed record, not the event, says whether it held files.
+            children = self._deleted_under(src_path)
+            if children or event.is_directory:
+                return children
+            return [event]
         if not event.is_directory:
             return [event]
-        if event.event_type == EventType.DELETED:
-            return self._deleted_under(src_path)
         return []
 
     def _deleted_under(self, directory: str) -> list[FileSystemEvent]:
@@ -237,6 +241,24 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             FileDeletedEvent(str(path))
             for path in self.updater.indexed_files_under(Path(directory))
         ]
+
+    def _created_under(self, directory: str) -> list[FileSystemEvent]:
+        """Creations for the files now beneath `directory`.
+
+        Ignored directories are pruned rather than walked: `_is_relevant`
+        would drop every file under them anyway, and walking a moved-in
+        `node_modules` would hold the watcher for nothing.
+        """
+        root = Path(directory)
+        if any(
+            part in self.ignore_patterns for part in self._repo_relative(root).parts
+        ):
+            return []
+        files: list[Path] = []
+        for current, dirs, names in os.walk(root):
+            dirs[:] = [name for name in dirs if name not in self.ignore_patterns]
+            files.extend(Path(current) / name for name in names)
+        return [FileCreatedEvent(str(path)) for path in sorted(files) if path.is_file()]
 
     def _dispatch_file(self, event: FileSystemEvent) -> None:
         src_path = _event_path(event.src_path)

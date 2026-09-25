@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -10,9 +10,11 @@ from watchdog.events import (
     DirCreatedEvent,
     DirDeletedEvent,
     DirMovedEvent,
+    FileDeletedEvent,
     FileMovedEvent,
 )
 
+import realtime_updater
 from codebase_rag.tests.conftest import create_and_run_updater
 from realtime_updater import CodeChangeEventHandler
 
@@ -141,6 +143,85 @@ class TestDirectoryEvents:
         (temp_repo / "pkg").mkdir()
         handler.dispatch(DirCreatedEvent(str(temp_repo / "pkg")))
         mock_updater.reingest.assert_not_called()
+
+    def test_synthetic_moves_of_a_moved_directorys_children_are_skipped(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        # The directory's own move already restated its files; watchdog's
+        # follow-up moves of each child must not re-ingest them again.
+        new = _write(temp_repo / "new" / "a.py")
+        handler.dispatch(
+            FileMovedEvent(str(temp_repo / "old" / "a.py"), str(new), is_synthetic=True)
+        )
+        handler.dispatch(
+            DirMovedEvent(
+                str(temp_repo / "old" / "sub"),
+                str(temp_repo / "new" / "sub"),
+                is_synthetic=True,
+            )
+        )
+        mock_updater.reingest.assert_not_called()
+        mock_updater.indexed_files_under.assert_not_called()
+
+    def test_directory_move_does_not_walk_ignored_subdirectories(
+        self,
+        handler: CodeChangeEventHandler,
+        mock_updater: MagicMock,
+        temp_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        new = _write(temp_repo / "new" / "a.py")
+        _write(temp_repo / "new" / "node_modules" / "dep" / "index.js")
+        mock_updater.indexed_files_under.return_value = []
+        walked: list[str] = []
+        real_walk = realtime_updater.os.walk
+
+        def recording_walk(top: Path) -> Iterator[tuple[str, list[str], list[str]]]:
+            for entry in real_walk(top):
+                walked.append(entry[0])
+                yield entry
+
+        monkeypatch.setattr(realtime_updater.os, "walk", recording_walk)
+        handler.dispatch(DirMovedEvent(str(temp_repo / "old"), str(temp_repo / "new")))
+        mock_updater.reingest.assert_called_once_with((new,))
+        assert walked == [str(temp_repo / "new")]
+
+    def test_directory_moved_under_an_ignored_path_is_not_walked(
+        self,
+        handler: CodeChangeEventHandler,
+        mock_updater: MagicMock,
+        temp_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _write(temp_repo / "node_modules" / "pkg" / "a.py")
+        mock_updater.indexed_files_under.return_value = []
+        walk = MagicMock()
+        monkeypatch.setattr(realtime_updater.os, "walk", walk)
+        handler.dispatch(
+            DirMovedEvent(
+                str(temp_repo / "pkg"), str(temp_repo / "node_modules" / "pkg")
+            )
+        )
+        walk.assert_not_called()
+        mock_updater.reingest.assert_not_called()
+
+    def test_directory_deletion_reported_as_a_file_still_removes_its_files(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        # Windows' observer cannot tell a deleted directory from a file.
+        gone = [temp_repo / "pkg" / "a.py", temp_repo / "pkg" / "b.py"]
+        mock_updater.indexed_files_under.return_value = gone
+        handler.dispatch(FileDeletedEvent(str(temp_repo / "pkg")))
+        assert mock_updater.reingest.call_args_list == [
+            call((), deleted=(path,)) for path in gone
+        ]
+
+    def test_file_deletion_is_still_a_deletion_of_that_file(
+        self, handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+    ) -> None:
+        mock_updater.indexed_files_under.return_value = []
+        handler.dispatch(FileDeletedEvent(str(temp_repo / "a.py")))
+        mock_updater.reingest.assert_called_once_with((), deleted=(temp_repo / "a.py",))
 
 
 class TestIndexedFilesUnder:
