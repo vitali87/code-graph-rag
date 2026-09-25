@@ -679,3 +679,74 @@ class TestLiteLLMProvider:
             "openai/gpt-4o", provider=mock_litellm_provider.return_value
         )
         assert result == mock_model
+
+
+# (endpoint as configured, base URL the health check must target). Ports and
+# hostnames ending in characters of "/v1" guard against char-set stripping.
+V1_SUFFIX_CASES = [
+    ("http://host:4001/v1", "http://host:4001"),
+    ("http://host:4000/v1", "http://host:4000"),
+    ("http://llmdev/v1", "http://llmdev"),
+    ("http://node1/v1", "http://node1"),
+    ("http://host:4001/v1/", "http://host:4001"),
+    ("http://host:4001", "http://host:4001"),
+    ("http://host:4001/", "http://host:4001"),
+    ("http://llmdev", "http://llmdev"),
+    ("http://node1", "http://node1"),
+]
+
+
+class TestV1SuffixStripping:
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    def test_strip_v1_suffix(self, endpoint: str, expected: str) -> None:
+        from codebase_rag.providers.base import strip_v1_suffix
+
+        assert strip_v1_suffix(endpoint) == expected
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_ollama_health_check_url(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        get = mock_client.return_value.__enter__.return_value.get
+        get.return_value.status_code = 200
+
+        OllamaProvider(endpoint=endpoint).validate_config()
+
+        get.assert_called_once_with(f"{expected}/api/tags")
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_litellm_provider_health_check_url(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        get = mock_client.return_value.__enter__.return_value.get
+        get.return_value.status_code = 200
+
+        LiteLLMProvider(endpoint=endpoint).validate_config()
+
+        get.assert_called_once_with(f"{expected}/health", headers={})
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_check_litellm_proxy_running_urls(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        from codebase_rag.providers.base import check_litellm_proxy_running
+
+        health_response = MagicMock()
+        health_response.status_code = 401
+        models_response = MagicMock()
+        models_response.status_code = 200
+        get = mock_client.return_value.__enter__.return_value.get
+        get.side_effect = [health_response, models_response]
+
+        assert check_litellm_proxy_running(endpoint, api_key="sk-test")
+
+        headers = {"Authorization": "Bearer sk-test"}
+        assert get.call_args_list == [
+            ((f"{expected}/health",), {"headers": headers}),
+            ((f"{expected}/v1/models",), {"headers": headers}),
+        ]

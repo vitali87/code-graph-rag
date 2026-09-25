@@ -8,7 +8,7 @@ from pydantic_ai.providers.litellm import LiteLLMProvider as PydanticLiteLLMProv
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 
-from .base import ModelProvider
+from .base import ModelProvider, strip_v1_suffix
 
 
 class LiteLLMProvider(ModelProvider):
@@ -34,7 +34,7 @@ class LiteLLMProvider(ModelProvider):
 
         from .base import check_litellm_proxy_running
 
-        base_url = self.endpoint.rstrip("/v1").rstrip("/")
+        base_url = strip_v1_suffix(self.endpoint)
         if not check_litellm_proxy_running(base_url, api_key=self.api_key):
             raise ValueError(ex.LITELLM_NOT_RUNNING.format(endpoint=base_url))
 

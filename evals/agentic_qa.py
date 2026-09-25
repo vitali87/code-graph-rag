@@ -92,6 +92,7 @@ MULTIHOP_MAX_FILES = 12
 _LAMBDA_SCOPE = "<lambda>"
 
 _PATH_TOKEN = re.compile(r"[\w./-]+\.py\b")
+_CURRENT_DIR_PREFIX = "./"
 
 
 class QACase(NamedTuple):
@@ -279,7 +280,7 @@ def build_multihop_cases(target: Path, sample: int, seed: int = 0) -> list[QACas
 def extract_answer_files(answer: str, expected_root: str = "") -> frozenset[str]:
     found = set()
     for token in _PATH_TOKEN.findall(answer):
-        path = token.lstrip("./")
+        path = token.removeprefix(_CURRENT_DIR_PREFIX)
         if expected_root and path.startswith(expected_root + "/"):
             path = path[len(expected_root) + 1 :]
         found.add(path)
