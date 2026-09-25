@@ -138,3 +138,63 @@ def test_the_qn_seed_skips_a_sibling_projects_module(tmp_path: Path) -> None:
     seeded = updater.factory.definition_processor.module_qn_to_file_path
     assert "svc.api" in seeded, seeded
     assert not [qn for qn in seeded if qn.startswith("svc.v2.")], seeded
+
+
+def _qns_under(store: _StatefulIngestor, project: str) -> set[str]:
+    return {
+        qn
+        for props in store.nodes.values()
+        if isinstance(qn := props.get(cs.KEY_QUALIFIED_NAME), str)
+        and (qn == project or qn.startswith(f"{project}."))
+    }
+
+
+def test_an_incremental_run_deletes_nothing_the_longer_named_project_owns(
+    tmp_path: Path,
+) -> None:
+    """Both deletes an incremental run makes are prefix-ruled, and `svc.`
+    matches `svc.v2`'s nodes (issue #1985). Re-parsing `svc/api.py` deleted
+    `svc.v2.api` through the module delete, and the orphan prune deleted
+    `svc.v2.extra` because `svc/extra.py` does not exist."""
+    store, root = _two_projects(tmp_path)
+    before = _qns_under(store, "svc.v2")
+    assert {"svc.v2.api", "svc.v2.api.helper", "svc.v2.extra"} <= before, before
+
+    (root / "api.py").write_text(_MODELS + "\n\ndef added():\n    return 3\n")
+    updater = _updater(root, store, "svc")
+    # The prune's decision, not only its effect: the scoped module delete
+    # would absorb a wrong `extra.py` request, hiding a prefix-ruled prune.
+    requested: list[str] = []
+    delete = updater._delete_module_entities
+
+    def record(file_key: str) -> None:
+        requested.append(file_key)
+        delete(file_key)
+
+    updater._delete_module_entities = record  # type: ignore[method-assign]
+    updater.run()
+
+    assert {path.name for path, _language in updater._parsed_files} == {"api.py"}
+    assert requested == ["api.py"]
+    assert _qns_under(store, "svc.v2") == before
+    assert "svc.api.added" in _qns_under(store, "svc")
+
+
+def test_the_module_delete_leaves_an_unrelated_project_alone(
+    tmp_path: Path,
+) -> None:
+    """Control for the double: the real `CYPHER_DELETE_MODULE` is scoped to
+    the project, so a project whose name merely shares a path never loses
+    its module. The double used to delete every Module at the path."""
+    store, _root = _two_projects(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "api.py").write_text(_MODELS, encoding="utf-8")
+    _updater(other, store, "other").run(force=True)
+    before = _qns_under(store, "other")
+    assert "other.api.helper" in before, before
+
+    (tmp_path / "svc" / "api.py").write_text(_MODELS + "\n# touched\n")
+    _updater(tmp_path / "svc", store, "svc").run()
+
+    assert _qns_under(store, "other") == before

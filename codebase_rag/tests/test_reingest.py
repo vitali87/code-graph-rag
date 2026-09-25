@@ -963,6 +963,7 @@ def test_reingest_deletes_the_module_project_scoped(
             cs.KEY_PATH: "mod.py",
             cs.KEY_PROJECT_NAME: updater.project_name,
             cs.KEY_PROJECT_PREFIX: f"{updater.project_name}.",
+            cs.KEY_NESTED_PROJECTS: [],
         }
     ]
     # A live file's File node is re-merged by the re-parse, not deleted.
