@@ -195,16 +195,18 @@ def _validate_qdrant_collection(client: Any) -> None:
     # vector size; without this check the mismatch only surfaces as an
     # opaque upsert error after the whole graph has been parsed.
     info = client.get_collection(collection_name=settings.QDRANT_COLLECTION_NAME)
-    vectors = info.config.params.vectors
     # Named-vector collections (a dict) are not created by this module, so
-    # only the single unnamed-vector layout is checked.
-    if not isinstance(vectors, VectorParams):
+    # only the single unnamed-vector layout, which carries an int `size`, is
+    # checked. Read by attribute rather than isinstance(VectorParams), which
+    # is not a class when qdrant-client is absent or stubbed.
+    size = getattr(info.config.params.vectors, "size", None)
+    if not isinstance(size, int):
         return
-    if vectors.size != settings.QDRANT_VECTOR_DIM:
+    if size != settings.QDRANT_VECTOR_DIM:
         raise ValueError(
             ex.QDRANT_VECTOR_DIM_MISMATCH.format(
                 collection=settings.QDRANT_COLLECTION_NAME,
-                dim=vectors.size,
+                dim=size,
                 expected=settings.QDRANT_VECTOR_DIM,
             )
         )
