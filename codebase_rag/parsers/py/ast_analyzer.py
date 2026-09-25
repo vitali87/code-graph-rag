@@ -451,16 +451,15 @@ def _annotates(binder: Node) -> bool:
 def _enclosing_functions(node: Node, stop: Node) -> Iterator[Node]:
     """Function scopes ENCLOSING `node`'s own, innermost first, up to `stop`.
 
-    The function `node` sits directly inside is skipped: a `nonlocal` never
-    binds in the scope that declares it.
+    The scope `node` sits directly inside is skipped, whatever it is: a
+    `nonlocal` never binds in the scope that declares it, and a class body's
+    `nonlocal` binds the nearest enclosing FUNCTION (bot review).
     """
-    current = node.parent
-    own_scope_seen = False
+    own = _own_scope(node)
+    current = own.parent if own is not None else None
     while current is not None:
         if current.type == cs.TS_PY_FUNCTION_DEFINITION:
-            if own_scope_seen:
-                yield current
-            own_scope_seen = True
+            yield current
         if current.id == stop.id:
             return
         current = current.parent

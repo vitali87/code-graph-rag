@@ -440,14 +440,15 @@ def test_a_parameter_is_the_nearest_binder_of_a_nonlocal(tmp_path: Path) -> None
 
 def test_a_forwarding_nonlocal_does_not_own_the_name(tmp_path: Path) -> None:
     """`middle` declares `nonlocal v` and assigns it, so middle FORWARDS
-    outer's `v`; `inner`'s `nonlocal v` therefore reaches outer too, and
-    inner's rebinding types outer's name (bot review)."""
+    outer's `v`; `inner`'s `nonlocal v` therefore reaches outer too. Only
+    inner's `Banner()` is typeable (outer's `v` is an untyped parameter and
+    middle's value is unknown), so the answer does not depend on the order
+    the assignments are visited (bot review)."""
     body = (
-        "def outer():\n"
-        "    v = Widget()\n"
+        "def outer(v):\n"
         "    def middle():\n"
         "        nonlocal v\n"
-        "        v = Widget()\n"
+        "        v = unknown()\n"
         "        def inner():\n"
         "            nonlocal v\n"
         "            v = Banner()\n"
@@ -455,4 +456,24 @@ def test_a_forwarding_nonlocal_does_not_own_the_name(tmp_path: Path) -> None:
         "    middle()\n"
         "    return v\n"
     )
-    assert _local_types(tmp_path, body, "outer")["v"] == "Banner"
+    assert _local_types(tmp_path, body, "outer").get("v") == "Banner"
+
+
+def test_a_class_nonlocal_binds_the_nearest_enclosing_function(tmp_path: Path) -> None:
+    """A class body's `nonlocal v` binds the nearest enclosing FUNCTION,
+    `middle`, which binds `v` itself; outer's `v` keeps its own type. The
+    search skipped the first enclosing function rather than the declaring
+    scope, which here is the class (bot review)."""
+    body = (
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    def middle():\n"
+        "        v = Widget()\n"
+        "        class Holder:\n"
+        "            nonlocal v\n"
+        "            v = Banner()\n"
+        "        return v\n"
+        "    middle()\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
