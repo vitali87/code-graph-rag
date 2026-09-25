@@ -51,7 +51,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['logfire'],
+    excludes=['logfire', 'readline'],
     noarchive=False,
     optimize=0,
 )

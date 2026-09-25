@@ -1,0 +1,10 @@
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+The Microsoft Visual C++ runtime (vcruntime140*.dll, msvcp140*.dll) and the
+Windows Universal C Runtime (ucrtbase.dll, api-ms-win-*.dll) are Microsoft
+Distributable Code. They are redistributed unmodified, as shipped with the
+Python runtime this program is built on, and remain subject to Microsoft's
+licence terms:
+
+https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files
+https://learn.microsoft.com/cpp/windows/universal-crt-deployment
