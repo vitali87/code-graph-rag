@@ -487,6 +487,19 @@ class _StatefulIngestor:
             if uid == qn and label not in (_FILE_LABEL, _FOLDER_LABEL)
         ]
 
+    def _in_project(self, node: _NodeId, prefix: str) -> bool:
+        """`node.qualified_name STARTS WITH $project_prefix`, as every graph
+        read filters the far endpoint. A File or Folder has no qualified
+        name, so it never matches; an ExternalModule's does not carry the
+        prefix. Without this the emulator returned rows production drops
+        (issue #1604)."""
+        label, uid = node
+        return (
+            node in self.nodes
+            and label not in (_FILE_LABEL, _FOLDER_LABEL)
+            and _str(uid).startswith(prefix)
+        )
+
     def _graph_edge_row(
         self, edge: _EdgeKey, keys: tuple[str, ...], node: _NodeId
     ) -> ResultRow:
@@ -562,6 +575,7 @@ class _StatefulIngestor:
 
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
+        prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
         targets = self._graph_node_ids(qn)
         if query in (cq.CYPHER_GRAPH_RESOLVE_NAME, cq.CYPHER_GRAPH_RESOLVE_LOCATION):
             return self._graph_resolve_rows(query, params)
@@ -570,9 +584,8 @@ class _StatefulIngestor:
             for source in targets:
                 for edge in self._out.get(source, ()):
                     callee = (edge[3], edge[4])
-                    if (
-                        edge[2] == cs.RelationshipType.CALLS.value
-                        and callee in self.nodes
+                    if edge[2] == cs.RelationshipType.CALLS.value and self._in_project(
+                        callee, prefix
                     ):
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, callee)
@@ -607,7 +620,7 @@ class _StatefulIngestor:
             for target in targets:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
-                    if edge[2] in wanted and source in self.nodes:
+                    if edge[2] in wanted and self._in_project(source, prefix):
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_SITE_KEYS, source)
                         )
@@ -615,18 +628,23 @@ class _StatefulIngestor:
             overrides = cs.RelationshipType.OVERRIDES.value
             for target in targets:
                 for edge in self._in.get(target, ()):
-                    if edge[2] == overrides and (edge[0], edge[1]) in self.nodes:
+                    if edge[2] == overrides and self._in_project(
+                        (edge[0], edge[1]), prefix
+                    ):
                         rows.append(self._graph_edge_row(edge, (), (edge[0], edge[1])))
                 for edge in self._out.get(target, ()):
-                    if edge[2] == overrides and (edge[3], edge[4]) in self.nodes:
+                    if edge[2] == overrides and self._in_project(
+                        (edge[3], edge[4]), prefix
+                    ):
                         rows.append(self._graph_edge_row(edge, (), (edge[3], edge[4])))
         elif query == cq.CYPHER_GRAPH_IMPORTERS:
             for target in targets:
                 for edge in self._in.get(target, ()):
                     source = (edge[0], edge[1])
-                    if (
-                        edge[2] == cs.RelationshipType.IMPORTS.value
-                        and source in self.nodes
+                    if edge[
+                        2
+                    ] == cs.RelationshipType.IMPORTS.value and self._in_project(
+                        source, prefix
                     ):
                         rows.append(
                             self._graph_edge_row(edge, self._GRAPH_IMPORT_KEYS, source)
