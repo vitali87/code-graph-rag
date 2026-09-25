@@ -732,6 +732,13 @@ class CSharpTypeInferenceEngine:
         # a member of the enclosing type beats a static import in C#, so this
         # runs after the checks above that claim the name for the enclosing
         # type (a delegate-typed field's `Callback()` is Delegate.Invoke).
+        return self._resolve_via_static_imports(
+            name, arg_count, generic_call, module_qn
+        )
+
+    def _resolve_via_static_imports(
+        self, name: str, arg_count: int, generic_call: bool, module_qn: str
+    ) -> tuple[str, str] | None:
         # An ambiguity across two static imports is CS0121 in C#, not a call
         # anyone compiles, so refuse rather than pick one: the values are a
         # set, and choosing arbitrarily would emit a different edge per run.
