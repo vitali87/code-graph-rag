@@ -217,3 +217,81 @@ def test_cross_file_object_method_chaining(
         "Expected at least 1 call to User.set_name from handle_user_creation, "
         "indicating that chained method calls on imported class instances are detected"
     )
+
+
+def test_module_qualified_construction_receiver_binds_its_own_module(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """A `mod.Cls().method()` receiver binds the class in THAT module.
+
+    The base is an import name rather than a local, so the chained-receiver
+    path used to stop before the construction hop and emit no CALLS edge at
+    all (only INSTANTIATES). Folding the import hop fixed it for Dart's
+    prefixed form (issue #2033) and, since that path is language-agnostic,
+    for this shape too. `other.Cls` is a same-named decoy: reaching it
+    through `mod` would be worse than the previous silence, so the test
+    pins the module as well as the member.
+    """
+    # No __init__.py: with one, `modqual` is a package and the absolute
+    # `import mod` does not name `modqual.mod`, so the fixture would exercise
+    # nothing. Plain modules beside each other is the shape being tested.
+    project = temp_repo / "modqual"
+    project.mkdir()
+    (project / "mod.py").write_text(
+        "class Cls:\n    def method(self):\n        return 1\n", encoding="utf-8"
+    )
+    (project / "other.py").write_text(
+        "class Cls:\n    def method(self):\n        return 2\n", encoding="utf-8"
+    )
+    (project / "app.py").write_text(
+        "import mod\n\n\ndef f():\n    return mod.Cls().method()\n", encoding="utf-8"
+    )
+    run_updater(project, mock_ingestor)
+
+    name = project.name
+    targets = {
+        c.args[2][2]
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if c.args[0][2] == f"{name}.app.f"
+    }
+    assert f"{name}.mod.Cls.method" in targets, targets
+    assert f"{name}.other.Cls.method" not in targets, targets
+
+
+def test_module_qualified_factory_call_does_not_bind_a_same_named_class(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    """`mod2.factory()` is a FUNCTION call, not a construction.
+
+    The import-prefix fold (issue #2033) types a chain from the hop after the
+    prefix. Gating that on "the registry knows this name" was not enough: the
+    registry holds functions too, so `mod2.factory().run()` bound the
+    same-named CLASS `mod.factory` in an unrelated module -- the wrong module
+    and the wrong class, where the resolver had previously emitted nothing.
+    A missing edge is a gap; a confident wrong one is a defect.
+
+    The hop must therefore name a class; a function hop types the chain by its
+    recorded return type or not at all.
+    """
+    project = temp_repo / "factoryfold"
+    project.mkdir()
+    (project / "mod.py").write_text(
+        "class factory:\n    def run(self):\n        return 2\n", encoding="utf-8"
+    )
+    (project / "mod2.py").write_text(
+        "class Thing:\n    def run(self):\n        return 1\n\n\n"
+        "def factory():\n    return Thing()\n",
+        encoding="utf-8",
+    )
+    (project / "app.py").write_text(
+        "import mod2\n\n\ndef b():\n    return mod2.factory().run()\n", encoding="utf-8"
+    )
+    run_updater(project, mock_ingestor)
+
+    name = project.name
+    targets = {
+        c.args[2][2]
+        for c in get_relationships(mock_ingestor, "CALLS")
+        if c.args[0][2] == f"{name}.app.b"
+    }
+    assert f"{name}.mod.factory.run" not in targets, targets

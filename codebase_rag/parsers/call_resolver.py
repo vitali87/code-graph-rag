@@ -32,6 +32,12 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 _RS_TYPE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
+# Registry kinds a CONSTRUCTION hop may name. Same members as the Rust set
+# above, kept separate because that one is about Rust receiver types while
+# this gates the import-prefix fold for every language (issue #2033).
+_CONSTRUCTIBLE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
 # A definition nested inside one of these is scoped to that body, so the
 # simple-name fallback prefers candidates that are not (issue #945).
 _SCOPING_PARENT_TYPES = frozenset({NodeType.FUNCTION, NodeType.METHOD})
@@ -1250,6 +1256,15 @@ class CallResolver:
             # resolves through its type as any local does.
             if self._receiver_is_untyped_shadow(call_name, caller_qn, local_var_types):
                 return None
+        # Dart's counterpart: a local or parameter named like an import
+        # prefix makes `p.Box(1)` a call on that value, so the import map
+        # must not answer for it (issue #2088). The binding spans are
+        # syntactic, so `var p = 1`, which inference leaves untyped, counts.
+        # A shadow the type map holds resolves through its type as usual.
+        if language == cs.SupportedLanguage.DART and self._dart_call_on_shadow(
+            call_name, module_qn, local_var_types, call_point
+        ):
+            return None
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer
@@ -3507,6 +3522,16 @@ class CallResolver:
                 language,
                 call_point,
             )
+        elif (
+            folded := self._fold_import_prefix_hop(
+                parts, module_qn, local_var_types, call_point, language
+            )
+        ) is not None:
+            # `p.Box(1).height` under `import '...' as p;`: the base names an
+            # IMPORT, not a local, so the local lookup below would end the
+            # chain before the construction hop is seen (issue #2033). Fold
+            # the prefix into the next hop and type that hop instead.
+            current_type, parts = folded
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -3520,6 +3545,196 @@ class CallResolver:
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
         return current_type
+
+    def _drop_named_constructor(self, name: str, target: str) -> str:
+        """`Box.named` -> `Box` when the dotted name is not a definition but
+        its head is: the tail is a named constructor, not part of the type
+        (issue #2033). Any other name is returned unchanged."""
+        if cs.SEPARATOR_DOT not in name:
+            return name
+        head = name.split(cs.SEPARATOR_DOT, 1)[0]
+        full_qn = f"{target}{cs.SEPARATOR_DOT}{name}"
+        head_qn = f"{target}{cs.SEPARATOR_DOT}{head}"
+        if (
+            self.function_registry.get(full_qn) is None
+            and self.function_registry.get(head_qn) is not None
+        ):
+            return head
+        return name
+
+    def _names_own_constructible(self, name: str, module_qn: str) -> bool:
+        """Does `name` resolve, from this module, to something constructible?
+
+        `new X.named(1).m` splits to base `X` + hop `named()`, so the base is
+        the CLASS and the hop its named constructor (issue #2033). Asked
+        before the import map, since a class in this module is not an import.
+        """
+        own = self._resolve_class_qn_from_type(
+            name,
+            self.import_processor.import_mapping.get(module_qn, {}),
+            module_qn,
+        )
+        return bool(own) and self.function_registry.get(own) in (
+            _CONSTRUCTIBLE_NODE_TYPES
+        )
+
+    def _dart_call_on_shadow(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        call_point: int | None,
+    ) -> bool:
+        """Is `call_name`'s first segment an import prefix a binding at this
+        site shadows, with no type to resolve the call through instead?"""
+        if cs.SEPARATOR_DOT not in call_name:
+            return False
+        prefix = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        typed = local_var_types.get(prefix) if local_var_types else None
+        if typed and typed != cs.DART_DYNAMIC_TYPE:
+            return False
+        return bool(
+            self._dart_prefix_targets(prefix, module_qn)
+        ) and self._dart_prefix_is_shadowed(prefix, module_qn, call_point)
+
+    def _dart_prefix_is_shadowed(
+        self, prefix: str, module_qn: str, call_point: int | None
+    ) -> bool:
+        """Does a local or parameter named `prefix` bind it at this site?
+
+        The resolver's `local_var_types` only holds names it could infer a
+        TYPE for, so `var p = 1` is absent from it and an inferred-type check
+        cannot see the shadow. The import processor records the syntactic
+        binding spans instead, which are independent of inference.
+
+        A site with no recorded position cannot be placed against a span, so
+        it is treated as unshadowed: flow and taint passes resolve without a
+        position, and losing the fold there would drop real edges.
+        """
+        if call_point is None:
+            return False
+        spans = self.import_processor.dart_prefix_shadows.get(module_qn, {})
+        return any(lo <= call_point < hi for lo, hi in spans.get(prefix, ()))
+
+    def _fold_import_prefix_hop(
+        self,
+        parts: list[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+        call_point: int | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> tuple[str, list[str]] | None:
+        # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
+        # collapses to that class: the prefix carries no type of its own, and
+        # the class is what the rest of the chain hangs off. Returns the
+        # constructed type and the remaining chain with the prefix removed, or
+        # None when the base is not a prefix or the next hop is not a
+        # construction the registry knows.
+        if len(parts) < 2:
+            return None
+        # The bare `p.Box.named(1)` (no `new`) has no construction node, so
+        # the class and its named constructor arrive as two hops; rejoined,
+        # they take the path `new p.Box.named(1)` takes (issue #2084).
+        if (
+            language == cs.SupportedLanguage.DART
+            and len(parts) >= 3
+            and cs.CHAR_PAREN_OPEN not in parts[1]
+            and cs.CHAR_PAREN_OPEN in parts[2]
+        ):
+            parts = [parts[0], f"{parts[1]}{cs.SEPARATOR_DOT}{parts[2]}", *parts[3:]]
+        prefix, hop = parts[0], parts[1]
+        if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
+            return None
+        # A binding of that name at this site shadows the import, whether or
+        # not a type could be inferred for it (issue #2033).
+        if self._dart_prefix_is_shadowed(prefix, module_qn, call_point):
+            return None
+        # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
+        # the CLASS itself and the hop is its named constructor, so the
+        # receiver's type is the base (issue #2033). Checked before the
+        # import map, since a class in this module is not an import.
+        # Dart only: elsewhere `Foo.create()` is a static FACTORY whose
+        # recorded return type the chain must keep, and folding it to `Foo`
+        # dropped that hop (bot review).
+        if (
+            language == cs.SupportedLanguage.DART
+            and not (local_var_types and prefix in local_var_types)
+            and self._names_own_constructible(prefix, module_qn)
+        ):
+            return prefix, parts[1:]
+        # A local or parameter of that name SHADOWS the import prefix, so the
+        # base is that variable and the chain is not a prefixed construction
+        # at all. Without this a `dynamic p` parameter still resolved
+        # `p.Box(1).height` through `import ... as p`, emitting an edge where
+        # the resolver had emitted none.
+        if local_var_types and prefix in local_var_types:
+            return None
+        name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        hit = self._unique_prefixed_definition(
+            self._dart_prefix_targets(prefix, module_qn), name
+        )
+        if hit is None:
+            return None
+        target, qn, kind = hit
+        # The hop must be a CONSTRUCTION, so the imported module must define
+        # that name as a CLASS. Accepting any registry entry bound a
+        # `mod.factory()` whose factory is a FUNCTION to a same-named class in
+        # an unrelated module: a confidently wrong edge where the resolver
+        # previously emitted none.
+        if kind in _CONSTRUCTIBLE_NODE_TYPES:
+            # The QUALIFIED name, not the bare one: `qn` is the exact class
+            # the prefix names, and returning `name` sent the rest of the
+            # chain back through a suffix lookup that another module's
+            # same-named class could win (Copilot, PR #2040).
+            return qn, parts[1:]
+        # A function hop types the chain by its RECORDED return type instead;
+        # with none recorded the chain stays unresolved rather than guessing.
+        # The type is a BARE name, qualified in the factory's OWN module: in
+        # the caller another import's same-named class could win (Copilot,
+        # PR #2040).
+        returned = self.type_inference.method_return_types.get(qn)
+        return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
+
+    def _dart_prefix_targets(self, prefix: str, module_qn: str) -> list[str]:
+        # An explicit `as` alias wins over the file-derived key: with
+        # `import 'helper.dart'; import 'other.dart' as helper;` the name
+        # `helper` in the source is other.dart, while import_mapping still
+        # holds helper.dart under that key so both IMPORTS edges survive
+        # (Greptile, PR #2040).
+        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return aliases.get(prefix) or (
+            [import_map[prefix]] if import_map.get(prefix) else []
+        )
+
+    def _unique_prefixed_definition(
+        self, targets: list[str], name: str
+    ) -> tuple[str, str, NodeType] | None:
+        # Imports sharing a prefix are searched together, and `p.Box` names
+        # the ONE library defining `Box`; a name several of them define is
+        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
+        if not targets or not name:
+            return None
+        hits = [
+            (target, qn, kind)
+            for target in targets
+            if (
+                kind := self.function_registry.get(
+                    qn := self._prefixed_qn(target, name)
+                )
+            )
+            is not None
+        ]
+        return hits[0] if len(hits) == 1 else None
+
+    def _prefixed_qn(self, target: str, name: str) -> str:
+        # `p.Box.named()` reaches the fold as prefix `p` and hop `Box.named`:
+        # the parser cannot tell a named CONSTRUCTOR from a class, because
+        # both are a trailing identifier (issue #2033). The import map can: if
+        # the full dotted name is not a definition but its head is, the tail
+        # is a constructor and the receiver's type is the head.
+        member = self._drop_named_constructor(name, target)
+        return f"{target}{cs.SEPARATOR_DOT}{member}"
 
     def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring

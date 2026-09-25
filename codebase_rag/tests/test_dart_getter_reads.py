@@ -527,3 +527,460 @@ def test_const_construction_receiver_read_is_referenced(tmp_path: Path) -> None:
     }
     rels = _rels(_run(tmp_path, files))
     assert _has(rels, ".app.constGet", REFERENCES, ".Box.height"), rels
+
+
+def test_import_prefixed_construction_receiver_keeps_the_class_hop(
+    tmp_path: Path,
+) -> None:
+    # An import-prefixed construction (`p.Box<int>(1).height`,
+    # `new p.Box(1).height`) must name the member on the CLASS, not on the
+    # prefix (issue #2033). Both shapes put the prefix where the unprefixed
+    # ones put the class: `new p.Box(1)` is type_identifier(p) +
+    # identifier(Box), and the mis-parsed generic's left spine leads with
+    # the prefix identifier and carries `.Box` as a selector.
+    files = {
+        "lib.dart": ("class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n"),
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+            "int newGet() { return new p.Box(1).height; }\n"
+            "int bareGet() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    # Control: the bare prefixed form already keeps its class hop on main.
+    assert _has(rels, ".app.bareGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.genGet", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.newGet", REFERENCES, ".Box.height"), rels
+
+
+def test_an_import_alias_does_not_displace_another_import(tmp_path: Path) -> None:
+    # Registering the `as` prefix (issue #2033) must not overwrite a key an
+    # earlier import already owns. `import 'helper.dart';` keys on the file
+    # name, and `import 'other.dart' as helper;` claims the same string, so
+    # writing the alias unconditionally dropped the FIRST import entirely:
+    # both IMPORTS edges pointed at other.dart and helper.dart was lost.
+    files = {
+        "helper.dart": "class H {\n  int get v => 1;\n}\n",
+        "other.dart": "class O {\n  int get v => 2;\n}\n",
+        "app.dart": (
+            "import 'helper.dart';\n"
+            "import 'other.dart' as helper;\n"
+            "int f() { return H().v; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    imports = {b for a, r, b in rels if r == "IMPORTS" and a.endswith(".app")}
+    assert any(q.endswith(".helper") for q in imports), imports
+    assert any(q.endswith(".other") for q in imports), imports
+
+
+def test_a_shadowed_prefix_is_not_read_as_a_construction(tmp_path: Path) -> None:
+    # The shadow check that stops a comparison being read as a construction
+    # (issue #2015) keys on the BARE binder, but an import-prefixed base is
+    # dotted (`p.Box`, issue #2033). A parameter named `p` must still make
+    # `p.Box < b > (1).height` a comparison; looking the dotted name up in
+    # the shadow spans would never match and the wrong edge would return.
+    files = {
+        "lib.dart": "class Box {\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "dynamic cmp(dynamic p, dynamic b) {\n"
+            "  return p.Box < b > (1).height;\n"
+            "}\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.cmp", REFERENCES, ".Box.height"), rels
+
+
+def test_a_prefixed_factory_function_types_the_chain_by_its_return(
+    tmp_path: Path,
+) -> None:
+    # A hop after an import prefix need not be a constructor: `p.make()` is a
+    # FUNCTION, so the fold types the chain from its recorded return type
+    # instead of treating `make` as a class (issue #2033). This is the
+    # positive case for that branch -- the factory guard test asserts only an
+    # absence, which a fold-nothing implementation would also satisfy.
+    files = {
+        "lib.dart": (
+            "class Thing {\n  int get v => 1;\n}\n\nThing make() { return Thing(); }\n"
+        ),
+        "app.dart": ("import 'lib.dart' as p;\nint f() { return p.make().v; }\n"),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.f", "CALLS", ".lib.make"), rels
+    assert _has(rels, ".app.f", REFERENCES, ".Thing.v"), rels
+
+
+def test_a_named_constructor_is_not_part_of_the_receiver_type(
+    tmp_path: Path,
+) -> None:
+    # `new Box.named(1)` constructs a Box, so the read binds Box.height. The
+    # grammar separates the shapes by node type -- an import prefix is a
+    # type_identifier, a named constructor an identifier -- and joining both
+    # made the receiver type `Box.named`, which resolves to nothing
+    # (issue #2033). The prefixed form keeps its prefix.
+    files = {
+        "lib.dart": (
+            "class Box {\n"
+            "  final int v;\n"
+            "  const Box(this.v);\n"
+            # `const Box.named(1)` below needs a CONST constructor; a plain
+            # one makes that a compile-time error, so the fixture would be
+            # invalid Dart and the test could pass on a parse failure rather
+            # than on resolution (CodeRabbit, PR #2040).
+            "  const Box.named(this.v);\n"
+            "  int get height => 2;\n"
+            "}\n"
+        ),
+        "app.dart": (
+            "import 'lib.dart';\n"
+            "import 'lib.dart' as p;\n"
+            "int named() { return new Box.named(1).height; }\n"
+            "int constNamed() { return const Box.named(1).height; }\n"
+            "int prefixedNamed() { return new p.Box.named(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.named", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.constNamed", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.prefixedNamed", REFERENCES, ".Box.height"), rels
+
+
+def test_a_local_shadowing_an_import_prefix_is_not_folded(tmp_path: Path) -> None:
+    # A parameter named after the import prefix SHADOWS it, so
+    # `p.Box(1).height` reads a member of that parameter, not of the imported
+    # class, and must emit no edge (issue #2033). Folding unconditionally
+    # resolved it through `import ... as p` and invented an edge where the
+    # resolver had emitted none.
+    #
+    # The untyped case is covered by
+    # test_an_untyped_local_shadowing_an_import_prefix_is_not_folded below.
+    #
+    # Separately, the bare `p.Box.named(1).height` spelling (no `new`) has
+    # never resolved on any branch; filed as #2084.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int shadowed(dynamic p) { return p.Box(1).height; }\n"
+            "int unshadowed() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.shadowed", REFERENCES, ".Box.height"), rels
+    # Control: the unshadowed prefix still resolves, so the guard is not
+    # simply switching the fold off.
+    assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
+
+
+def test_a_pattern_binding_shadowing_an_import_prefix_is_not_folded(
+    tmp_path: Path,
+) -> None:
+    # `var (p, q) = (1, 2)` binds `p` as surely as `var p = 1` does, and
+    # carries no inferable type either, so neither the span guard nor the
+    # older local_var_types guard sees it unless the span walk descends into
+    # the pattern subtree. It did not, so this shape reproduced the exact
+    # false CALLS/INSTANTIATES/REFERENCES edges the guard exists to stop
+    # (local review P1 on the first cut of this fix).
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int pat() { var (p, q) = (1, 2); return p.Box(1).height; }\n"
+            "int clean() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.pat", REFERENCES, ".Box.height"), rels
+    # Control: the same prefix in a function with no pattern still folds.
+    assert _has(rels, ".app.clean", REFERENCES, ".Box.height"), rels
+    # NOT asserted: the CALLS/INSTANTIATES pair. Measured at this commit's
+    # parent, `p.Box(1)` under ANY shadow shape -- including the typed
+    # parameter the older guard does catch for reads -- still emits
+    # `CALLS lib.Box.Box` and `INSTANTIATES lib.Box`, because the call path
+    # resolves through `_try_resolve_via_import` rather than the chain fold
+    # this guard sits in. Pre-existing and shape-independent, so it is a
+    # separate defect, not part of this fix.
+
+
+def test_a_parameter_shadow_does_not_reach_past_its_own_body(
+    tmp_path: Path,
+) -> None:
+    # A parameter lives in the SIGNATURE, a sibling of the body, so walking
+    # up for a block ancestor finds none. Falling through to the file root
+    # made one function's parameter shadow the whole module -- measured, it
+    # swallowed an unrelated read 45 bytes later.
+    #
+    # The binder must be the PARAMETER itself -- a `var p = ...` local has a
+    # block ancestor and never reaches the signature branch, so a fixture
+    # using one tests nothing here (measured: it stays green with the rule
+    # deleted).
+    #
+    # It must also be UNANNOTATED. A typed parameter is caught upstream by
+    # local_var_types, which hides any difference; `int first(p)` is not,
+    # so the span path is the only thing suppressing it. With the rule
+    # removed a parameter records NO span at all and `first` leaks
+    # REFERENCES to Box.height.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int first(p) { return p.Box(1).height; }\n"
+            "int second() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.first", REFERENCES, ".Box.height"), rels
+    assert _has(rels, ".app.second", REFERENCES, ".Box.height"), rels
+
+
+def test_an_untyped_local_shadowing_an_import_prefix_is_not_folded(
+    tmp_path: Path,
+) -> None:
+    # `var p = 1` shadows the prefix exactly as a typed parameter does, but
+    # it carries no inferable type, so it never reaches `local_var_types` --
+    # instrumented and measured empty at the fold. Checking the type map
+    # therefore cannot see this shadow at all, and the fold resolved
+    # `p.Box(1).height` through `import ... as p`, inventing REFERENCES and
+    # CALLS edges to the imported class (issue #2033, Greptile P1 on #2040).
+    #
+    # The binding is syntactic, so the import processor records the span the
+    # name is bound in and the fold checks the call site against it. No type
+    # inference is involved on either side.
+    files = {
+        "lib.dart": "class Box {\n  Box(int v);\n  int get height => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\n"
+            "int untyped() { var p = 1; return p.Box(1).height; }\n"
+            "int scoped() {\n"
+            "  { var p = 1; }\n"
+            "  return p.Box(1).height;\n"
+            "}\n"
+            "int unshadowed() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.untyped", REFERENCES, ".Box.height"), rels
+    # The shadow is SCOPED: a binding in an inner block does not reach a read
+    # after that block, so `scoped` still folds. Without this the guard could
+    # pass by suppressing the fold for the whole module.
+    assert _has(rels, ".app.scoped", REFERENCES, ".Box.height"), rels
+    # Control: an unshadowed prefix in the same file still resolves.
+    assert _has(rels, ".app.unshadowed", REFERENCES, ".Box.height"), rels
+
+
+def test_an_explicit_alias_beats_a_colliding_filename_key(tmp_path: Path) -> None:
+    """An `as` prefix is the name the SOURCE binds, so it owns that key.
+
+    The file-derived key (`helper` for `helper.dart`) never appears in the
+    source; it exists so an UNPREFIXED import of that file resolves. When a
+    later import aliases a different library to the same name, Dart binds
+    the alias, so `helper.Box` is other.dart's `Box`. Registering the alias
+    only where the key was free dropped it silently and resolved the read
+    against the wrong library (Greptile, PR #2040).
+    """
+    files = {
+        "helper.dart": "class Box {\n  Box(int v);\n  int get height => 1;\n}\n",
+        "other.dart": "class Box {\n  Box(int v);\n  int get width => 2;\n}\n",
+        "app.dart": (
+            "import 'helper.dart';\n"
+            "import 'other.dart' as helper;\n"
+            "int aliased() { return helper.Box(1).width; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+
+    assert _has(rels, ".app.aliased", REFERENCES, ".other.Box.width"), rels
+    assert not _has(rels, ".app.aliased", REFERENCES, ".helper.Box.height"), rels
+
+
+def test_a_reparse_drops_the_dart_prefix_state(tmp_path: Path) -> None:
+    """`_clear_module_import_state` must carry nothing the file no longer says.
+
+    Both Dart prefix maps are written only when the file HAS prefixed
+    imports, so removing the last one left the previous parse's entries in
+    place: a stale alias kept resolving a name the file no longer binds
+    (Copilot, PR #2040).
+    """
+    from codebase_rag.parsers.import_processor import ImportProcessor
+
+    class _Probe(ImportProcessor):  # __slots__ forbids stubbing on instances
+        def _retract_import_sites(self, module_qn: str) -> None:
+            return None
+
+    processor = object.__new__(_Probe)
+    processor.import_mapping = {"m": {"p": "m.lib"}}
+    processor.dart_prefix_shadows = {"m": {"p": [(0, 1)]}}
+    processor.dart_import_aliases = {"m": {"p": ["m.lib"]}}
+    processor._cpp_shadowed_include_targets = set()
+    processor._cpp_declaration_mappings = set()
+
+    processor._clear_module_import_state("m")
+
+    assert processor.dart_prefix_shadows.get("m") is None
+    assert processor.dart_import_aliases.get("m") is None
+    # The control: the mapping it sits beside is emptied, not dropped, so
+    # this is the documented reset rather than a wholesale delete.
+    assert processor.import_mapping["m"] == {}
+
+
+def test_a_prefixed_factory_types_the_chain_in_its_own_module(tmp_path: Path) -> None:
+    # The recorded return type is a BARE name. Resolved in the CALLER, where
+    # an unprefixed import brings another `Thing` into scope, the chain bound
+    # `alt.Thing.v`; the factory's own module names `lib.Thing`
+    # (Copilot, PR #2040). The decoy must sort BEFORE `lib`: named
+    # `other.dart` the suffix lookup reached `lib.Thing` first by luck and
+    # the test passed on the unfixed code.
+    files = {
+        "lib.dart": (
+            "class Thing {\n  int get v => 1;\n}\n\nThing make() { return Thing(); }\n"
+        ),
+        "alt.dart": "class Thing {\n  int get v => 2;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\nimport 'alt.dart';\n"
+            "int f() { return p.make().v; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.f", REFERENCES, ".lib.Thing.v"), rels
+    assert not _has(rels, ".app.f", REFERENCES, ".alt.Thing.v"), rels
+
+
+def test_libraries_sharing_a_prefix_are_all_searched(tmp_path: Path) -> None:
+    # Dart lets several imports share one prefix, and `p.Box` names the one
+    # library that defines `Box`. Keeping only the LAST import under `p`
+    # searched `b.dart`, which has no `Box`, and the fold gave up
+    # (CodeRabbit, PR #2040).
+    files = {
+        "a.dart": "class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n",
+        "b.dart": "class Other {\n  int get height => 3;\n}\n",
+        "app.dart": (
+            "import 'a.dart' as p;\nimport 'b.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.genGet", REFERENCES, ".a.Box.height"), rels
+
+
+def test_a_name_both_prefixed_libraries_define_is_not_guessed(tmp_path: Path) -> None:
+    # The same name in two libraries under one prefix is an ambiguous import
+    # in Dart; the fold binds neither rather than picking one.
+    files = {
+        "a.dart": "class Box<T> {\n  Box(T v);\n  int get height => 2;\n}\n",
+        "b.dart": "class Box<T> {\n  Box(T v);\n  int get height => 3;\n}\n",
+        "app.dart": (
+            "import 'a.dart' as p;\nimport 'b.dart' as p;\n"
+            "int genGet() { return p.Box<int>(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not _has(rels, ".app.genGet", REFERENCES, ".b.Box.height"), rels
+    assert not _has(rels, ".app.genGet", REFERENCES, ".a.Box.height"), rels
+
+
+_NAMED_BOX = (
+    "class Box {\n  Box(int v);\n  Box.named(int v);\n  int get height => 2;\n}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("header", "call"),
+    [
+        ("import 'lib.dart' as p;\n", "p.Box.named(1).height"),
+        ("import 'lib.dart';\n", "Box.named(1).height"),
+    ],
+)
+def test_a_named_constructor_without_new_types_by_its_class(
+    tmp_path: Path, header: str, call: str
+) -> None:
+    """The bare named-constructor form, prefixed or not, has no construction
+    node: it is an identifier and flat selectors (#2084)."""
+    files = {
+        "lib.dart": _NAMED_BOX,
+        "app.dart": f"{header}int bareNamed() {{ return {call}; }}\n",
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.bareNamed", REFERENCES, ".Box.height"), rels
+
+
+def test_a_same_module_static_field_chain_is_not_a_construction(
+    tmp_path: Path,
+) -> None:
+    """`Foo.bar.baz()` reads the static field `bar`, so it never binds
+    `Foo.baz`: the #2084 rejoin applies to import prefixes only."""
+    files = {
+        "app.dart": (
+            "class Other { int baz() => 1; }\n"
+            "class Foo {\n  static Other bar = Other();\n  int baz() => 2;\n}\n"
+            "int use() { return Foo.bar.baz(); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert not any(
+        str(src).endswith(".app.use") and str(dst).endswith(".Foo.baz")
+        for src, _rel, dst in rels
+    ), rels
+
+
+_PLAIN_BOX = "class Box {\n  Box(int v);\n  int get height => 2;\n}\n"
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        "int shadowed(dynamic p) { return p.Box(1).height; }\n",
+        "int shadowed() { var p = 1; return p.Box(1).height; }\n",
+        "int shadowed() { var (p, q) = (1, 2); return p.Box(1).height; }\n",
+    ],
+)
+def test_a_shadowed_prefix_emits_no_call_through_the_import(
+    tmp_path: Path, shadow: str
+) -> None:
+    """`p` bound at the site is a value, so `p.Box(1)` is a call on it, not
+    a construction of the imported `Box`: no CALLS, INSTANTIATES or
+    REFERENCES through the import (#2088)."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "app.dart": f"import 'lib.dart' as p;\n{shadow}",
+    }
+    rels = _rels(_run(tmp_path, files))
+    leaked = {
+        (rel, dst)
+        for src, rel, dst in rels
+        if src.endswith(".app.shadowed") and ".lib.Box" in dst
+    }
+    assert leaked == set(), leaked
+
+
+def test_the_unshadowed_prefix_still_constructs(tmp_path: Path) -> None:
+    """The control: the same call with no shadow keeps its edges."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "app.dart": (
+            "import 'lib.dart' as p;\nint plain() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.plain", "CALLS", ".Box.Box"), rels
+    assert _has(rels, ".app.plain", "INSTANTIATES", ".lib.Box"), rels
+
+
+def test_a_typed_shadow_resolves_through_its_type(tmp_path: Path) -> None:
+    """A shadow with a real type is a receiver like any other: `p.Box(1)`
+    on a `Pad p` calls `Pad.Box`, not the imported class (#2088)."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "pad.dart": "class Pad {\n  int Box(int v) => v;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\nimport 'pad.dart';\n"
+            "int typed(Pad p) { return p.Box(1); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.typed", "CALLS", ".Pad.Box"), rels
+    assert not any(
+        src.endswith(".app.typed") and ".lib.Box" in dst for src, _r, dst in rels
+    ), rels

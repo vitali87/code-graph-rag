@@ -25,7 +25,13 @@ from ..types_defs import (
 )
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
-from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
+from .dart import (
+    dart_binding_spans,
+    dart_extract_uri,
+    dart_import_prefix,
+    dart_local_name,
+    dart_resolve_import,
+)
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -599,6 +605,8 @@ class ImportProcessor:
         "rust_fn_scope_mod_imports",
         "rust_block_items",
         "rust_block_item_qns",
+        "dart_prefix_shadows",
+        "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -739,6 +747,15 @@ class ImportProcessor:
         # from reaching them from outside their block (issue #1061).
         self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
         self.rust_block_item_qns: set[str] = set()
+        # Dart: {module qn: {import prefix: [byte spans where a local or
+        # parameter of that name shadows it]}} (issue #2033).
+        self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
+        # `import 'other.dart' as helper;` binds `helper` to other.dart even
+        # when an unprefixed `import 'helper.dart';` already owns that key in
+        # import_mapping. Kept separately so BOTH imports keep their IMPORTS
+        # edge (those come from import_mapping's values) while the name the
+        # source writes resolves to the aliased library (Greptile, #2033).
+        self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -989,6 +1006,14 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # The Dart prefix maps share the same invariant. Both are written
+        # only when the file HAS prefixed imports, so removing the last one
+        # left the previous parse's entries in place: a stale alias kept
+        # resolving a name the file no longer binds, and a stale shadow span
+        # kept suppressing a fold at a line that had moved (Copilot,
+        # PR #2040).
+        self.dart_prefix_shadows.pop(module_qn, None)
+        self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(
@@ -1124,7 +1149,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
-                    self._parse_dart_imports(captures, module_qn)
+                    self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
                 case _:
@@ -4601,12 +4626,15 @@ class ImportProcessor:
                 node_type=import_node.type,
             )
 
-    def _parse_dart_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_dart_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
         # Dart import/export/part directives carry a URI string. `dart:` and
         # `package:` targets are external (kept verbatim); relative paths and part
         # files resolve to a project-internal module qn. A `part of my.library;`
         # directive names a dotted library, not a file, so it has no URI and is
         # skipped.
+        prefixes: set[str] = set()
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             uri = dart_extract_uri(import_node)
             if not uri:
@@ -4615,6 +4643,47 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                # `import 'lib.dart' as p;` binds the library's names under
+                # `p`, and the file-derived key never appears in the source,
+                # so a prefixed reference (`p.Box`) resolves only once the
+                # PREFIX is a key too (issue #2033). Both keys are kept: the
+                # file-derived one still serves an unprefixed import of the
+                # same file elsewhere in the module.
+                # An alias must not clobber a key another import already
+                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+                # would otherwise drop the first import entirely, since the
+                # file-derived key and the alias collide. The prefix is the
+                # name the source uses for THIS import, so it is only added
+                # where it is free.
+                prefix = dart_import_prefix(import_node)
+                if prefix:
+                    # An explicit `as` prefix is the name the SOURCE uses for
+                    # this import, so it owns that name outright. Recorded in
+                    # its own map rather than overwriting import_mapping,
+                    # whose values carry the IMPORTS edges: writing it there
+                    # dropped the colliding unprefixed import entirely.
+                    # Several imports may SHARE a prefix (`import 'a.dart' as
+                    # p; import 'b.dart' as p;`), so every library is kept and
+                    # the fold picks the one defining the name (CodeRabbit,
+                    # PR #2040).
+                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+                        prefix, []
+                    ).append(full_name)
+                    if prefix not in self.import_mapping[module_qn]:
+                        self.import_mapping[module_qn][prefix] = full_name
+                        # Its IMPORTS edge carries a span and alias like every
+                        # other binding (Copilot, PR #2040).
+                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    prefixes.add(prefix)
+        # A local or parameter of the same name SHADOWS the prefix inside its
+        # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
+        # local_var_types, so the type map cannot answer this. The binding is
+        # syntactic, so record its span here and let the fold check the call
+        # site against it (issue #2033).
+        if root_node is not None and prefixes:
+            self.dart_prefix_shadows[module_qn] = dart_binding_spans(
+                root_node, frozenset(prefixes)
+            )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):

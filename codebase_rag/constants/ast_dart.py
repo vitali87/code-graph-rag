@@ -240,3 +240,7 @@ DART_PARAMETER_MODIFIERS = frozenset({"final", "const", "var", "covariant"})
 
 # `C(super.x)`: an initialising formal forwarded to the superclass constructor.
 TS_DART_SUPER_FORMAL_PARAMETER = "super_formal_parameter"
+
+# The static type that opts out of typing: a `dynamic p` has no type a
+# member call on it can resolve through.
+DART_DYNAMIC_TYPE = "dynamic"
