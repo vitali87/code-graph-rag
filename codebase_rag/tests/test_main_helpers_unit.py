@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 from pydantic_ai import BinaryContent
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 from rich.console import Console
 from rich.table import Table
 
 from codebase_rag import constants as cs
-from codebase_rag.config import ModelConfig
+from codebase_rag.config import AppConfig, ModelConfig
 from codebase_rag.main import (
     _build_user_prompt,
     _create_configuration_table,
@@ -20,6 +22,7 @@ from codebase_rag.main import (
     _path_variants,
     _print_new_file_content,
     _print_unified_diff,
+    _refresh_context_tokens,
     _setup_common_initialization,
     _to_tool_args,
     _update_single_model_setting,
@@ -387,6 +390,135 @@ class TestUpdateModelSettings:
             update_model_settings(None, None)
 
         single.assert_not_called()
+
+
+def _active_config(app_settings: AppConfig, role: cs.ModelRole) -> ModelConfig:
+    if role == cs.ModelRole.ORCHESTRATOR:
+        return app_settings.active_orchestrator_config
+    return app_settings.active_cypher_config
+
+
+def _set_config(app_settings: AppConfig, role: cs.ModelRole) -> Callable[..., None]:
+    if role == cs.ModelRole.ORCHESTRATOR:
+        return app_settings.set_orchestrator
+    return app_settings.set_cypher
+
+
+class TestProviderSwitchStartsFromProviderDefaults:
+    """A provider chosen on the command line keeps nothing of the config it
+    replaces, while a model change within one provider keeps it all (#2195)."""
+
+    @pytest.fixture
+    def app_settings(self, monkeypatch: pytest.MonkeyPatch) -> AppConfig:
+        for variable in (
+            "ORCHESTRATOR_PROVIDER",
+            "ORCHESTRATOR_MODEL",
+            "CYPHER_PROVIDER",
+            "CYPHER_MODEL",
+            cs.ENV_ANTHROPIC_API_KEY,
+            cs.ENV_OPENAI_API_KEY,
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        app_settings = AppConfig(_env_file=None)
+        monkeypatch.setattr("codebase_rag.main.settings", app_settings)
+        return app_settings
+
+    @pytest.mark.parametrize("role", list(cs.ModelRole))
+    def test_a_switch_from_the_default_ollama_config_uses_the_providers_own_key(
+        self,
+        app_settings: AppConfig,
+        role: cs.ModelRole,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(cs.ENV_ANTHROPIC_API_KEY, "sk-ant-from-env")
+
+        _update_single_model_setting(role, "anthropic:claude-sonnet-5")
+
+        config = _active_config(app_settings, role)
+        assert config.provider == cs.Provider.ANTHROPIC
+        assert config.api_key == "sk-ant-from-env"
+        assert config.endpoint is None
+
+    @pytest.mark.parametrize("value", ["   ", cs.DEFAULT_API_KEY])
+    def test_a_blank_or_placeholder_provider_key_is_no_key(
+        self, app_settings: AppConfig, value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(cs.ENV_ANTHROPIC_API_KEY, value)
+
+        _update_single_model_setting(
+            cs.ModelRole.ORCHESTRATOR, "anthropic:claude-sonnet-5"
+        )
+
+        assert app_settings.active_orchestrator_config.api_key is None
+
+    @pytest.mark.parametrize("role", list(cs.ModelRole))
+    def test_nothing_of_another_providers_config_carries_over(
+        self, app_settings: AppConfig, role: cs.ModelRole
+    ) -> None:
+        _set_config(app_settings, role)(
+            "openai",
+            "gpt-4o",
+            api_key="sk-openai",
+            endpoint="http://proxy:8000/v1",
+            project_id="project",
+            region="europe-west4",
+            provider_type="vertex",
+            thinking_budget=1024,
+            service_account_file="/secrets/sa.json",
+        )
+
+        _update_single_model_setting(role, "anthropic:claude-sonnet-5")
+
+        assert _active_config(app_settings, role).to_update_kwargs() == {
+            cs.FIELD_API_KEY: None,
+            cs.FIELD_ENDPOINT: None,
+            "project_id": None,
+            "region": cs.DEFAULT_REGION,
+            "provider_type": None,
+            "thinking_budget": None,
+            "service_account_file": None,
+        }
+
+    @pytest.mark.parametrize("role", list(cs.ModelRole))
+    def test_a_model_change_within_the_provider_keeps_its_key_and_endpoint(
+        self, app_settings: AppConfig, role: cs.ModelRole
+    ) -> None:
+        _set_config(app_settings, role)(
+            "openai", "gpt-4o", api_key="sk-openai", endpoint="http://proxy:8000/v1"
+        )
+
+        _update_single_model_setting(role, "openai:gpt-4o-mini")
+
+        config = _active_config(app_settings, role)
+        assert config.model_id == "gpt-4o-mini"
+        assert config.api_key == "sk-openai"
+        assert config.endpoint == "http://proxy:8000/v1"
+
+    @pytest.mark.asyncio
+    async def test_the_token_counter_receives_the_key_the_provider_uses(
+        self, app_settings: AppConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It read the Ollama placeholder, and Anthropic answered 401."""
+        monkeypatch.setenv(cs.ENV_ANTHROPIC_API_KEY, "sk-ant-from-env")
+        sent_keys: list[str] = []
+
+        async def count(api_key: str, *_args: object, **_kwargs: object) -> int:
+            sent_keys.append(api_key)
+            return 1
+
+        monkeypatch.setattr(
+            "codebase_rag.services.anthropic_token_counter.count_anthropic_context",
+            count,
+        )
+        _update_single_model_setting(
+            cs.ModelRole.ORCHESTRATOR, "anthropic:claude-sonnet-5"
+        )
+
+        await _refresh_context_tokens(
+            [ModelRequest(parts=[UserPromptPart(content="hello")])]
+        )
+
+        assert sent_keys == ["sk-ant-from-env"]
 
 
 class TestExportGraphToFile:
