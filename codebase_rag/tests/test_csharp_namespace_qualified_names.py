@@ -606,3 +606,19 @@ class TestAUsingChoosesAmongSameNamedTypes:
         owner = "proj.src.Zeta.Widget.Widget"
         targets = {target for source, target in _calls(store) if source == run}
         assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+
+    def test_a_using_static_imports_members_not_a_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        """`using static Other.Widget;` makes Other.Widget's members bare,
+        while `using Zeta;` imports only Zeta's types, so a bare `S()` is
+        `Other.Widget.S` (bot review)."""
+        files = _twin_widgets("using static Other.Widget;\nusing Zeta;")
+        files["src/App/Plain.cs"] = (
+            "using static Other.Widget;\nusing Zeta;\nnamespace App;\n"
+            "public class Plain\n{\n    public void Run() { S(); }\n}\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.Plain.Run"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {"proj.src.Other.Widget.Widget.S"}, sorted(targets)

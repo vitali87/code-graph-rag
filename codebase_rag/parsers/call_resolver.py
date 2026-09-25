@@ -2881,7 +2881,9 @@ class CallResolver:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
         if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
-            possible_matches = self._csharp_prefer_imported(possible_matches, module_qn)
+            possible_matches = self._csharp_prefer_imported(
+                possible_matches, module_qn, call_name
+            )
 
         if len(possible_matches) == 1:
             best_candidate_qn = possible_matches[0]
@@ -2911,7 +2913,7 @@ class CallResolver:
         return self.function_registry[best_candidate_qn], best_candidate_qn
 
     def _csharp_prefer_imported(
-        self, candidates: list[str], module_qn: str
+        self, candidates: list[str], module_qn: str, call_name: str
     ) -> list[str]:
         # Same-named C# types in two namespaces tied on import distance and
         # broke on qn order, so `using Zeta;` + `new Widget()` bound
@@ -2922,12 +2924,22 @@ class CallResolver:
         # a type) the file imports: C# does not import nested namespaces.
         declared = self.type_inference.csharp_class_namespaced
         containers: dict[str, str] = {}
+        # What an import must name for each candidate: a type, or a member
+        # reached through its type (`Widget.S()`), is imported by a
+        # namespace directive naming the type's namespace; a BARE member
+        # (`S()`) only by a `using static` naming its declaring type
+        # (bot review).
+        bare = cs.SEPARATOR_DOT not in call_name
+        import_keys: dict[str, str] = {}
         for qn in candidates:
             owner = qn
             while owner and owner not in declared:
                 owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
             if owner:
                 containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+                import_keys[qn] = (
+                    declared[owner] if bare and owner != qn else containers[qn]
+                )
         # The call site's namespace chain is only known when the file declares
         # ONE nested chain; with sibling namespaces (`App` and `Other` in one
         # file) neither is local to every call site, so no local precedence
@@ -2960,7 +2972,7 @@ class CallResolver:
             ).items()
             if local_name == target.rpartition(cs.SEPARATOR_DOT)[2]
         }
-        preferred = [qn for qn in candidates if containers.get(qn) in imported]
+        preferred = [qn for qn in candidates if import_keys.get(qn) in imported]
         return preferred or candidates
 
     def _resolve_two_part_call(
