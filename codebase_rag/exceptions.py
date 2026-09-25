@@ -92,9 +92,9 @@ LLM_DISALLOWED_PROCEDURE = (
     "MAGE allowlist. Query rejected: {query}"
 )
 LLM_GENERATION_FAILED = "Cypher generation failed: {error}"
-READ_ONLY_WRITE_OPERATOR = (
-    "Refused to run a generated query: the database plans it with the "
-    "write operation '{operator}'. Query rejected: {query}"
+READ_ONLY_UNKNOWN_OPERATOR = (
+    "Refused to run a generated query: the database plans the operation "
+    "'{operator}', which is not known to be read-only. Query rejected: {query}"
 )
 READ_ONLY_UNREADABLE_PLAN = (
     "Refused to run a generated query: the database returned no plan that "

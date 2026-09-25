@@ -761,9 +761,10 @@ class MemgraphIngestor:
         The text checks in `services.llm` are the first layer; this is the
         one that does not depend on reading the query text correctly. On both
         engines the query is planned with EXPLAIN and refused before it runs
-        if the plan writes or calls a disallowed procedure. Neo4j additionally
-        runs it in a READ access-mode session, which its driver documents as a
-        routing hint rather than access control, so it is not relied on.
+        unless every planned operator is a known read and every procedure is
+        allowed. Neo4j additionally runs it in a READ access-mode session,
+        which its driver documents as a routing hint rather than access
+        control, so it is not relied on.
         """
         bounded_query = _apply_memory_limit(
             query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect

@@ -124,10 +124,6 @@ CYPHER_DENIED_PROCEDURES: frozenset[str] = frozenset(
         "graph_util.chain_nodes",
     }
 )
-# Memgraph has no read-only session, so an untrusted query is planned with
-# EXPLAIN first and refused if any plan operator starts with one of these.
-# Prefixes rather than names, so a new variant (SetNestedProperty,
-# LoadParquet, ...) is refused without an update here.
 CYPHER_EXPLAIN_PREFIX = "EXPLAIN "
 # Lexical pieces of Cypher that `cypher_guard` masks before inspecting a
 # generated query.
@@ -154,16 +150,91 @@ NEO4J_PLAN_OPERATOR_TYPE = "operatorType"
 NEO4J_PLAN_ARGS = "args"
 NEO4J_PLAN_DETAILS = "Details"
 NEO4J_PLAN_CHILDREN = "children"
-CYPHER_PLAN_WRITE_OPERATOR_PREFIXES: tuple[str, ...] = (
-    "Create",
-    "Set",
-    "Remove",
-    "Delete",
-    "Detach",
-    "Merge",
-    "Foreach",
-    "Load",
+# An untrusted query is planned with EXPLAIN and runs only if every plan
+# operator is known to read. An allowlist, not a list of writes, so an
+# operator this list has never seen (a new write, or a write under a new
+# name) is refused rather than run. Names are the bare operator: Neo4j's
+# `Expand(All)@neo4j` is checked as `Expand`. Taken from each engine's
+# operator reference and checked against the plans of the query shapes the
+# Cypher prompt asks for (memgraph 3.3, neo4j 5.26).
+CYPHER_PLAN_READ_OPERATORS: frozenset[str] = frozenset(
+    {
+        # Both engines
+        "Apply",
+        "Distinct",
+        "Filter",
+        "Limit",
+        "Optional",
+        "RollUpApply",
+        "Skip",
+        "Union",
+        "Unwind",
+        # Memgraph
+        "Accumulate",
+        "Aggregate",
+        "BFSExpand",
+        "Cartesian",
+        "ConstructNamedPath",
+        "EdgeUniquenessFilter",
+        "EmptyResult",
+        "EvaluatePatternFilter",
+        "Expand",
+        "ExpandVariable",
+        "HashJoin",
+        "IndexedJoin",
+        "Once",
+        "OrderBy",
+        "OutputTable",
+        "OutputTableStream",
+        "Produce",
+        # Neo4j
+        "AntiConditionalApply",
+        "AntiSemiApply",
+        "Argument",
+        "ArgumentTracker",
+        "BFSPruningVarLengthExpand",
+        "CacheProperties",
+        "CartesianProduct",
+        "ConditionalApply",
+        "EagerAggregation",
+        "ExhaustiveLimit",
+        "LetAntiSemiApply",
+        "LetSelectOrAntiSemiApply",
+        "LetSelectOrSemiApply",
+        "LetSemiApply",
+        "NodeCountFromCountStore",
+        "NodeHashJoin",
+        "NodeLeftOuterHashJoin",
+        "NodeRightOuterHashJoin",
+        "NullifyMetadata",
+        "OptionalExpand",
+        "OrderedAggregation",
+        "OrderedDistinct",
+        "PartialSort",
+        "PartialTop",
+        "PartitionedUnwind",
+        "ProduceResults",
+        "Projection",
+        "RelationshipCountFromCountStore",
+        "SelectOrAntiSemiApply",
+        "SelectOrSemiApply",
+        "SemiApply",
+        "ShortestPath",
+        "Sort",
+        "StatefulShortestPath",
+        "Top",
+        "Top1WithTies",
+        "TriadicBuild",
+        "TriadicFilter",
+        "TriadicSelection",
+        "ValueHashJoin",
+        "VarLengthExpand",
+    }
 )
+# Scans and seeks only read, and both engines name many variants of them
+# (Memgraph `ScanAllByLabelProperties`, Neo4j `NodeUniqueIndexSeekByRange`).
+CYPHER_PLAN_READ_OPERATOR_PREFIXES: tuple[str, ...] = ("ScanAll", "Assert")
+CYPHER_PLAN_READ_OPERATOR_SUFFIXES: tuple[str, ...] = ("Scan", "Seek", "SeekByRange")
 
 # Shell command constants
 SHELL_CMD_GREP = "grep"

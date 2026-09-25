@@ -9,8 +9,8 @@ and the database:
   keyword inside a string literal is not a false positive and a procedure
   name hidden behind backticks or a comment is still seen.
 * The engine itself, via `MemgraphIngestor.fetch_read_only`: the query is
-  planned with EXPLAIN and `check_plan` refuses it if the planner reports a
-  write operator or a disallowed procedure. The plan names what will
+  planned with EXPLAIN and `check_plan` refuses it unless every operator the
+  planner reports is a known read operator and every procedure is allowed. The plan names what will
   actually execute, whatever the query text looks like. Neo4j also runs the
   query in a READ access-mode session, but its driver documents that mode
   as routing, not access control, so the plan check is the boundary on
@@ -163,23 +163,37 @@ def neo4j_plan_operators(plan: list[tuple[str, str]]) -> list[PlanOperator]:
 
 
 def check_plan(operators: list[PlanOperator], query: str) -> None:
-    """Refuse a query whose EXPLAIN plan would write, or cannot be judged.
+    """Refuse a query unless its EXPLAIN plan provably only reads.
 
-    Fails closed: an empty plan, or a procedure call whose name could not be
-    read, is refused rather than run on the assumption that it reads.
+    Fails closed throughout: every operator must be a known read operator,
+    every procedure call must name an allowed procedure, and an empty plan
+    is refused rather than run on the assumption that it reads.
     """
     if not operators:
         raise ex.ReadOnlyQueryError(ex.READ_ONLY_UNREADABLE_PLAN.format(query=query))
     for operator in operators:
-        if operator.name.startswith(cs.CYPHER_PLAN_WRITE_OPERATOR_PREFIXES):
+        if operator.name in cs.CYPHER_PLAN_PROCEDURE_OPERATORS:
+            if operator.procedure is None or not is_allowed_procedure(
+                operator.procedure
+            ):
+                raise ex.ReadOnlyQueryError(
+                    ex.READ_ONLY_PROCEDURE.format(
+                        name=operator.procedure or operator.name, query=query
+                    )
+                )
+        elif not _is_read_operator(operator.name):
             raise ex.ReadOnlyQueryError(
-                ex.READ_ONLY_WRITE_OPERATOR.format(operator=operator.name, query=query)
-            )
-        if operator.name in cs.CYPHER_PLAN_PROCEDURE_OPERATORS and (
-            operator.procedure is None or not is_allowed_procedure(operator.procedure)
-        ):
-            raise ex.ReadOnlyQueryError(
-                ex.READ_ONLY_PROCEDURE.format(
-                    name=operator.procedure or operator.name, query=query
+                ex.READ_ONLY_UNKNOWN_OPERATOR.format(
+                    operator=operator.name, query=query
                 )
             )
+
+
+def _is_read_operator(name: str) -> bool:
+    # Neo4j qualifies some operators with a mode: `Expand(All)`, `Expand(Into)`.
+    base = name.split(cs.CYPHER_PLAN_PROCEDURE_ARGS_OPEN, 1)[0]
+    return (
+        base in cs.CYPHER_PLAN_READ_OPERATORS
+        or base.startswith(cs.CYPHER_PLAN_READ_OPERATOR_PREFIXES)
+        or base.endswith(cs.CYPHER_PLAN_READ_OPERATOR_SUFFIXES)
+    )

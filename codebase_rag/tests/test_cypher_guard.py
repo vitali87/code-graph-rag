@@ -179,8 +179,12 @@ class TestCheckMemgraphPlan:
         ],
     )
     def test_write_operator_is_refused(self, operator: str) -> None:
-        with pytest.raises(ex.ReadOnlyQueryError, match="write operation"):
+        with pytest.raises(ex.ReadOnlyQueryError, match="not known to be read-only"):
             _check_memgraph([" * EmptyResult", f" * {operator}", " * Once"], "q")
+
+    def test_an_operator_the_allowlist_has_never_seen_is_refused(self) -> None:
+        with pytest.raises(ex.ReadOnlyQueryError, match="SomeFutureWrite"):
+            _check_memgraph([" * Produce {x}", " * SomeFutureWrite", " * Once"], "q")
 
     def test_write_inside_a_subquery_branch_is_refused(self) -> None:
         with pytest.raises(ex.ReadOnlyQueryError, match="CreateNode"):
@@ -259,6 +263,21 @@ class TestCheckNeo4jPlan:
     def test_read_plan_passes(self) -> None:
         check_plan(neo4j_plan_operators(_NEO4J_READ_PLAN), "q")
 
+    def test_mode_qualified_and_scan_operators_pass(self) -> None:
+        plan = [
+            ("ProduceResults@neo4j", "n"),
+            ("Expand(All)@neo4j", "(a)-[:CALLS]->(b)"),
+            ("VarLengthExpand(Into)@neo4j", "(a)-[:CALLS*1..6]->(a)"),
+            ("NodeUniqueIndexSeekByRange@neo4j", "a:Function"),
+            ("DirectedRelationshipTypeScan@neo4j", "(a)-[r:CALLS]->(b)"),
+        ]
+        check_plan(neo4j_plan_operators(plan), "q")
+
+    def test_an_operator_the_allowlist_has_never_seen_is_refused(self) -> None:
+        plan = [("ProduceResults@neo4j", ""), ("SetNodePropertiesFromMap@neo4j", "")]
+        with pytest.raises(ex.ReadOnlyQueryError, match="SetNodePropertiesFromMap"):
+            check_plan(neo4j_plan_operators(plan), "q")
+
     @pytest.mark.parametrize(
         "operator",
         [
@@ -273,7 +292,7 @@ class TestCheckNeo4jPlan:
     )
     def test_write_operator_is_refused(self, operator: tuple[str, str]) -> None:
         plan = [("ProduceResults@neo4j", ""), operator, ("AllNodesScan@neo4j", "n")]
-        with pytest.raises(ex.ReadOnlyQueryError, match="write operation"):
+        with pytest.raises(ex.ReadOnlyQueryError, match="not known to be read-only"):
             check_plan(neo4j_plan_operators(plan), "q")
 
     def test_procedure_name_is_read_from_the_signature(self) -> None:

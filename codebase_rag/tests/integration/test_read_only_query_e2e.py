@@ -79,3 +79,46 @@ def test_memgraph_refuses_a_disguised_procedure_before_running_it(
         "CALL mg.get_module_files() YIELD path RETURN path"
     )
     assert not any("pwned" in str(row["path"]) for row in modules)
+
+
+# The plan guard is an allowlist of read operators, so an ordinary read that
+# plans an operator it has never seen would be refused. These are the query
+# shapes the Cypher prompt asks for; each must still run on both engines.
+_ORDINARY_READS = [
+    "MATCH (c:Class) RETURN count(c) AS total",
+    "MATCH (f:Function) WHERE f.name = 'delete' RETURN f.qualified_name AS qn",
+    "MATCH (f:Function) WHERE f.qualified_name STARTS WITH 'p.' "
+    "RETURN f.name AS n LIMIT 5",
+    "MATCH (n:Function|Method) RETURN n.name AS n",
+    "MATCH (caller)-[r:CALLS]->(callee:Function) WHERE callee.name = 'delete' "
+    "RETURN caller.name AS c, type(r) AS relationship",
+    "MATCH (c:Function)-[r:CALLS]->(f:Function) RETURN f.name AS name, "
+    "count(r) AS callers ORDER BY callers DESC LIMIT 10",
+    "MATCH p = (a:Function)-[:CALLS*1..6]->(b:Function) RETURN length(p) AS l LIMIT 5",
+    "MATCH p = (a:Function)-[:CALLS*1..6]->(a) RETURN p LIMIT 5",
+    "MATCH (m:Module) OPTIONAL MATCH (m)-[:DEFINES]->(f:Function) "
+    "RETURN m.name AS m, collect(f.name) AS fs",
+    "UNWIND ['a', 'b'] AS x MATCH (f:Function {name: x}) RETURN DISTINCT f.name AS n",
+    "MATCH (f:Function) RETURN f.name AS n UNION MATCH (m:Method) RETURN m.name AS n",
+    "MATCH (f:Function) WITH f ORDER BY f.name LIMIT 3 RETURN collect(f.name) AS ns",
+    "MATCH (f:Function) WHERE f.name IN ['a', 'delete'] RETURN f.name AS n SKIP 0",
+    "MATCH (f:Function) CALL { WITH f MATCH (f)-[:CALLS]->(g) RETURN count(g) AS c } "
+    "RETURN f.name AS n, c",
+    "MATCH ()-[r:CALLS]->() RETURN count(r) AS c",
+    "MATCH (a:Function)-[r:CALLS]-(b) RETURN a.name AS a, b.name AS b LIMIT 1",
+]
+
+
+@pytest.mark.parametrize("query", _ORDINARY_READS)
+def test_ordinary_reads_pass_the_plan_guard(
+    ingestor: MemgraphIngestor, query: str
+) -> None:
+    ingestor.fetch_read_only(query)
+
+
+def test_breadth_first_expansion_passes_on_memgraph(
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    memgraph_ingestor.fetch_read_only(
+        "MATCH (a:Function)-[:CALLS *BFS ..5]->(b) RETURN b.name AS n LIMIT 1"
+    )
