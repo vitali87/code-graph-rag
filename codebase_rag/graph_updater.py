@@ -2703,6 +2703,41 @@ class GraphUpdater:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
+    def _forget_flux_stem_qns(self, flux_stems: set[str]) -> None:
+        """Drop the module-qn claims of every file on a stem in flux.
+
+        Seeding skips a flux-stem survivor so it re-parses unseeded, but a
+        reused updater (the watcher, the MCP server) still holds the claim
+        its previous run wrote: `util.h` keeps `proj.util`, so an added
+        `util.c` is suffixed to `proj.util.c` where a clean index gives it
+        the bare qn (issue #2022). Its definitions stay registered under the
+        old qn too, so the re-parse marks the new owner's same-named
+        function as a duplicate. Every file on the stem re-parses this run
+        and writes its state again in walk order, so the old state goes
+        first; `remove_file_from_state` finds it through the recorded qn,
+        so it runs before the claim is dropped.
+
+        Survivors only: a file deleted this run keeps its state until the
+        deletion step, since the foreign-definer lookup reads it to find the
+        files that define into the departing module (issue #1660).
+        """
+        if not flux_stems:
+            return
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        on_stem = set()
+        for path in module_map.values():
+            try:
+                key = cached_relative_path(path, self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if _stem_key(key) in flux_stems and path.is_file():
+                on_stem.add(path)
+        for path in sorted(on_stem):
+            self.remove_file_from_state(path)
+        for qn, path in list(module_map.items()):
+            if path in on_stem:
+                del module_map[qn]
+
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
     ) -> None:
@@ -4529,6 +4564,7 @@ class GraphUpdater:
             }
         )
         if not is_full_build:
+            self._forget_flux_stem_qns(flux_stems)
             self._seed_module_qns_from_graph(eligible_keys, flux_stems)
         # A full build can still land on a graph that already holds this
         # project: the cache lives in the repo working tree, the graph does
