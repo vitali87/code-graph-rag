@@ -339,6 +339,15 @@ def test_resolver_prefers_imports_then_scope_then_unique_suffix() -> None:
     assert resolver.resolve("int", "p.app") is None
 
 
+def test_resolver_names_the_label_a_resolved_type_is_registered_under() -> None:
+    resolver = _resolver(
+        {"p.models.Item": NodeType.CLASS, "p.models.Shape": NodeType.INTERFACE},
+        {},
+    )
+    assert resolver.label_for("p.models.Item") == cs.NodeLabel.CLASS.value
+    assert resolver.label_for("p.models.Shape") == cs.NodeLabel.INTERFACE.value
+
+
 def test_type_reference_names_accept_unicode_identifiers() -> None:
     # Python allows `class Δ`; an annotation naming it must be a candidate.
     assert type_reference_names("Optional[Δ]") == ["Optional", "Δ"]

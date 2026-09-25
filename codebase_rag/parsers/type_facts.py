@@ -375,11 +375,14 @@ class TypeReferenceResolver:
                 found.setdefault(qn, None)
         return list(found)
 
+    def label_for(self, qn: str) -> str:
+        return str(self._registry[qn])
+
 
 def _target_spec(
     resolver: TypeReferenceResolver, target_qn: str
 ) -> tuple[str, str, str]:
-    return (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn)
+    return (resolver.label_for(target_qn), cs.KEY_QUALIFIED_NAME, target_qn)
 
 
 def _emit_returns(
