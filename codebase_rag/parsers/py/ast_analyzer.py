@@ -761,16 +761,11 @@ class PythonAstAnalyzerMixin(_AstBase):
         # nested `for` target is the nested body's local unless declared
         # `nonlocal` there. A comprehension is a scope of its own that
         # cannot declare `nonlocal`, so one in a nested body binds nothing
-        # here; one in this body still types its variable for calls inside
-        # it, unless this body binds that name itself, whose type it must
-        # not overwrite.
+        # here; one in this body still types its variables for calls inside
+        # it, except a name this body binds itself, whose type it must not
+        # overwrite (`analyze_scoped_comprehensions`).
         for_statements = [f for f in for_statements if _belongs_to(f, node)]
-        own_names = _own_bound_names(node)
-        comprehensions = [
-            c
-            for c in comprehensions
-            if _scope_of(c) == node.id and not (_comprehension_names(c) & own_names)
-        ]
+        comprehensions = [c for c in comprehensions if _scope_of(c) == node.id]
 
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
@@ -784,8 +779,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             node, assignments, local_var_types, module_qn
         )
 
-        for comp in comprehensions:
-            self._analyze_comprehension(comp, local_var_types, module_qn)
+        self.analyze_scoped_comprehensions(
+            node, comprehensions, local_var_types, module_qn
+        )
 
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
@@ -794,6 +790,33 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
+
+    def analyze_scoped_comprehensions(
+        self,
+        scope: Node,
+        comprehensions: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """Type `scope`'s comprehension targets, one target at a time.
+
+        A target named like one of `scope`'s own bindings is skipped, since
+        the comprehension's variable is a different object; the others keep
+        their types. Skipping the whole comprehension on any overlap left a
+        non-overlapping target untyped (#2201).
+        """
+        if not comprehensions:
+            return
+        own_names = _own_bound_names(scope)
+        for comp in comprehensions:
+            names = _comprehension_names(comp) - own_names
+            if not names:
+                continue
+            scratch = dict(local_var_types)
+            self._analyze_comprehension(comp, scratch, module_qn)
+            for name in names:
+                if name in scratch:
+                    local_var_types[name] = scratch[name]
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str

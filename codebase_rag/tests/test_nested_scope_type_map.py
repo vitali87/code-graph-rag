@@ -477,3 +477,20 @@ def test_a_class_nonlocal_binds_the_nearest_enclosing_function(tmp_path: Path) -
         "    return v\n"
     )
     assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
+
+
+def test_a_comprehension_overlapping_one_name_still_types_the_others(
+    tmp_path: Path,
+) -> None:
+    """Comprehension targets are filtered one by one: `v` shadows the
+    function's own `v` and is skipped, while `w` keeps its type (#2201)."""
+    types = _local_types(
+        tmp_path,
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    return [(v, w.render()) for v in [Banner()] for w in [Banner()]]\n",
+        "outer",
+    )
+
+    assert types.get("w") == "Banner", types
+    assert types["v"] == "Widget", types

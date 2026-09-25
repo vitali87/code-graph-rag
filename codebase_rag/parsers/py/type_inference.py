@@ -380,8 +380,9 @@ class PythonTypeInferenceEngine(
             # Attribute-backed iterables (`for w in self.widgets`) only type
             # after the attribute passes above populated `self.x`; re-running
             # the loop analyzers picks them up (they never downgrade a type).
-            for comp in comprehensions:
-                self._analyze_comprehension(comp, local_var_types, module_qn)
+            self.analyze_scoped_comprehensions(
+                caller_node, comprehensions, local_var_types, module_qn
+            )
             for for_stmt in for_statements:
                 self._analyze_for_loop(for_stmt, local_var_types, module_qn)
             aliases = self._collect_local_aliases(caller_node)
