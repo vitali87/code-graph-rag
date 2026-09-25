@@ -243,7 +243,7 @@ class TestTheCliPathAppliesTheEvidenceGuardToo:
 
         cypher_gen.generate = _generate
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(
+        ingestor.fetch_read_only = MagicMock(
             return_value=[
                 {"name": "handler", "path": "a.py"},
                 {"name": "handler", "path": "b.py"},
@@ -270,7 +270,7 @@ class TestTheCliPathAppliesTheEvidenceGuardToo:
 
         cypher_gen.generate = _generate
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(
+        ingestor.fetch_read_only = MagicMock(
             return_value=[
                 {"name": "handler", "path": "a.py"},
                 {"name": "handler", "path": "b.py"},
@@ -1432,6 +1432,7 @@ def _registry_over_graph(rows: list[dict], cypher: str):
     handler.project_root = "/repo"
     handler.ingestor = MagicMock()
     handler.ingestor.fetch_all = MagicMock(return_value=list(rows))
+    handler.ingestor.fetch_read_only = handler.ingestor.fetch_all
     handler.ingestor.list_projects = MagicMock(return_value=[ALPHA, BETA])
     handler.cypher_gen = MagicMock()
     handler.cypher_gen.generate = AsyncMock(return_value=cypher)
@@ -1618,7 +1619,7 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         cypher_gen.generate = _generate
 
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(return_value=list(_ROWS))
+        ingestor.fetch_read_only = MagicMock(return_value=list(_ROWS))
 
         tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
         result = await tool.function("every function")
@@ -1648,7 +1649,7 @@ class TestEnforcementSurvivesAnUnfilteredQuery:
         cypher_gen.generate = _generate
 
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(return_value=list(_ROWS))
+        ingestor.fetch_read_only = MagicMock(return_value=list(_ROWS))
 
         tool = create_query_tool(ingestor, cypher_gen)
         result = await tool.function("every function")
@@ -2412,13 +2413,13 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
 
         cypher_gen.generate = _generate
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(return_value=[{"name": "x", "path": "p"}])
+        ingestor.fetch_read_only = MagicMock(return_value=[{"name": "x", "path": "p"}])
 
         tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
         result = await tool.function("names only")
 
         assert result.results == []
-        ingestor.fetch_all.assert_not_called()
+        ingestor.fetch_read_only.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_a_scopeable_query_still_reaches_the_graph(self) -> None:
@@ -2438,14 +2439,14 @@ class TestAnUnscopeableQueryNeverReachesTheGraph:
 
         cypher_gen.generate = _generate
         ingestor = MagicMock()
-        ingestor.fetch_all = MagicMock(
+        ingestor.fetch_read_only = MagicMock(
             return_value=[{"qualified_name": f"{ALPHA}.mod.f"}]
         )
 
         tool = create_query_tool(ingestor, cypher_gen, project_name=ALPHA)
         result = await tool.function("functions")
 
-        ingestor.fetch_all.assert_called_once()
+        ingestor.fetch_read_only.assert_called_once()
         assert result.results == [{"qualified_name": f"{ALPHA}.mod.f"}]
 
 
