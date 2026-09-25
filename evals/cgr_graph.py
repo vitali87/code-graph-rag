@@ -231,6 +231,10 @@ def _int(value: PropertyValue) -> int | None:
     return value if isinstance(value, int) else None
 
 
+_REMOTE_NETWORK_KIND = "NETWORK"
+_REMOTE_DIRECT_KINDS = frozenset({"RPC", "DISPATCH"})
+
+
 class _StatefulIngestor:
     # A faithful in-memory stand-in for the persistent graph store. Unlike
     # _CapturingIngestor it implements the QueryProtocol delete/fetch Cypher
@@ -434,6 +438,80 @@ class _StatefulIngestor:
                 )
         return rows
 
+    def _delta_remote_callers_of(
+        self, prefix: str, qns: set[str], *, direct: bool
+    ) -> list[ResultRow]:
+        # The remote hop the way the two real queries join it: handler
+        # -EXPOSES-> resource, then either NETWORK -RESOLVES_TO-> resource
+        # with the NETWORK's READS_FROM/WRITES_TO callers, or the resource's
+        # own callers (RPC / dispatch). Not scoped by caller project. The
+        # queries RETURN DISTINCT: a caller that reads and writes one
+        # resource is one row here too.
+        rows: list[ResultRow] = []
+        seen: set[tuple[str, ...]] = set()
+        access = {
+            cs.RelationshipType.READS_FROM.value,
+            cs.RelationshipType.WRITES_TO.value,
+        }
+        for (label, uid), _props in list(self.nodes.items()):
+            handler = _str(uid)
+            if handler not in qns:
+                continue
+            for edge in self._out.get((label, uid), ()):
+                if edge[2] != cs.RelationshipType.EXPOSES.value:
+                    continue
+                resource = (edge[3], edge[4])
+                endpoint = _str(self.nodes.get(resource, {}).get(cs.KEY_NAME))
+                sources: list[tuple[_NodeId, str]] = []
+                if direct:
+                    # The direct shape is the RPC and dispatch kinds only, the
+                    # way the query filters them: an ordinary endpoint reached
+                    # without a NETWORK hop is not a remote call site.
+                    if (
+                        _str(self.nodes.get(resource, {}).get(cs.KEY_KIND))
+                        in _REMOTE_DIRECT_KINDS
+                    ):
+                        sources.append((resource, endpoint))
+                else:
+                    for inbound in self._in.get(resource, ()):
+                        if inbound[2] != cs.RelationshipType.RESOLVES_TO.value:
+                            continue
+                        network = (inbound[0], inbound[1])
+                        # Only a NETWORK resource resolves to an endpoint the
+                        # way the query means it.
+                        if (
+                            _str(self.nodes.get(network, {}).get(cs.KEY_KIND))
+                            != _REMOTE_NETWORK_KIND
+                        ):
+                            continue
+                        sources.append(
+                            (
+                                network,
+                                _str(self.nodes.get(network, {}).get(cs.KEY_NAME)),
+                            )
+                        )
+                for node, url in sources:
+                    for inbound in self._in.get(node, ()):
+                        if inbound[2] not in access:
+                            continue
+                        caller = self.nodes.get((inbound[0], inbound[1]))
+                        # A caller in the handler's own project is local.
+                        if caller is None or _str(inbound[1]).startswith(prefix):
+                            continue
+                        row: ResultRow = {
+                            cs.KEY_HANDLER: handler,
+                            cs.KEY_ENDPOINT: endpoint,
+                            cs.KEY_LABEL: inbound[0],
+                            cs.KEY_QUALIFIED_NAME: _str(inbound[1]),
+                            cs.KEY_PATH: _str(caller.get(cs.KEY_PATH)),
+                            cs.KEY_URL: url,
+                        }
+                        key = tuple(str(row[k]) for k in sorted(row))
+                        if key not in seen:
+                            seen.add(key)
+                            rows.append(row)
+        return rows
+
     def _delta_callers_into(
         self,
         prefix: str,
@@ -635,6 +713,16 @@ class _StatefulIngestor:
                 {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
                 longer_project_prefixes,
             )
+        if query in (
+            cq.CYPHER_DELTA_REMOTE_CALLERS_OF,
+            cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+        ):
+            raw_qns = params.get(cs.KEY_QNS)
+            return self._delta_remote_callers_of(
+                prefix,
+                {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
+                direct=query == cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF,
+            )
         if query == cq.CYPHER_DELTA_RUST_MODULES:
             return [
                 self._delta_node_row(label, props)
@@ -716,6 +804,8 @@ class _StatefulIngestor:
                 | cq.CYPHER_DELTA_SITES
                 | cq.CYPHER_DELTA_MODULE_IMPORTS
                 | cq.CYPHER_DELTA_CALLERS_OF
+                | cq.CYPHER_DELTA_REMOTE_CALLERS_OF
+                | cq.CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF
                 | cq.CYPHER_DELTA_RUST_MODULES
                 | cq.CYPHER_DELTA_RUST_TEST_FNS
                 | cq.CYPHER_DUPLICATE_FINGERPRINTS

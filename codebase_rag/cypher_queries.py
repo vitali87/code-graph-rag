@@ -912,6 +912,25 @@ RETURN a.qualified_name AS from_qn, a.path AS from_path, type(r) AS rel_type,
        r.arg_count AS arg_count, r.kwarg_names AS kwarg_names"""
 # One hop of the backward test-reach walk: the callers of a frontier of
 # qualified names, with the properties the test classifier reads.
+# The blast radius of a signature change crosses services (issue #1603): a
+# changed handler's endpoint is reached by call sites in OTHER projects,
+# through a NETWORK resource that RESOLVES_TO it, or directly for the RPC and
+# dispatch kinds. A caller inside the handler's own project is a local
+# site, whatever route it takes, and is excluded (bot review on PR #1978).
+CYPHER_DELTA_REMOTE_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(n:Resource {kind: 'NETWORK'})-[:RESOLVES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       n.name AS url"""
+CYPHER_DELTA_REMOTE_DIRECT_CALLERS_OF = """MATCH (h)-[:EXPOSES]->(e:Resource)
+WHERE h.qualified_name IN $qns AND e.kind IN ['RPC', 'DISPATCH']
+MATCH (c)-[r:READS_FROM|WRITES_TO]->(e)
+WHERE NOT c.qualified_name STARTS WITH $project_prefix
+RETURN DISTINCT h.qualified_name AS handler, e.name AS endpoint,
+       labels(c)[0] AS label, c.qualified_name AS qualified_name, c.path AS path,
+       e.name AS url"""
 CYPHER_DELTA_CALLERS_OF = """MATCH (a)-[:CALLS|REFERENCES|INSTANTIATES]->(b)
 WHERE b.qualified_name IN $qns AND a.qualified_name STARTS WITH $project_prefix
   AND ALL(longer_project IN $longer_project_prefixes
