@@ -5,12 +5,17 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TypedDict, Unpack
+from typing import Any, TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 from . import constants as cs
 from . import exceptions as ex
@@ -172,6 +177,42 @@ class ModelConfig:
             raise ValueError(error_msg)
 
 
+class _DotEnvWithoutProviderKeys(PydanticBaseSettingsSource):
+    """The `.env` source minus the provider key variables.
+
+    `load_dotenv` has already put those in `os.environ`, where the key gate and
+    the providers read them. They are not settings of their own, so the `.env`
+    source reported them as extra inputs and every command failed at start-up,
+    although the missing-key message tells the user to put the key there
+    (#2194). Any other key the settings do not declare is still refused.
+    """
+
+    def __init__(self, source: PydanticBaseSettingsSource) -> None:
+        super().__init__(source.settings_cls)
+        self._source = source
+
+    def _set_current_state(self, state: dict[str, Any]) -> None:
+        super()._set_current_state(state)
+        self._source._set_current_state(state)
+
+    def _set_settings_sources_data(self, states: dict[str, dict[str, Any]]) -> None:
+        super()._set_settings_sources_data(states)
+        self._source._set_settings_sources_data(states)
+
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
+        return self._source.get_field_value(field, field_name)
+
+    def __call__(self) -> dict[str, Any]:
+        provider_keys = {env_var.lower() for env_var in PROVIDER_ENV_KEYS.values()}
+        return {
+            name: value
+            for name, value in self._source().items()
+            if name.lower() not in provider_keys
+        }
+
+
 class AppConfig(BaseSettings):
     """
     All settings are loaded from environment variables or a .env file.
@@ -182,6 +223,22 @@ class AppConfig(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (
+            init_settings,
+            env_settings,
+            _DotEnvWithoutProviderKeys(dotenv_settings),
+            file_secret_settings,
+        )
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
     # so an existing install keeps its behaviour without touching config;

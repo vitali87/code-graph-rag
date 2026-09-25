@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -215,3 +216,64 @@ class TestFormatMissingApiKeyErrors:
         msg = format_missing_api_key_errors("OpenAI")
         assert "OPENAI_API_KEY" in msg
         assert "OpenAI" in msg
+
+
+def _load_config_with_dotenv(
+    tmp_path, dotenv: str, code: str
+) -> subprocess.CompletedProcess[str]:
+    """Run `code` in a fresh interpreter whose working directory holds `dotenv`.
+
+    `config.py` reads `.env` from the invocation directory at import, so this is
+    the only way to exercise that file. PYTHONPATH points at the package under
+    test, so a checkout other than the installed one imports its own code.
+    """
+    import codebase_rag
+
+    (tmp_path / ".env").write_text(dotenv, encoding=cs.ENCODING_UTF8)
+    env = os.environ.copy()
+    for info in API_KEY_INFO.values():
+        env.pop(info["env_var"], None)
+    env["PYTHONPATH"] = str(Path(codebase_rag.__file__).resolve().parents[1])
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+    )
+
+
+@pytest.mark.parametrize("provider", sorted(API_KEY_INFO))
+def test_a_provider_key_in_dotenv_loads_and_satisfies_the_gate(
+    tmp_path, provider: str
+) -> None:
+    """#2194: the missing-key message tells the user to add the key to `.env`,
+    and doing that made every command fail at start-up, because the `.env`
+    settings source rejected the variable as an extra input. Derived from the
+    table, so a new provider is covered without a new cell.
+    """
+    env_var = API_KEY_INFO[provider]["env_var"]
+    result = _load_config_with_dotenv(
+        tmp_path,
+        f"{env_var}=dotenv-key\n",
+        "from codebase_rag.config import AppConfig, ModelConfig; AppConfig(); "
+        f"ModelConfig(provider={str(provider)!r}, model_id='m').validate_api_key(); "
+        "print('ok')",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_an_undeclared_key_in_dotenv_is_still_refused(tmp_path) -> None:
+    """The accept control: only the provider variables are let through."""
+    result = _load_config_with_dotenv(
+        tmp_path,
+        "NOT_A_CGR_SETTING=1\n",
+        "from codebase_rag.config import AppConfig; AppConfig()",
+    )
+
+    assert result.returncode != 0
+    assert "extra_forbidden" in result.stderr
