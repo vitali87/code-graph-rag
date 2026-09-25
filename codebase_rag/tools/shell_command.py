@@ -9,6 +9,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
@@ -680,7 +681,119 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
         if arg.startswith(f"{cs.SHELL_GIT_EXEC_PATH_FLAG}="):
             return cs.SHELL_GIT_EXEC_PATH_FLAG
 
-    return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
+    if flag := _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS):
+        return flag
+    return _git_subcommand_exec_option(cmd_parts)
+
+
+class _GitExecTables(NamedTuple):
+    """The program-running option spellings of one git subcommand."""
+
+    subcommand: str
+    long_options: frozenset[str]
+    short_flags: frozenset[str]
+    value_flags: frozenset[str]
+    lookalikes: frozenset[str]
+    config_long: str | None
+    config_short: str | None
+
+
+def _git_exec_tables(subcommand: str) -> _GitExecTables:
+    return _GitExecTables(
+        subcommand,
+        cs.SHELL_GIT_EXEC_LONG_OPTIONS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_EXEC_SHORT_FLAGS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_VALUE_SHORT_FLAGS.get(subcommand, frozenset()),
+        cs.SHELL_GIT_EXEC_OPTION_LOOKALIKES.get(subcommand, frozenset()),
+        cs.SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS.get(subcommand),
+        cs.SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS.get(subcommand),
+    )
+
+
+def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
+    """A program-running subcommand option in a spelling the exact match misses.
+
+    git's parsers accept abbreviated long options (`rebase --ex`), short
+    letters (`rebase -x`), attached values (`grep -Oprog`) and clustered short
+    flags (`rebase -ixprog`); the exact-name scan saw none of them.
+    """
+    index = _git_subcommand_index(cmd_parts)
+    if index is None:
+        return None
+    tables = _git_exec_tables(cmd_parts[index])
+    args = cmd_parts[index + 1 :]
+    for position, arg in enumerate(args):
+        # `--` ends the options only when nothing before it can claim it as a
+        # value: `grep -e -- -Oprog` gives `--` to -e and still parses -Oprog.
+        # Which options take a value is not fully tabulated, so any option in
+        # front keeps the scan going; a dash-leading pathspec after such a
+        # `--` is refused, which is the safe direction.
+        previous = args[position - 1] if position else tables.subcommand
+        if arg == "--" and not previous.startswith("-"):
+            break
+        following = args[position + 1] if position + 1 < len(args) else ""
+        if arg.startswith("--"):
+            hit = _git_long_exec_option(arg, following, tables)
+        elif arg.startswith("-"):
+            hit = _git_short_exec_option(arg, following, tables)
+        else:
+            hit = None
+        if hit:
+            return hit
+    return None
+
+
+def _git_long_exec_option(
+    arg: str, following: str, tables: _GitExecTables
+) -> str | None:
+    name = _flag_name(arg)
+    if name in tables.lookalikes or len(name) <= 2:
+        return None
+    if (
+        tables.config_long
+        and len(name) >= cs.SHELL_GIT_CONFIG_OPTION_MIN_ABBREV
+        and tables.config_long.startswith(name)
+    ):
+        setting = arg.split("=", 1)[1] if "=" in arg else following
+        key = _git_exec_config_setting(setting)
+        return f"{tables.subcommand} {name} {key}" if key else None
+    # Prefix one way is an abbreviation; the other way is the scripted
+    # subcommands' `--tool*` case patterns, which take `--toolx=prog` as
+    # `--tool=prog`.
+    if any(
+        option.startswith(name) or name.startswith(option)
+        for option in tables.long_options
+    ):
+        return f"{tables.subcommand} {name}"
+    return None
+
+
+def _git_short_exec_option(
+    arg: str, following: str, tables: _GitExecTables
+) -> str | None:
+    for offset, letter in enumerate(arg[1:], start=2):
+        if letter in tables.short_flags:
+            return f"{tables.subcommand} -{letter}"
+        if letter == tables.config_short:
+            # The rest of the cluster is the key=value, or the next token is
+            # when the letter ends it: `-qc core.hooksPath=d`.
+            key = _git_exec_config_setting(arg[offset:] or following)
+            return f"{tables.subcommand} -{letter} {key}" if key else None
+        if letter in tables.value_flags:
+            return None
+    return None
+
+
+def _git_exec_config_setting(setting: str) -> str | None:
+    """The key of a subcommand-level `key=value` whose value git runs.
+
+    `git clone -c core.hooksPath=DIR` writes the key into the new repository
+    before checkout, so its hooks run during the clone itself (verified): the
+    same reach as the top-level `git -c` that `_git_dash_c_exec_key` checks.
+    Harmless keys (`-c core.autocrlf=false`) stay allowed.
+    """
+    key = setting.split("=", 1)[0]
+    return key if key and _is_git_config_exec_key(key) else None
 
 
 def _sed_awaits_operand(script: str) -> bool:
