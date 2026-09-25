@@ -133,6 +133,12 @@ HELP_CHECK_FAIL_ON_FOUND = (
     "Exit with status 1 when the delta reports dangling callers, arity "
     "findings, new duplicates or new import cycles."
 )
+HELP_CHECK_ISOLATED = (
+    "Measure the edit, then put the graph and the hash cache back so the "
+    "same edit can be checked again. The graph does change while the check "
+    "runs; if the restore fails, the project stays marked incomplete until a "
+    "full update."
+)
 CMD_RENAME = (
     "Rename a definition everywhere the graph references it (definition, call "
     "and reference sites, imports, overrides, __all__); refuses on guessed sites."

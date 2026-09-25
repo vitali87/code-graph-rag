@@ -23,6 +23,9 @@ time rather than at import -- quieter still. The templates in THIS file are
 applies there.)
 """
 
+import re
+from collections.abc import Iterable
+
 from .constants import (
     ANCHOR_HASH_VERSION,
     CYPHER_DEFAULT_LIMIT,
@@ -474,6 +477,30 @@ def build_constraint_query(label: str, prop: str) -> str:
 
 def build_merge_node_query(label: str, id_key: str) -> str:
     return f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
+
+
+def build_node_props_query(label: str, id_key: str) -> str:
+    """One node's full property map, addressed by its unique key."""
+    return f"MATCH (n:{label} {{{id_key}: $id}}) RETURN properties(n) AS props"
+
+
+_PROPERTY_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def build_remove_node_keys_query(label: str, id_key: str, keys: Iterable[str]) -> str:
+    """Remove the named properties from one node.
+
+    The batch merge adds and overwrites keys but never removes one, so it
+    cannot undo a property a later write added; the isolated check's restore
+    removes those by name (#1718). Cypher takes no parameter for a property
+    NAME, so each one is checked to be a plain identifier and backquoted.
+    """
+    names = sorted(keys)
+    for name in names:
+        if not _PROPERTY_KEY.fullmatch(name):
+            raise ValueError(f"not a property name: {name!r}")
+    removals = ", ".join(f"n.`{name}`" for name in names)
+    return f"MATCH (n:{label} {{{id_key}: $id}}) REMOVE {removals}"
 
 
 def build_merge_relationship_query(
@@ -957,6 +984,103 @@ WHERE target.qualified_name = $qn AND m.qualified_name STARTS WITH $project_pref
 RETURN m.qualified_name AS qualified_name, m.path AS path, r.line AS line,
        r.col AS col, r.end_line AS end_line, r.end_col AS end_col,
        r.alias AS alias, r.imported_name AS imported_name"""
+
+# Isolated check (issue #1718): the subgraph a scoped re-ingest is about to
+# replace, read in full so it can be put back afterwards. The scope is the
+# module subtrees at the re-parsed paths, walked exactly as
+# `CYPHER_DELETE_MODULE` walks them so the capture equals the delete -- the
+# relation list must be kept in step with that query's, or the re-ingest
+# deletes nodes the capture never saw and the restore cannot put them back
+# (HAS_FIELD was added to the delete by #1899 and missed here: CodeRabbit),
+# plus
+# the File nodes at those paths and the containers above them (a package
+# indicator appearing or vanishing flips the directory's node kind).
+_CHECK_SCOPE = f"""MATCH (n)
+WHERE (n:{NodeLabel.MODULE.value} AND n.path IN $paths
+       AND (n.qualified_name = $project_name
+            OR n.qualified_name STARTS WITH $project_prefix))
+   OR ((n:{NodeLabel.FILE.value} OR n:{NodeLabel.FOLDER.value}
+        OR n:{NodeLabel.PACKAGE.value}) AND n.absolute_path IN $absolute_paths)
+MATCH (n)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c)
+WITH DISTINCT c"""
+CYPHER_CHECK_SCOPE_NODES = f"""{_CHECK_SCOPE}
+RETURN labels(c)[0] AS label, properties(c) AS props"""
+# Every relationship with at least one end in the scope, either direction,
+# with each end addressed by the three key fields the batch writer can key
+# a node on (the label decides which one applies). The far end's properties
+# come along only for the labels the check can prune, re-grade or rewrite:
+# an ExternalModule a new import created, a Resource an endpoint anchored, a
+# Gloss whose anchor the re-parse re-graded, and a finding whose qualified
+# name (file, line, column, rule) survives the re-parse while its snippet
+# and span move with the edited source -- that node is not deleted by the
+# cleanup, so only its captured properties can put it back (#1718).
+CYPHER_CHECK_SCOPE_EDGES = f"""{_CHECK_SCOPE}
+MATCH (c)-[r]-(x)
+RETURN labels(c)[0] AS label, c.qualified_name AS qualified_name,
+       c.absolute_path AS absolute_path, c.name AS name,
+       type(r) AS rel, startNode(r) = c AS outgoing, properties(r) AS props,
+       labels(x)[0] AS far_label, x.qualified_name AS far_qualified_name,
+       x.absolute_path AS far_absolute_path, x.name AS far_name,
+       CASE WHEN x:{NodeLabel.EXTERNAL_MODULE.value} OR x:{NodeLabel.RESOURCE.value}
+            OR x:{_GLOSS} OR x:{NodeLabel.CODE_SMELL.value}
+            OR x:{NodeLabel.SECURITY_ISSUE.value} OR x:{NodeLabel.PATTERN.value}
+            THEN properties(x) END AS far_props"""
+# Findings hang off a Module without being DEFINED by it, keyed on their
+# file, line, column and rule: the ones at the scope's paths that the
+# capture did not see were written by the check itself. Project-scoped for
+# the reason CYPHER_DELETE_MODULE is: `$paths` are repo-relative, two
+# projects in the shared graph can hold the same relative path, and a
+# path-only match would take the sibling project's findings with it
+# (greptile-local, #1718). A finding's qualified name starts with its
+# module qn, so the prefix test applies unchanged.
+CYPHER_CHECK_DELETE_FINDINGS = f"""MATCH (n:{NodeLabel.CODE_SMELL.value}|{NodeLabel.SECURITY_ISSUE.value}|{NodeLabel.PATTERN.value})
+WHERE n.path IN $paths AND NOT n.qualified_name IN $keep
+  AND (n.qualified_name = $project_name
+       OR n.qualified_name STARTS WITH $project_prefix)
+DETACH DELETE n"""
+
+# Every shared node (ExternalModule, Resource) with its properties and
+# inbound-edge count, snapshotted before the isolated check writes (#1718).
+# Three uses, one scan:
+# - the ones with no inbound edge are the orphans `reingest` itself sweeps
+#   repo-wide (CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES), so the restore puts
+#   those back;
+# - a shared node the scope reaches after the check but absent here was
+#   created by the check, and only those are deleted -- "newly reachable" is
+#   not "newly created": a pre-existing node another project imports
+#   becomes reachable the moment the check adds the same import (bot
+#   review);
+# - a pre-existing one the check re-emitted gets these properties back
+#   verbatim, since a re-parse merges its own (an ExternalModule's `path` is
+#   the importing name, not a function of the key).
+# The scan is graph-wide because the sweeps it answers to are. The OPTIONAL
+# MATCH + count rewrite, not `NOT ()-->(n)`: a pattern expression in a WHERE
+# clause is not portable to Memgraph 3, and
+# `test_no_pattern_expressions_in_where_clauses` enforces that repo-wide.
+CYPHER_CHECK_SHARED_NODES = f"""MATCH (n)
+WHERE n:{NodeLabel.EXTERNAL_MODULE.value} OR n:{NodeLabel.RESOURCE.value}
+OPTIONAL MATCH (x)-->(n)
+WITH n, count(x) AS inbound
+RETURN head(labels(n)) AS label, properties(n) AS props, inbound"""
+
+# Whether the graph already holds any IO resource link (FLOWS_TO,
+# RESOLVES_TO). An isolated check refuses on one: deleting a changed file's
+# subtree can leave a resource chain unanchored, and the re-ingest's
+# repo-wide `prune_unanchored_resources` would delete it, chain edges and all,
+# beyond what the capture holds (bot review, #1718). A typed pattern with
+# LIMIT 1 stops at the first such edge instead of scanning every relationship.
+CYPHER_CHECK_GRAPH_IO_LINKS = """MATCH ()-[r:FLOWS_TO|RESOLVES_TO]->()
+RETURN type(r) AS rel
+LIMIT 1"""
+
+# The shared nodes the isolated check created, by label and qualified name: the ones the scope reaches that the snapshot above did not hold.
+# Addressed by key rather than by an orphan sweep, so a pre-existing orphan
+# elsewhere in the graph -- which this check never touched -- stays (#1718).
+# Two parallel lists rather than pairs, so the parameters stay flat.
+CYPHER_CHECK_DELETE_SHARED_NODES = """UNWIND range(0, size($labels) - 1) AS i
+MATCH (n)
+WHERE head(labels(n)) = $labels[i] AND n.qualified_name = $qualified_names[i]
+DETACH DELETE n"""
 
 # Trace write-back (issue #1526): a static edge the runtime observed is
 # upgraded in place, on every site it has, so the upgrade never creates a

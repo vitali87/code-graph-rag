@@ -946,6 +946,13 @@ class GraphUpdater:
         # Files (re)parsed by Pass 2 this run: the only files whose
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
+        # The file keys the current `reingest` call will delete and re-parse
+        # (changed, deleted, dependents, same-stem survivors), published right
+        # before `before_write` runs so a caller can capture exactly that set
+        # while nothing has been written yet (issue #1718). Set only while
+        # `before_write` runs; empty before and after, whether the hook
+        # returned, refused or was never given.
+        self.reingest_scope: tuple[str, ...] = ()
         self._exclusion_match: bool | None = None
         # Set when a run that needed the graph's module paths could not read
         # them: the reconciliation it was meant to do may not have happened,
@@ -5859,6 +5866,7 @@ class GraphUpdater:
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
+        self.reingest_scope = ()
         present, gone, skipped = self._reingest_split(paths, deleted)
         if skipped:
             logger.warning(ls.REINGEST_SKIPPED_IGNORED, paths=sorted(skipped))
@@ -5913,12 +5921,20 @@ class GraphUpdater:
         # The caller's last word before the first write. Still inside the
         # read-only prologue: a refusal here leaves the graph exactly as it
         # was, and `reingest_mutated` stays False so the caller classifies
-        # it as "nothing changed".
-        if before_write is not None:
-            try:
+        # it as "nothing changed". The scope is published first so the hook
+        # can read what this call is about to replace (issue #1718).
+        self.reingest_scope = tuple(all_keys)
+        try:
+            if before_write is not None:
                 before_write()
-            except Exception as exc:
-                raise ReingestAborted(str(exc)) from exc
+        except Exception as exc:
+            raise ReingestAborted(str(exc)) from exc
+        finally:
+            # Published for the hook only: the declaration promises an empty
+            # scope outside a call, and a long-lived updater (the watcher,
+            # the MCP server) would otherwise carry the last call's keys into
+            # whatever reads it next (bot review, #1718).
+            self.reingest_scope = ()
         # Past this point the run WILL issue deletes and writes. Callers that
         # persist recovery state need to know whether a failure left the graph
         # untouched or partial, and classifying by exception TYPE is not
