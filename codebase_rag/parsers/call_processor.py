@@ -805,11 +805,10 @@ def _go_variant_spans(
                 return None
             spans.append(declarations[0][1])
             continue
-        suffix = marker.rpartition(cs.DUP_QN_MARKER)[2]
-        line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
-        if not line_text.isdigit() or int(line_text) not in by_line:
+        line = qn_markers.marker_line(marker)
+        if line is None or line not in by_line:
             return None
-        spans.append(by_line[int(line_text)])
+        spans.append(by_line[line])
     return spans
 
 
