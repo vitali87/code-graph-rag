@@ -368,7 +368,10 @@ class AppConfig(BaseSettings):
     FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
+    # Measured in bytes of source the cached ASTs span (see ast_cache.py).
     CACHE_MAX_MEMORY_MB: int = 500
+    # No longer read (the AST cache now evicts LRU until under its cap); kept
+    # so an existing .env that sets them still validates.
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
