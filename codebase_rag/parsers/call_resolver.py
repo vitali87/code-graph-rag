@@ -1256,6 +1256,15 @@ class CallResolver:
             # resolves through its type as any local does.
             if self._receiver_is_untyped_shadow(call_name, caller_qn, local_var_types):
                 return None
+        # Dart's counterpart: a local or parameter named like an import
+        # prefix makes `p.Box(1)` a call on that value, so the import map
+        # must not answer for it (issue #2088). The binding spans are
+        # syntactic, so `var p = 1`, which inference leaves untyped, counts.
+        # A shadow the type map holds resolves through its type as usual.
+        if language == cs.SupportedLanguage.DART and self._dart_call_on_shadow(
+            call_name, module_qn, local_var_types, call_point
+        ):
+            return None
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer
@@ -3555,6 +3564,25 @@ class CallResolver:
         return bool(own) and self.function_registry.get(own) in (
             _CONSTRUCTIBLE_NODE_TYPES
         )
+
+    def _dart_call_on_shadow(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        call_point: int | None,
+    ) -> bool:
+        """Is `call_name`'s first segment an import prefix a binding at this
+        site shadows, with no type to resolve the call through instead?"""
+        if cs.SEPARATOR_DOT not in call_name:
+            return False
+        prefix = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        typed = local_var_types.get(prefix) if local_var_types else None
+        if typed and typed != cs.DART_DYNAMIC_TYPE:
+            return False
+        return bool(
+            self._dart_prefix_targets(prefix, module_qn)
+        ) and self._dart_prefix_is_shadowed(prefix, module_qn, call_point)
 
     def _dart_prefix_is_shadowed(
         self, prefix: str, module_qn: str, call_point: int | None

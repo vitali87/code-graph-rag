@@ -923,3 +923,64 @@ def test_a_same_module_static_field_chain_is_not_a_construction(
         str(src).endswith(".app.use") and str(dst).endswith(".Foo.baz")
         for src, _rel, dst in rels
     ), rels
+
+
+_PLAIN_BOX = "class Box {\n  Box(int v);\n  int get height => 2;\n}\n"
+
+
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        "int shadowed(dynamic p) { return p.Box(1).height; }\n",
+        "int shadowed() { var p = 1; return p.Box(1).height; }\n",
+        "int shadowed() { var (p, q) = (1, 2); return p.Box(1).height; }\n",
+    ],
+)
+def test_a_shadowed_prefix_emits_no_call_through_the_import(
+    tmp_path: Path, shadow: str
+) -> None:
+    """`p` bound at the site is a value, so `p.Box(1)` is a call on it, not
+    a construction of the imported `Box`: no CALLS, INSTANTIATES or
+    REFERENCES through the import (#2088)."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "app.dart": f"import 'lib.dart' as p;\n{shadow}",
+    }
+    rels = _rels(_run(tmp_path, files))
+    leaked = {
+        (rel, dst)
+        for src, rel, dst in rels
+        if src.endswith(".app.shadowed") and ".lib.Box" in dst
+    }
+    assert leaked == set(), leaked
+
+
+def test_the_unshadowed_prefix_still_constructs(tmp_path: Path) -> None:
+    """The control: the same call with no shadow keeps its edges."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "app.dart": (
+            "import 'lib.dart' as p;\nint plain() { return p.Box(1).height; }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.plain", "CALLS", ".Box.Box"), rels
+    assert _has(rels, ".app.plain", "INSTANTIATES", ".lib.Box"), rels
+
+
+def test_a_typed_shadow_resolves_through_its_type(tmp_path: Path) -> None:
+    """A shadow with a real type is a receiver like any other: `p.Box(1)`
+    on a `Pad p` calls `Pad.Box`, not the imported class (#2088)."""
+    files = {
+        "lib.dart": _PLAIN_BOX,
+        "pad.dart": "class Pad {\n  int Box(int v) => v;\n}\n",
+        "app.dart": (
+            "import 'lib.dart' as p;\nimport 'pad.dart';\n"
+            "int typed(Pad p) { return p.Box(1); }\n"
+        ),
+    }
+    rels = _rels(_run(tmp_path, files))
+    assert _has(rels, ".app.typed", "CALLS", ".Pad.Box"), rels
+    assert not any(
+        src.endswith(".app.typed") and ".lib.Box" in dst for src, _r, dst in rels
+    ), rels
