@@ -282,3 +282,31 @@ def test_a_real_inline_module_named_file_is_seeded_so_an_add_cannot_take_its_qn(
     # assertion above is not passing on a map that simply holds everything
     # regardless of the predicate.
     assert Path(seeded["proj.other"]).name == "other.py"
+
+
+class _TwoProjects(_ModuleRows):
+    """Also answers the project registry: `proj` and `proj.v2`."""
+
+    def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
+        from codebase_rag import cypher_queries as cq
+
+        if query == cq.CYPHER_LIST_PROJECTS:
+            return [{cs.KEY_NAME: "proj"}, {cs.KEY_NAME: "proj.v2"}]
+        return super().fetch_all(query, params)
+
+
+def test_a_nested_projects_module_is_not_this_files_owner(tmp_path: Path) -> None:
+    """The read is prefix-scoped, so `proj.` also returns `proj.v2`'s module.
+    When this project holds no module at that path, the nested project's is
+    the only row and became the recorded owner; it now falls back to the bare
+    derivation (bot review)."""
+    store = _TwoProjects(
+        [{cs.KEY_QUALIFIED_NAME: "proj.v2.api", cs.KEY_PATH: "api.py"}]
+    )
+    updater = GraphUpdater(
+        ingestor=store,  # type: ignore[arg-type]
+        repo_path=tmp_path / "proj",
+        parsers={},
+        queries={},
+    )
+    assert updater._recorded_module_qn("api.py") == "proj.api"

@@ -2383,6 +2383,11 @@ class GraphUpdater:
                 continue
             if _is_inline_module_path(path):
                 continue
+            # The read is prefix-scoped, and `svc.` selects `svc.v2`'s
+            # modules too; a nested project's module must not become this
+            # file's recorded owner (#1970; bot review).
+            if not self._owns(qn):
+                continue
             if path not in found or (len(qn), qn) < (len(found[path]), found[path]):
                 found[path] = qn
         return found
