@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import platform
 import sys
 from importlib.metadata import PathDistribution
 from pathlib import Path
@@ -483,6 +484,138 @@ class TestRender:
 
         assert not output.exists()
         assert "bare" in capsys.readouterr().err
+
+
+class TestRuntimeNotices:
+    """The interpreter and bootloader ship in every binary but are not
+    Python distributions in the dependency closure, so they are credited
+    separately (#2174)."""
+
+    PSF_HEADING = "PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2"
+    BOOTLOADER_EXCEPTION = "Bootloader Exception"
+
+    def test_cpython_notice_reproduces_the_interpreters_licence(
+        self, notices: ModuleType
+    ) -> None:
+        notice = notices.cpython_notice()
+
+        assert notice.name == "CPython"
+        assert notice.version == platform.python_version()
+        assert notice.license == "PSF-2.0"
+        assert self.PSF_HEADING in notice.texts[0]
+
+    def test_cpython_licence_found_in_the_posix_stdlib_directory(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        stdlib = tmp_path / "lib" / "python3.12"
+        stdlib.mkdir(parents=True)
+        (stdlib / "LICENSE.txt").write_text(self.PSF_HEADING, encoding="utf-8")
+
+        found = notices._cpython_license_path(stdlib, tmp_path)
+
+        assert found == stdlib / "LICENSE.txt"
+
+    def test_cpython_licence_found_at_the_windows_install_root(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        # Windows installs keep the stdlib in `<prefix>\Lib` and the licence
+        # one level up, beside python.exe.
+        stdlib = tmp_path / "Lib"
+        stdlib.mkdir()
+        (tmp_path / "LICENSE.txt").write_text(self.PSF_HEADING, encoding="utf-8")
+
+        found = notices._cpython_license_path(stdlib, tmp_path)
+
+        assert found == tmp_path / "LICENSE.txt"
+
+    def test_main_refuses_when_the_interpreter_licence_is_missing(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(notices, "runtime_closure", dict)
+        monkeypatch.setattr(notices, "_cpython_license_path", lambda *_: None)
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output)]) == 1
+
+        assert not output.exists()
+        assert "CPython" in capsys.readouterr().err
+
+    def test_bootloader_notice_uses_pyinstallers_own_licence(
+        self, notices: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pyinstaller = _fake_dist(
+            tmp_path,
+            "pyinstaller",
+            [],
+            {"licenses/COPYING.txt": f"GPL-2.0 text\n{self.BOOTLOADER_EXCEPTION}"},
+        )
+        monkeypatch.setattr(notices, "_pyinstaller_distribution", lambda: pyinstaller)
+
+        notice = notices.bootloader_notice()
+
+        assert notice.name == "PyInstaller bootloader"
+        assert notice.version == "1.0"
+        assert self.BOOTLOADER_EXCEPTION in notice.texts[0]
+
+    def test_binary_notice_refuses_without_the_bootloader_licence(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(notices, "runtime_closure", dict)
+        monkeypatch.setattr(notices, "_pyinstaller_distribution", lambda: None)
+        monkeypatch.setattr(
+            notices, "bundled_components", lambda _: frozenset({"anyio"})
+        )
+        output = tmp_path / "notices.txt"
+        binary = tmp_path / "binary"
+        binary.write_bytes(b"")
+
+        assert notices.main(["--output", str(output), "--binary", str(binary)]) == 1
+
+        assert not output.exists()
+        assert "pyinstaller" in capsys.readouterr().err.lower()
+
+    def test_binary_notice_credits_the_bootloader(
+        self, notices: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pyinstaller = _fake_dist(
+            tmp_path,
+            "pyinstaller",
+            [],
+            {"licenses/COPYING.txt": f"GPL-2.0 text\n{self.BOOTLOADER_EXCEPTION}"},
+        )
+        monkeypatch.setattr(notices, "runtime_closure", dict)
+        monkeypatch.setattr(notices, "_pyinstaller_distribution", lambda: pyinstaller)
+        monkeypatch.setattr(
+            notices, "bundled_components", lambda _: frozenset({"anyio"})
+        )
+        output = tmp_path / "notices.txt"
+        binary = tmp_path / "binary"
+        binary.write_bytes(b"")
+
+        assert notices.main(["--output", str(output), "--binary", str(binary)]) == 0
+
+        text = output.read_text(encoding="utf-8")
+        assert "\nPyInstaller bootloader 1.0\n" in text
+        assert self.BOOTLOADER_EXCEPTION in text
+
+    def test_main_credits_the_interpreter(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output)]) == 0
+
+        text = output.read_text(encoding="utf-8")
+        assert f"\nCPython {platform.python_version()}\n" in text
+        assert self.PSF_HEADING in text
 
 
 class TestWorkflowStep:
