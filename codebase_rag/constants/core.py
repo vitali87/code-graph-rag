@@ -173,6 +173,10 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 # re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
 HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+# Present while an EXPOSES cleanup the last run skipped (its project registry
+# was unreadable) is still owed; the in-sync fast path refuses until a batch
+# run has done it (issue #2193).
+EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
