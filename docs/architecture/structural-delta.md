@@ -100,3 +100,45 @@ included, are re-ingested and the delta printed as JSON. With
 callers, `too_many` arity findings, new duplicates or new import cycles.
 A project that is not indexed is refused: a scoped re-ingest completes a
 graph, it cannot stand in for the first index.
+
+The re-ingest is also what brings the graph up to the working tree, so a
+second run on the same edit reports nothing. `--isolated` measures without
+keeping the write:
+
+```bash
+cgr check --base origin/main --isolated --fail-on-found
+```
+
+The subgraph the re-ingest replaces (the changed files' module subtrees and
+those of their dependents, the File nodes at those paths, the containers
+above them and every relationship touching any of it) is captured inside the
+re-ingest's own prologue, so the scope is the updater's rather than a guess
+from the diff, and put back once the delta is computed; the hash cache is
+restored byte for byte, timestamps included. Nodes the check creates beside
+the subtrees (a new file's File node, a new directory's Folder, a new
+finding, an ExternalModule for a new import) are removed; a shared node that
+already existed is kept even when the check links it, and every node that
+outlived the check gets its captured properties back exactly, with any key
+the check added removed. A re-ingest that fails after its first write is
+rolled back the same way.
+
+What `--isolated` does not promise:
+
+- **The graph changes while the check runs.** The re-ingest writes to the
+  shared graph and the restore undoes it afterwards; a reader in between
+  sees the check's state.
+- **The restore is not one transaction.** It deletes before it re-creates.
+  The project's incomplete-run marker is set before the first write and
+  cleared only once the restore finishes, so if the restore fails partway
+  the marker stays, readers refuse, and the next full update repairs the
+  graph.
+- **Some graphs are refused.** A capture that enables IO resource links, a
+  graph that already holds any, and a hash cache that exists but cannot be
+  read are all refused before anything is written, because the restore could
+  not undo them.
+
+The capture and restore read the changed files' subgraph plus one
+graph-wide scan of the shared ExternalModule and Resource nodes, the same
+set the re-ingest's own repo-wide sweeps touch. The delta itself still does
+its project-wide reads (the duplicate-fingerprint lookup above), and the
+re-ingest still runs its repo-wide cleanup passes.

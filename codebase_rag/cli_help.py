@@ -125,6 +125,7 @@ CMD_CHECK = (
 )
 EXAMPLES_CHECK = (
     "Examples:\n  cgr check --base HEAD\n  cgr check --base origin/main --fail-on-found"
+    "\n  cgr check --base origin/main --isolated --fail-on-found"
 )
 HELP_CHECK_BASE = (
     "Git ref the graph was indexed at; files differing from it are re-ingested."
