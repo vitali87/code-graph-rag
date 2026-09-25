@@ -680,7 +680,49 @@ def _git_exec_flag(cmd_parts: list[str]) -> str | None:
         if arg.startswith(f"{cs.SHELL_GIT_EXEC_PATH_FLAG}="):
             return cs.SHELL_GIT_EXEC_PATH_FLAG
 
-    return _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS)
+    if flag := _program_naming_flag(cmd_parts, cs.SHELL_GIT_EXEC_FLAGS):
+        return flag
+    return _git_subcommand_exec_option(cmd_parts)
+
+
+def _git_subcommand_exec_option(cmd_parts: list[str]) -> str | None:
+    """A program-running subcommand option in a spelling the exact match misses.
+
+    git's parsers accept abbreviated long options (`rebase --ex`), short
+    letters (`rebase -x`), attached values (`grep -Oprog`) and clustered short
+    flags (`rebase -ixprog`); the exact-name scan saw none of them.
+    """
+    index = _git_subcommand_index(cmd_parts)
+    if index is None:
+        return None
+    subcommand = cmd_parts[index]
+    long_options = cs.SHELL_GIT_EXEC_LONG_OPTIONS.get(subcommand, frozenset())
+    short_flags = cs.SHELL_GIT_EXEC_SHORT_FLAGS.get(subcommand, frozenset())
+    value_flags = cs.SHELL_GIT_VALUE_SHORT_FLAGS.get(subcommand, frozenset())
+    lookalikes = cs.SHELL_GIT_EXEC_OPTION_LOOKALIKES.get(subcommand, frozenset())
+
+    for arg in cmd_parts[index + 1 :]:
+        if arg == "--":
+            break
+        if arg.startswith("--"):
+            name = _flag_name(arg)
+            if name in lookalikes or len(name) <= 2:
+                continue
+            # Prefix one way is an abbreviation; the other way is the
+            # scripted subcommands' `--tool*` case patterns, which take
+            # `--toolx=prog` as `--tool=prog`.
+            for option in long_options:
+                if option.startswith(name) or name.startswith(option):
+                    return f"{subcommand} {name}"
+            continue
+        if not arg.startswith("-") or not short_flags:
+            continue
+        for letter in arg[1:]:
+            if letter in short_flags:
+                return f"{subcommand} -{letter}"
+            if letter in value_flags:
+                break
+    return None
 
 
 def _sed_awaits_operand(script: str) -> bool:
