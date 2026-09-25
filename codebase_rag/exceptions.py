@@ -63,6 +63,11 @@ MODEL_FORMAT_INVALID = (
 )
 BATCH_SIZE_POSITIVE = "batch_size must be a positive integer"
 CONFIG = "{role} configuration error: {error}"
+MODEL_ROLE_HALF_CONFIGURED = (
+    "{set_var}={value} is set but {missing_var} is not. "
+    "Set both {role}_PROVIDER and {role}_MODEL, or neither to use the local "
+    "Ollama default."
+)
 MODEL_ID_UNKNOWN = "Unknown {provider} model {model_id!r}. Did you mean {suggestions}?"
 MODEL_ID_UNKNOWN_NO_MATCH = (
     "Unknown {provider} model {model_id!r}. Known {provider} models: {known}"
