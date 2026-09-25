@@ -3159,9 +3159,11 @@ class GraphUpdater:
             qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
             if isinstance(qn, str) and isinstance(path, str):
                 known.setdefault(path, set()).add(
-                    qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                    .split(cs.CHAR_PAREN_OPEN, 1)[0]
-                    .split(cs.DUP_QN_MARKER, 1)[0]
+                    qn_markers.strip_dup_marker(
+                        qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[
+                            0
+                        ]
+                    )
                 )
         return known
 
