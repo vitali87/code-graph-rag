@@ -528,7 +528,11 @@ def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
                 for fn in _enclosing_functions(declaration, scope)
                 # A parameter is a binding too: `nonlocal v` inside a def
                 # nested in `middle(v)` names middle's parameter (bot review).
-                if _binds_name(fn, text) or text in set(_parameter_names(fn))
+                # A function that itself declares the name `nonlocal` (or
+                # `global`) forwards it rather than owning it, so the search
+                # continues outward past it (bot review).
+                if (_binds_name(fn, text) or text in set(_parameter_names(fn)))
+                and text not in _declared_non_local(fn)
             ),
             None,
         )

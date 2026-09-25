@@ -436,3 +436,23 @@ def test_a_parameter_is_the_nearest_binder_of_a_nonlocal(tmp_path: Path) -> None
         "    return v\n"
     )
     assert _local_types(tmp_path, body, "outer")["v"] == "Widget"
+
+
+def test_a_forwarding_nonlocal_does_not_own_the_name(tmp_path: Path) -> None:
+    """`middle` declares `nonlocal v` and assigns it, so middle FORWARDS
+    outer's `v`; `inner`'s `nonlocal v` therefore reaches outer too, and
+    inner's rebinding types outer's name (bot review)."""
+    body = (
+        "def outer():\n"
+        "    v = Widget()\n"
+        "    def middle():\n"
+        "        nonlocal v\n"
+        "        v = Widget()\n"
+        "        def inner():\n"
+        "            nonlocal v\n"
+        "            v = Banner()\n"
+        "        inner()\n"
+        "    middle()\n"
+        "    return v\n"
+    )
+    assert _local_types(tmp_path, body, "outer")["v"] == "Banner"
