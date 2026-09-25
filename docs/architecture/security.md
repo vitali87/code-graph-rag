@@ -129,7 +129,10 @@ Application-level data paths include:
   service.
 - **Web research:** CLI research can send queries to an external search backend.
   DuckDuckGo is the keyless default; Serpdive and Serply are configurable. No
-  search API key is required for this network path to be available.
+  search API key is required for this network path to be available. Serply
+  takes the query as a URL parameter, so a proxy or gateway that records
+  request URLs retains the query text; the other two carry it in the request
+  body.
 
 The CLI [research boundary](https://github.com/vitali87/code-graph-rag/blob/main/codebase_rag/tools/research.py)
 checks queries before calling the research agent, and the search tool checks
