@@ -454,6 +454,26 @@ class AppConfig(BaseSettings):
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
         model = getattr(self, f"{role_upper}_MODEL", None)
 
+        # Half a role is a mistake, not a request for the default: falling
+        # back to Ollama here skipped the API-key gate (Ollama needs none) and
+        # then failed later as "Ollama not running" or quietly ran a small
+        # local model instead of the one the user asked for.
+        if bool(provider) != bool(model):
+            provider_var, model_var = f"{role_upper}_PROVIDER", f"{role_upper}_MODEL"
+            set_var, value, missing_var = (
+                (provider_var, provider, model_var)
+                if provider
+                else (model_var, model, provider_var)
+            )
+            raise ValueError(
+                ex.MODEL_ROLE_HALF_CONFIGURED.format(
+                    set_var=set_var,
+                    value=value,
+                    missing_var=missing_var,
+                    role=role_upper,
+                )
+            )
+
         if provider and model:
             return ModelConfig(
                 provider=provider.lower(),
