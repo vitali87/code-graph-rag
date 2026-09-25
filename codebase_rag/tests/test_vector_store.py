@@ -202,10 +202,11 @@ def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
     instance = MagicMock()
     instance.collection_exists.return_value = True
     getattr(instance, failing).side_effect = RuntimeError("store is down")
+    store = vs.QdrantVectorStore()
     with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
         with patch("codebase_rag.vector_store.QdrantClient", return_value=instance):
             with pytest.raises(RuntimeError):
-                vs.QdrantVectorStore().clear_all_embeddings()
+                store.clear_all_embeddings()
 
     assert vs._CLIENT is None
     instance.close.assert_called_once()
