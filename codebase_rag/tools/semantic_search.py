@@ -144,7 +144,7 @@ def get_function_source_code(
         located = locate_node_source(
             qualified_name,
             result.get("absolute_path"),
-            str(file_path_obj),
+            file_path_obj,
             project_roots,
             None,
         )

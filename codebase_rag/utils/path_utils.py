@@ -541,7 +541,7 @@ def _owning_project(qualified_name: str, roots: dict[str, str | None]) -> str | 
 def locate_node_source(
     qualified_name: str,
     absolute_path: str | None,
-    relative_path: str,
+    relative_path: str | Path,
     roots: dict[str, str | None],
     unowned_root: Path | None,
 ) -> SourceLocation:
@@ -564,12 +564,18 @@ def locate_node_source(
         and Path(absolute_path).is_file()
     ):
         return SourceLocation(Path(absolute_path), project=project, root=owner_root)
-    if owner_root is not None and not owner_root.is_dir():
+    if recorded is not None and owner_root is not None and not owner_root.is_dir():
         # Reported as recorded: resolving a vanished path rewrites it through
         # whatever the host maps it to, which is not what the user indexed.
         return SourceLocation(None, SourceMiss.STALE_ROOT, project, Path(recorded))
     base = owner_root or unowned_root
-    candidate = (base / relative_path).resolve() if base else Path(relative_path)
+    # With no root the path is used exactly as the caller validated it.
+    if base is None:
+        candidate = (
+            Path(relative_path) if isinstance(relative_path, str) else relative_path
+        )
+    else:
+        candidate = (base / relative_path).resolve()
     if base is not None and not candidate.is_relative_to(base):
         return SourceLocation(None, SourceMiss.OUTSIDE_ROOT, project, owner_root)
     if not candidate.is_file():
