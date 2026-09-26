@@ -44,6 +44,8 @@ HEALTH_CHECK_MODEL_READY = "{role} model ready ({provider}:{model})"
 HEALTH_CHECK_MODEL_NOT_READY = "{role} model not ready ({provider}:{model})"
 HEALTH_CHECK_MODEL_OK_MSG = "Credentials accepted for {provider}"
 HEALTH_CHECK_MODEL_KEY_MISSING_MSG = "API key not set"
+HEALTH_CHECK_MODEL_MISCONFIGURED = "{role} model not configured"
+HEALTH_CHECK_MODEL_MISCONFIGURED_MSG = "Provider and model must be set together"
 HEALTH_CHECK_MODEL_KEY_MISSING_ERROR = (
     "Set {env_name} in your environment or .env file, or choose a local model."
 )
