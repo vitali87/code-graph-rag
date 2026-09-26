@@ -221,9 +221,10 @@ def _milvus_client_kwargs() -> dict[str, str]:
     return kwargs
 
 
-def _ensure_milvus_collection(client: Any) -> None:
+def _ensure_milvus_collection(client: Any, validate: bool = True) -> None:
     if client.has_collection(collection_name=settings.MILVUS_COLLECTION_NAME):
-        _validate_milvus_collection(client)
+        if validate:
+            _validate_milvus_collection(client)
         return
 
     schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
@@ -287,16 +288,23 @@ def _validate_milvus_collection(client: Any) -> None:
         )
 
 
-def get_milvus_client() -> Any:
+def get_milvus_client(validate: bool = True) -> Any:
     global _CLIENT, _CLIENT_BACKEND
     if MilvusClient is None:
         raise RuntimeError("pymilvus is not installed")
 
     _ensure_client_backend(VectorStoreBackend.MILVUS)
     if _CLIENT is None:
-        _CLIENT = MilvusClient(**_milvus_client_kwargs())
+        client = MilvusClient(**_milvus_client_kwargs())
+        try:
+            _ensure_milvus_collection(client, validate)
+        except Exception:
+            # Close and do not cache, as for Qdrant: a cached client would
+            # skip validation on every later call.
+            client.close()
+            raise
+        _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.MILVUS
-        _ensure_milvus_collection(_CLIENT)
     return _CLIENT
 
 
@@ -511,10 +519,16 @@ class MilvusVectorStore:
         _delete_scoped_embeddings(self.backend, project_name, node_ids, _delete)
 
     def clear_all_embeddings(self) -> None:
-        # Failures propagate; see QdrantVectorStore.clear_all_embeddings.
-        client = get_milvus_client()
-        client.drop_collection(settings.MILVUS_COLLECTION_NAME)
-        _ensure_milvus_collection(client)
+        # Failures propagate, and validation is skipped so a collection of the
+        # wrong vector size can be dropped; see
+        # QdrantVectorStore.clear_all_embeddings.
+        client = get_milvus_client(validate=False)
+        try:
+            client.drop_collection(settings.MILVUS_COLLECTION_NAME)
+            _ensure_milvus_collection(client)
+        except Exception:
+            close_vector_store_client()
+            raise
         logger.info(ls.VECTOR_STORE_CLEARED.format(backend=self.backend))
 
     def verify_stored_ids(self, expected_ids: set[int]) -> set[int]:
