@@ -999,3 +999,34 @@ public record Person(String name, int age) {
         yield node
         for child in node.children:
             yield from self._traverse_all_nodes(child)
+
+
+def _only_method(tree_root_node):
+    class_body = tree_root_node.children[0].child_by_field_name("body")
+    return next(c for c in class_body.children if c.type == "method_declaration")
+
+
+# Generated code (builders, snapshot fixtures) reaches call chains and argument
+# nesting hundreds deep. Inference recursed once per step, hit Python's limit,
+# and the RecursionError discarded the whole method's variable types, so its
+# calls resolved against an empty map (issue #1786).
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param("b" + "".join(f".with{i}(x)" for i in range(1000)), id="chain"),
+        pytest.param("f(" * 1000 + "1" + ")" * 1000, id="nested-arguments"),
+    ],
+)
+def test_a_pathologically_deep_expression_keeps_the_methods_other_variable_types(
+    java_parser: Parser, engine: JavaTypeInferenceEngine, expression: str
+) -> None:
+    code = (
+        f'class A {{ void m(B b) {{ var deep = {expression}; String after = "x"; }} }}'
+    ).encode()
+    method = _only_method(java_parser.parse(code).root_node)
+
+    var_types = engine.build_variable_type_map(method, "test_project.A")
+
+    assert var_types["b"] == "B"
+    assert "after" in var_types
+    assert "deep" in var_types

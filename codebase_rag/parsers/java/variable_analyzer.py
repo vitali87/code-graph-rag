@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...decorators import recursion_guard
+from ...decorators import depth_guard, recursion_guard
 from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
@@ -370,6 +370,10 @@ class JavaVariableAnalyzerMixin:
                         )
                         break
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _infer_java_type_from_expression(
         self,
         expr_node: ASTNode,

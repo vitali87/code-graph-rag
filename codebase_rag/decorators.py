@@ -125,6 +125,42 @@ def recursion_guard[**P, T](
     return decorator
 
 
+_DEPTH_REGISTRY: dict[str, ContextVar[int]] = {}
+
+
+def depth_guard[**P, T](
+    max_depth: int, guard_name: str
+) -> Callable[[Callable[P, T | None]], Callable[P, T | None]]:
+    """Answer None once `max_depth` guarded calls are already on the stack.
+
+    Every function decorated with the same `guard_name` shares one counter, so
+    mutually recursive functions are bounded together. It stops input-driven
+    recursion (a long call chain, deeply nested arguments) well before
+    Python's own limit, where a RecursionError would abort the whole caller.
+    """
+    context_var = _DEPTH_REGISTRY.get(guard_name)
+    if context_var is None:
+        context_var = _DEPTH_REGISTRY.setdefault(
+            guard_name, ContextVar[int](guard_name, default=0)
+        )
+
+    def decorator(func: Callable[P, T | None]) -> Callable[P, T | None]:
+        @wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
+            depth = context_var.get()
+            if depth >= max_depth:
+                return None
+            token = context_var.set(depth + 1)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                context_var.reset(token)
+
+        return wrapper
+
+    return decorator
+
+
 def log_operation[T](
     start_msg: str,
     end_msg: str,
