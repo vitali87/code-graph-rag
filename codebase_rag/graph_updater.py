@@ -2710,6 +2710,17 @@ class GraphUpdater:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
+    def _delete_stale_subtrees(self, keys: Iterable[str]) -> None:
+        """Delete the old subtree of every re-parsed or deleted file.
+
+        A method of its own so the phase-order guard can pin it before the
+        re-parse: `_delete_module_entities` also runs after the parse, for
+        the late deletion pass, and a name-keyed guard cannot tell the two
+        call sites apart (issue #1584).
+        """
+        for key in keys:
+            self._delete_module_entities(key)
+
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
     ) -> None:
@@ -4877,19 +4888,21 @@ class GraphUpdater:
             file_key for _fp, file_key, _new, _b in changed_entries
         }
 
+        pre_parsed = self._pre_parse_changed_files(changed_entries)
         # Every old subtree goes BEFORE any file of this run is parsed, not
         # one by one as each file is reached: a same-stem sibling parsed
         # earlier claims the survivor's old module qn, the MERGE lands on the
         # old node and rewrites its path, and the per-file delete by path
         # then finds nothing, leaving the old definitions beside the new
-        # ones (issue #1569). This loop is the only graph delete on the
-        # re-parse path: every non-new entry is in reindexed_keys, so the
-        # per-file loop below only clears local state. It runs only once
-        # every changed file has pre-parsed: a parse failure then leaves
-        # the old subtrees in place instead of an emptied graph.
-        pre_parsed = self._pre_parse_changed_files(changed_entries)
-        for stale_key in (*reindexed_keys, *deleted_before_parse):
-            self._delete_module_entities(stale_key)
+        # ones (issue #1569). A dependent re-parsed while a deleted file's
+        # module is still in the graph would also resolve into it instead of
+        # taking the fallback a clean index takes (issue #1584). This is the
+        # only graph delete on the re-parse path: every non-new entry is in
+        # reindexed_keys, so the per-file loop below only clears local
+        # state. It runs only once every changed file has pre-parsed: a
+        # parse failure then leaves the old subtrees in place instead of an
+        # emptied graph.
+        self._delete_stale_subtrees((*reindexed_keys, *deleted_before_parse))
         # The in-memory side of a deleted file goes now as well: a reused
         # updater (the watcher's `remove_file_from_state` path, or any caller
         # holding one across `run()` calls) otherwise resolves this
