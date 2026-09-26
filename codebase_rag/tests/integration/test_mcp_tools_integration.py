@@ -58,7 +58,7 @@ class TestMCPToolsIntegration:
 
     async def test_query_code_graph_works(self, mcp_registry: MCPToolsRegistry) -> None:
         """Verify query_code_graph tool works without mocking."""
-        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_read_only.return_value = [  # type: ignore[attr-defined]
             {"name": "func1"},
             {"name": "func2"},
         ]

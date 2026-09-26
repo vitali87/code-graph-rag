@@ -347,7 +347,6 @@ public class RemoteStorageProvider
     updater.run()
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     installer.write_text(
         installer.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -517,7 +516,6 @@ public class RemoteStorageProvider
     updater.run()
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     provider.write_text(
         provider.read_text(encoding="utf-8") + "\n// touched\n", encoding="utf-8"
@@ -641,7 +639,6 @@ public class RemoteStorageProvider
     updater.run()
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     provider.unlink()
     mock_ingestor.reset_mock()
