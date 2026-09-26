@@ -210,3 +210,25 @@ class TestForbiddenBundleEntries:
 
     def test_build_succeeds_when_archive_is_clean(self) -> None:
         assert self._build_with_entries(self.LINUX_CLEAN) is True
+
+    def test_windows_guard_reads_the_exe_pyinstaller_writes(self) -> None:
+        """On Windows the built file is `dist/<name>.exe`, not `dist/<name>`.
+
+        Checking the bare name found nothing there, so the guard never ran on
+        the Windows build.
+        """
+        with (
+            patch("build_binary.platform.system", return_value="Windows"),
+            patch("build_binary.subprocess.run"),
+            patch(
+                "build_binary._archive_entries", return_value=self.LINUX_READLINE
+            ) as mock_entries,
+            patch("build_binary.Path.exists", return_value=True),
+            patch("build_binary.Path.stat") as mock_stat,
+            patch("build_binary.os.chmod"),
+        ):
+            mock_stat.return_value.st_size = 1
+            assert build_binary() is False
+
+        checked = mock_entries.call_args.args[0]
+        assert checked.name.endswith(cs.WINDOWS_EXECUTABLE_SUFFIX)

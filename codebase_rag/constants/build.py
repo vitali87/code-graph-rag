@@ -21,6 +21,10 @@ class Architecture(StrEnum):
 BINARY_NAME_TEMPLATE = "code-graph-rag-{system}-{machine}"
 BINARY_FILE_PERMISSION = 0o755
 DIST_DIR = "dist"
+# PyInstaller appends `.exe` to the `--name` it is given on Windows, so the
+# built file is not at `dist/<name>` there.
+WINDOWS_SYSTEM = "windows"
+WINDOWS_EXECUTABLE_SUFFIX = ".exe"
 BYTES_PER_MB_FLOAT = 1024 * 1024
 
 PYPROJECT_PATH = "pyproject.toml"

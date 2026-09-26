@@ -103,7 +103,10 @@ def build_binary() -> bool:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         logger.success(logs.BUILD_SUCCESS)
 
-        binary_path = Path(cs.DIST_DIR) / binary_name
+        binary_file = binary_name
+        if system == cs.WINDOWS_SYSTEM:
+            binary_file += cs.WINDOWS_EXECUTABLE_SUFFIX
+        binary_path = Path(cs.DIST_DIR) / binary_file
         if binary_path.exists():
             size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
             logger.info(logs.BINARY_INFO.format(path=binary_path))
