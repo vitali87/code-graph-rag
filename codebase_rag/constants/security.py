@@ -701,6 +701,88 @@ SHELL_GIT_EXEC_FLAGS = frozenset(
     }
 )
 
+# The same program-running options per subcommand, in every spelling git's
+# parsers accept. The exact long names above are not enough on their own:
+# parse-options, `rev-parse --parseopt` and Getopt::Long all resolve an
+# unambiguous ABBREVIATION (`rebase --ex`, `grep --open`, `fetch --upl` were
+# each verified running a program), and the short letters were never listed
+# at all (`rebase -x`, `grep -O<prog>`, `clone -u`, all verified). Keyed by
+# subcommand because the letters mean different things elsewhere: `-x` is
+# harmless to `git log`, `-u` is `--update-head-ok` to `git fetch`.
+SHELL_GIT_EXEC_LONG_OPTIONS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"--exec"}),
+    "difftool": frozenset({"--extcmd", "--tool"}),
+    "mergetool": frozenset({"--tool"}),
+    "grep": frozenset({"--open-files-in-pager"}),
+    # --template copies hooks from an arbitrary directory into the new
+    # repository: under clone they ran during the checkout, under init on the
+    # next commit (both verified). What runs is a hook, not the value itself.
+    "clone": frozenset({"--upload-pack", "--template"}),
+    "init": frozenset({"--template"}),
+    "fetch": frozenset({"--upload-pack"}),
+    "pull": frozenset({"--upload-pack"}),
+    "ls-remote": frozenset({"--upload-pack", "--exec"}),
+    "fetch-pack": frozenset({"--upload-pack", "--exec"}),
+    "archive": frozenset({"--exec"}),
+    "push": frozenset({"--receive-pack", "--exec"}),
+    "send-pack": frozenset({"--receive-pack", "--exec"}),
+    "send-email": frozenset(
+        {"--smtp-server", "--sendmail-cmd", "--to-cmd", "--cc-cmd", "--header-cmd"}
+    ),
+    "instaweb": frozenset({"--httpd", "--browser"}),
+    "web--browse": frozenset({"--browser", "--tool"}),
+}
+
+# Short letters naming a program for each subcommand. difftool/mergetool
+# `-t` picks a tool, which is a launcher in its own right (the built-in
+# vimdiff/emacs tools run an editor), and is refused like `--tool` already is.
+SHELL_GIT_EXEC_SHORT_FLAGS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"x"}),
+    "difftool": frozenset({"x", "t"}),
+    "mergetool": frozenset({"t"}),
+    "grep": frozenset({"O"}),
+    "clone": frozenset({"u"}),
+    "instaweb": frozenset({"d", "b"}),
+    "web--browse": frozenset({"b", "t"}),
+}
+
+# Short letters that take a value in those subcommands. git reads the rest of
+# a cluster after such a letter as its value, so `grep -eOops` searches for
+# "Oops" rather than opening a pager; the scan stops there instead of
+# refusing a pattern that merely contains the letter.
+SHELL_GIT_VALUE_SHORT_FLAGS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"C", "s", "X", "S", "r"}),
+    # difftool forwards diff options, several of which take an attached value.
+    "difftool": frozenset({"S", "G", "O", "U", "M", "C", "B", "l", "I"}),
+    "mergetool": frozenset({"O"}),
+    "grep": frozenset({"C", "B", "A", "m", "f", "e"}),
+    "clone": frozenset({"j", "o", "b", "c"}),
+    "instaweb": frozenset({"p", "m"}),
+    "web--browse": frozenset({"c"}),
+}
+
+# A subcommand's own option that sets config in the repository it creates.
+# `git clone -c core.hooksPath=DIR` (and `--config`, `--conf=`, `-ckey=val`,
+# `-qc key=val`) ran a hook during the clone, and `-c core.sshCommand=PROG`
+# ran PROG, all verified. It is the per-command twin of the top-level `git
+# -c`, so the value goes through the same exec-key test and a harmless key
+# keeps working. fetch, pull, init and submodule have no such option (per
+# `git <cmd> -h` under 2.43).
+SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS: dict[str, str] = {"clone": "--config"}
+SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS: dict[str, str] = {"clone": "c"}
+# `--c` is ambiguous under clone (--checkout), so git refuses it; `--co` is
+# the shortest abbreviation git resolves to --config.
+SHELL_GIT_CONFIG_OPTION_MIN_ABBREV = 4
+
+# Real options that are a prefix of, or extend, a program-running one and
+# must keep working. An exact option name wins over an abbreviation in every
+# git parser, so `send-email --to` is the recipient, not `--to-cmd`.
+SHELL_GIT_EXEC_OPTION_LOOKALIKES: dict[str, frozenset[str]] = {
+    "send-email": frozenset({"--to", "--cc"}),
+    "difftool": frozenset({"--tool-help"}),
+    "mergetool": frozenset({"--tool-help"}),
+}
+
 
 # The argument that turns one of those subcommands into a command runner.
 # `git submodule status` and `git bisect start` launch nothing.
@@ -765,6 +847,11 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "uploadpack.packobjectshook",
         "ssh.variant",
         "init.templatedir",
+        # Not a program, but the switch that lets an `ext::<command>` URL run
+        # its command: git refuses the ext transport by default, and `clone
+        # -c protocol.allow=always ext::PROG` ran PROG (verified).
+        "protocol.allow",
+        "protocol.ext.allow",
     }
 )
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,

@@ -90,6 +90,37 @@ def _pyz_entry_names(outer: object) -> list[str]:
     ]
 
 
+# A shared library at the archive root that no wheel owns: the interpreter
+# and the system libraries PyInstaller copied in beside it. Python extension
+# modules also end in `.so`/`.pyd` but carry an ABI tag, and belong to a
+# distribution whose own licence the notice already reproduces; libraries a
+# wheel vendors sit under that wheel's directory, never at the root.
+NATIVE_LIBRARY_PATTERN = re.compile(r"(\.so(\.\d+)*|\.dylib|\.dll)$", re.IGNORECASE)
+EXTENSION_MODULE_PATTERN = re.compile(r"\.(cpython-\d+|abi3|cp\d+)[.-]", re.IGNORECASE)
+
+
+def native_libraries(binary: Path) -> frozenset[str] | None:
+    """Root-level shared libraries in the binary, or `None` when unreadable.
+
+    `None` and an empty set mean different things, as in
+    `bundled_components`: a binary that bundles no native libraries is
+    possible, whereas an unreadable one says nothing about what it carries.
+    """
+    try:
+        from PyInstaller.archive.readers import CArchiveReader
+
+        entries = list(CArchiveReader(str(binary)).toc)
+    except Exception:  # noqa: BLE001 - any unreadable binary means "unknown"
+        return None
+    return frozenset(
+        entry
+        for entry in entries
+        if "/" not in entry.replace("\\", "/")
+        and NATIVE_LIBRARY_PATTERN.search(entry)
+        and not EXTENSION_MODULE_PATTERN.search(entry)
+    )
+
+
 def bundled_components(binary: Path) -> frozenset[str]:
     """Top-level component names present in the binary, from BOTH archives.
 

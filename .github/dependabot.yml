@@ -6,7 +6,9 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.clusterfuzzlite"
     schedule:
       interval: "weekly"
 
