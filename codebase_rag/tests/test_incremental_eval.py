@@ -57,7 +57,14 @@ def _module_subtree() -> _StatefulIngestor:
 class TestStatefulStore:
     def test_detach_delete_module_removes_subtree_and_incident_edges(self) -> None:
         s = _module_subtree()
-        s.execute_write(cs.CYPHER_DELETE_MODULE, {cs.KEY_PATH: "callee.py"})
+        s.execute_write(
+            cs.CYPHER_DELETE_MODULE,
+            {
+                cs.KEY_PATH: "callee.py",
+                cs.KEY_PROJECT_NAME: "proj",
+                cs.KEY_PROJECT_PREFIX: "proj.",
+            },
+        )
 
         assert (_MODULE, "proj.callee") not in s.nodes
         assert (_FUNCTION, "proj.callee.target") not in s.nodes
