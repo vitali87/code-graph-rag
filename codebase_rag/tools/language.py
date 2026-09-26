@@ -606,6 +606,7 @@ def _show_review_hints() -> None:
     no_args_is_help=True,
 )
 def cli() -> None:
+    # A click group: its subcommands do the work.
     pass
 
 

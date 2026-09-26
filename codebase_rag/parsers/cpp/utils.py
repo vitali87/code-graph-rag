@@ -536,13 +536,16 @@ def extract_class_name_from_out_of_class_method(func_node: Node) -> str | None:
     for child in qualified_id.children:
         if child.type == cs.TS_TEMPLATE_TYPE:
             return _extract_class_name_from_template_type(child)
-        if child.type in (
-            cs.CppNodeType.NAMESPACE_IDENTIFIER,
-            cs.CppNodeType.IDENTIFIER,
-            cs.TS_TYPE_IDENTIFIER,
+        if (
+            child.type
+            in (
+                cs.CppNodeType.NAMESPACE_IDENTIFIER,
+                cs.CppNodeType.IDENTIFIER,
+                cs.TS_TYPE_IDENTIFIER,
+            )
+            and child.text
         ):
-            if child.text:
-                return safe_decode_text(child)
+            return safe_decode_text(child)
 
     return None
 

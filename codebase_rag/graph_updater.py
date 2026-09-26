@@ -763,7 +763,7 @@ def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
             data = json.load(f)
         if isinstance(data, dict):
             return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (OSError, ValueError):  # json.JSONDecodeError is a ValueError
         pass
     return {}
 
