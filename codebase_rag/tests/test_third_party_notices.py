@@ -1149,23 +1149,27 @@ class TestNativeNotices:
 
     def test_bundled_readline_refuses_the_notice(self, notices: ModuleType) -> None:
         """The regression: v0.0.945 for Linux shipped GNU Readline (GPL-3.0)."""
+        libraries = frozenset(LINUX_RELEASE_LIBRARIES) | {"libreadline.so.8"}
+
         with pytest.raises(notices.NativeLicenseError, match="GNU Readline"):
-            notices.native_notices(
-                frozenset(LINUX_RELEASE_LIBRARIES) | {"libreadline.so.8"}
-            )
+            notices.native_notices(libraries)
 
     def test_an_unlisted_library_refuses_the_notice(self, notices: ModuleType) -> None:
         """A new library must get a licence entry, not ship unattributed."""
+        libraries = frozenset({"libsqlite3.so.0"})
+
         with pytest.raises(notices.NativeLicenseError, match="libsqlite3.so.0"):
-            notices.native_notices(frozenset({"libsqlite3.so.0"}))
+            notices.native_notices(libraries)
 
     @pytest.mark.parametrize("library", ["libssl.so.1.1", "libcrypto-1_1-x64.dll"])
     def test_pre_3_openssl_is_not_given_the_apache_text(
         self, notices: ModuleType, library: str
     ) -> None:
         """OpenSSL before 3.0 is under the OpenSSL/SSLeay licence, not Apache-2.0."""
+        libraries = frozenset({library})
+
         with pytest.raises(notices.NativeLicenseError, match=library):
-            notices.native_notices(frozenset({library}))
+            notices.native_notices(libraries)
 
     def test_the_gcc_notice_carries_the_gpl_and_the_exception(
         self, notices: ModuleType
