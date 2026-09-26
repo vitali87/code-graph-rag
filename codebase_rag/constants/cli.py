@@ -657,13 +657,68 @@ QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
 QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
-# Refused rather than answered unscoped: rows with no qualified name cannot
-# be attributed to a project, so the requested scope cannot be honoured.
-QUERY_SUMMARY_UNSCOPEABLE = (
-    "This query cannot be scoped to project {project!r}: it returns no "
-    "qualified name, so results cannot be attributed to a project. Ask for "
-    "the qualified name in the query."
+
+
+class ScopeRefusal(StrEnum):
+    """Which check `requires_project_evidence` refused a scoped query on."""
+
+    UNANALYSABLE = "unanalysable"
+    NO_RETURN = "no_return"
+    TRANSFORMED_TERM = "transformed_term"
+    UNBOUND_AGGREGATE = "unbound_aggregate"
+    UNRESTRICTED_AGGREGATE = "unrestricted_aggregate"
+    UNATTRIBUTED_ENTITY = "unattributed_entity"
+    NO_QUALIFIED_NAME = "no_qualified_name"
+
+
+# Refused rather than answered unscoped: a scoped query whose rows cannot be
+# attributed to a project cannot honour the requested scope. One message per
+# refusal (issue #2197): a shared one claimed a missing qualified name
+# whatever the check was, and an agent that followed its advice was refused
+# again.
+QUERY_SUMMARY_UNSCOPEABLE_PREFIX = (
+    "This query cannot be scoped to project {project!r}: "
 )
+QUERY_SUMMARY_UNSCOPEABLE_REASONS: dict[ScopeRefusal, str] = {
+    ScopeRefusal.UNANALYSABLE: (
+        "it uses {subjects}, which the scope check does not analyse. Write it "
+        "as MATCH, WHERE, RETURN and LIMIT with plain property reads."
+    ),
+    ScopeRefusal.NO_RETURN: (
+        "it has no RETURN clause, so nothing it produces can be attributed to "
+        "a project."
+    ),
+    ScopeRefusal.TRANSFORMED_TERM: (
+        "a returned term is neither a plain property read such as "
+        "`n.qualified_name` nor a single aggregate, so it cannot be attributed "
+        "to a project. Return plain `<variable>.<property>` values."
+    ),
+    ScopeRefusal.UNBOUND_AGGREGATE: (
+        "an aggregate such as `count(*)` measures no variable, so what it "
+        "counts cannot be restricted to the project. Aggregate over a "
+        "variable instead, such as `count(n)`, and restrict it with "
+        "`n.qualified_name STARTS WITH '{project}.'`."
+    ),
+    ScopeRefusal.UNRESTRICTED_AGGREGATE: (
+        "the aggregate over {subjects} is not restricted to the project, so "
+        "its result would span every indexed project. Add {predicates} to the "
+        "WHERE clause."
+    ),
+    ScopeRefusal.UNATTRIBUTED_ENTITY: (
+        "the values returned for {subjects} carry no qualified name of their "
+        "own, so they cannot be attributed to a project. Return "
+        "{qualified_names} as well."
+    ),
+    ScopeRefusal.NO_QUALIFIED_NAME: (
+        "it returns no qualified name, so results cannot be attributed to a "
+        "project. Ask for the qualified name in the query."
+    ),
+}
+QUERY_SCOPE_SUBJECT = "`{name}`"
+QUERY_SCOPE_RESTRICTION = "`{name}.qualified_name STARTS WITH '{project}.'`"
+QUERY_SCOPE_QUALIFIED_NAME = "`{name}.qualified_name`"
+QUERY_SCOPE_LIST_SEPARATOR = ", "
+QUERY_SCOPE_AND_SEPARATOR = " AND "
 QUERY_SUMMARY_TIMEOUT = (
     "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
     "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
