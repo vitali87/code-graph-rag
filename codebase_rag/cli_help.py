@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     GRAPH = "graph"
     CHECK = "check"
     RENAME = "rename"
+    CHANGE_SIGNATURE = "change-signature"
     STOP = "stop"
     STATUS = "status"
     HELP = "help"
@@ -147,6 +148,31 @@ HELP_RENAME_ALLOW_HEURISTIC = (
     "Rewrite through heuristic, overload and trace-only sites as well."
 )
 HELP_RENAME_DRY_RUN = "Print the plan and diff without writing anything."
+CMD_CHANGE_SIGNATURE = (
+    "Change a Python definition's parameter list and rewrite every call site "
+    "the graph knows; sites the mapping cannot complete are listed, not touched."
+)
+EXAMPLES_CHANGE_SIGNATURE = (
+    "Examples:\n"
+    "  cgr change-signature myproj.pkg.util.helper a 'n: int' b --map n==1 --dry-run\n"
+    "  cgr change-signature myproj.pkg.util.helper b a\n"
+    "  cgr change-signature myproj.pkg.util.helper 'times: int' 'text: str' "
+    "--map times=0 --map text=1"
+)
+HELP_CHANGE_SIGNATURE_QN = "Qualified name of the function or method to change."
+HELP_CHANGE_SIGNATURE_PARAMS = (
+    "The new parameters in order: NAME, 'NAME: TYPE', 'NAME = DEFAULT' or "
+    "'NAME: TYPE = DEFAULT'; a bare old name carries it over unchanged."
+)
+HELP_CHANGE_SIGNATURE_MAP = (
+    "NEW=SOURCE, repeatable: SOURCE is an old parameter name, its 0-based "
+    "index, or =LITERAL to pass that text at every site (so NEW==1 inserts 1)."
+)
+HELP_CHANGE_SIGNATURE_ALLOW_HEURISTIC = (
+    "Rewrite sites the graph resolved heuristically, by overload fan-out or by "
+    "a trace as well, instead of listing them as unmapped."
+)
+HELP_CHANGE_SIGNATURE_DRY_RUN = "Print the plan and diff without writing anything."
 CMD_TRACE_INGEST = "Resolve a trace file against a project and write dynamic edges"
 CMD_TRACE_CONVERT = "Convert a V8 .cpuprofile (node --cpu-prof) to a trace file"
 
@@ -487,6 +513,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.GRAPH: CMD_GRAPH,
     CLICommandName.CHECK: CMD_CHECK,
     CLICommandName.RENAME: CMD_RENAME,
+    CLICommandName.CHANGE_SIGNATURE: CMD_CHANGE_SIGNATURE,
     CLICommandName.WORKSPACE: CMD_WORKSPACE,
     CLICommandName.STOP: CMD_STOP,
     CLICommandName.STATUS: CMD_STATUS,
