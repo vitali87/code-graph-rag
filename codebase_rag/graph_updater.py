@@ -215,6 +215,14 @@ def _hash_file(filepath: Path) -> str:
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
 
+def _opens_for_reading(path: Path) -> bool:
+    try:
+        with open(path, "rb"):
+            return True
+    except OSError:
+        return False
+
+
 def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
     try:
         with open(filepath, "rb") as f:
@@ -2719,24 +2727,33 @@ class GraphUpdater:
 
         Survivors only: a file deleted this run keeps its state until the
         deletion step, since the foreign-definer lookup reads it to find the
-        files that define into the departing module (issue #1660).
+        files that define into the departing module (issue #1660). A
+        survivor that cannot be opened keeps its claim as well: the run
+        leaves its graph subtree in place, and the added sibling would
+        otherwise take the bare qn over a Module still defining the
+        survivor's functions.
+
+        In LIBCLANG mode the frontend has already registered a covered
+        file's current definitions and the file pass will skip it, so its
+        frontend registrations are kept, as in the re-parse loop.
         """
         if not flux_stems:
             return
         module_map = self.factory.definition_processor.module_qn_to_file_path
-        on_stem = set()
+        on_stem: dict[Path, str] = {}
         for path in module_map.values():
             try:
                 key = cached_relative_path(path, self.repo_path).as_posix()
             except ValueError:
                 continue
-            if _stem_key(key) in flux_stems and path.is_file():
-                on_stem.add(path)
+            if _stem_key(key) in flux_stems and _opens_for_reading(path):
+                on_stem[path] = key
         for path in sorted(on_stem):
-            self.remove_file_from_state(path)
-        for qn, path in list(module_map.items()):
-            if path in on_stem:
-                del module_map[qn]
+            self.remove_file_from_state(
+                path, frontend_current=on_stem[path] in self._cpp_frontend_covered
+            )
+        for qn in [qn for qn, path in module_map.items() if path in on_stem]:
+            del module_map[qn]
 
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
