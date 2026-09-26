@@ -1024,3 +1024,228 @@ class TestPyzEntryLookup:
 
         assert names, "the PYZ was not found in a real one-file archive"
         assert "anyio" in bundle.bundled_components(binary)
+
+
+# Root-level shared libraries in the v0.0.945 release binaries, read from each
+# archive's TOC. These are what `runtime_closure` never sees: no wheel owns
+# them, so without a native entry they shipped with no notice at all.
+LINUX_RELEASE_LIBRARIES = (
+    "libbz2.so.1.0",
+    "libcrypto.so.3",
+    "libffi.so.8",
+    "libgcc_s.so.1",
+    "liblzma.so.5",
+    "libpython3.12.so.1.0",
+    "libssl.so.3",
+    "libstdc++.so.6",
+    "libtinfo.so.6",
+    "libuuid.so.1",
+    "libz.so.1",
+)
+DARWIN_RELEASE_LIBRARIES = ("libcrypto.3.dylib", "libssl.3.dylib")
+WINDOWS_RELEASE_LIBRARIES = (
+    "VCRUNTIME140.dll",
+    "VCRUNTIME140_1.dll",
+    "api-ms-win-core-console-l1-1-0.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "libcrypto-3.dll",
+    "libffi-8.dll",
+    "libssl-3.dll",
+    "python3.dll",
+    "python312.dll",
+    "ucrtbase.dll",
+)
+
+
+class TestNativeLibraries:
+    def test_root_libraries_are_listed_and_extension_modules_are_not(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        binary = TestPyzArchiveIsActuallyRead._write_binary(
+            tmp_path,
+            ["anyio.abc"],
+            [
+                "libssl.so.3",
+                "libcrypto.3.dylib",
+                "python312.dll",
+                "_cffi_backend.cpython-312-x86_64-linux-gnu.so",
+                "mgclient.cpython-312-darwin.so",
+                "_rust.abi3.so",
+                "python3.12/lib-dynload/_ssl.cpython-312-x86_64-linux-gnu.so",
+                "pywin32_system32/pywintypes312.dll",
+            ],
+        )
+
+        assert bundle.native_libraries(binary) == frozenset(
+            {"libssl.so.3", "libcrypto.3.dylib", "python312.dll"}
+        )
+
+    def test_an_unreadable_binary_is_unknown_not_empty(
+        self, bundle: ModuleType, tmp_path: Path
+    ) -> None:
+        not_a_binary = tmp_path / "plain.txt"
+        not_a_binary.write_text("not an archive")
+
+        assert bundle.native_libraries(not_a_binary) is None
+
+
+class TestNativeNotices:
+    @pytest.mark.parametrize(
+        ("libraries", "expected"),
+        [
+            (
+                LINUX_RELEASE_LIBRARIES,
+                {
+                    "CPython",
+                    "OpenSSL",
+                    "libffi",
+                    "zlib",
+                    "bzip2",
+                    "liblzma (XZ Utils)",
+                    "ncurses",
+                    "libuuid (util-linux)",
+                    "GCC runtime libraries",
+                },
+            ),
+            (DARWIN_RELEASE_LIBRARIES, {"CPython", "OpenSSL"}),
+            # A distro interpreter links the system Expat rather than the copy
+            # CPython vendors; a local build on Ubuntu 24.04 bundled it.
+            (("libexpat.so.1",), {"CPython", "Expat"}),
+            (
+                WINDOWS_RELEASE_LIBRARIES,
+                {
+                    "CPython",
+                    "OpenSSL",
+                    "libffi",
+                    "Microsoft Visual C++ runtime and Universal CRT",
+                },
+            ),
+        ],
+    )
+    def test_every_release_library_is_covered(
+        self, notices: ModuleType, libraries: tuple[str, ...], expected: set[str]
+    ) -> None:
+        produced = notices.native_notices(frozenset(libraries))
+
+        assert {n.name for n in produced} == expected
+        assert all(n.texts and n.texts[0] for n in produced)
+
+    def test_the_notice_names_the_files_it_covers(self, notices: ModuleType) -> None:
+        produced = notices.native_notices(frozenset(DARWIN_RELEASE_LIBRARIES))
+
+        openssl = next(n for n in produced if n.name == "OpenSSL")
+        assert "libcrypto.3.dylib" in openssl.version
+        assert "libssl.3.dylib" in openssl.version
+        assert "The OpenSSL Project Authors" in openssl.texts[0]
+
+    def test_cpython_is_credited_even_without_a_binary(
+        self, notices: ModuleType
+    ) -> None:
+        """The interpreter is in every binary, readable or not."""
+        produced = notices.native_notices(None)
+
+        assert [n.name for n in produced] == ["CPython"]
+        assert "PYTHON SOFTWARE FOUNDATION LICENSE" in produced[0].texts[0]
+
+    def test_bundled_readline_refuses_the_notice(self, notices: ModuleType) -> None:
+        """The regression: v0.0.945 for Linux shipped GNU Readline (GPL-3.0)."""
+        libraries = frozenset(LINUX_RELEASE_LIBRARIES) | {"libreadline.so.8"}
+
+        with pytest.raises(notices.NativeLicenseError, match="GNU Readline"):
+            notices.native_notices(libraries)
+
+    def test_an_unlisted_library_refuses_the_notice(self, notices: ModuleType) -> None:
+        """A new library must get a licence entry, not ship unattributed."""
+        libraries = frozenset({"libsqlite3.so.0"})
+
+        with pytest.raises(notices.NativeLicenseError, match="libsqlite3.so.0"):
+            notices.native_notices(libraries)
+
+    @pytest.mark.parametrize("library", ["libssl.so.1.1", "libcrypto-1_1-x64.dll"])
+    def test_pre_3_openssl_is_not_given_the_apache_text(
+        self, notices: ModuleType, library: str
+    ) -> None:
+        """OpenSSL before 3.0 is under the OpenSSL/SSLeay licence, not Apache-2.0."""
+        libraries = frozenset({library})
+
+        with pytest.raises(notices.NativeLicenseError, match=library):
+            notices.native_notices(libraries)
+
+    def test_the_gcc_notice_carries_the_gpl_and_the_exception(
+        self, notices: ModuleType
+    ) -> None:
+        produced = notices.native_notices(frozenset({"libstdc++.so.6"}))
+
+        gcc = next(n for n in produced if n.name == "GCC runtime libraries")
+        assert "GCC RUNTIME LIBRARY EXCEPTION" in gcc.texts[0]
+        assert "GNU GENERAL PUBLIC LICENSE" in gcc.texts[0]
+        assert "Version 3, 29 June 2007" in gcc.texts[0]
+
+    def test_a_missing_interpreter_licence_refuses_the_notice(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(notices.sysconfig, "get_path", lambda _: str(tmp_path))
+        monkeypatch.setattr(notices.sys, "base_prefix", str(tmp_path))
+
+        with pytest.raises(notices.NativeLicenseError, match="LICENSE.txt"):
+            notices.native_notices(None)
+
+    def test_every_native_text_file_exists(self, notices: ModuleType) -> None:
+        for component in notices.NATIVE_COMPONENTS:
+            if component.text_file is not None:
+                path = notices.NATIVE_TEXTS_DIR / component.text_file
+                assert path.read_text(encoding="utf-8").strip(), component.name
+
+
+class TestNativeNoticesEndToEnd:
+    def test_main_credits_the_bundled_libraries(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        binary = TestPyzArchiveIsActuallyRead._write_binary(
+            tmp_path, ["anyio.abc"], ["libssl.so.3", "libffi.so.8"]
+        )
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output), "--binary", str(binary)]) == 0
+
+        text = output.read_text(encoding="utf-8")
+        assert "\nOpenSSL (bundled as libssl.so.3)" in text
+        assert "\nlibffi (bundled as libffi.so.8)" in text
+        assert "\nCPython " in text
+
+    def test_main_refuses_a_binary_carrying_readline(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        binary = TestPyzArchiveIsActuallyRead._write_binary(
+            tmp_path, ["anyio.abc"], ["libreadline.so.8"]
+        )
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output), "--binary", str(binary)]) == 1
+
+        assert not output.exists()
+        assert "GNU Readline" in capsys.readouterr().err
+
+    def test_main_refuses_a_binary_it_cannot_inventory(
+        self,
+        notices: ModuleType,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An unread inventory must not pass as one with nothing to check."""
+        not_a_binary = tmp_path / "plain.txt"
+        not_a_binary.write_text("not an archive")
+        output = tmp_path / "notices.txt"
+
+        assert (
+            notices.main(["--output", str(output), "--binary", str(not_a_binary)]) == 1
+        )
+
+        assert not output.exists()
+        assert "native libraries cannot be checked" in capsys.readouterr().err

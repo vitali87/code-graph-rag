@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import platform
 import re
 import sys
+import sysconfig
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -55,7 +57,9 @@ def _load_bundle_contents() -> ModuleType:
     # condition that splits them.
     existing = sys.modules.get("bundle_contents")
     if existing is not None:
-        if not hasattr(existing, "bundled_components"):
+        if not hasattr(existing, "bundled_components") or not hasattr(
+            existing, "native_libraries"
+        ):
             # Something registered a different module under this name. Say so
             # rather than failing later with an AttributeError on a name that
             # gives no hint where the wrong module came from.
@@ -63,9 +67,9 @@ def _load_bundle_contents() -> ModuleType:
             # constants block, so a name defined there is not yet bound and
             # the raise would be a NameError instead (measured).
             raise ImportError(
-                f"sys.modules['bundle_contents'] is {existing!r}, which has "
-                "no `bundled_components`; something registered a different "
-                "module under that name"
+                f"sys.modules['bundle_contents'] is {existing!r}, which lacks "
+                "`bundled_components` or `native_libraries`; something "
+                "registered a different module under that name"
             )
         return existing
 
@@ -79,7 +83,9 @@ def _load_bundle_contents() -> ModuleType:
     return module
 
 
-bundled_components = _load_bundle_contents().bundled_components
+_bundle_contents = _load_bundle_contents()
+bundled_components = _bundle_contents.bundled_components
+native_libraries = _bundle_contents.native_libraries
 
 ROOT_DISTRIBUTION = "code-graph-rag"
 ROOT_EXTRAS = frozenset({"treesitter-full"})
@@ -152,7 +158,7 @@ HEADER = """\
 THIRD-PARTY SOFTWARE NOTICES
 
 {root} {version} is distributed under the MIT License. The standalone
-binary bundles the following open source packages, each of which is the
+binary bundles the following third-party packages, each of which is the
 property of its respective copyright holders and is distributed under the
 licence reproduced below.
 
@@ -170,9 +176,110 @@ License: {license}
 """
 ENCODING = "utf-8"
 
+# The binary also carries what no wheel owns: the Python interpreter and the
+# shared libraries PyInstaller copies in beside it (OpenSSL, libffi, zlib, the
+# C runtime, ...). `runtime_closure` walks wheels only, so these would ship
+# with no notice at all. Each entry names the files it covers, keyed by the
+# release binaries' actual contents, and the upstream licence text kept under
+# `license_texts/native/`.
+NATIVE_TEXTS_DIR = LICENSE_TEXTS_DIR / "native"
+CPYTHON_COMPONENT = "CPython"
+CPYTHON_LICENSE = "PSF-2.0"
+CPYTHON_LICENSE_FILE = "LICENSE.txt"
+BUNDLED_AS = "(bundled as {files})"
+
+
+@dataclass(frozen=True)
+class NativeComponent:
+    name: str
+    license: str
+    patterns: tuple[str, ...]
+    text_file: str | None
+
+    def matches(self, filename: str) -> bool:
+        return any(re.search(p, filename, re.IGNORECASE) for p in self.patterns)
+
+
+NATIVE_COMPONENTS: tuple[NativeComponent, ...] = (
+    # The interpreter's text is read from the interpreter itself, so it is the
+    # exact licence of the build that was bundled rather than a stored copy.
+    NativeComponent(
+        CPYTHON_COMPONENT, CPYTHON_LICENSE, (r"^libpython3", r"^python3\d*\.dll$"), None
+    ),
+    # OpenSSL 3 only: releases before 3.0 are under the dual OpenSSL/SSLeay
+    # licence, so a 1.x library falls through to the unknown-library refusal
+    # rather than inheriting the Apache-2.0 text.
+    NativeComponent(
+        "OpenSSL",
+        "Apache-2.0",
+        (r"^lib(ssl|crypto)(\.so\.3($|\.)|\.3\.dylib$|-3(-x64)?\.dll$)",),
+        "OpenSSL.txt",
+    ),
+    NativeComponent("libffi", "MIT", (r"^libffi[.-]",), "libffi.txt"),
+    NativeComponent("Expat", "MIT", (r"^libexpat[.-]",), "expat.txt"),
+    NativeComponent("zlib", "Zlib", (r"^libz\.", r"^zlib1?\.dll$"), "zlib.txt"),
+    NativeComponent("bzip2", "bzip2-1.0.6", (r"^libbz2[.-]",), "bzip2.txt"),
+    # 0BSD from XZ Utils 5.6; earlier releases put liblzma in the public
+    # domain, which asks for nothing, so the stricter text covers both.
+    NativeComponent("liblzma (XZ Utils)", "0BSD", (r"^liblzma[.-]",), "liblzma.txt"),
+    NativeComponent(
+        "ncurses",
+        "X11-distribute-modifications-variant",
+        (r"^lib(tinfo|ncurses|panel|form|menu)w?[.-]",),
+        "ncurses.txt",
+    ),
+    NativeComponent(
+        "libuuid (util-linux)", "BSD-3-Clause", (r"^libuuid[.-]",), "libuuid.txt"
+    ),
+    NativeComponent(
+        "GCC runtime libraries",
+        "GPL-3.0-or-later WITH GCC-exception-3.1",
+        (r"^libgcc_s[.-]", r"^libstdc\+\+[.-]"),
+        "gcc-runtime.txt",
+    ),
+    NativeComponent(
+        "Microsoft Visual C++ runtime and Universal CRT",
+        "LicenseRef-Microsoft-Distributable-Code",
+        (r"^vcruntime140", r"^msvcp140", r"^ucrtbase\.dll$", r"^api-ms-win-"),
+        "microsoft-runtime.txt",
+    ),
+)
+
+# Copyleft libraries with no linking exception. Bundling one inside the
+# one-file executable would put the whole binary under its terms, so the
+# notice step fails the release instead of documenting it. GNU Readline is
+# the measured case: the Linux binary shipped `libreadline.so.8` because the
+# interpreter's `readline` module was collected.
+FORBIDDEN_NATIVE: dict[str, str] = {
+    r"^libreadline[.-]": "GNU Readline (GPL-3.0-or-later)",
+    r"^libgdbm": "GNU dbm (GPL-3.0-or-later)",
+}
+
+FORBIDDEN_NATIVE_ERROR = (
+    "the binary bundles {files}, which is {component}; copyleft without a "
+    "linking exception cannot ship inside an MIT-licensed executable -- exclude "
+    "the module that pulls it in (PYINSTALLER_EXCLUDED_MODULES)"
+)
+UNKNOWN_NATIVE_ERROR = (
+    "the binary bundles native libraries with no licence entry: {files}; add "
+    "them to NATIVE_COMPONENTS with their upstream licence text"
+)
+UNREADABLE_NATIVE_ERROR = (
+    "{path} could not be read as a PyInstaller archive, so its native "
+    "libraries cannot be checked for copyleft or missing licence entries"
+)
+MISSING_CPYTHON_LICENSE_ERROR = (
+    "no CPython {file} found under {paths}; the interpreter is bundled in every "
+    "binary and its licence must be reproduced"
+)
+
 
 class UnreadableLicenseError(RuntimeError):
     """A licence file resolved but could not be read."""
+
+
+class NativeLicenseError(RuntimeError):
+    """A bundled native library is forbidden or has no licence entry."""
 
 
 @dataclass(frozen=True)
@@ -505,6 +612,89 @@ def collect_notices(
     return [_notice(dist, bundled) for dist in dists]
 
 
+def _cpython_license_text() -> str:
+    """The running interpreter's own `LICENSE.txt`.
+
+    The generator runs in the virtualenv the binary was frozen from, so its
+    base interpreter IS the bundled one. POSIX builds keep the file in the
+    stdlib directory, Windows builds at the install root; the Windows copy
+    also carries the licences of what that build links in.
+    """
+    candidates = [
+        Path(sysconfig.get_path("stdlib")) / CPYTHON_LICENSE_FILE,
+        Path(sys.base_prefix) / CPYTHON_LICENSE_FILE,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding=ENCODING).strip()
+    raise NativeLicenseError(
+        MISSING_CPYTHON_LICENSE_ERROR.format(
+            file=CPYTHON_LICENSE_FILE,
+            paths=", ".join(str(c.parent) for c in candidates),
+        )
+    )
+
+
+def _native_text(component: NativeComponent) -> str:
+    if component.text_file is None:
+        return _cpython_license_text()
+    return (NATIVE_TEXTS_DIR / component.text_file).read_text(encoding=ENCODING).strip()
+
+
+def native_notices(libraries: frozenset[str] | None) -> list[Notice]:
+    """Notices for the interpreter and the native libraries bundled with it.
+
+    `libraries` is `None` when the binary was not given or could not be read.
+    CPython is in every binary regardless, so its notice is always produced;
+    the rest need the binary's actual contents.
+    """
+    found = sorted(libraries or ())
+    forbidden: dict[str, list[str]] = {}
+    for filename in found:
+        for pattern, component in FORBIDDEN_NATIVE.items():
+            if re.search(pattern, filename, re.IGNORECASE):
+                forbidden.setdefault(component, []).append(filename)
+    if forbidden:
+        raise NativeLicenseError(
+            "\n".join(
+                FORBIDDEN_NATIVE_ERROR.format(files=", ".join(files), component=name)
+                for name, files in forbidden.items()
+            )
+        )
+
+    by_component: dict[str, list[str]] = {}
+    unknown = []
+    for filename in found:
+        component = next((c for c in NATIVE_COMPONENTS if c.matches(filename)), None)
+        if component is None:
+            unknown.append(filename)
+        else:
+            by_component.setdefault(component.name, []).append(filename)
+    if unknown:
+        raise NativeLicenseError(UNKNOWN_NATIVE_ERROR.format(files=", ".join(unknown)))
+
+    notices = []
+    for component in NATIVE_COMPONENTS:
+        files = by_component.get(component.name)
+        if component.name == CPYTHON_COMPONENT:
+            version = platform.python_version()
+            if files:
+                version = f"{version} {BUNDLED_AS.format(files=', '.join(files))}"
+        elif files:
+            version = BUNDLED_AS.format(files=", ".join(files))
+        else:
+            continue
+        notices.append(
+            Notice(
+                name=component.name,
+                version=version,
+                license=component.license,
+                texts=(_native_text(component),),
+            )
+        )
+    return notices
+
+
 def render(notices: list[Notice], root: str = ROOT_DISTRIBUTION) -> str:
     root_version = distribution(root).version
     parts = [HEADER.format(root=root, version=root_version, count=len(notices))]
@@ -541,8 +731,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     bundled: frozenset[str] = frozenset()
+    libraries: frozenset[str] | None = None
     if args.binary is not None:
         bundled = bundled_components(args.binary)
+        libraries = native_libraries(args.binary)
+        # Unlike the package filter above, there is no safe fallback here: an
+        # unread inventory would skip the readline and unknown-library checks
+        # and still write a notice, so refuse instead.
+        if libraries is None:
+            print(UNREADABLE_NATIVE_ERROR.format(path=args.binary), file=sys.stderr)  # noqa: T201
+            return 1
         if not bundled:
             # Unreadable is not empty. Say so, because the notice silently
             # reverts to the unfiltered wheel contents.
@@ -550,7 +748,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         notices = collect_notices(runtime_closure().values(), bundled)
-    except UnreadableLicenseError as error:
+        notices += native_notices(libraries)
+    except (UnreadableLicenseError, NativeLicenseError) as error:
         print(error, file=sys.stderr)  # noqa: T201
         return 1
 
