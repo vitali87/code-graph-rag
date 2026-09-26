@@ -42,11 +42,12 @@ PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ARG_COPY_METADATA = "--copy-metadata"
 PYINSTALLER_ENTRY_POINT = "main.py"
 
-# On Linux the stdlib `readline` extension links GNU Readline, which is
-# GPL-3.0 (not LGPL), and PyInstaller bundles libreadline with it; on macOS
-# it links the system libedit instead. PyInstaller collects it only because
-# stdlib modules try `import readline` opportunistically, and interactive
-# input goes through prompt_toolkit, so it is excluded everywhere (#2189).
+# `readline` is excluded for its licence, not its size. On Linux the
+# interpreter's module links GNU Readline (GPL-3.0-or-later), and PyInstaller
+# collects it whenever anything imports it (the stdlib `site` and `pdb`,
+# `websockets.cli`), which put `libreadline.so.8` inside the MIT-licensed
+# one-file binary. Every importer guards the import, and interactive input
+# goes through prompt_toolkit, so nothing loses behaviour without it.
 PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
 
 # Archive entries a release binary must never carry, matched against the last

@@ -541,36 +541,43 @@ def extract_python_superclasses(
     if not superclasses_node:
         return []
 
-    parent_classes: list[str] = []
     import_map = import_processor.import_mapping.get(module_qn)
+    return [
+        _resolve_python_base(parent_name, module_qn, import_map, resolve_to_qn)
+        for child in superclasses_node.children
+        if (parent_name := _python_base_name(child))
+    ]
 
-    for child in superclasses_node.children:
-        # A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
-        # int])`, click) is a `subscript` node; the base name is its `value`
-        # field. Skipping it dropped the INHERITS edge and with it every
-        # OVERRIDES/dispatch relationship of the subclass.
-        if child.type == cs.TS_PY_SUBSCRIPT:
-            value = child.child_by_field_name(cs.FIELD_VALUE)
-            if value is not None and value.type in (
-                cs.TS_IDENTIFIER,
-                cs.TS_PY_ATTRIBUTE,
-            ):
-                child = value
-        if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
-            continue
-        if not (parent_name := safe_decode_text(child)):
-            continue
 
-        head, sep, tail = parent_name.partition(cs.SEPARATOR_DOT)
-        if import_map and head in import_map:
-            resolved_head = import_map[head]
-        elif import_map:
-            resolved_head = resolve_to_qn(head, module_qn)
-        else:
-            resolved_head = f"{module_qn}.{head}"
-        parent_classes.append(f"{resolved_head}{sep}{tail}")
+def _python_base_name(child: Node) -> str | None:
+    """The dotted name a Python base-list entry names, if it names one."""
+    # A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
+    # int])`, click) is a `subscript` node; the base name is its `value`
+    # field. Skipping it dropped the INHERITS edge and with it every
+    # OVERRIDES/dispatch relationship of the subclass.
+    if child.type == cs.TS_PY_SUBSCRIPT:
+        value = child.child_by_field_name(cs.FIELD_VALUE)
+        if value is not None and value.type in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            child = value
+    if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
+        return None
+    return safe_decode_text(child) or None
 
-    return parent_classes
+
+def _resolve_python_base(
+    parent_name: str,
+    module_qn: str,
+    import_map: dict[str, str] | None,
+    resolve_to_qn: Callable[[str, str], str],
+) -> str:
+    head, sep, tail = parent_name.partition(cs.SEPARATOR_DOT)
+    if import_map and head in import_map:
+        resolved_head = import_map[head]
+    elif import_map:
+        resolved_head = resolve_to_qn(head, module_qn)
+    else:
+        resolved_head = f"{module_qn}.{head}"
+    return f"{resolved_head}{sep}{tail}"
 
 
 def extract_js_ts_heritage_parents(
@@ -589,21 +596,21 @@ def extract_js_ts_heritage_parents(
                 )
             )
             break
+        if not is_preceded_by_extends(child, class_heritage_node):
+            continue
         if child.type in cs.JS_TS_PARENT_REF_TYPES:
-            if is_preceded_by_extends(child, class_heritage_node):
-                if parent_name := safe_decode_text(child):
-                    parent_classes.append(
-                        resolve_js_ts_parent_class(
-                            parent_name, module_qn, import_processor, resolve_to_qn
-                        )
-                    )
-        elif child.type == cs.TS_CALL_EXPRESSION:
-            if is_preceded_by_extends(child, class_heritage_node):
-                parent_classes.extend(
-                    extract_mixin_parent_classes(
-                        child, module_qn, import_processor, resolve_to_qn
+            if parent_name := safe_decode_text(child):
+                parent_classes.append(
+                    resolve_js_ts_parent_class(
+                        parent_name, module_qn, import_processor, resolve_to_qn
                     )
                 )
+        elif child.type == cs.TS_CALL_EXPRESSION:
+            parent_classes.extend(
+                extract_mixin_parent_classes(
+                    child, module_qn, import_processor, resolve_to_qn
+                )
+            )
 
     return parent_classes
 
@@ -667,26 +674,27 @@ def extract_mixin_parent_classes(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
+    arguments = find_child_by_type(call_expr_node, cs.TS_ARGUMENTS)
+    if arguments is None:
+        return []
     parent_classes: list[str] = []
-
-    for child in call_expr_node.children:
-        if child.type == cs.TS_ARGUMENTS:
-            for arg_child in child.children:
-                if arg_child.type == cs.TS_IDENTIFIER and arg_child.text:
-                    if parent_name := safe_decode_text(arg_child):
-                        parent_classes.append(
-                            resolve_js_ts_parent_class(
-                                parent_name, module_qn, import_processor, resolve_to_qn
-                            )
-                        )
-                elif arg_child.type == cs.TS_CALL_EXPRESSION:
-                    parent_classes.extend(
-                        extract_mixin_parent_classes(
-                            arg_child, module_qn, import_processor, resolve_to_qn
-                        )
-                    )
-            break
-
+    for arg_child in arguments.children:
+        if arg_child.type == cs.TS_CALL_EXPRESSION:
+            parent_classes.extend(
+                extract_mixin_parent_classes(
+                    arg_child, module_qn, import_processor, resolve_to_qn
+                )
+            )
+        elif (
+            arg_child.type == cs.TS_IDENTIFIER
+            and arg_child.text
+            and (parent_name := safe_decode_text(arg_child))
+        ):
+            parent_classes.append(
+                resolve_js_ts_parent_class(
+                    parent_name, module_qn, import_processor, resolve_to_qn
+                )
+            )
     return parent_classes
 
 
@@ -762,12 +770,16 @@ def extract_java_interface_names(
     resolve_to_qn: Callable[[str, str], str],
 ) -> None:
     for child in interfaces_node.children:
-        if child.type == cs.TS_TYPE_LIST:
-            for type_child in child.children:
-                # Unwrap generic/qualified bases (`TBase<T>`, `pkg.IScheme`) to
-                # the base type_identifier; plain identifiers pass straight
-                # through. Skips list punctuation (commas).
-                base = java_base_type_identifier(type_child)
-                if base is not None and base.text:
-                    if interface_name := safe_decode_text(base):
-                        interface_list.append(resolve_to_qn(interface_name, module_qn))
+        if child.type != cs.TS_TYPE_LIST:
+            continue
+        for type_child in child.children:
+            # Unwrap generic/qualified bases (`TBase<T>`, `pkg.IScheme`) to
+            # the base type_identifier; plain identifiers pass straight
+            # through. Skips list punctuation (commas).
+            base = java_base_type_identifier(type_child)
+            if (
+                base is not None
+                and base.text
+                and (interface_name := safe_decode_text(base))
+            ):
+                interface_list.append(resolve_to_qn(interface_name, module_qn))

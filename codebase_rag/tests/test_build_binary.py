@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from build_binary import (
@@ -140,13 +141,24 @@ class TestBuildBinaryCommand:
         metadata_pair = [cs.PYINSTALLER_ARG_COPY_METADATA, cs.PACKAGE_NAME]
         assert any(cmd[i : i + 2] == metadata_pair for i in range(len(cmd) - 1)), cmd
 
-    def test_excludes_gpl_readline_module(self) -> None:
+    def test_excludes_gpl_readline_from_the_bundle(self) -> None:
+        """The Linux interpreter's `readline` links GNU Readline (GPL-3.0).
+
+        Released binaries up to v0.0.945 carried `libreadline.so.8` because
+        guarded imports in `site`, `pdb` and `websockets.cli` made PyInstaller
+        collect the module; excluding it keeps copyleft out of the executable.
+        """
         with patch("build_binary.subprocess.run") as mock_run:
             assert build_binary()
 
         cmd = mock_run.call_args.args[0]
         exclude_pair = [cs.PYINSTALLER_ARG_EXCLUDE_MODULE, "readline"]
         assert any(cmd[i : i + 2] == exclude_pair for i in range(len(cmd) - 1)), cmd
+
+    def test_darwin_spec_excludes_readline_too(self) -> None:
+        spec = Path(__file__).resolve().parents[2] / "code-graph-rag-darwin-arm64.spec"
+
+        assert "'readline'" in spec.read_text(encoding="utf-8")
 
 
 class TestForbiddenBundleEntries:
