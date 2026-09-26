@@ -2,6 +2,8 @@ import hashlib
 import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
@@ -504,3 +506,78 @@ def absolute_path_within_project_root(
     if root is None:
         return True
     return Path(absolute_path).resolve().is_relative_to(root)
+
+
+class SourceMiss(StrEnum):
+    """Why a node's source file could not be located."""
+
+    STALE_ROOT = "stale_root"
+    OUTSIDE_ROOT = "outside_root"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True)
+class SourceLocation:
+    """A node's source file, or why there is none. `project` and `root` name
+    the owning project and its recorded root when one is known, so a stale
+    root can be reported as such rather than as a missing file."""
+
+    path: Path | None
+    miss: SourceMiss | None = None
+    project: str | None = None
+    root: Path | None = None
+
+
+def _owning_project(qualified_name: str, roots: dict[str, str | None]) -> str | None:
+    owner = None
+    for name in roots:
+        if (qualified_name == name or qualified_name.startswith(name + ".")) and (
+            owner is None or len(name) > len(owner)
+        ):
+            owner = name
+    return owner
+
+
+def locate_node_source(
+    qualified_name: str,
+    absolute_path: str | None,
+    relative_path: str | Path,
+    roots: dict[str, str | None],
+    unowned_root: Path | None,
+) -> SourceLocation:
+    """The one fallback sequence both source readers use (issue #2123).
+
+    The recorded absolute path is authoritative when it sits inside the
+    owning project's root and is a file. Otherwise the relative path is
+    joined to that root, or to `unowned_root` for a node no registered
+    project owns; with no root at all the relative path is used as given,
+    the legacy behaviour. A recorded root that is no longer a directory is
+    reported as stale: the repository moved and must be re-indexed, and
+    falling back to another root would read another project's file (#1881).
+    """
+    project = _owning_project(qualified_name, roots)
+    recorded = roots.get(project) if project is not None else None
+    owner_root = Path(recorded).resolve() if recorded is not None else None
+    if (
+        absolute_path
+        and absolute_path_within_project_root(qualified_name, absolute_path, roots)
+        and Path(absolute_path).is_file()
+    ):
+        return SourceLocation(Path(absolute_path), project=project, root=owner_root)
+    if recorded is not None and owner_root is not None and not owner_root.is_dir():
+        # Reported as recorded: resolving a vanished path rewrites it through
+        # whatever the host maps it to, which is not what the user indexed.
+        return SourceLocation(None, SourceMiss.STALE_ROOT, project, Path(recorded))
+    base = owner_root or unowned_root
+    # With no root the path is used exactly as the caller validated it.
+    if base is None:
+        candidate = (
+            Path(relative_path) if isinstance(relative_path, str) else relative_path
+        )
+    else:
+        candidate = (base / relative_path).resolve()
+    if base is not None and not candidate.is_relative_to(base):
+        return SourceLocation(None, SourceMiss.OUTSIDE_ROOT, project, owner_root)
+    if not candidate.is_file():
+        return SourceLocation(None, SourceMiss.MISSING, project, owner_root)
+    return SourceLocation(candidate, project=project, root=owner_root)

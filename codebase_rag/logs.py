@@ -518,6 +518,10 @@ SEMANTIC_FOUND = "Found {count} semantic matches for: {query}"
 SEMANTIC_FAILED = "Semantic search failed for query '{query}': {error}"
 SEMANTIC_NODE_NOT_FOUND = "No node found with ID: {id}"
 SEMANTIC_INVALID_LOCATION = "Missing or invalid source location info for node {id}"
+SEMANTIC_STALE_PROJECT_ROOT = (
+    "No source for node {id}: project '{project}' was indexed at '{root}', "
+    "which no longer exists; re-index the project"
+)
 SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
 SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
 SEMANTIC_TOOL_SOURCE = "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"

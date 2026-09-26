@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -19,8 +18,8 @@ from ..taint import ReadContentRecord
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
 from ..utils.path_utils import (
-    absolute_path_within_project_root,
-    project_root_for_qualified_name,
+    SourceMiss,
+    locate_node_source,
     project_roots_from_rows,
 )
 from . import tool_descriptions as td
@@ -142,25 +141,24 @@ def get_function_source_code(
         # (issue #425), but must satisfy the same known-project boundary.
         qualified_name = str(result.get("qualified_name", ""))
         project_roots = _resolve_project_roots(ingestor, roots_cache)
-        absolute_path = result.get("absolute_path")
-        if absolute_path and not absolute_path_within_project_root(
-            qualified_name, absolute_path, project_roots
-        ):
-            absolute_path = None
-        if absolute_path and Path(absolute_path).is_file():
-            file_path_obj = Path(absolute_path)
-        else:
-            owner_root = project_root_for_qualified_name(qualified_name, project_roots)
-            if owner_root is not None:
-                file_path_obj = (owner_root / file_path_obj).resolve()
-            if (
-                not absolute_path_within_project_root(
-                    qualified_name, str(file_path_obj), project_roots
+        located = locate_node_source(
+            qualified_name,
+            result.get("absolute_path"),
+            file_path_obj,
+            project_roots,
+            None,
+        )
+        if located.path is None:
+            if located.miss == SourceMiss.STALE_ROOT:
+                logger.warning(
+                    ls.SEMANTIC_STALE_PROJECT_ROOT.format(
+                        id=node_id, project=located.project, root=located.root
+                    )
                 )
-                or not file_path_obj.is_file()
-            ):
+            else:
                 logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
-                return None
+            return None
+        file_path_obj = located.path
 
         return extract_source_lines(file_path_obj, start_line, end_line)
 
