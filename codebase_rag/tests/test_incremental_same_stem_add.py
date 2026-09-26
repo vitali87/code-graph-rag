@@ -196,3 +196,66 @@ def test_an_unreadable_same_stem_survivor_keeps_its_module(
     for module, defined in _defines_by_module(graph).items():
         foreign = {pair for pair in defined if pair[1] != modules.get(module)}
         assert not foreign, (module, modules.get(module), foreign)
+
+
+def test_a_survivor_that_opens_but_cannot_be_read_keeps_its_module(
+    tmp_path: Path,
+) -> None:
+    # The race behind the check above: `util.h` passes the open check, which
+    # drops its claim, and then fails the read that decides whether it is
+    # parsed. Its subtree stays, so the claim has to come back before
+    # `util.c` is parsed.
+    root = tmp_path / "proj"
+    _write(
+        root,
+        {
+            "util.h": "static inline int helper(void) { return 2; }\nint util(void);\n",
+            "main.c": '#include "util.h"\nint main(void) { return util() + helper(); }\n',
+        },
+    )
+    graph = InMemoryGraph()
+    updater = _make_updater(root, graph)
+    updater.run(force=True)
+    header_module = next(
+        (
+            uid
+            for (label, uid), props in graph.nodes.items()
+            if label == cs.NodeLabel.MODULE and props.get(cs.KEY_PATH) == "util.h"
+        ),
+        None,
+    )
+    assert header_module is not None, "the header was never indexed"
+
+    (root / _C_ADDED[0]).write_text(_C_ADDED[1])
+    header = root / "util.h"
+    os.utime(header, (time.time() + 5, time.time() + 5))
+    real_open, real_read_bytes = builtins.open, Path.read_bytes
+
+    def denied(path: object) -> None:
+        if Path(str(path)) == header:
+            raise PermissionError(13, "Permission denied", str(path))
+
+    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        denied(file)
+        return real_open(file, *args, **kwargs)
+
+    def read_bytes_denied(self: Path) -> bytes:
+        denied(self)
+        return real_read_bytes(self)
+
+    with (
+        patch("codebase_rag.graph_updater._opens_for_reading", return_value=True),
+        patch("builtins.open", open_denied),
+        patch.object(Path, "read_bytes", read_bytes_denied),
+    ):
+        updater.run(force=False)
+
+    modules = {
+        str(uid): props.get(cs.KEY_PATH)
+        for (label, uid), props in graph.nodes.items()
+        if label == cs.NodeLabel.MODULE
+    }
+    assert modules.get(str(header_module)) == "util.h", modules
+    for module, defined in _defines_by_module(graph).items():
+        foreign = {pair for pair in defined if pair[1] != modules.get(module)}
+        assert not foreign, (module, modules.get(module), foreign)

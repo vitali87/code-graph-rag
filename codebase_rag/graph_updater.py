@@ -967,6 +967,9 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
+        # key, so a survivor that turns out unreadable gets its claim back.
+        self._forgotten_flux_claims: dict[str, tuple[str, Path]] = {}
         # Hybrid-mode macro uses awaiting a caller: attribution needs the
         # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
@@ -2748,12 +2751,32 @@ class GraphUpdater:
                 continue
             if _stem_key(key) in flux_stems and _opens_for_reading(path):
                 on_stem[path] = key
+        # Recorded first: `remove_file_from_state` drops the claim itself.
+        for qn, path in module_map.items():
+            if path in on_stem:
+                self._forgotten_flux_claims[on_stem[path]] = (qn, path)
         for path in sorted(on_stem):
             self.remove_file_from_state(
                 path, frontend_current=on_stem[path] in self._cpp_frontend_covered
             )
         for qn in [qn for qn, path in module_map.items() if path in on_stem]:
             del module_map[qn]
+
+    def _restore_unreadable_flux_claims(self, unreadable_keys: set[str]) -> None:
+        """Give an unreadable flux-stem survivor back the claim it lost.
+
+        `_forget_flux_stem_qns` checks that a survivor opens, but the read
+        that decides whether it is parsed comes later and can still fail. The
+        run then leaves the survivor's subtree in place, and without its
+        claim an added same-stem sibling would take the bare qn over a Module
+        still defining the survivor's functions. Runs before any file is
+        parsed, so the sibling is suffixed as it is when the survivor does
+        not open at all.
+        """
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        for key in unreadable_keys & self._forgotten_flux_claims.keys():
+            qn, path = self._forgotten_flux_claims[key]
+            module_map.setdefault(qn, path)
 
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
@@ -4580,6 +4603,9 @@ class GraphUpdater:
                 | (old_hashes.keys() - eligible_keys)
             }
         )
+        # Per run: a full build forgets nothing, and a reused updater must not
+        # restore a claim an earlier run recorded.
+        self._forgotten_flux_claims = {}
         if not is_full_build:
             self._forget_flux_stem_qns(flux_stems)
             self._seed_module_qns_from_graph(eligible_keys, flux_stems)
@@ -4753,6 +4779,8 @@ class GraphUpdater:
             else:
                 logger.debug(ls.FILE_HASH_NEW, path=file_key)
             changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+        self._restore_unreadable_flux_claims(unreadable_keys)
 
         # Before deleting any changed file's subtree (which removes the inbound
         # CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
