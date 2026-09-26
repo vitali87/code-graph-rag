@@ -524,6 +524,106 @@ def test_the_declared_form_is_rebuilt_from_the_graph(
     assert csharp_namespaced_from_graph(qn, path, "proj", namespace) == expected
 
 
+def _twin_widgets(using: str) -> dict[str, str]:
+    widget = (
+        "namespace {ns};\n"
+        "public class Widget {{ public Widget(int n) {{ }} public static void S() {{ }} }}\n"
+    )
+    return {
+        "src/Zeta/Widget.cs": widget.format(ns="Zeta"),
+        "src/Other/Widget.cs": widget.format(ns="Other"),
+        "src/Zeta/Sub/Widget.cs": widget.format(ns="Zeta.Sub"),
+        "src/App/Plain.cs": (
+            f"{using}\nnamespace App;\npublic class Plain\n{{\n"
+            "    public void Run()\n    {\n"
+            "        var w = new Widget(1);\n        Widget.S();\n    }\n}\n"
+        ),
+    }
+
+
+class TestAUsingChoosesAmongSameNamedTypes:
+    """Same-named types in several namespaces tied on import distance and
+    broke on qn order, so a bare `Widget` under `using Zeta;` bound
+    `Other.Widget` (issue #2001)."""
+
+    @pytest.mark.parametrize("namespace", ["Zeta", "Other", "Zeta.Sub"])
+    def test_the_imported_namespace_wins(self, tmp_path: Path, namespace: str) -> None:
+        store = _index(tmp_path / "proj", _twin_widgets(f"using {namespace};"))
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = f"proj.src.{namespace}.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+        instantiates = {
+            str(target)
+            for _sl, source, rel, _tl, target in store.edges
+            if rel == cs.RelationshipType.INSTANTIATES.value and str(source) == run
+        }
+        assert instantiates == {owner}, sorted(instantiates)
+
+    def test_the_callers_own_namespace_wins_over_a_using(self, tmp_path: Path) -> None:
+        """C# looks up the caller's namespace before any `using`, so an
+        `App.Widget` declared in another file beats `Zeta.Widget` for a
+        caller in `namespace App` (bot review)."""
+        files = _twin_widgets("using Zeta;")
+        files["src/App/Widget.cs"] = (
+            "namespace App;\n"
+            "public class Widget { public Widget(int n) { } public static void S() { } }\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = "proj.src.App.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+
+    def test_a_sibling_namespace_in_the_callers_file_is_not_local(
+        self, tmp_path: Path
+    ) -> None:
+        """One file declaring `App` and `Other` does not make `Other` local
+        to a call site inside `App`, so `using Zeta;` still chooses
+        `Zeta.Widget` (bot review)."""
+        files = _twin_widgets("using Zeta;")
+        files["src/App/Plain.cs"] = (
+            "using Zeta;\nnamespace App\n{\n    public class Plain\n    {\n"
+            "        public void Run() { var w = new Widget(1); Widget.S(); }\n"
+            "    }\n}\nnamespace Other\n{\n    public class Unrelated { }\n}\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.App.Plain.Run"
+        owner = "proj.src.Zeta.Widget.Widget"
+        targets = {
+            target for source, target in _calls(store) if source.endswith("Plain.Run")
+        }
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, (run, sorted(targets))
+
+    def test_a_namespace_alias_does_not_import_its_target(self, tmp_path: Path) -> None:
+        """`using Alias = Other;` names `Other` only through `Alias.`, so an
+        unqualified `Widget` under it and `using Zeta;` is `Zeta.Widget`
+        (bot review)."""
+        store = _index(
+            tmp_path / "proj", _twin_widgets("using Alias = Other;\nusing Zeta;")
+        )
+        run = "proj.src.App.Plain.Plain.Run"
+        owner = "proj.src.Zeta.Widget.Widget"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {f"{owner}.S", f"{owner}.Widget(int)"}, sorted(targets)
+
+    def test_a_using_static_imports_members_not_a_namespace(
+        self, tmp_path: Path
+    ) -> None:
+        """`using static Other.Widget;` makes Other.Widget's members bare,
+        while `using Zeta;` imports only Zeta's types, so a bare `S()` is
+        `Other.Widget.S` (bot review)."""
+        files = _twin_widgets("using static Other.Widget;\nusing Zeta;")
+        files["src/App/Plain.cs"] = (
+            "using static Other.Widget;\nusing Zeta;\nnamespace App;\n"
+            "public class Plain\n{\n    public void Run() { S(); }\n}\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.Plain.Run"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {"proj.src.Other.Widget.Widget.S"}, sorted(targets)
+
+
 _ZETA_WIDGET = (
     "namespace Zeta;\npublic class Widget\n{\n"
     "    public Widget(int n) { }\n    public static void S() { }\n"

@@ -2893,6 +2893,10 @@ class CallResolver:
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
+        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
+            possible_matches = self._csharp_prefer_imported(
+                possible_matches, module_qn, call_name
+            )
 
         if len(possible_matches) == 1:
             best_candidate_qn = possible_matches[0]
@@ -2920,6 +2924,69 @@ class CallResolver:
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _csharp_prefer_imported(
+        self, candidates: list[str], module_qn: str, call_name: str
+    ) -> list[str]:
+        # Same-named C# types in two namespaces tied on import distance and
+        # broke on qn order, so `using Zeta;` + `new Widget()` bound
+        # `Other.Widget` (issue #2001). C# name lookup searches the caller's
+        # own namespace, innermost first, before any `using`, so a candidate
+        # there wins outright (bot review); otherwise the candidates whose
+        # owning type sits DIRECTLY in a namespace (or, for `using static`,
+        # a type) the file imports: C# does not import nested namespaces.
+        declared = self.type_inference.csharp_class_namespaced
+        containers: dict[str, str] = {}
+        # What an import must name for each candidate: a type, or a member
+        # reached through its type (`Widget.S()`), is imported by a
+        # namespace directive naming the type's namespace; a BARE member
+        # (`S()`) only by a `using static` naming its declaring type
+        # (bot review).
+        bare = cs.SEPARATOR_DOT not in call_name
+        import_keys: dict[str, str] = {}
+        for qn in candidates:
+            owner = qn
+            while owner and owner not in declared:
+                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
+            if owner:
+                containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+                import_keys[qn] = (
+                    declared[owner] if bare and owner != qn else containers[qn]
+                )
+        # The call site's namespace chain is only known when the file declares
+        # ONE nested chain; with sibling namespaces (`App` and `Other` in one
+        # file) neither is local to every call site, so no local precedence
+        # applies rather than a guessed one (bot review).
+        declared_here = sorted(
+            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
+            key=len,
+        )
+        enclosing: set[str] = set()
+        if declared_here and all(
+            declared_here[-1] == ns
+            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
+            for ns in declared_here
+        ):
+            parts = declared_here[-1].split(cs.SEPARATOR_DOT)
+            enclosing = {
+                cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)
+            }
+        local = [qn for qn in candidates if containers.get(qn) in enclosing]
+        if local:
+            innermost = max(len(containers[qn]) for qn in local)
+            return [qn for qn in local if len(containers[qn]) == innermost]
+        # Only a directive whose local name is its target's own last segment
+        # makes names available unqualified (`using Zeta;`, `using static
+        # Zeta.Widget;`); an alias (`using Alias = Other;`) does not.
+        imported = {
+            target
+            for local_name, target in self.import_processor.import_mapping.get(
+                module_qn, {}
+            ).items()
+            if local_name == target.rpartition(cs.SEPARATOR_DOT)[2]
+        }
+        preferred = [qn for qn in candidates if import_keys.get(qn) in imported]
+        return preferred or candidates
 
     def _resolve_two_part_call(
         self,
