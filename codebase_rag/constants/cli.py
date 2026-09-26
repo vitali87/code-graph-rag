@@ -621,6 +621,109 @@ RENAME_ROLLBACK_UNMEASURED = (
 RENAME_CONTRACT_UNMEASURED = (
     "Rename applied, but its postcondition could not be measured: {error}"
 )
+# Change signature (issue #1533).
+SIGNATURE_PARAM_PROBE = "def _({text}): pass"
+SIGNATURE_NOT_PYTHON = (
+    "Cannot change the signature of {qn}: {path} is not Python, and only Python "
+    "definitions are supported for now (issue #{issue})"
+)
+SIGNATURE_DEFINITION_UNREADABLE = (
+    "Cannot change the signature of {qn}: its file {path} cannot be read "
+    "({error}). The index names a file the tree no longer has; re-index and retry."
+)
+SIGNATURE_NO_HEADER = "Could not locate the definition of {qn} in {path}"
+SIGNATURE_UNSUPPORTED_PARAMS = (
+    "Cannot change the signature of {qn}: `{text}` is not a plain "
+    "positional-or-keyword parameter, and only those can be remapped"
+)
+SIGNATURE_UNUSUAL_RECEIVER = (
+    "Cannot change the signature of {qn}: its first parameter `{name}` is not "
+    "self or cls, so the receiver cannot be told from the parameters; rename "
+    "it to self or cls first"
+)
+SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_BAD_PARAM = (
+    "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
+    "or `name: type = default`)"
+)
+SIGNATURE_DUPLICATE_NEW = "Parameter {name} is listed twice"
+SIGNATURE_REQUIRED_AFTER_DEFAULT = (
+    "Parameter {name} has no default but comes after a defaulted parameter"
+)
+SIGNATURE_BODY_REBINDS = (
+    "Cannot rename parameter {old} of {qn} to {new}: `{old}` is used inside a "
+    "nested scope, or re-bound by a global, nonlocal or import statement, in "
+    "its body; rename it by hand first"
+)
+SIGNATURE_DEFAULT_REFERENCES_RENAMED = (
+    "Cannot rename parameter {old} of {qn} to {new}: the default of `{param}` "
+    "reads `{old}`, which is evaluated at definition time and would raise "
+    "NameError; rewrite that default by hand first"
+)
+SIGNATURE_DROPPED_STILL_READ = (
+    "Cannot drop parameter {name} of {qn}: its body still reads `{name}`, "
+    "which would raise NameError when called; remove that use by hand first"
+)
+SIGNATURE_BODY_NAME_TAKEN = (
+    "Cannot rename parameter {old} of {qn} to {new}: `{new}` is already used "
+    "in its body"
+)
+SIGNATURE_HIERARCHY_MISMATCH = (
+    "Cannot change the signature of {qn}: its override {member} declares "
+    "({theirs}) where {qn} declares ({ours}); make the hierarchy agree first"
+)
+SIGNATURE_MAPPING_UNKNOWN_NEW = (
+    "The mapping names {name}, which is not a new parameter ({names})"
+)
+SIGNATURE_MAPPING_UNKNOWN_OLD = (
+    "The mapping feeds {name} from `{source}`, which is neither an old parameter "
+    "({names}), an index into them, nor a `=literal`"
+)
+SIGNATURE_MAPPING_BAD_INDEX = (
+    "The mapping feeds {name} from index {index}, but only {count} old "
+    "parameter(s) exist"
+)
+SIGNATURE_MAPPING_EMPTY_LITERAL = "The mapping gives {name} an empty literal"
+SIGNATURE_MAPPING_DUPLICATE = (
+    "Old parameter {old} cannot feed both {first} and {second}"
+)
+SIGNATURE_LITERAL_MISMATCH = (
+    "{literal} does not fit the declared type of {name} ({annotation})"
+)
+SIGNATURE_BAD_MAP = "Mapping entries take the form NEW=SOURCE, got `{entry}`"
+SIGNATURE_SITE_NO_LOCATION = "site carries no location ({resolution})"
+SIGNATURE_SITE_GUESSED = (
+    "site was resolved by {resolution}; pass allow_heuristic to rewrite it"
+)
+SIGNATURE_SITE_NOT_PYTHON = "{path} is not Python"
+SIGNATURE_SITE_UNREADABLE_FILE = "file cannot be read ({error})"
+SIGNATURE_SITE_NO_CALL = "no call found at the recorded position"
+SIGNATURE_SITE_UNREADABLE = "arguments cannot be read positionally: `{text}`"
+SIGNATURE_SITE_UNKNOWN_KEYWORD = "passes keyword `{name}`, which is not declared"
+SIGNATURE_SITE_DUPLICATE = "passes `{name}` more than once"
+SIGNATURE_SITE_TOO_MANY = (
+    "passes {given} positional arguments but {declared} are declared"
+)
+SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
+SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
+SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
+SIGNATURE_CONTRACT_FAILED = (
+    "Signature change rolled back, postcondition failed: {reasons}"
+)
+SIGNATURE_ROLLBACK_REFUSED = (
+    "Signature change kept: its postcondition failed ({reasons}) but a later "
+    "edit was recorded on top of it, so it was not rolled back; undo the later "
+    "edit and rerun"
+)
+SIGNATURE_ROLLBACK_UNMEASURED = (
+    "Signature change rolled back after its postcondition failed ({reasons}), "
+    "but the graph could not be re-ingested afterwards ({error}); rebuild the "
+    "graph before the next graph-backed operation"
+)
+SIGNATURE_CONTRACT_UNMEASURED = (
+    "Signature change applied, but its postcondition could not be measured: {error}"
+)
 # Postcondition contract (issue #1531).
 CONTRACT_OP_RENAME = "rename"
 CONTRACT_OP_CHANGE_SIGNATURE = "change_signature"
