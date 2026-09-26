@@ -23,7 +23,6 @@ from codebase_rag.config import settings
 from codebase_rag.constants import (
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_MAX_WAIT_SECONDS,
-    IGNORE_PATTERNS,
     LOG_LEVEL_INFO,
     REALTIME_LOGGER_FORMAT,
     WATCHER_SLEEP_INTERVAL,
@@ -32,11 +31,7 @@ from codebase_rag.constants import (
 from codebase_rag.graph_updater import GraphUpdater, ReingestAborted
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.utils.path_utils import (
-    is_ignored_filename,
-    is_unconditionally_ignored_filename,
-    unignore_names_this_file,
-)
+from codebase_rag.utils.path_utils import is_eligible_rel_file, is_walked_dir
 
 
 class PendingTimer(Protocol):
@@ -85,7 +80,6 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         # than racing a wall clock, which is what made these tests flaky on
         # loaded runners (issue #1005). Production always uses threading.Timer.
         self._timer_factory = timer_factory
-        self.ignore_patterns = IGNORE_PATTERNS
         # Set when a scoped re-ingest fails after it may have written, so the
         # next change re-indexes the whole repository before touching it
         # (issue #1681).
@@ -140,38 +134,28 @@ class CodeChangeEventHandler(FileSystemEventHandler):
         return True
 
     def _is_relevant(self, path_str: str) -> bool:
-        path = Path(path_str)
-        # Shared with the repository walk. These two predicates answer the same
-        # question and drifted apart once already (issue #1636).
-        if is_unconditionally_ignored_filename(path.name):
-            return False
-        # The rescuable half (.min.js, .min.css) is ignored unless the run's
-        # unignore set names the file (issue #1637). Read from the updater
-        # rather than stored at construction: `_register_generated_sources`
-        # recomputes `unignore_paths` every run, so a copy taken here would
-        # go stale. Without this the watcher drops edits to a file the walk
-        # indexed, and the two consumers disagree again (issue #1636).
-        # Watchdog hands this method an ABSOLUTE path, while both checks below
-        # are about the path INSIDE the repository. Relativise once, here:
-        # matching the absolute form against repo-relative unignore patterns
-        # left only the bare-filename branch working, and testing the absolute
-        # form for ignored components makes the repository's own location
-        # decide the answer -- a checkout under /tmp has `tmp` as a component,
-        # so every file in it was dropped, first-party sources included.
-        relative = self._repo_relative(path)
-        if is_ignored_filename(path.name):
-            unignore_paths = getattr(self.updater, "unignore_paths", None)
-            # The rescuable half (.min.js, .min.css) is ignored unless the run's
-            # unignore set names the file (issue #1637). Read from the updater
-            # rather than stored at construction: `_register_generated_sources`
-            # recomputes `unignore_paths` every run, so a copy taken here would
-            # go stale.
-            if not (
-                unignore_paths
-                and unignore_names_this_file(relative.as_posix(), unignore_paths)
-            ):
-                return False
-        return all(part not in self.ignore_patterns for part in relative.parts)
+        # The same predicate as the repository walk, not a restatement of it:
+        # the watcher and the indexer have to agree about which files are in
+        # the graph, and every separate copy of the rule has drifted (issues
+        # #1636, #1637). The exclude and unignore sets are read from the
+        # updater on every call, because `_register_generated_sources`
+        # recomputes `unignore_paths` each run and a copy taken here would go
+        # stale. Watchdog hands this method an ABSOLUTE path; the rule is about
+        # the path inside the repository, so relativise first -- a checkout
+        # under /tmp would otherwise have `tmp` as an ignored component.
+        relative = self._repo_relative(Path(path_str))
+        return is_eligible_rel_file(
+            relative.as_posix(),
+            exclude_paths=getattr(self.updater, "exclude_paths", None),
+            unignore_paths=getattr(self.updater, "unignore_paths", None),
+        )
+
+    def _is_walked(self, directory: Path) -> bool:
+        return is_walked_dir(
+            self._repo_relative(directory).parts,
+            exclude_paths=getattr(self.updater, "exclude_paths", None),
+            unignore_paths=getattr(self.updater, "unignore_paths", None),
+        )
 
     def _repo_relative(self, path: Path) -> Path:
         """The path as the repository sees it, mirroring `dispatch`.
@@ -257,18 +241,17 @@ class CodeChangeEventHandler(FileSystemEventHandler):
     def _created_under(self, directory: str) -> list[FileSystemEvent]:
         """Creations for the files now beneath `directory`.
 
-        Ignored directories are pruned rather than walked: `_is_relevant`
-        would drop every file under them anyway, and walking a moved-in
-        `node_modules` would hold the watcher for nothing.
+        Directories the repository walk would not enter are pruned rather
+        than walked: `_is_relevant` would drop every file under them anyway,
+        and walking a moved-in `node_modules` would hold the watcher for
+        nothing.
         """
         root = Path(directory)
-        if any(
-            part in self.ignore_patterns for part in self._repo_relative(root).parts
-        ):
+        if not self._is_walked(root):
             return []
         files: list[Path] = []
         for current, dirs, names in os.walk(root, onerror=_raise_walk_error):
-            dirs[:] = [name for name in dirs if name not in self.ignore_patterns]
+            dirs[:] = [name for name in dirs if self._is_walked(Path(current, name))]
             files.extend(Path(current) / name for name in names)
         return [FileCreatedEvent(str(path)) for path in sorted(files) if path.is_file()]
 

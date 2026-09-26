@@ -17,7 +17,6 @@ from realtime_updater import CodeChangeEventHandler
 @pytest.fixture
 def event_handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
     handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
     return handler
 
 

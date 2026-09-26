@@ -63,7 +63,6 @@ def test_sibling_inline_mod_functions_survive_the_prefix_sweep(
     assert go_qn in updater.function_registry
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     touched = project / "src" / "a" / "b.rs"
     touched.write_text("pub fn refreshed_wrap() {}\n", encoding="utf-8")
