@@ -518,8 +518,11 @@ def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
         patch.object(vs.settings, "MILVUS_URI", str(tmp_path / "milvus.db")),
         patch.object(vs.settings, "MILVUS_COLLECTION_NAME", "code_embeddings_test"),
     ):
+        # Left empty on purpose: milvus-lite indexes stored rows on a background
+        # thread when it reopens the file, and dropping the collection while
+        # that runs aborts the process on macOS.
         with patch.object(vs.settings, "MILVUS_VECTOR_DIM", 8):
-            vs.store_embedding_batch([(1, [1.0] + [0.0] * 7, "pkg.a")])
+            vs.get_milvus_client()
             vs.close_vector_store_client()
         with patch.object(vs.settings, "MILVUS_VECTOR_DIM", 4):
             with pytest.raises(ValueError, match="dimension 8"):
