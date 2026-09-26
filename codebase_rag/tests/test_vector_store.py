@@ -125,6 +125,93 @@ def test_get_qdrant_client_logs_and_reraises_on_lock_error(
     mock_logger.error.assert_called_once()
 
 
+def _open_local_qdrant_with_existing_collection(path: Path, size: int) -> None:
+    from qdrant_client import QdrantClient as QC
+    from qdrant_client.models import Distance, VectorParams
+
+    client = QC(path=str(path))
+    client.create_collection(
+        collection_name="code_embeddings",
+        vectors_config=VectorParams(size=size, distance=Distance.COSINE),
+    )
+    # Embedded Qdrant allows one process-level handle per folder, so release
+    # it before get_qdrant_client opens the same path.
+    client.close()
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_get_qdrant_client_rejects_existing_collection_with_other_dim(
+    temp_qdrant_path: Path, reset_global_client: None
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
+
+    with patch.object(vs.settings, "QDRANT_URL", None):
+        with patch.object(vs.settings, "QDRANT_DB_PATH", str(temp_qdrant_path)):
+            with patch.object(vs.settings, "QDRANT_VECTOR_DIM", 768):
+                with pytest.raises(ValueError, match="dimension 1536, expected 768"):
+                    vs.get_qdrant_client()
+
+    # A rejected collection must not leave a half-initialised cached client
+    # behind for the next caller to reuse without validation.
+    assert vs._CLIENT is None
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_get_qdrant_client_accepts_existing_collection_with_same_dim(
+    temp_qdrant_path: Path, reset_global_client: None
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
+
+    with patch.object(vs.settings, "QDRANT_URL", None):
+        with patch.object(vs.settings, "QDRANT_DB_PATH", str(temp_qdrant_path)):
+            with patch.object(vs.settings, "QDRANT_VECTOR_DIM", 1536):
+                client = vs.get_qdrant_client()
+
+    assert client.collection_exists("code_embeddings")
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+def test_clear_all_embeddings_recreates_collection_with_other_dim(
+    temp_qdrant_path: Path, reset_global_client: None
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    _open_local_qdrant_with_existing_collection(temp_qdrant_path, size=1536)
+
+    with patch.object(vs.settings, "QDRANT_URL", None):
+        with patch.object(vs.settings, "QDRANT_DB_PATH", str(temp_qdrant_path)):
+            with patch.object(vs.settings, "QDRANT_VECTOR_DIM", 768):
+                vs.QdrantVectorStore().clear_all_embeddings()
+                client = vs.get_qdrant_client()
+                info = client.get_collection(collection_name="code_embeddings")
+
+    assert info.config.params.vectors.size == 768
+
+
+@pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
+@pytest.mark.parametrize("failing", ["delete_collection", "create_collection"])
+def test_a_failed_clear_does_not_leave_its_unvalidated_client_cached(
+    reset_global_client: None, failing: str
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    instance = MagicMock()
+    instance.collection_exists.return_value = True
+    getattr(instance, failing).side_effect = RuntimeError("store is down")
+    store = vs.QdrantVectorStore()
+    with patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"):
+        with patch("codebase_rag.vector_store.QdrantClient", return_value=instance):
+            with pytest.raises(RuntimeError):
+                store.clear_all_embeddings()
+
+    assert vs._CLIENT is None
+    instance.close.assert_called_once()
+
+
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
@@ -415,6 +502,58 @@ def test_milvus_store_search_verify_delete_roundtrip(
     assert [node_id for node_id, _score in results] == [101, 103]
     assert found_ids == {101, 102}
     assert remaining_ids == {103}
+
+
+@pytest.mark.skipif(not has_pymilvus(), reason="pymilvus not installed")
+@pytest.mark.skipif(not _has_milvus_lite(), reason="milvus-lite not installed")
+def test_milvus_clean_rebuilds_a_collection_of_the_wrong_size(
+    tmp_path: Path, reset_global_client: None
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    # A collection left by an embedder with a different output size must be
+    # repairable with --clean; validating before the drop made that fail.
+    with (
+        patch.object(vs.settings, "VECTOR_STORE_BACKEND", VectorStoreBackend.MILVUS),
+        patch.object(vs.settings, "MILVUS_URI", str(tmp_path / "milvus.db")),
+        patch.object(vs.settings, "MILVUS_COLLECTION_NAME", "code_embeddings_test"),
+    ):
+        # Left empty on purpose: milvus-lite indexes stored rows on a background
+        # thread when it reopens the file, and dropping the collection while
+        # that runs aborts the process on macOS.
+        with patch.object(vs.settings, "MILVUS_VECTOR_DIM", 8):
+            vs.get_milvus_client()
+            vs.close_vector_store_client()
+        with patch.object(vs.settings, "MILVUS_VECTOR_DIM", 4):
+            with pytest.raises(ValueError, match="dimension 8"):
+                vs.get_milvus_client()
+            # The client that failed validation is not cached, so the check
+            # runs again rather than being skipped.
+            with pytest.raises(ValueError, match="dimension 8"):
+                vs.get_milvus_client()
+            vs.MilvusVectorStore().clear_all_embeddings()
+            stored = vs.store_embedding_batch([(2, [1.0, 0.0, 0.0, 0.0], "pkg.b")])
+            found = vs.verify_stored_ids({1, 2})
+
+    assert stored == 1
+    assert found == {2}
+
+
+def test_a_failed_milvus_clean_does_not_leave_its_unvalidated_client_cached(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    instance = MagicMock()
+    instance.has_collection.return_value = True
+    instance.drop_collection.side_effect = RuntimeError("store is down")
+    store = vs.MilvusVectorStore()
+    with patch("codebase_rag.vector_store.MilvusClient", return_value=instance):
+        with pytest.raises(RuntimeError):
+            store.clear_all_embeddings()
+
+    assert vs._CLIENT is None
+    instance.close.assert_called_once()
 
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")

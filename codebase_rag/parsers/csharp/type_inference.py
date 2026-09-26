@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections import deque
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -30,16 +29,7 @@ from .utils import (
     leaf_type_segment,
     split_type_ref,
     strip_generic_arguments,
-)
-
-# Registration artifacts on a qualified name ("@<line>", optionally
-# "_<col>"), never part of the written name. A bare `@` is a verbatim
-# identifier's escape and must survive (issue #1998).
-_DUP_QN_MARKER_RE = re.compile(
-    re.escape(cs.DUP_QN_MARKER)
-    + r"\d+(?:"
-    + re.escape(cs.DUP_QN_COLUMN_MARKER)
-    + r"\d+)?"
+    unique_carrier,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +105,7 @@ class CSharpTypeInferenceEngine:
         "csharp_generic_methods",
         "csharp_class_generic_arity",
         "csharp_class_namespaced",
+        "csharp_namespaced_qns",
         "csharp_method_return_types",
         "method_return_types",
         "function_locations",
@@ -143,6 +134,7 @@ class CSharpTypeInferenceEngine:
         csharp_generic_methods: set[str] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
+        csharp_namespaced_qns: dict[str, set[str]] | None = None,
         csharp_method_return_types: dict[str, tuple[str, int]] | None = None,
         method_return_types: dict[str, str] | None = None,
         function_locations: dict[FunctionSpanKey, FunctionLocation] | None = None,
@@ -198,6 +190,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_class_namespaced = (
             csharp_class_namespaced if csharp_class_namespaced is not None else {}
+        )
+        self.csharp_namespaced_qns = (
+            csharp_namespaced_qns if csharp_namespaced_qns is not None else {}
         )
         self.csharp_method_return_types = (
             csharp_method_return_types if csharp_method_return_types is not None else {}
@@ -1360,6 +1355,22 @@ class CSharpTypeInferenceEngine:
 
         if self.function_registry.get(expanded) in _TYPE_DECLS:
             return expanded
+        # The written path names the DECLARED form (`Zeta.Widget`), which a
+        # folded qn no longer ends with, so it is looked up in the
+        # declared-form index; the leading alias was expanded above, so
+        # `Z.Widget` under `using Z = Zeta;` lands here as `Zeta.Widget`
+        # (issues #2000, #2004).
+        # `Widget` and `Widget<T>` share the declared form, so the written
+        # arity picks between them first (bot review).
+        carriers = self.csharp_namespaced_qns.get(expanded)
+        if carriers and len(carriers) > 1 and generic_arity is not None:
+            carriers = {
+                qn
+                for qn in carriers
+                if self.csharp_class_generic_arity.get(qn, 0) == generic_arity
+            } or carriers
+        if declared := unique_carrier(carriers, self.csharp_partial_groups):
+            return declared
         leaf = expanded.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         candidates = [
             qn
@@ -1416,6 +1427,14 @@ class CSharpTypeInferenceEngine:
         if import_map and (mapped := import_map.get(simple)):
             if self.function_registry.get(mapped) in _TYPE_DECLS:
                 return mapped
+            # A type alias (`using W = Zeta.Widget;`) maps to a WRITTEN path,
+            # not a qn: resolve it as one (issue #2002).
+            if mapped != simple and (
+                aliased := self._qualified_type_name_to_qn(
+                    mapped, module_qn, generic_arity
+                )
+            ):
+                return aliased
         candidates = [
             qn
             for qn in self.simple_name_lookup.get(simple, set())
@@ -1623,7 +1642,7 @@ class CSharpTypeInferenceEngine:
             # identifier (`Lib.@Helper`) carries a leading `@` that IS part
             # of the name, and splitting at the first one truncated the
             # candidate to `Lib.`, rejecting the real type (Copilot, #1998).
-            and _DUP_QN_MARKER_RE.sub("", qn).endswith(suffix)
+            and qn_markers.strip_all_markers(qn).endswith(suffix)
         ]
         # The leaf's own arity picks between same-name twins; the leaf is
         # cut at the last dot outside generic arguments, so a qualified type
