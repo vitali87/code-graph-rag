@@ -667,3 +667,61 @@ def test_process_exit_closes_local_client_cleanly(temp_qdrant_path: Path) -> Non
     )
     assert result.returncode == 0
     assert "Exception ignored" not in result.stderr
+
+
+# An embedding model whose output size differs from the collection's used to
+# fail every batch with an opaque backend error that the batch wrapper
+# swallowed, so a full index ran to the end and stored nothing.
+@pytest.mark.parametrize(
+    ("backend", "setting"),
+    [
+        (VectorStoreBackend.QDRANT, "QDRANT_VECTOR_DIM"),
+        (VectorStoreBackend.MILVUS, "MILVUS_VECTOR_DIM"),
+    ],
+)
+def test_storing_vectors_of_the_wrong_size_names_the_setting_to_change(
+    backend: VectorStoreBackend, setting: str
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    store = MagicMock()
+    store.backend = backend
+    with (
+        patch.object(vs.settings, setting, 4),
+        patch.object(vs, "_get_vector_store", return_value=store),
+    ):
+        with pytest.raises(ValueError, match=f"3-dimensional.*{setting}"):
+            vs.store_embedding_batch([(1, [0.1, 0.2, 0.3], "pkg.a")])
+
+    store.store_embedding_batch.assert_not_called()
+
+
+def test_vectors_of_the_configured_size_reach_the_store() -> None:
+    import codebase_rag.vector_store as vs
+
+    store = MagicMock()
+    store.backend = VectorStoreBackend.QDRANT
+    store.store_embedding_batch.return_value = 1
+    points = [(1, [0.1, 0.2, 0.3, 0.4], "pkg.a")]
+    with (
+        patch.object(vs.settings, "QDRANT_VECTOR_DIM", 4),
+        patch.object(vs, "_get_vector_store", return_value=store),
+    ):
+        assert vs.store_embedding_batch(points) == 1
+
+    store.store_embedding_batch.assert_called_once_with(points)
+
+
+def test_a_query_of_the_wrong_size_names_the_setting_to_change() -> None:
+    import codebase_rag.vector_store as vs
+
+    store = MagicMock()
+    store.backend = VectorStoreBackend.QDRANT
+    with (
+        patch.object(vs.settings, "QDRANT_VECTOR_DIM", 4),
+        patch.object(vs, "_get_vector_store", return_value=store),
+    ):
+        with pytest.raises(ValueError, match="QDRANT_VECTOR_DIM"):
+            vs.search_embeddings([0.1, 0.2])
+
+    store.search_embeddings.assert_not_called()

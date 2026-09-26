@@ -76,6 +76,12 @@ QDRANT_VECTOR_DIM_MISMATCH = (
     "or re-index with --clean to rebuild the collection with the new size."
 )
 
+EMBEDDING_DIM_MISMATCH = (
+    "The embedding model produced {dim}-dimensional vectors, but the {backend} "
+    "collection holds {expected}-dimensional ones. Set {setting} to the "
+    "embedding model's output size and re-index with --clean."
+)
+
 # Graph loading errors
 GRAPH_FILE_NOT_FOUND = "Graph file not found: {path}"
 FAILED_TO_LOAD_DATA = "Failed to load data from file"
