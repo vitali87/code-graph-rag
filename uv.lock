@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.994"
+version = "0.0.995"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
