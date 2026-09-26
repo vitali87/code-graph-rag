@@ -215,6 +215,7 @@ def _sync_workspace(
         _run_graph_sync(
             repo=repo_path,
             project_name=repo.project_name,
+            project_named=repo.project_named,
             batch_size=batch_size,
             exclude=exclude,
             interactive_setup=False,
@@ -326,6 +327,7 @@ def _confirm_destructive_clean(
 def _run_graph_sync(
     repo: Path,
     project_name: str,
+    project_named: bool,
     batch_size: int,
     exclude: list[str] | None,
     interactive_setup: bool,
@@ -367,6 +369,7 @@ def _run_graph_sync(
             unignore_paths=unignore_paths,
             exclude_paths=exclude_paths,
             project_name=project_name,
+            project_named=project_named,
             capture=_capture_selection(capture),
             skip_embeddings=skip_embeddings,
         )
@@ -608,6 +611,7 @@ def start(
         _run_graph_sync(
             repo=resolved_repo,
             project_name=resolved_project_name,
+            project_named=project_name is not None,
             batch_size=effective_batch_size,
             exclude=exclude,
             interactive_setup=interactive_setup,
@@ -642,6 +646,7 @@ def start(
                 _run_graph_sync,
                 repo=resolved_repo,
                 project_name=resolved_project_name,
+                project_named=project_name is not None,
                 batch_size=effective_batch_size,
                 exclude=exclude,
                 interactive_setup=interactive_setup,
@@ -1154,6 +1159,7 @@ def check_command(
                 queries,
                 exclude_paths=exclude_paths,
                 unignore_paths=unignore_paths,
+                project_named=project is not None,
             )
         except CheckError as error:
             typer.echo(str(error), err=True)

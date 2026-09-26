@@ -81,6 +81,7 @@ class TestStorage:
         config, repo = add_repo("mono", str(repo_dir))
         assert repo.path == str(repo_dir.resolve())
         assert repo.project_name.startswith("some_repo__")
+        assert repo.project_named is False
         assert config.repos[0].project_name == repo.project_name
 
     def test_add_repo_with_explicit_project_name(
@@ -91,6 +92,7 @@ class TestStorage:
         create_workspace("mono")
         _, repo = add_repo("mono", str(repo_dir), project_name="custom_name")
         assert repo.project_name == "custom_name"
+        assert repo.project_named is True
 
     def test_add_repo_missing_path(self, tmp_path: Path, _temp_home: Path) -> None:
         create_workspace("mono")
@@ -192,7 +194,7 @@ def test_start_with_workspace_passes_all_projects(
     repo_b.mkdir()
 
     create_workspace("mono")
-    add_repo("mono", str(repo_a), project_name="proj_a")
+    _, workspace_repo_a = add_repo("mono", str(repo_a))
     add_repo("mono", str(repo_b), project_name="proj_b")
 
     with (
@@ -214,9 +216,17 @@ def test_start_with_workspace_passes_all_projects(
     assert result.exit_code == 0, result.output
     assert mock_sync.call_count == 2
     project_names_synced = [c.kwargs["project_name"] for c in mock_sync.call_args_list]
-    assert set(project_names_synced) == {"proj_a", "proj_b"}
+    assert set(project_names_synced) == {workspace_repo_a.project_name, "proj_b"}
+    project_provenance = {
+        call.kwargs["project_name"]: call.kwargs["project_named"]
+        for call in mock_sync.call_args_list
+    }
+    assert project_provenance == {workspace_repo_a.project_name: False, "proj_b": True}
     mock_single.assert_called_once()
-    assert mock_single.call_args.kwargs["active_projects"] == ["proj_a", "proj_b"]
+    assert mock_single.call_args.kwargs["active_projects"] == [
+        workspace_repo_a.project_name,
+        "proj_b",
+    ]
 
 
 def test_start_with_unknown_workspace_errors(

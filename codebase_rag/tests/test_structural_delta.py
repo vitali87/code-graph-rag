@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
 from codebase_rag import constants as cs
+from codebase_rag.cli import app
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_delta import (
@@ -107,6 +110,31 @@ def _observe(
 
 def _qn(rel: str) -> str:
     return f"{PROJECT}.{rel}"
+
+
+def _assert_cli_check_accepts(
+    root: Path,
+    store: _StatefulIngestor,
+    project_name: str,
+    projects: list[str],
+) -> None:
+    cli_store = MagicMock(wraps=store)
+    cli_store.list_projects = MagicMock(return_value=projects)
+    context = MagicMock()
+    context.__enter__.return_value = cli_store
+    context.__exit__.return_value = False
+    with patch("codebase_rag.cli.connect_memgraph", return_value=context):
+        result = CliRunner().invoke(
+            app,
+            [
+                "check",
+                "--repo-path",
+                str(root),
+                "--project",
+                project_name,
+            ],
+        )
+    assert result.exit_code == 0, result.output
 
 
 # --- acceptance ---------------------------------------------------------------
@@ -617,6 +645,119 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
     assert indexed_scope(root, "other_project") == (None, None)
 
 
+def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
+    temp_repo: Path,
+) -> None:
+    """A repository cache must not make a sibling project look indexed."""
+    from codebase_rag.graph_updater import _load_exclusion_state
+    from codebase_rag.structural_check import indexed_scope, run_check
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    _git(
+        root,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "-m",
+        "b",
+    )
+    parsers, queries = load_parsers()
+    store = _StatefulIngestor()
+
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="project_a",
+    ).run(force=True)
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.helper"
+        for properties in store.nodes.values()
+    )
+    _assert_cli_check_accepts(root, store, "project_a", ["project_a"])
+    assert indexed_scope(root, "project_a", explicit=True) == (None, None)
+    assert not has_findings(
+        run_check(
+            root,
+            "HEAD",
+            "project_a",
+            store,
+            parsers,
+            queries,
+            project_named=True,
+        )
+    )
+
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def assist(a):"),
+    )
+    second = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="project_b",
+    )
+    second.run(force=True)
+    assert second.skipped_because_in_sync is False
+    _assert_cli_check_accepts(root, store, "project_b", ["project_a", "project_b"])
+    assert indexed_scope(root, "project_b", explicit=True) == (None, None)
+    assert not has_findings(
+        run_check(
+            root,
+            "HEAD",
+            "project_b",
+            store,
+            parsers,
+            queries,
+            project_named=True,
+        )
+    )
+
+    third = GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name="project_a",
+    )
+    third.run()
+
+    assert third.skipped_because_in_sync is False
+    assert not any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.helper"
+        for properties in store.nodes.values()
+    )
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")) == "project_a.pkg.util.assist"
+        for properties in store.nodes.values()
+    )
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_a.")
+        for properties in store.nodes.values()
+    )
+    assert any(
+        str(properties.get(cs.KEY_QUALIFIED_NAME, "")).startswith("project_b.")
+        for properties in store.nodes.values()
+    )
+    assert _load_exclusion_state(root / cs.EXCLUSION_STATE_FILENAME) == {
+        "exclude": [],
+        "unignore": [],
+        "project": "project_a",
+        "named": "1",
+    }
+
+
 def test_check_keeps_excluded_files_out_of_the_graph(
     temp_repo: Path,
 ) -> None:
@@ -651,6 +792,59 @@ def test_check_keeps_excluded_files_out_of_the_graph(
     # The excluded file differs from the base but never enters the graph.
     assert _qn("generated_src.thing.vendored") not in delta["symbols"]["added"]
     assert all("generated_src" not in p for p in delta["reparsed"])
+
+
+def test_unnamed_check_preserves_unnamed_stamp_after_reingest(
+    temp_repo: Path,
+) -> None:
+    import subprocess
+
+    from codebase_rag.parser_loader import load_parsers
+    from codebase_rag.structural_check import CheckError, indexed_scope, run_check
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    root = temp_repo / PROJECT
+    for rel, text in FIXTURE.items():
+        _write(root, rel, text)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "b"],
+        cwd=root,
+        check=True,
+    )
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+    project_name = derive_project_name(root)
+    GraphUpdater(
+        ingestor=store,
+        repo_path=root,
+        parsers=parsers,
+        queries=queries,
+        project_name=project_name,
+        project_named=False,
+    ).run(force=True)
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def assist(a):"),
+    )
+
+    run_check(
+        root,
+        "HEAD",
+        project_name,
+        store,
+        parsers,
+        queries,
+        project_named=False,
+    )
+
+    assert indexed_scope(root, project_name) == (None, None)
+    with pytest.raises(CheckError):
+        indexed_scope(root, project_name, explicit=True)
+    with pytest.raises(CheckError):
+        indexed_scope(root, "explicit-project", explicit=True)
 
 
 def test_check_works_when_the_project_is_below_the_git_toplevel(
@@ -769,6 +963,7 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
     root = temp_repo / PROJECT
     for rel, text in FIXTURE.items():
         _write(root, rel, text)
+    default_project = derive_project_name(root)
     parsers, queries = __import__(
         "codebase_rag.parser_loader", fromlist=["load_parsers"]
     ).load_parsers()
@@ -779,9 +974,11 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
         repo_path=root,
         parsers=parsers,
         queries=queries,
+        project_name=default_project,
+        project_named=False,
         exclude_paths=frozenset({"generated_src"}),
     ).run(force=True)
-    assert indexed_scope(root, derive_project_name(root)) == (
+    assert indexed_scope(root, default_project) == (
         frozenset({"generated_src"}),
         None,
     )

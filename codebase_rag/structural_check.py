@@ -176,8 +176,8 @@ def indexed_scope(
         exclude = stored.get("exclude") or []
         unignore = stored.get("unignore") or []
         return (
-            frozenset(exclude) or None,  # type: ignore[arg-type]
-            frozenset(unignore) or None,  # type: ignore[arg-type]
+            frozenset(exclude) or None,
+            frozenset(unignore) or None,
         )
     cgrignore = load_ignore_patterns(repo_root)
     return cgrignore.exclude or None, cgrignore.unignore or None
@@ -192,6 +192,7 @@ def run_check(
     queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    project_named: bool | None = None,
 ) -> StructuralDelta:
     """Re-ingest what changed since `base` and return the structural delta.
 
@@ -208,6 +209,7 @@ def run_check(
         parsers=parsers,
         queries=queries,
         project_name=project_name,
+        project_named=project_named,
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
     )

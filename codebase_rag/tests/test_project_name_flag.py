@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.capture import resolve_capture
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.tests.conftest import get_node_names
@@ -184,6 +185,30 @@ class TestEdgeCases:
 
 
 class TestFactoryPropagation:
+    def test_project_named_is_appended_after_existing_positional_options(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple[dict, dict],
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        capture = resolve_capture(["io"])
+        updater = GraphUpdater(
+            mock_ingestor,
+            temp_repo,
+            parsers,
+            queries,
+            None,
+            None,
+            "positional-project",
+            capture,
+            True,
+        )
+
+        assert updater.capture is capture
+        assert updater.skip_embeddings is True
+        assert updater.project_named is True
+
     def test_factory_receives_project_name(
         self,
         temp_repo: Path,
