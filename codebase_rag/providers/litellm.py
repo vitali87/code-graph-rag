@@ -17,21 +17,20 @@ class LiteLLMProvider(ModelProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        endpoint: str = "http://localhost:4000/v1",
+        endpoint: str | None = None,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
         self.api_key = api_key
-        self.endpoint = endpoint
+        # The factory passes every config key, so an unset endpoint arrives as
+        # None rather than falling through to a parameter default.
+        self.endpoint = endpoint or cs.LITELLM_DEFAULT_ENDPOINT
 
     @property
     def provider_name(self) -> cs.Provider:
         return cs.Provider.LITELLM_PROXY
 
     def validate_config(self) -> None:
-        if not self.endpoint:
-            raise ValueError(ex.LITELLM_NO_ENDPOINT)
-
         from .base import check_litellm_proxy_running
 
         base_url = strip_v1_suffix(self.endpoint)

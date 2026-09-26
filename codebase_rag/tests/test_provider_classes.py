@@ -592,12 +592,20 @@ class TestLiteLLMProvider:
         provider = LiteLLMProvider()
         assert provider.endpoint == "http://localhost:4000/v1"
 
-    def test_litellm_no_endpoint_validation_error(self) -> None:
+    def test_litellm_default_endpoint_applies_through_the_config_factory(
+        self,
+    ) -> None:
+        from codebase_rag.config import ModelConfig
+        from codebase_rag.providers.base import get_provider_from_config
         from codebase_rag.providers.litellm import LiteLLMProvider
 
-        provider = LiteLLMProvider(endpoint="")
-        with pytest.raises(ValueError, match="LiteLLM provider requires endpoint"):
-            provider.validate_config()
+        # The factory passes every config key, endpoint=None included, so a
+        # parameter default alone never took effect and validation failed.
+        provider = get_provider_from_config(
+            ModelConfig(provider=Provider.LITELLM_PROXY, model_id="gpt-4o")
+        )
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.endpoint == "http://localhost:4000/v1"
 
     @patch("httpx.Client")
     def test_litellm_validation_success(self, mock_client: Any) -> None:
