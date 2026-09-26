@@ -44,7 +44,7 @@ dependencies = [
     "tiktoken>=0.12.0",
     "toml>=0.10.2",
     "tree-sitter-python>=0.25.0",
-    "tree-sitter==0.25.2",
+    "tree-sitter==0.26.0",
     "watchdog>=6.0.0",
     "typer>=0.21.1",
     "rich>=14.2.0",
