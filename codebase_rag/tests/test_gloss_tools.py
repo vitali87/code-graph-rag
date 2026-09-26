@@ -53,6 +53,11 @@ NODES: list[ResultRow] = [
     _node("Function", RUN, "app.py", 3, 8, anchor_hash="fp-run"),
     _node("Class", STORE, "app.py", 10, 18, anchor_hash="fp-store"),
     _node("Method", STORE_GET, "app.py", 11, 13, anchor_hash="fp-store-get"),
+    # A property trio: the registry names the setter and deleter `x@<line>`
+    # (issue #1808); the getter keeps the natural name.
+    _node("Method", f"{STORE}.x", "app.py", 14, 15, decorators=["@property"]),
+    _node("Method", f"{STORE}.x@16", "app.py", 16, 17, decorators=["@x.setter"]),
+    _node("Method", f"{STORE}.x@18", "app.py", 18, 19, decorators=["@x.deleter"]),
     _node("Module", f"{P}.util", "util.py", 1, 10),
     _node("Function", UTIL_GET, "util.py", 1, 4),
     _node("Function", VALIDATE, "util.py", 6, 9, anchor_hash="fp-validate"),
@@ -103,6 +108,12 @@ class FakeGraph:
                     n[cs.KEY_START_LINE]  # type: ignore[arg-type]
                 ) <= line <= int(n[cs.KEY_END_LINE]):  # type: ignore[arg-type]
                     out.append(n)
+        elif query == cq.CYPHER_GLOSS_VARIANTS:
+            prefix = str(p[cs.KEY_VARIANT_PREFIX])
+            for n in self.nodes.values():
+                q = str(n[cs.KEY_QUALIFIED_NAME])
+                if q == p[cs.KEY_QN] or q.startswith(prefix):
+                    out.append({**n, cs.KEY_DECORATORS: n.get(cs.KEY_DECORATORS)})
         elif query == cq.CYPHER_GLOSS_TARGET:
             n = self.nodes.get(str(p[cs.KEY_QN]))
             if n is not None:
@@ -123,8 +134,9 @@ class FakeGraph:
             out = [self._gloss_row(g) for g, qn in self.annotates if qn == p[cs.KEY_QN]]
         elif query == cq.CYPHER_GLOSSES_MENTIONING:
             out = [self._gloss_row(g) for g, qn in self.mentions if qn == p[cs.KEY_QN]]
-        elif query == cq.CYPHER_GLOSSES_ORPHANED_ON:
+        elif query in (cq.CYPHER_GLOSSES_ORPHANED_ON, cq.CYPHER_GLOSSES_ORPHANED_UNDER):
             attached = {g for g, _qn in self.annotates}
+            under = query == cq.CYPHER_GLOSSES_ORPHANED_UNDER
 
             def in_project(props: PropertyDict) -> bool:
                 recorded = props.get(cs.KEY_PROJECT)
@@ -136,6 +148,10 @@ class FakeGraph:
 
             def names_target(props: PropertyDict) -> bool:
                 qn = str(props.get(cs.KEY_TARGET_QN, ""))
+                if under:
+                    return qn == p[cs.KEY_QN] or qn.startswith(
+                        str(p[cs.KEY_VARIANT_PREFIX])
+                    )
                 return qn == p[cs.KEY_QN] or qn.endswith(str(p[cs.KEY_SUFFIX]))
 
             out = [
@@ -1257,3 +1273,109 @@ def test_a_class_note_records_the_class_hash() -> None:
     row = _write(graph, STORE)
     assert not _is_refusal(row)
     assert graph.glosses[row["qualified_name"]][cs.KEY_TARGET_HASH] == "fp-store"
+
+
+class TestPropertyDescriptors:
+    """A property's getter, setter and deleter share one qualified name; the
+    registry names the later members `x@<line>`, which shifts with the
+    file. `#getter`, `#setter` and `#deleter` name them stably (issue
+    #1808)."""
+
+    def test_each_descriptor_names_its_member(self) -> None:
+        graph = FakeGraph()
+        for descriptor, expected in (
+            ("getter", f"{STORE}.x"),
+            ("setter", f"{STORE}.x@16"),
+            ("deleter", f"{STORE}.x@18"),
+        ):
+            found = gloss.resolve_one(graph.fetch_all, P, f"{STORE}.x#{descriptor}")
+            assert not gloss._is_refusal(found), found
+            assert found["qualified_name"] == expected  # type: ignore[index]
+        # The dotted-suffix form resolves the base the same way.
+        found = gloss.resolve_one(graph.fetch_all, P, "Store.x#setter")
+        assert found["qualified_name"] == f"{STORE}.x@16"  # type: ignore[index]
+
+    def test_an_unknown_descriptor_and_a_missing_member_are_refused(self) -> None:
+        graph = FakeGraph()
+        unknown = gloss.resolve_one(graph.fetch_all, P, f"{STORE}.x#owner")
+        assert gloss._is_refusal(unknown)
+        assert "owner" in unknown[cs.DICT_KEY_ERROR]  # type: ignore[index]
+        plain = gloss.resolve_one(graph.fetch_all, P, f"{STORE_GET}#setter")
+        assert gloss._is_refusal(plain)
+        assert ".setter" in plain[cs.DICT_KEY_ERROR]  # type: ignore[index]
+
+    def test_a_hash_opening_a_name_is_part_of_the_name(self) -> None:
+        """A JS/TS private member keeps its `#` in the qualified name, so
+        `Bank.#validatePin` is a name, not a descriptor target (bot
+        review)."""
+        private = f"{STORE}.#secret"
+        assert gloss._split_descriptor(private) == (private, None)
+        assert gloss._split_descriptor("#secret") == ("#secret", None)
+        assert gloss._split_descriptor(f"{STORE}.x#Setter ") == (
+            f"{STORE}.x",
+            "setter",
+        )
+        graph = FakeGraph()
+        graph.nodes[private] = _node("Method", private, "app.py", 30, 31)
+        found = gloss.resolve_one(graph.fetch_all, P, private)
+        assert not gloss._is_refusal(found), found
+        assert found["qualified_name"] == private  # type: ignore[index]
+        # The typo form still gets the descriptor refusal, not "not found".
+        typo = gloss.resolve_one(graph.fetch_all, P, f"{STORE}.x#owner")
+        assert "owner" in typo[cs.DICT_KEY_ERROR]  # type: ignore[index]
+
+    def test_the_base_is_resolved_once(self) -> None:
+        graph = FakeGraph()
+        queries: list[str] = []
+
+        def counting(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+            queries.append(query)
+            return graph.fetch_all(query, params)
+
+        found = gloss.resolve_one(counting, P, f"{STORE}.x#setter")
+        assert found["qualified_name"] == f"{STORE}.x@16"  # type: ignore[index]
+        assert queries.count(cq.CYPHER_GRAPH_RESOLVE_NAME) == 1
+
+    def test_a_note_on_a_gone_member_is_reported_orphaned(self) -> None:
+        """The note filed through `x#setter` sits on `x@16`; once the setter
+        is gone the descriptor target no longer resolves, and the read
+        must still surface the orphaned note (bot review)."""
+        graph = FakeGraph()
+        stored = gloss.write_gloss(
+            graph.fetch_all,
+            graph.execute_write,
+            P,
+            f"{STORE}.x#setter",
+            "validates before storing",
+            "invariant",
+        )
+        assert not gloss._is_refusal(stored), stored
+        gone = f"{STORE}.x@16"
+        del graph.nodes[gone]
+        graph.annotates = {(g, qn) for g, qn in graph.annotates if qn != gone}
+        result = gloss.glosses_for(graph.fetch_all, P, f"{STORE}.x#setter")
+        assert gloss._is_refusal(result)
+        assert ".setter" in result[cs.DICT_KEY_ERROR]  # type: ignore[index]
+        orphaned = result[cs.KEY_ORPHANED]  # type: ignore[typeddict-item]
+        assert [g["target_qn"] for g in orphaned] == [gone]
+        # The deleter's note is still attached, so it is not orphaned.
+        graph.annotates.add(("gloss:kept", f"{STORE}.x@18"))
+        graph.glosses["gloss:kept"] = {
+            cs.KEY_TARGET_QN: f"{STORE}.x@18",
+            cs.KEY_BODY: "b",
+        }
+        again = gloss.glosses_for(graph.fetch_all, P, f"{STORE}.x#setter")
+        assert [g["target_qn"] for g in again[cs.KEY_ORPHANED]] == [gone]  # type: ignore[typeddict-item]
+
+    def test_a_note_written_on_the_setter_is_filed_on_it(self) -> None:
+        graph = FakeGraph()
+        stored = gloss.write_gloss(
+            graph.fetch_all,
+            graph.execute_write,
+            P,
+            f"{STORE}.x#setter",
+            "validates before storing",
+            "invariant",
+        )
+        assert not gloss._is_refusal(stored), stored
+        assert stored["target_qn"] == f"{STORE}.x@16"  # type: ignore[index]

@@ -535,6 +535,15 @@ WHERE n.qualified_name STARTS WITH $project_prefix
 RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
        n.start_line AS start_line, n.end_line AS end_line,
        n.name AS name, n.namespace AS namespace"""
+# Every definition registered under one natural name: the name itself and
+# its `name@<line>` (and `@<line>_<col>`) variants, with the decorators that
+# tell a property's getter, setter and deleter apart (issue #1808).
+CYPHER_GLOSS_VARIANTS = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
+WHERE n.qualified_name STARTS WITH $project_prefix
+  AND (n.qualified_name = $qn OR n.qualified_name STARTS WITH $variant_prefix)
+RETURN labels(n)[0] AS label, n.qualified_name AS qualified_name, n.path AS path,
+       n.start_line AS start_line, n.end_line AS end_line,
+       n.decorators AS decorators"""
 CYPHER_GRAPH_RESOLVE_LOCATION = f"""MATCH (n:{_GRAPH_DEFINITION_LABELS})
 WHERE n.qualified_name STARTS WITH $project_prefix AND n.path = $path
   AND n.start_line <= $line AND $line <= n.end_line
@@ -782,6 +791,18 @@ CYPHER_GLOSSES_ORPHANED_ON = f"""MATCH (g:{_GLOSS})
 WHERE (g.project = $project_name
        OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
   AND (g.target_qn = $qn OR g.target_qn ENDS WITH $suffix)
+OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
+WITH g, count(subject) AS subjects
+WHERE subjects = 0
+OPTIONAL MATCH (g)-[:{_MENTIONS}]->(m)
+RETURN {_GLOSS_ROW}"""
+# The same, for a definition and its `name@<line>` variants: a note filed
+# through a descriptor (`x#setter`) sits on a variant, so the literal target
+# names nothing once the member is gone (issue #1808).
+CYPHER_GLOSSES_ORPHANED_UNDER = f"""MATCH (g:{_GLOSS})
+WHERE (g.project = $project_name
+       OR (g.project IS NULL AND g.target_qn STARTS WITH $project_prefix))
+  AND (g.target_qn = $qn OR g.target_qn STARTS WITH $variant_prefix)
 OPTIONAL MATCH (g)-[:{_ANNOTATES}]->(subject)
 WITH g, count(subject) AS subjects
 WHERE subjects = 0

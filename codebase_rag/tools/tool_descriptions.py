@@ -257,7 +257,10 @@ MCP_PARAM_TARGET = (
 MCP_PARAM_DEPTH = "How many hops to follow (1 to 5; default 1)."
 MCP_ANNOTATE = (
     "Attach a durable note (a Gloss) to one definition in the graph, never to "
-    "the source file. `target` names the definition the way `resolve` does; "
+    "the source file. `target` names the definition the way `resolve` does, "
+    "optionally with `#getter`, `#setter` or `#deleter` after it to name one "
+    "member of a property (a `#` opening a name, as in a JS private member, "
+    "is part of the name); "
     "a name matching several definitions is refused with the candidates, so "
     "pass a qualified name to disambiguate. `kind` types the claim "
     "(invariant, mirrors, platform-conditional, safety-precondition); "
