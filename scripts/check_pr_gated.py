@@ -42,6 +42,7 @@ import re
 import subprocess
 import sys
 from typing import Any
+from urllib.parse import quote
 
 REPO = "vitali87/code-graph-rag"
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
@@ -828,6 +829,102 @@ def classic_required_contexts(protection: dict[str, Any]) -> list[str]:
     return [str(c) for c in contexts] if isinstance(contexts, list) else []
 
 
+def required_app_bindings(
+    rules: list[Any], protection: dict[str, Any]
+) -> dict[str, set[int]]:
+    """Context name -> the Apps a required check must be posted by (#2131).
+
+    Both layers can bind a required check to one GitHub App: classic
+    protection through `required_status_checks.checks[].app_id`, a ruleset
+    through `required_status_checks[].integration_id`. GitHub then accepts
+    only that App's run of the name. No id, or -1 ("any source"), leaves the
+    name unbound, so it is absent here and judged by name alone as before.
+    """
+    bound: dict[str, set[int]] = {}
+
+    def add(name: object, app: object) -> None:
+        if (
+            isinstance(name, str)
+            and isinstance(app, int)
+            and not isinstance(app, bool)
+            and app > 0
+        ):
+            bound.setdefault(name, set()).add(app)
+
+    classic = protection.get("required_status_checks")
+    if isinstance(classic, dict):
+        for entry in classic.get("checks") or []:
+            if isinstance(entry, dict):
+                add(entry.get("context"), entry.get("app_id"))
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        for entry in (rule.get("parameters") or {}).get("required_status_checks") or []:
+            if isinstance(entry, dict):
+                add(entry.get("context"), entry.get("integration_id"))
+    return bound
+
+
+def head_check_runs(head: str, name: str) -> list[dict[str, Any]] | None:
+    """The check runs named `name` at `head`, with the App that posted each.
+
+    The rollup `gh pr view` returns carries no provider for a check run, so
+    a binding cannot be judged from it. None when the call fails or returns
+    something else: unread is not the same as "no run".
+    """
+    parsed = _json_dict(
+        _gh_stdout_or_empty(
+            "api",
+            f"repos/{REPO}/commits/{head}/check-runs"
+            f"?check_name={quote(name)}&per_page=100",
+        )
+    )
+    runs = parsed.get("check_runs")
+    if not isinstance(runs, list):
+        return None
+    return [run for run in runs if isinstance(run, dict)]
+
+
+def _app_id(run: dict[str, Any]) -> object:
+    app = run.get("app")
+    return app.get("id") if isinstance(app, dict) else None
+
+
+def app_binding_reasons(
+    name: str, apps: set[int], runs: list[dict[str, Any]] | None
+) -> list[str]:
+    """Why `name`, required from `apps`, is not satisfied by those Apps' runs.
+
+    A same-name run from a DIFFERENT App satisfies the name-only checks
+    above while GitHub refuses the merge, so only the bound App's latest run
+    counts (#2131).
+    """
+    if runs is None:
+        return [
+            f"'{name}' is required from App(s) {sorted(apps)}, but the head's "
+            "check runs could not be read, so which App posted it is unverified"
+        ]
+    reasons: list[str] = []
+    for app in sorted(apps):
+        own = [run for run in runs if _app_id(run) == app]
+        if not own:
+            others = sorted({str(_app_id(run)) for run in runs})
+            reasons.append(
+                f"'{name}' is required from App {app}, but no check run of that "
+                "name at the head comes from it"
+                + (f" (posted by App(s) {', '.join(others)})" if others else "")
+            )
+            continue
+        latest = max(own, key=lambda run: str(run.get("started_at") or ""))
+        if str(latest.get("status") or "").lower() != "completed":
+            reasons.append(f"'{name}' from App {app} has not concluded")
+            continue
+        outcome = str(latest.get("conclusion") or "").upper()
+        if outcome not in NON_FAILING_CONCLUSIONS:
+            reasons.append(f"'{name}' from App {app} concluded {outcome}")
+    return reasons
+
+
 def effective_entries(
     rollup: list[dict[str, object]], name: str
 ) -> list[dict[str, object]]:
@@ -873,6 +970,24 @@ def entry_outcome(entry: dict[str, object]) -> str:
     status is unfinished forever (bot review on PR #1968).
     """
     return str(entry.get("conclusion") or entry.get("state") or "").upper()
+
+
+def without_bound_check_runs(
+    rollup: list[dict[str, object]], bound: set[str]
+) -> list[dict[str, object]]:
+    """`rollup` minus the check runs of App-bound names.
+
+    The rollup names no App, so its latest check run of a bound name may be
+    another App's, and a foreign red run would outvote the bound App's green
+    one (bot review on PR #2155). `app_binding_reasons` judges those runs
+    with their App; a same-name commit status stays, since GitHub requires
+    it to pass as well.
+    """
+    return [
+        entry
+        for entry in rollup
+        if not (context_name(entry) in bound and entry.get("__typename") == "CheckRun")
+    ]
 
 
 def classic_context_reasons(name: str, rollup: list[dict[str, object]]) -> list[str]:
@@ -1120,6 +1235,9 @@ def check(pr: str) -> tuple[list[str], list[str]]:
                 "taken on trust here (issue #1944)"
             )
 
+    bindings = required_app_bindings(rules, protection)
+    judged = without_bound_check_runs(rollup, set(bindings))
+
     missing = required_contexts_present(rollup, [REQUIRED_CONTEXT])
     if missing:
         reasons.append(
@@ -1127,7 +1245,7 @@ def check(pr: str) -> tuple[list[str], list[str]]:
             + absent_context_reason(REQUIRED_CONTEXT, rollup, at_head)
         )
     else:
-        for entry in rollup:
+        for entry in judged:
             if context_name(entry) != REQUIRED_CONTEXT:
                 continue
             if not is_concluded(entry):
@@ -1142,7 +1260,17 @@ def check(pr: str) -> tuple[list[str], list[str]]:
     for name in classic_contexts:
         if name == REQUIRED_CONTEXT:
             continue
-        reasons.extend(classic_context_reasons(name, rollup))
+        if name in bindings and not any(
+            context_name(entry) == name for entry in judged
+        ):
+            # Only check runs carry the name; the binding below judges them.
+            continue
+        reasons.extend(classic_context_reasons(name, judged))
+
+    # A binding to one App narrows what satisfies a name further. Read only
+    # for a name that has one, so an unbound repo makes no extra call.
+    for name, apps in sorted(bindings.items()):
+        reasons.extend(app_binding_reasons(name, apps, head_check_runs(head, name)))
 
     absent_jobs = missing_aggregated_jobs(rollup)
     if absent_jobs:
