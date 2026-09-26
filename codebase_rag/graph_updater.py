@@ -1015,6 +1015,7 @@ class GraphUpdater:
         # Whether that read failed: the list then holds this project alone,
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1725,6 +1726,7 @@ class GraphUpdater:
         self._parser_changed = False
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -1891,6 +1893,7 @@ class GraphUpdater:
         # Call-registered routes (Express, net/http, echo, gin) become
         # endpoints too, so JS and Go servers are linkable (issue #886).
         self._emit_route_call_endpoints()
+        self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
@@ -2150,6 +2153,7 @@ class GraphUpdater:
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
@@ -2157,6 +2161,24 @@ class GraphUpdater:
             )
         except Exception:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
+        """Owe a skipped EXPOSES cleanup to the next run, or settle it.
+
+        A batch run's endpoint passes cover every module, so one that ran
+        its cleanups settles whatever an earlier run owed; any run that
+        skipped one leaves the marker for the next (issue #2193).
+        """
+        marker = self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        try:
+            if self._exposes_cleanup_skipped:
+                marker.touch()
+            elif cleared_by_this_run:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            # Best effort, as every other state file here: a read-only tree
+            # must not lose the run to a marker it could not write.
+            logger.debug("EXPOSES cleanup marker not updated")
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2186,6 +2208,7 @@ class GraphUpdater:
         # Same reason as the handler cleanup: a seeded module map can hold a
         # sibling project's modules when the registry could not be read.
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
@@ -4184,7 +4207,11 @@ class GraphUpdater:
         # on this path degrades quietly, so a read-only tree reaches here
         # having survived all of them and must not lose the whole indexing run
         # to a file it only wanted to delete (issue #1647).
-        for stale in (cache_path, self.repo_path / cs.DIR_MTIMES_FILENAME):
+        for stale in (
+            cache_path,
+            self.repo_path / cs.DIR_MTIMES_FILENAME,
+            self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+        ):
             try:
                 stale.unlink(missing_ok=True)
             except OSError as e:
@@ -4268,6 +4295,11 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return False
+        # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
+        # hash below would send the run into the endpoint passes that owe it
+        # (issue #2193).
+        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return False
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -5998,6 +6030,9 @@ class GraphUpdater:
         }
         self._emit_pending_endpoints(only=touched_modules)
         self._emit_route_call_endpoints(only=touched_modules)
+        # A scoped pass covers only the touched modules, so it can owe a
+        # cleanup but never settle one owed from elsewhere.
+        self._record_exposes_cleanup(cleared_by_this_run=False)
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -6125,6 +6160,7 @@ class GraphUpdater:
         # A project registered since the last run must not read as owned.
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
