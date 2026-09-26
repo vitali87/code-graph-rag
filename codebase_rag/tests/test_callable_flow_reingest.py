@@ -53,7 +53,6 @@ def _updater(project: Path, mock_ingestor: MagicMock) -> GraphUpdater:
 
 def _watch(updater: GraphUpdater) -> realtime_updater.CodeChangeEventHandler:
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
     return handler
 
 

@@ -51,7 +51,6 @@ def test_watch_created_rust_file_emits_calls_in_the_same_cycle(
     updater.run()
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     fresh = project / "src" / "fresh.rs"
     fresh.write_text(
@@ -96,7 +95,6 @@ def test_watch_updates_run_under_the_update_lock(
     updater.run()
 
     handler = realtime_updater.CodeChangeEventHandler(updater, debounce_seconds=0)
-    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
 
     held: list[bool] = []
     original = updater._process_function_calls

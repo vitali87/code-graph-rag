@@ -43,6 +43,9 @@ class _Event:
 def updater() -> MagicMock:
     mock = MagicMock()
     mock.repo_path = Path("/repo")
+    # A real updater always carries both sets, as None when unconfigured.
+    mock.exclude_paths = None
+    mock.unignore_paths = None
     return mock
 
 
