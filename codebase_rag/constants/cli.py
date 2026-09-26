@@ -127,6 +127,13 @@ PACKAGE_NAME = "code-graph-rag"
 CLI_MODULE_INVOCATION = "codebase_rag.cli"
 CLI_ENTRY_POINT_NAMES: frozenset[str] = frozenset({"cgr", PACKAGE_NAME})
 CLI_MSG_VERSION = "{package} version {version}"
+# The Credits page on the docs site (issue #2175). A release binary also
+# names its notices sidecar, which the build writes beside it as
+# `<binary name>.THIRD_PARTY_NOTICES.txt` (`build-binaries.yml`).
+CREDITS_URL = "https://docs.code-graph-rag.com/credits/"
+CLI_MSG_CREDITS = "Third-party credits: {url}"
+CLI_MSG_CREDITS_NOTICES = "Third-party notices: {name}, beside this binary"
+THIRD_PARTY_NOTICES_SUFFIX = ".THIRD_PARTY_NOTICES.txt"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
