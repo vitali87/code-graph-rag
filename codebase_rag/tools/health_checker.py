@@ -202,13 +202,24 @@ class HealthChecker:
         missing key is named by the variable the runtime reads
         (issue #1910).
         """
-        config = (
-            settings.active_orchestrator_config
-            if role == cs.ModelRole.ORCHESTRATOR
-            else settings.active_cypher_config
-        )
+        role_name = cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value)
+        try:
+            config = (
+                settings.active_orchestrator_config
+                if role == cs.ModelRole.ORCHESTRATOR
+                else settings.active_cypher_config
+            )
+        except ValueError as e:
+            # A half-configured role is refused by `cgr start` too; doctor
+            # reports it as a failed check instead of crashing on it.
+            return HealthCheckResult(
+                name=cs.HEALTH_CHECK_MODEL_MISCONFIGURED.format(role=role_name),
+                passed=False,
+                message=cs.HEALTH_CHECK_MODEL_MISCONFIGURED_MSG,
+                error=str(e),
+            )
         label = {
-            "role": cs.HEALTH_MODEL_ROLE_NAMES.get(role.value, role.value),
+            "role": role_name,
             "provider": config.provider,
             "model": config.model_id,
         }

@@ -1445,6 +1445,19 @@ class CallResolver:
                 return result
             if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
                 return None
+        # `new W(1)` under `using W = Zeta.Widget;` names no registered type
+        # by its written name, so the trie has no `W` to offer; the type
+        # lookup expands the alias to its target (issue #2002).
+        if (
+            language == cs.SupportedLanguage.CSHARP
+            and constructing
+            and (
+                type_qn := self.type_inference.csharp_type_inference._type_name_to_qn(
+                    call_name, module_qn
+                )
+            )
+        ):
+            return self.function_registry[type_qn], type_qn
         if result := self._try_resolve_via_imports(
             call_name, module_qn, local_var_types, language
         ):

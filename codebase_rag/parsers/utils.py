@@ -1849,3 +1849,13 @@ def _node_source_bytes(node: Node) -> bytes | None:
         root = parent
     raw = getattr(root, "text", None)
     return raw if isinstance(raw, bytes) else None
+
+
+def written_simple_name(name: str) -> str:
+    """The last segment of a written name, whatever the separator: `geo::Shape`
+    and `pkg.Base` both name what a defining file's own simple name does
+    (issue #1568). One spelling for every pass that records an unresolved
+    reference, so a waiter and its provider agree on the key."""
+    return name.replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT).rsplit(
+        cs.SEPARATOR_DOT, 1
+    )[-1]

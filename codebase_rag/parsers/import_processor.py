@@ -481,6 +481,18 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _include_path_suffix(include_path: str) -> str:
+    """A written include path as the repository path suffix it names:
+    normalised, with every `.` and `..` segment dropped wherever it falls
+    (after `normpath`, only leading `..` segments can remain)."""
+    parts = [
+        part
+        for part in posixpath.normpath(include_path.replace("\\", "/")).split("/")
+        if part not in ("", ".", "..")
+    ]
+    return "/".join(parts)
+
+
 def _dotted_include_path(include_path: str) -> str:
     """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
 
@@ -576,6 +588,7 @@ class ImportProcessor:
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
         "unresolved_specifiers",
+        "unresolved_references",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -650,6 +663,13 @@ class ImportProcessor:
         # never re-parsed when the file is finally created (issue #1714).
         # Recorded here so the importer stays findable from the path alone.
         self.unresolved_specifiers: dict[str, set[str]] = {}
+        # Per module qn: every name the module referenced and could not
+        # resolve, from any pass (a dropped import, an include naming no
+        # file, a base class resolved nowhere, a call with no callee). The
+        # class and call processors record into the same dict; the updater
+        # writes it onto the Module node after Pass 3, and matches an added
+        # file against it to find the modules that waited (issue #1568).
+        self.unresolved_references: dict[str, set[str]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -1088,6 +1108,7 @@ class ImportProcessor:
         # whose target now exists, would otherwise keep nominating this file
         # for ever (issue #1714).
         self.unresolved_specifiers.pop(module_qn, None)
+        self.unresolved_references.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -1553,6 +1574,7 @@ class ImportProcessor:
                         from_module=entry.module_qn,
                         to_module=entry.full_name,
                     )
+                    self.note_unresolved(entry.module_qn, entry.full_name)
                     continue
                 self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
                 emitted += 1
@@ -1591,6 +1613,8 @@ class ImportProcessor:
                         from_module=entry.module_qn,
                         to_module=module_path,
                     )
+                    self.note_unresolved(entry.module_qn, module_path)
+                    self.note_unresolved(entry.module_qn, entry.full_name)
                     continue
                 module_path = verified
             self._emit_import_edge(entry, target_label, module_path)
@@ -3343,6 +3367,13 @@ class ImportProcessor:
             return f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
         return None
 
+    def note_unresolved(self, module_qn: str, name: str) -> None:
+        """Record that `module_qn` referenced `name` and could not resolve it
+        (issue #1568). Any pass may call this; the set is cleared when the
+        module is parsed again, so it always describes the current source."""
+        if name:
+            self.unresolved_references.setdefault(module_qn, set()).add(name)
+
     def _note_unresolved_js_specifier(self, module_qn: str, specifier: str) -> None:
         """Record a RELATIVE specifier that names nothing on disk (issue #1714).
 
@@ -4374,7 +4405,11 @@ class ImportProcessor:
             return resolved
         # A quoted include matching no repo file is a third-party header; a
         # project-rooted qn would be a phantom. Segmented like the system
-        # branch above, for the same reason (issue #1758).
+        # branch above, for the same reason (issue #1758). Recorded for the
+        # day the header is added (issue #1568), normalised to the repo path
+        # suffix an added file offers: `./include/base.h` and
+        # `../include/base.h` both wait on `include/base.h` (bot review).
+        self.note_unresolved(module_qn, _include_path_suffix(include_path))
         return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
