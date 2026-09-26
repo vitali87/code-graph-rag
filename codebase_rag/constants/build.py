@@ -60,7 +60,7 @@ PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
 FORBIDDEN_BUNDLE_ENTRY_PATTERNS = (
     r"libreadline\.so(\.\d+)*",
     r"libreadline(\.\d+)*\.dylib",
-    r"readline\.cpython-[^/\\]+\.so",
+    r"readline(\.cpython-[^/\\]+|\.abi3)?\.so",
     r"readline(\.cp\d+-[^/\\]+)?\.pyd",
 )
 

@@ -338,6 +338,7 @@ BINARY_SIZE = "Size: {size:.1f} MB"
 BUILD_STDOUT = "STDOUT: {stdout}"
 BUILD_STDERR = "STDERR: {stderr}"
 BUILD_FORBIDDEN_ENTRIES = "Binary bundles entries it must not ship: {entries}"
+BUILD_BINARY_MISSING = "Build reported success but no binary exists at {path}"
 
 # Graph summary logs
 GRAPH_SUMMARY = "Graph Summary:"

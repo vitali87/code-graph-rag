@@ -135,7 +135,7 @@ class TestBuildPackageArgs:
 class TestBuildBinaryCommand:
     def test_copies_own_package_metadata_for_version_lookup(self) -> None:
         with patch("build_binary.subprocess.run") as mock_run:
-            assert build_binary()
+            build_binary()
 
         cmd = mock_run.call_args.args[0]
         metadata_pair = [cs.PYINSTALLER_ARG_COPY_METADATA, cs.PACKAGE_NAME]
@@ -149,7 +149,7 @@ class TestBuildBinaryCommand:
         collect the module; excluding it keeps copyleft out of the executable.
         """
         with patch("build_binary.subprocess.run") as mock_run:
-            assert build_binary()
+            build_binary()
 
         cmd = mock_run.call_args.args[0]
         exclude_pair = [cs.PYINSTALLER_ARG_EXCLUDE_MODULE, "readline"]
@@ -190,6 +190,14 @@ class TestForbiddenBundleEntries:
     def test_reports_macos_readline_extension(self) -> None:
         found = forbidden_bundle_entries(self.DARWIN_READLINE + self.LINUX_CLEAN)
         assert found == self.DARWIN_READLINE
+
+    def test_reports_untagged_readline_extensions(self) -> None:
+        """Python also loads `readline.so` and `readline.abi3.so`, untagged."""
+        untagged = ["readline.so", "python3.12/lib-dynload/readline.abi3.so"]
+
+        found = forbidden_bundle_entries(untagged + self.LINUX_CLEAN)
+
+        assert found == sorted(untagged)
 
     def test_clean_archive_reports_nothing(self) -> None:
         assert forbidden_bundle_entries(self.LINUX_CLEAN) == []
@@ -232,3 +240,14 @@ class TestForbiddenBundleEntries:
 
         checked = mock_entries.call_args.args[0]
         assert checked.name.endswith(cs.WINDOWS_EXECUTABLE_SUFFIX)
+
+    def test_a_missing_binary_fails_the_build(self) -> None:
+        """Reporting success with no artifact would skip the guard entirely."""
+        with (
+            patch("build_binary.subprocess.run"),
+            patch("build_binary.Path.exists", return_value=False),
+            patch("build_binary._archive_entries") as mock_entries,
+        ):
+            assert build_binary() is False
+
+        mock_entries.assert_not_called()

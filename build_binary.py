@@ -107,21 +107,25 @@ def build_binary() -> bool:
         if system == cs.WINDOWS_SYSTEM:
             binary_file += cs.WINDOWS_EXECUTABLE_SUFFIX
         binary_path = Path(cs.DIST_DIR) / binary_file
-        if binary_path.exists():
-            size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
-            logger.info(logs.BINARY_INFO.format(path=binary_path))
-            logger.info(logs.BINARY_SIZE.format(size=size_mb))
+        # A missing artifact is a failed build, not a skipped check: returning
+        # success here let an unguarded binary through when the path was wrong.
+        if not binary_path.exists():
+            logger.error(logs.BUILD_BINARY_MISSING.format(path=binary_path))
+            return False
 
-            forbidden = forbidden_bundle_entries(_archive_entries(binary_path))
-            if forbidden:
-                logger.error(
-                    logs.BUILD_FORBIDDEN_ENTRIES.format(entries=", ".join(forbidden))
-                )
-                return False
+        size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
+        logger.info(logs.BINARY_INFO.format(path=binary_path))
+        logger.info(logs.BINARY_SIZE.format(size=size_mb))
 
-            os.chmod(binary_path, cs.BINARY_FILE_PERMISSION)
-            logger.success(logs.BUILD_READY)
+        forbidden = forbidden_bundle_entries(_archive_entries(binary_path))
+        if forbidden:
+            logger.error(
+                logs.BUILD_FORBIDDEN_ENTRIES.format(entries=", ".join(forbidden))
+            )
+            return False
 
+        os.chmod(binary_path, cs.BINARY_FILE_PERMISSION)
+        logger.success(logs.BUILD_READY)
         return True
 
     except subprocess.CalledProcessError as e:
