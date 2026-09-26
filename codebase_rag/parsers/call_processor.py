@@ -42,6 +42,7 @@ from .io_access import IOAccessProcessor
 from .java import type_inference as java_ti
 from .java import utils as java_utils
 from .js_ts import utils as js_ts_utils
+from .julia import utils as julia_utils
 from .lua import utils as lua_utils
 from .rpc_exposure import GoRpcExposureProcessor
 from .rs import utils as rs_utils
@@ -1377,7 +1378,10 @@ class CallProcessor:
         # the plain byte span.
         if all_call_nodes is None or call_starts is None:
             return None
-        if language == cs.SupportedLanguage.RUST:
+        if language in (
+            cs.SupportedLanguage.RUST,
+            cs.SupportedLanguage.JULIA,
+        ):
             return self._calls_owned_by(
                 func_node, owned_func_nodes, all_call_nodes, call_starts
             )
@@ -1404,6 +1408,7 @@ class CallProcessor:
         all_call_nodes: list[Node],
         call_starts: list[int],
         func_nodes: list[Node],
+        module_qn: str,
     ) -> list[Node]:
         # Calls inside a function's BODY belong to that function, not the
         # module; only genuine top-level calls are module-attributed. The body
@@ -1419,11 +1424,74 @@ class CallProcessor:
             if body is None:
                 # a Dart body is a SIBLING of its signature, not a field
                 body = dart_utils.dart_body_node(func_node)
-            if body is None:
+            if body is None and func_node.type in (
+                cs.TS_JULIA_FUNCTION_DEFINITION,
+                cs.TS_JULIA_MACRO_DEFINITION,
+            ):
+                # No body field: the body is everything after the signature.
+                # A head the naming pass refuses owns no body: its calls
+                # bubble to the module (issue #1882 review).
+                if func_node.named_children and julia_utils.julia_function_head_name(
+                    func_node
+                ):
+                    start = func_node.named_children[0].end_byte
+                    end = func_node.end_byte
+                    lo = bisect_left(call_starts, start)
+                    hi = bisect_right(call_starts, end)
+                    for call in all_call_nodes[lo:hi]:
+                        if call.end_byte <= end:
+                            nested_starts.add(call.start_byte)
                 continue
+            if body is None:
+                if (
+                    func_node.type
+                    in (
+                        cs.TS_JULIA_ASSIGNMENT,
+                        cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION,
+                    )
+                    and len(func_node.named_children) >= 2
+                ):
+                    # The RHS is the body; an anonymous arrow's calls stay
+                    # module-attributed or they drop entirely.
+                    if self._julia_caller_name(func_node, module_qn) is None:
+                        continue
+                    body = func_node.named_children[-1]
+                else:
+                    continue
             for call in self._filter_calls_in_node(all_call_nodes, call_starts, body):
                 nested_starts.add(call.start_byte)
         return [c for c in all_call_nodes if c.start_byte not in nested_starts]
+
+    def _sibling_qn_in_macro_namespace(self, qn: str, want_macro: bool) -> str | None:
+        # A same-named function/macro pair collides on one natural name;
+        # the needed twin is the other bucket member.
+        natural = qn.rsplit(cs.DUP_QN_MARKER, 1)[0] if cs.DUP_QN_MARKER in qn else qn
+        registry = self._resolver.function_registry
+        bucket = registry.variants(natural)
+        if len(bucket) < 2:
+            return None
+        matches = [
+            candidate
+            for candidate in bucket
+            if registry.get(candidate) is not None
+            and (candidate in self.macro_qns) == want_macro
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _julia_caller_name(self, func_node: Node, module_qn: str) -> str | None:
+        # The name the definition pass registers for this node, or None
+        # while it stays anonymous; every caller pass derives attribution
+        # through this helper so both passes name a node identically.
+        name = julia_utils.julia_function_head_name(
+            func_node
+        ) or julia_utils.julia_arrow_assigned_name(func_node)
+        if name:
+            return name
+        if (
+            recorded := self._recorded_caller(func_node, module_qn)
+        ) is not None and recorded.is_named:
+            return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return None
 
     def _bare_decorator_name(self, decorator_node: Node) -> str | None:
         # A bare decorator `@task` / `@pkg.deco` (no call parens) is not a
@@ -1997,7 +2065,7 @@ class CallProcessor:
                     else sorted_func_nodes
                 )
                 module_calls = self._filter_top_level_calls(
-                    all_call_nodes, call_starts, exclusion_nodes
+                    all_call_nodes, call_starts, exclusion_nodes, module_qn
                 )
             else:
                 module_calls = all_call_nodes
@@ -2111,6 +2179,12 @@ class CallProcessor:
                             cs.TS_IDENTIFIER,
                         ),
                     )
+            if not func_name and language == cs.SupportedLanguage.JULIA:
+                # Julia definition nodes carry no `name` field; recover it
+                # here or the body is skipped.
+                func_name = julia_utils.julia_function_head_name(
+                    func_node
+                ) or julia_utils.julia_arrow_assigned_name(func_node)
             if not func_name:
                 # A nameless JS/TS function expression that a NAMED pass
                 # registered (`exports.f = function`, `x: function`) has a
@@ -2413,6 +2487,10 @@ class CallProcessor:
                 method_name = self._get_node_name(method_node)
             if not method_name and language in _JS_TS_LANGUAGES:
                 method_name = self._js_ts_arrow_binding_name(method_node)
+            if not method_name and language == cs.SupportedLanguage.JULIA:
+                # Same name recovery as the module pass, else the inner
+                # constructor's body is skipped (issue #1882 review).
+                method_name = self._julia_caller_name(method_node, module_qn)
             # A nameless function expression the definition pass registered
             # under a name (`x: function () {}` in a method's object literal,
             # `this.h = function () {}` in a constructor) has a real node:
@@ -2561,12 +2639,12 @@ class CallProcessor:
         # function, never also to the enclosing one.
         own = self._filter_calls_in_node(all_call_nodes, call_starts, func_node)
         descendant_bodies = [
-            body
+            span
             for n in sibling_func_nodes
             if n is not func_node
             and n.start_byte >= func_node.start_byte
             and n.end_byte <= func_node.end_byte
-            and (body := n.child_by_field_name(cs.FIELD_BODY)) is not None
+            and (span := self._func_body_span(n)) is not None
         ]
         if not descendant_bodies:
             return own
@@ -2574,10 +2652,47 @@ class CallProcessor:
             call
             for call in own
             if not any(
-                body.start_byte <= call.start_byte and call.end_byte <= body.end_byte
-                for body in descendant_bodies
+                start <= call.start_byte and call.end_byte <= end
+                for start, end in descendant_bodies
             )
         ]
+
+    @staticmethod
+    def _func_body_span(func_node: Node) -> tuple[int, int] | None:
+        body = func_node.child_by_field_name(cs.FIELD_BODY)
+        if body is not None:
+            return body.start_byte, body.end_byte
+        # No body field: the body is the span between the signature and the
+        # trailing `end` (an arrow's body is its last named child).
+        if func_node.type == cs.TS_JULIA_FUNCTION_DEFINITION:
+            named = func_node.named_children
+            if named and named[0].type == cs.TS_JULIA_SIGNATURE:
+                end_token = next(
+                    (
+                        c
+                        for c in func_node.children
+                        if c.type == cs.TS_JULIA_END_KEYWORD
+                    ),
+                    None,
+                )
+                if end_token is not None:
+                    return named[0].end_byte, end_token.start_byte
+        if func_node.type == cs.TS_JULIA_ARROW_FUNCTION_EXPRESSION:
+            # An arrow has two named children (parameter, body); the body is last.
+            named = func_node.named_children
+            if len(named) >= 2:
+                body = named[-1]
+                return body.start_byte, body.end_byte
+        if (
+            func_node.type == cs.TS_JULIA_ASSIGNMENT
+            and func_node.named_children
+            and julia_utils.julia_function_head_name(func_node) is not None
+        ):
+            # A concise method `f(x) = ...` (also `f(x)::Int`,
+            # `f(x) where T`): the right side is the body.
+            body = func_node.named_children[-1]
+            return body.start_byte, body.end_byte
+        return None
 
     def _process_calls_in_classes(
         self,
@@ -2724,6 +2839,12 @@ class CallProcessor:
         # chain, not inside the node.
         if language == cs.SupportedLanguage.DART:
             return dart_utils.dart_call_name(call_node)
+        if language == cs.SupportedLanguage.JULIA:
+            # A definition's own head IS a call_expression; drop heads
+            # here (no query negation to exclude them at capture time).
+            if julia_utils.julia_is_signature_head(call_node):
+                return None
+            return julia_utils.julia_call_name(call_node)
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
                 case (
@@ -3844,15 +3965,29 @@ class CallProcessor:
                     in (cs.SupportedLanguage.JAVA, cs.SupportedLanguage.CSHARP)
                     and call_node.type in _OBJECT_CREATION_NODE_TYPES,
                 )
-            if callee_info and language == cs.SupportedLanguage.RUST:
-                # Rust macros and functions live in SEPARATE namespaces:
-                # a macro invocation (write!) must not bind a same-named fn
-                # (std-prelude macro names collide with common fn names and
-                # the false edge revives dead code), and a fn call must not
-                # bind a same-named macro.
+            if callee_info and language in (
+                cs.SupportedLanguage.RUST,
+                cs.SupportedLanguage.JULIA,
+            ):
+                # Rust and Julia macros and functions live in SEPARATE
+                # namespaces: a macro invocation must not bind a same-named
+                # fn and vice versa.
                 is_macro_target = callee_info[1] in self.macro_qns
-                if is_macro_target != (call_node.type == cs.TS_RS_MACRO_INVOCATION):
-                    callee_info = None
+                is_macro_invocation = call_node.type in (
+                    cs.TS_RS_MACRO_INVOCATION,
+                    cs.TS_JULIA_MACROCALL_EXPRESSION,
+                )
+                if is_macro_target != is_macro_invocation:
+                    # Swap to the other namespace's twin when the bucket
+                    # holds exactly one candidate there (issue #1882
+                    # review).
+                    sibling = self._sibling_qn_in_macro_namespace(
+                        callee_info[1], is_macro_invocation
+                    )
+                    if sibling is None:
+                        callee_info = None
+                    else:
+                        callee_info = (callee_info[0], sibling)
             if not callee_info and resolve_builtin is not None:
                 callee_info = resolve_builtin(call_name)
             if not callee_info and resolve_cpp_op is not None:
@@ -4206,6 +4341,18 @@ class CallProcessor:
                 # it does not (dataclass/NamedTuple/pydantic), INSTANTIATES is
                 # the only edge.
                 class_variants = resolver.function_registry.variants(callee_qn)
+                # Julia call syntax dispatches in the FUNCTION namespace:
+                # a same-named free function wins over the type (no
+                # INSTANTIATES) and a macro is not a call target.
+                julia_fn_variants: list[tuple[NodeType, str]] = []
+                if language == cs.SupportedLanguage.JULIA:
+                    julia_fn_variants = [
+                        (node_type, variant)
+                        for variant in class_variants
+                        if (node_type := resolver.function_registry.get(variant))
+                        in (NodeType.FUNCTION, NodeType.METHOD)
+                        and variant not in self.macro_qns
+                    ]
                 self._resolution = (
                     cs.EdgeResolution.OVERLOAD
                     if len(class_variants) > 1
@@ -4220,11 +4367,47 @@ class CallProcessor:
                     variant_type = resolver.function_registry.get(class_variant)
                     if variant_type is not None and variant_type != NodeType.CLASS:
                         continue
+                    if julia_fn_variants:
+                        # A shadowing function owns the call: no instantiation.
+                        continue
                     ensure_rel(
                         caller_spec,
                         cs.RelationshipType.INSTANTIATES,
                         (class_label, qn_key, class_variant),
                     )
+                if language == cs.SupportedLanguage.JULIA:
+                    # A shadowing free function wins, else the inner same-
+                    # name constructor (like Java/C#). The resolution
+                    # describes the FILTERED target set (#1882 review).
+                    fn_variants = julia_fn_variants
+                    if fn_variants:
+                        self._resolution = (
+                            cs.EdgeResolution.OVERLOAD
+                            if len(fn_variants) > 1
+                            else resolver.last_resolution
+                        )
+                        for node_type, variant in sorted(fn_variants):
+                            ensure_rel(
+                                caller_spec, calls_rel, (node_type, qn_key, variant)
+                            )
+                    else:
+                        ctor_edges = [
+                            (ctor_type, variant)
+                            for ctor_type, ctor_qn in sorted(
+                                resolver.java_constructor_targets(callee_qn)
+                            )
+                            for variant in resolver.function_registry.variants(ctor_qn)
+                        ]
+                        self._resolution = (
+                            cs.EdgeResolution.OVERLOAD
+                            if len(ctor_edges) > 1
+                            else resolver.last_resolution
+                        )
+                        for ctor_type, variant in ctor_edges:
+                            ensure_rel(
+                                caller_spec, calls_rel, (ctor_type, qn_key, variant)
+                            )
+                    continue
                 if language in (
                     cs.SupportedLanguage.JAVA,
                     cs.SupportedLanguage.CSHARP,
@@ -4286,6 +4469,22 @@ class CallProcessor:
                 callee_qn = init_qn
 
             targets = resolver.function_registry.variants(callee_qn)
+            if language in (
+                cs.SupportedLanguage.RUST,
+                cs.SupportedLanguage.JULIA,
+            ):
+                # Filter the fan-out by the macro registry: an invocation
+                # binds only macros, a plain call only non-macros.
+                is_macro_invocation = call_node.type in (
+                    cs.TS_RS_MACRO_INVOCATION,
+                    cs.TS_JULIA_MACROCALL_EXPRESSION,
+                )
+                if is_macro_invocation:
+                    targets = [t for t in targets if t in self.macro_qns]
+                else:
+                    targets = [t for t in targets if t not in self.macro_qns]
+                if not targets:
+                    continue
             if len(
                 targets
             ) > 1 and not resolver.import_processor.rust_block_item_qns.isdisjoint(
@@ -7681,6 +7880,10 @@ class CallProcessor:
             # locals' types) instead of being excluded and dropped. Named nested
             # `fn`s stay attributable and keep their own calls.
             return [n for n in func_nodes if n.type != cs.TS_RS_CLOSURE_EXPRESSION]
+        if language == cs.SupportedLanguage.JULIA:
+            # An anonymous Julia arrow gets no caller node: its calls
+            # bubble to the enclosing scope like JS/TS arrows.
+            return [n for n in func_nodes if self._julia_caller_name(n, module_qn)]
         if language not in _JS_TS_LANGUAGES:
             return func_nodes
         # A nameless function expression the definition pass registered under

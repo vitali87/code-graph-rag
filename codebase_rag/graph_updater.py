@@ -4440,6 +4440,7 @@ class GraphUpdater:
     def _process_files(self, force: bool = False) -> None:
         self.factory.import_processor.reset_rust_path_caches()
         self.factory.import_processor.reset_java_path_caches()
+        self.factory.import_processor.reset_julia_path_caches()
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         # `_cache_discarded_in_memory`: the orphan discard could not delete the
@@ -5913,9 +5914,16 @@ class GraphUpdater:
             import_processor.refresh_rust_path_caches_for(
                 path, created=key not in hashes
             )
+            # Julia's stem/declared-module indices are the same kind of
+            # per-layout cache: any .jl change invalidates the whole set.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
         for key, path in gone.items():
             self.remove_file_from_state(path)
             self._delete_module_entities(key)
+            # A deleted .jl file invalidates the same path caches reparse does.
+            if path.suffix == cs.EXT_JL:
+                import_processor.reset_julia_path_caches()
             if isinstance(self.ingestor, QueryProtocol):
                 # Keyed on the absolute path: a sibling project's File node
                 # can share the relative path (issue #897).

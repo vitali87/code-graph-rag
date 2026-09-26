@@ -1,4 +1,5 @@
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -27,8 +28,6 @@ _EXTERNAL_TOOLS: dict[str, bool] = {}
 def _is_tool_available(tool_name: str) -> bool:
     if tool_name in _EXTERNAL_TOOLS:
         return _EXTERNAL_TOOLS[tool_name]
-
-    import subprocess
 
     try:
         subprocess.run(
@@ -178,6 +177,11 @@ class StdlibExtractor:
                 return self._extract_csharp_stdlib_path(full_qualified_name)
             case cs.SupportedLanguage.LUA:
                 return self._extract_lua_stdlib_path(full_qualified_name)
+            case cs.SupportedLanguage.JULIA:
+                # The path is the module path AS WRITTEN: no trailing class
+                # segment to strip (the generic heuristic would collapse
+                # `Pkg.SomeModule` onto `Pkg`).
+                return full_qualified_name
             case _:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
@@ -286,7 +290,6 @@ class StdlibExtractor:
         if _is_tool_available("node"):
             try:
                 import os
-                import subprocess
 
                 node_script = """
                     const moduleName = process.env.MODULE_NAME;
@@ -356,7 +359,6 @@ class StdlibExtractor:
         if len(parts) >= 2:
             try:
                 import os
-                import subprocess
 
                 package_path = cs.SEPARATOR_SLASH.join(parts[:-1])
                 entity_name = parts[-1]
@@ -626,7 +628,6 @@ func main() {
 
             try:
                 import os
-                import subprocess
 
                 lua_script = """
 -- Get module and entity names from environment
