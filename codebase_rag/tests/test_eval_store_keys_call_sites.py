@@ -98,7 +98,9 @@ def test_two_bound_names_from_one_import_statement_are_two_edges(
     # statement span but binds two names, so it is two edges in production.
     repo = tmp_path / "proj"
     repo.mkdir()
-    (repo / "helpers.py").write_text("def a():\n    pass\n\n\ndef b():\n    pass\n")
+    (repo / "helpers.py").write_text(
+        "def a():\n    pass\n\n\ndef b():\n    pass\n", encoding="utf-8"
+    )
     (repo / "mod.py").write_text("from helpers import a, b\n", encoding="utf-8")
     store = _StatefulIngestor()
     _index(store, repo)
