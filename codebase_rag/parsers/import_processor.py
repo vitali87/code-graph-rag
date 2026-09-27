@@ -575,6 +575,8 @@ class ImportProcessor:
         "exclude_paths",
         "unignore_paths",
         "import_mapping",
+        "csharp_static_imports",
+        "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
@@ -646,6 +648,17 @@ class ImportProcessor:
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # `using static N.T;` brings T's MEMBERS into bare-call scope, which
+        # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
+        # bare `Member()` has no entry to resolve through. Module qn -> the set
+        # of (enclosing namespace, statically imported type path), probed as an
+        # extra bare-call scope (issue #2005). The namespace is "" for a
+        # file-level directive; one inside `namespace N { ... }` scopes only N.
+        self.csharp_static_imports: dict[str, set[tuple[str, str]]] = {}
+        # `global using static N.T;` is in scope in EVERY file of the
+        # compilation. Keyed by the DECLARING module, so a re-parse or a
+        # removal of that file drops exactly its own directives.
+        self.csharp_global_static_imports: dict[str, set[str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -1008,6 +1021,8 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -1380,6 +1395,8 @@ class ImportProcessor:
         self._csharp_module_identifiers.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.
@@ -1409,6 +1426,17 @@ class ImportProcessor:
             for namespace, declared_types in namespaces.items():
                 namespace_modules.setdefault(namespace, {})[module_qn] = declared_types
         return namespace_modules
+
+    def recover_unparsed_csharp_state(self, known_module_paths: dict[str, str]) -> None:
+        """Rebuild the per-file C# scans for modules this run did not parse.
+
+        An incremental run re-parses only CHANGED files, so an unchanged
+        file's declared namespaces, identifiers and `global using static`
+        directives are recovered here from a targeted parse of its source.
+        Run before Pass 3: a global static import in an unchanged file scopes
+        the bare calls of every re-parsed one (CodeRabbit, PR #2036).
+        """
+        self._recover_unparsed_csharp_namespaces(known_module_paths)
 
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
@@ -1441,6 +1469,7 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(tree.root_node)
             )
+            self._collect_csharp_global_static_imports(tree.root_node, module_qn)
 
     def _emit_csharp_internal_imports(
         self,
@@ -3670,29 +3699,94 @@ class ImportProcessor:
                             path=resolved_path,
                         )
 
-    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
+    @staticmethod
+    def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
+        # `using Alias = Target;` marks the alias with a `name` field; the
+        # imported path is then the OTHER name node. Plain/static/global
+        # forms have no `name` field, so the sole name node is the path.
         name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
+        alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+        target = None
+        for child in import_node.children:
+            if child.type in name_types and child != alias_node:
+                target = child
+        if target is None:
+            return None
+        imported_path = safe_decode_with_fallback(target)
+        if not imported_path:
+            return None
+        return imported_path, alias_node
+
+    def _record_csharp_static_import(
+        self,
+        import_node: Node,
+        module_qn: str,
+        imported_path: str,
+        alias_node: Node | None,
+        global_only: bool = False,
+    ) -> None:
+        # `using static` is marked by a literal `static` child; an alias
+        # form (`using static X = N.T;`) is not a member import.
+        modifiers = {child.type for child in import_node.children}
+        if alias_node is not None or cs.TS_CSHARP_STATIC not in modifiers:
+            return
+        is_global = cs.TS_CSHARP_GLOBAL in modifiers
+        if global_only and not is_global:
+            return
+        if is_global:
+            self.csharp_global_static_imports.setdefault(module_qn, set()).add(
+                imported_path
+            )
+        else:
+            self.csharp_static_imports.setdefault(module_qn, set()).add(
+                (self._csharp_enclosing_namespace(import_node), imported_path)
+            )
+
+    @staticmethod
+    def _csharp_enclosing_namespace(node: Node) -> str:
+        # The dotted name of the `namespace N { ... }` blocks around `node`,
+        # outermost first. A file-scoped `namespace N;` covers the whole file,
+        # so a directive under it is file-level and is not counted.
+        parts: list[str] = []
+        parent = node.parent
+        while parent is not None:
+            if parent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+                name = safe_decode_with_fallback(
+                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                )
+                if name:
+                    parts.append(name)
+            parent = parent.parent
+        return cs.SEPARATOR_DOT.join(reversed(parts))
+
+    def _collect_csharp_global_static_imports(self, root: Node, module_qn: str) -> None:
+        # A `global using` must precede every other member of the file, so
+        # the directives are direct children of the compilation unit.
+        for import_node in root.children:
+            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                continue
+            if parsed := self._csharp_using_target(import_node):
+                imported_path, alias_node = parsed
+                self._record_csharp_static_import(
+                    import_node, module_qn, imported_path, alias_node, global_only=True
+                )
+
+    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
                 continue
-            # `using Alias = Target;` marks the alias with a `name` field; the
-            # imported path is then the OTHER name node. Plain/static/global
-            # forms have no `name` field, so the sole name node is the path.
-            alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            target = None
-            for child in import_node.children:
-                if child.type in name_types and child != alias_node:
-                    target = child
-            if target is None:
+            parsed = self._csharp_using_target(import_node)
+            if parsed is None:
                 continue
-            imported_path = safe_decode_with_fallback(target)
-            if not imported_path:
-                continue
+            imported_path, alias_node = parsed
             if alias_node is not None and alias_node.text:
                 local_name = safe_decode_with_fallback(alias_node)
             else:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
+            self._record_csharp_static_import(
+                import_node, module_qn, imported_path, alias_node
+            )
             self._record_import_site(
                 module_qn,
                 local_name,

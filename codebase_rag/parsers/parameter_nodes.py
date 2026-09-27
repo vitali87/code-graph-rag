@@ -17,6 +17,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..services import IngestorProtocol
+from ..types_defs import CSharpCallShape
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -460,6 +461,20 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
             slots.add(param, pending_variadic, is_variadic=True)
             pending_variadic = None
     return slots.declared
+
+
+def csharp_call_shape(func_node: Node) -> CSharpCallShape:
+    """The arity bounds and staticness C# bare-call binding checks."""
+    params = csharp_declared_parameters(func_node)
+    return CSharpCallShape(
+        required=sum(not (p.has_default or p.is_variadic) for p in params),
+        variadic=any(p.is_variadic for p in params),
+        is_static=any(
+            child.type == cs.TS_CSHARP_MODIFIER
+            and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_STATIC
+            for child in func_node.children
+        ),
+    )
 
 
 # --- Lua ---------------------------------------------------------------------

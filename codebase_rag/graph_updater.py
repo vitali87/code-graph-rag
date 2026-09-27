@@ -1901,6 +1901,7 @@ class GraphUpdater:
         if self._is_full_build:
             self.factory.call_processor.reset_callable_flow()
         logger.info(ls.PASS_3_CALLS)
+        self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
         self._process_function_calls()
 
         # IMPORTS flush AFTER Pass 3: a C# namespace import lands on the
@@ -4092,6 +4093,7 @@ class GraphUpdater:
             for qn in (
                 type_inference.csharp_generic_methods
                 | type_inference.csharp_local_functions.keys()
+                | type_inference.csharp_call_shapes.keys()
                 | extension_owners
             )
             if owned(qn)
@@ -6197,6 +6199,7 @@ class GraphUpdater:
         # The re-parsed files' own CALLS edges went with their Module
         # subtrees; a moved use must not serve last pass's cached answer.
         self.factory.call_processor.reset_resolution_caches()
+        self.factory.import_processor.recover_unparsed_csharp_state(known_module_paths)
         self._process_function_calls(only=set(reparse.values()))
         # Editing a PROVIDER recreated its Module node and severed the
         # unchanged C# importers' edges (issue #1347).
