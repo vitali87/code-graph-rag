@@ -103,6 +103,7 @@ def add_repo(
     repo = WorkspaceRepo(
         path=str(resolved),
         project_name=(project_name or derive_project_name(resolved)),
+        project_named=bool(project_name and project_name.strip()),
     )
     config.repos.append(repo)
     save_workspace(config, home=home)

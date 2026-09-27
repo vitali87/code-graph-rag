@@ -98,6 +98,7 @@ from .types_defs import (
     EmbeddingQueryResult,
     FunctionLocation,
     FunctionLocations,
+    JsonValue,
     LanguageQueries,
     NodeType,
     PendingExpansionCall,
@@ -341,6 +342,12 @@ def _load_exclusion_state(state_path: Path) -> dict[str, list[str] | str] | None
         return None
     if not isinstance(loaded, dict):
         return None
+    return _parse_exclusion_stamp(loaded)
+
+
+def _parse_exclusion_stamp(
+    loaded: dict[str, JsonValue],
+) -> dict[str, list[str] | str] | None:
     result: dict[str, list[str] | str] = {}
     for key in ("exclude", "unignore"):
         values = loaded.get(key)
@@ -360,10 +367,52 @@ def _load_exclusion_state(state_path: Path) -> dict[str, list[str] | str] | None
     return result
 
 
+def _load_project_stamps(state_path: Path) -> dict[str, dict[str, list[str] | str]]:
+    """Every project's own stamp in the exclusion state file (issue #1987).
+
+    The top-level stamp is overwritten by whichever project indexed the tree
+    last; these entries are not, so a project indexed earlier can still read
+    the scope its graph was built under. Each entry carries its `project`
+    key, exactly as the top-level stamp does. A file written before the map
+    existed has none, which reads as empty.
+    """
+    try:
+        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    projects = (
+        loaded.get(cs.EXCLUSION_STATE_PROJECTS_KEY)
+        if isinstance(loaded, dict)
+        else None
+    )
+    if not isinstance(projects, dict):
+        return {}
+    stamps: dict[str, dict[str, list[str] | str]] = {}
+    for name, entry in projects.items():
+        if not isinstance(entry, dict):
+            continue
+        parsed = _parse_exclusion_stamp(entry)
+        if parsed is not None:
+            parsed["project"] = name
+            stamps[name] = parsed
+    return stamps
+
+
 def _save_exclusion_state(state_path: Path, state: dict[str, list[str] | str]) -> None:
+    """Write `state` as the last run's stamp and as its project's own entry."""
+    projects: dict[str, dict[str, list[str] | str]] = {
+        name: {k: v for k, v in stamp.items() if k != "project"}
+        for name, stamp in _load_project_stamps(state_path).items()
+    }
+    project = state.get("project")
+    if isinstance(project, str):
+        projects[project] = {k: v for k, v in state.items() if k != "project"}
     try:
         state_path.write_text(
-            json.dumps(state, sort_keys=True), encoding=cs.ENCODING_UTF8
+            json.dumps(
+                {**state, cs.EXCLUSION_STATE_PROJECTS_KEY: projects}, sort_keys=True
+            ),
+            encoding=cs.ENCODING_UTF8,
         )
     except OSError:
         return None
@@ -928,6 +977,7 @@ class GraphUpdater:
         project_name: str | None = None,
         capture: CaptureSelection | None = None,
         skip_embeddings: bool | None = None,
+        project_named: bool | None = None,
     ):
         self.capture = capture if capture is not None else default_capture()
         # `ingestor` stays the raw object for DB queries (QueryProtocol),
@@ -952,7 +1002,11 @@ class GraphUpdater:
         self.repo_path = repo_path
         self.parsers = parsers
         self.queries = queries
-        self.project_named = bool(project_name and project_name.strip())
+        self.project_named = (
+            bool(project_name and project_name.strip())
+            if project_named is None
+            else project_named
+        )
         self.project_name = (
             project_name and project_name.strip()
         ) or repo_path.resolve().name
@@ -1011,6 +1065,9 @@ class GraphUpdater:
         # definition spans exist for hybrid macro-call attribution.
         self._reparsed_file_keys: set[str] = set()
         self._exclusion_match: bool | None = None
+        # Project provenance can match while the exclusion set changes. Keep
+        # the old cache in that case so newly excluded files can be removed.
+        self._cache_project_match: bool | None = None
         # Set when a run that needed the graph's module paths could not read
         # them: the reconciliation it was meant to do may not have happened,
         # so that run must not stamp its exclusion set as reconciled.
@@ -1775,6 +1832,7 @@ class GraphUpdater:
         # run replaced. Reset after _register_generated_sources so the answer
         # is always computed against the effective unignore set.
         self._exclusion_match = None
+        self._cache_project_match = None
         self._graph_state_unknown = False
         # Per-run for the same reason (issue #1620's shape): a run that raised
         # between `_process_files` and the commit point leaves its cache
@@ -1800,6 +1858,8 @@ class GraphUpdater:
             # statements, no-ops when every note is attached (issue #1808).
             self._reanchor_glosses()
             self.ingestor.flush_all()
+            if self._single_file is None and not self._graph_state_unknown:
+                self._stamp_exclusion_state(only_if_changed=True)
             return
 
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
@@ -2066,15 +2126,35 @@ class GraphUpdater:
             if self._graph_state_unknown:
                 logger.warning(ls.EXCLUSION_STATE_NOT_RECORDED)
             else:
-                _save_exclusion_state(
-                    self.repo_path / cs.EXCLUSION_STATE_FILENAME,
-                    _exclusion_state(
-                        self.exclude_paths,
-                        self.unignore_paths,
-                        self.project_name,
-                        named=self.project_named,
-                    ),
-                )
+                self._stamp_exclusion_state()
+
+    def _stamp_exclusion_state(self, *, only_if_changed: bool = False) -> None:
+        """Record this run's scope as the last run's and as this project's own.
+
+        `only_if_changed` serves the in-sync fast path, which reconciles
+        nothing and so has no scope to change, but may still carry a
+        different `named` provenance than the stamp (a derived name first
+        indexed unnamed, then synced with --project-name), or run on a stamp
+        written before the per-project map existed. Rewriting then keeps
+        `cgr check` reading the right owner; rewriting an identical stamp
+        would only churn the file (CodeRabbit, PR #2251).
+        """
+        path = self.repo_path / cs.EXCLUSION_STATE_FILENAME
+        state = _exclusion_state(
+            self.exclude_paths,
+            self.unignore_paths,
+            self.project_name,
+            named=self.project_named,
+        )
+        if only_if_changed:
+            # The loaders drop an empty `named`, so compare in that shape.
+            expected = {k: v for k, v in state.items() if k != "named" or v}
+            if (
+                _load_exclusion_state(path) == expected
+                and _load_project_stamps(path).get(self.project_name) == expected
+            ):
+                return
+        _save_exclusion_state(path, state)
 
     def _emit_pending_endpoints(self, only: set[str] | None = None) -> None:
         # `only` (a scoped re-ingest, issue #1524) limits the AST loads to
@@ -4462,11 +4542,23 @@ class GraphUpdater:
             return self._exclusion_match
         stored = _load_exclusion_state(self.repo_path / cs.EXCLUSION_STATE_FILENAME)
         current = _exclusion_state(self.exclude_paths, self.unignore_paths)
-        # The project and named keys are informational for readers such as
-        # `cgr check`; the sync decision compares the scope itself, as it
-        # always has. Leaving `named` in the comparison made every run with
-        # --project-name miss the in-sync fast path (issue #1981).
         if stored is not None:
+            # The cache and directory mtimes are repository-scoped, but the
+            # graph they justify is project-scoped. A stamp from another
+            # project cannot authorize this project's in-sync fast path
+            # (issue #1987).
+            if stored.get("project") != self.project_name:
+                self._cache_project_match = False
+                logger.info(
+                    ls.EXCLUSION_SET_CHANGED.format(previous=stored, current=current)
+                )
+                self._exclusion_match = False
+                return False
+            self._cache_project_match = True
+            # `named` stays informational for readers such as `cgr check`;
+            # the sync decision compares the scope itself. Leaving `named` in
+            # the comparison made every run with --project-name miss the
+            # in-sync fast path (issue #1981).
             stored = {
                 k: v for k, v in stored.items() if k not in _EXCLUSION_READER_KEYS
             }
@@ -4479,6 +4571,7 @@ class GraphUpdater:
         # apart from a real change so a user seeing an unexpected full pass
         # can tell which of the two they are looking at.
         if stored is None:
+            self._cache_project_match = False
             logger.info(ls.EXCLUSION_STATE_MISSING)
         else:
             logger.info(
@@ -4680,8 +4773,16 @@ class GraphUpdater:
         # mtime fast path below skips every file against hashes known dead, and
         # the run indexes nothing on every subsequent run too.
         cache_is_dead = self._cache_discarded_in_memory
+        # A repository cache can contain hashes from another project. Reusing
+        # those hashes would skip every unchanged file even though this
+        # project has not been parsed into the graph. Exclusion-set changes
+        # are different: the old cache is needed to identify files that just
+        # became excluded, so keep it when project provenance still matches.
+        self._exclusions_match_last_run()
         old_hashes = (
-            _load_hash_cache(cache_path) if not (force or cache_is_dead) else {}
+            _load_hash_cache(cache_path)
+            if not (force or cache_is_dead or self._cache_project_match is False)
+            else {}
         )
         # Snapshot for the single-file merge, read from DISK and independently
         # of `force`. Two distinct reasons it cannot reuse `old_hashes`:
@@ -4703,9 +4804,16 @@ class GraphUpdater:
         # cache wholesale from its own complete walk, as it always has.
         # A discarded cache is dead for the snapshot too: merging over it
         # would carry forward the very hashes the discard rejected.
+        # A cache stamped by ANOTHER project holds that project's hashes:
+        # merging this project's file hash into it and publishing would tell
+        # the other project's next sync the file is current while its graph
+        # still holds the old parse (CodeRabbit, PR #2251). Treated like a
+        # missing cache, so nothing is published.
         pristine_hashes = (
             _load_hash_cache(cache_path)
-            if self._single_file is not None and not cache_is_dead
+            if self._single_file is not None
+            and not cache_is_dead
+            and self._cache_project_match is not False
             else {}
         )
         # Remembered BEFORE the pop: a key forced through re-parse by a
