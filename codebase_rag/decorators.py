@@ -161,6 +161,17 @@ def depth_guard[**P, T](
     return decorator
 
 
+def depth_exhausted(guard_name: str, max_depth: int) -> bool:
+    """Whether a `depth_guard` with this name would refuse its next call.
+
+    For a caller holding a fallback: once the guarded call was refused for
+    depth, falling back would run the same unbounded work the guard exists
+    to stop.
+    """
+    context_var = _DEPTH_REGISTRY.get(guard_name)
+    return context_var is not None and context_var.get() >= max_depth
+
+
 def log_operation[T](
     start_msg: str,
     end_msg: str,

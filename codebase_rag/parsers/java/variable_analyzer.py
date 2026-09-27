@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...decorators import depth_guard, recursion_guard
+from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
@@ -449,6 +449,10 @@ class JavaVariableAnalyzerMixin:
             if object_ref
             else str(method_name)
         )
+        # A call refused for depth stays untyped: the name-based fallback walks
+        # the class AST recursively, which the depth limit exists to prevent.
+        if depth_exhausted(cs.GUARD_JAVA_INFERENCE_DEPTH, cs.JAVA_MAX_INFERENCE_DEPTH):
+            return None
         return self._resolve_java_method_return_type(call_string, module_qn)
 
     @recursion_guard(
@@ -466,6 +470,10 @@ class JavaVariableAnalyzerMixin:
         # recurse without a brake.
         return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _infer_java_field_access_type(
         self,
         field_access_node: ASTNode,

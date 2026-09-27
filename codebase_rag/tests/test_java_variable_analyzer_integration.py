@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1015,6 +1015,7 @@ def _only_method(tree_root_node):
     [
         pytest.param("b" + "".join(f".with{i}(x)" for i in range(1000)), id="chain"),
         pytest.param("f(" * 1000 + "1" + ")" * 1000, id="nested-arguments"),
+        pytest.param("b" + "".join(f".f{i}" for i in range(1000)), id="field-chain"),
     ],
 )
 def test_a_pathologically_deep_expression_keeps_the_methods_other_variable_types(
@@ -1030,3 +1031,34 @@ def test_a_pathologically_deep_expression_keeps_the_methods_other_variable_types
     assert var_types["b"] == "B"
     assert "after" in var_types
     assert "deep" in var_types
+
+
+def test_a_call_refused_for_depth_does_not_take_the_name_based_fallback(
+    java_parser: Parser, engine: JavaTypeInferenceEngine
+) -> None:
+    # The fallback walks the class AST recursively; reached at the depth
+    # limit it would run that walk with the stack already full.
+    from codebase_rag import constants as cs
+    from codebase_rag.decorators import depth_exhausted
+
+    # A chain whose steps take call arguments: the step refused for depth is
+    # a call, reached from the inference that holds the fallback.
+    chain = "b" + ".m(f(1))" * 200
+    code = f"class A {{ void m(B b) {{ var v = {chain}; }} }}".encode()
+    method = _only_method(java_parser.parse(code).root_node)
+    at_limit: list[bool] = []
+    original = JavaTypeInferenceEngine._resolve_java_method_return_type
+
+    def spy(
+        self: JavaTypeInferenceEngine, call_string: str, module_qn: str
+    ) -> str | None:
+        at_limit.append(
+            depth_exhausted(cs.GUARD_JAVA_INFERENCE_DEPTH, cs.JAVA_MAX_INFERENCE_DEPTH)
+        )
+        return original(self, call_string, module_qn)
+
+    with patch.object(JavaTypeInferenceEngine, "_resolve_java_method_return_type", spy):
+        engine.build_variable_type_map(method, "test_project.A")
+
+    assert at_limit, "the fallback never ran, so the test proves nothing"
+    assert not any(at_limit)
