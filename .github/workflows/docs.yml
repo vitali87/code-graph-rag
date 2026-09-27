@@ -40,8 +40,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group docs
 
+      # Zensical never runs mkdocs.yml hooks, so the Credits page (#2175) is
+      # written here rather than added mid-build as it was under MkDocs.
+      - name: Generate Credits page
+        run: uv run python scripts/generate_credits_page.py --output docs/credits.md
+
       - name: Build site
-        run: uv run mkdocs build --strict
+        run: uv run zensical build --strict
 
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
         with:

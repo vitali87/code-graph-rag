@@ -251,8 +251,8 @@ dev = [
     "types-protobuf>=5.0.0",
 ]
 docs = [
-    "mkdocs>=1.6.1,<2",
-    "mkdocs-material>=9.7.3",
+    # Exact pin while Zensical is pre-1.0.
+    "zensical==0.0.65",
 ]
 fuzz = [
     "atheris>=2.3.0",
