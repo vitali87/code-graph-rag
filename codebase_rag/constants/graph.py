@@ -671,6 +671,17 @@ CYPHER_DELETE_MODULE = (
     "OR m.qualified_name STARTS WITH $project_prefix) "
     "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
     "OR m.qualified_name STARTS WITH (p + '.')) "
+    # The same exclusion read from the graph itself: `$nested_projects` comes
+    # from a registry read that can fail, and an empty list would let `svc.`
+    # take `svc.v2`'s module again. The delete must still run then (a full
+    # rebuild over an unreadable graph deletes before it re-parses), so the
+    # query rules those modules out on its own (CodeRabbit, PR #2125).
+    # OPTIONAL MATCH rather than an EXISTS subquery, which Memgraph rejects.
+    "OPTIONAL MATCH (nested:Project) "
+    "WHERE nested.name STARTS WITH $project_prefix "
+    "AND (m.qualified_name = nested.name "
+    "OR m.qualified_name STARTS WITH (nested.name + '.')) "
+    "WITH m, nested WHERE nested IS NULL "
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).

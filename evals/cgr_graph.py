@@ -1353,6 +1353,17 @@ class _StatefulIngestor:
             if isinstance(nested_projects, list)
             else []
         )
+        # The real query also reads the nested projects from the graph's own
+        # Project nodes, so an empty parameter (registry unread) still spares
+        # them (CodeRabbit, PR #2125).
+        if project_prefix is not None:
+            nested_names += [
+                name
+                for label, name in self.nodes
+                if label == cs.NodeLabel.PROJECT.value
+                and isinstance(name, str)
+                and name.startswith(project_prefix)
+            ]
 
         def in_scope(qn: str) -> bool:
             if qn != project_name and not (

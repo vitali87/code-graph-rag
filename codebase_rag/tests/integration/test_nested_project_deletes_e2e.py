@@ -76,3 +76,29 @@ def test_the_module_delete_query_excludes_nested_projects(
     )
 
     assert _module_qns(memgraph_ingestor) == {"svc.v2.api", "svc.v2", "other.api"}
+
+
+def test_the_module_delete_spares_nested_projects_without_the_parameter(
+    memgraph_ingestor: MemgraphIngestor,
+) -> None:
+    # `$nested_projects` comes from a registry read that can fail; the query
+    # reads the nested Project nodes itself, so an empty list still spares
+    # them (CodeRabbit, PR #2125).
+    for name in ("svc", "svc.v2"):
+        memgraph_ingestor.execute_write("CREATE (:Project {name: $n})", {"n": name})
+    for qn in ("svc.api", "svc.v2.api", "svc"):
+        memgraph_ingestor.execute_write(
+            "CREATE (:Module {qualified_name: $qn, path: 'api.py'})", {"qn": qn}
+        )
+
+    memgraph_ingestor.execute_write(
+        cs.CYPHER_DELETE_MODULE,
+        {
+            cs.KEY_PATH: "api.py",
+            cs.KEY_PROJECT_NAME: "svc",
+            cs.KEY_PROJECT_PREFIX: "svc.",
+            cs.KEY_NESTED_PROJECTS: [],
+        },
+    )
+
+    assert _module_qns(memgraph_ingestor) == {"svc.v2.api"}

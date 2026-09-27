@@ -6867,6 +6867,7 @@ class GraphUpdater:
 
         logger.info(ls.PRUNE_START)
         total_pruned = 0
+        registry_skipped = 0
 
         repo_abs = self.repo_path.resolve().as_posix()
         prune_specs: list[tuple[str, str, str]] = [
@@ -6933,8 +6934,18 @@ class GraphUpdater:
                 # Ownership, not the prefix: `svc.` prefixes `svc.v2`'s rows
                 # too, and a file only `svc.v2` holds is absent from `svc`'s
                 # tree, so the prefix rule pruned it (issue #1985).
-                if isinstance(qn, str) and qn and not self._owns(qn):
-                    continue
+                # With the registry unread `_owns` degrades to that same
+                # prefix rule, so a row it cannot place is left for the next
+                # healthy run, which prunes the whole project again
+                # (CodeRabbit, PR #2125). Path-keyed rows carry no qn and
+                # still prune.
+                if isinstance(qn, str) and qn:
+                    owned = self._owns(qn)
+                    if self._registry_unread:
+                        registry_skipped += 1
+                        continue
+                    if not owned:
+                        continue
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
@@ -6985,6 +6996,8 @@ class GraphUpdater:
         # code node, e.g. an endpoint whose route changed on a rebuild.
         prune_unanchored_resources(self.ingestor)
 
+        if registry_skipped:
+            logger.warning(ls.PRUNE_SKIPPED_REGISTRY_UNREAD, count=registry_skipped)
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
