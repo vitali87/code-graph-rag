@@ -74,7 +74,8 @@ def test_one_deep_manifest_does_not_stop_the_run(
     # file, which is the outcome wanted here; nothing else may have failed.
     failures = _fail_on_swallowed_pass_errors
     assert all(
-        f.startswith("Error parsing package.json") and manifest in f for f in failures
+        f.startswith("Error parsing package.json") and manifest in f.replace("\\", "/")
+        for f in failures
     ), failures
     failures.clear()
 
