@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from evals.agentic_qa import (
     build_cases,
     build_multihop_cases,
@@ -128,6 +130,21 @@ def test_extract_answer_files_normalizes_paths() -> None:
     )
     files = extract_answer_files(answer, expected_root="django")
     assert files == frozenset({"db/models/query.py", "apps/config.py"})
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("./pkg/mod.py", "pkg/mod.py"),
+        (".github/scripts/check.py", ".github/scripts/check.py"),
+        ("./.github/scripts/check.py", ".github/scripts/check.py"),
+        ("../shared/util.py", "../shared/util.py"),
+    ],
+)
+def test_extract_answer_files_strips_only_current_dir_prefix(
+    answer: str, expected: str
+) -> None:
+    assert extract_answer_files(answer) == frozenset({expected})
 
 
 def test_grade_scores_partial_and_exact() -> None:

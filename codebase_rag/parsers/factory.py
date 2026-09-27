@@ -185,6 +185,7 @@ class ProcessorFactory:
                 csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
                 csharp_class_owner_module=self.definition_processor.csharp_class_owner_module,
                 csharp_class_namespaced=self.definition_processor.csharp_class_namespaced,
+                csharp_namespaced_qns=self.definition_processor.csharp_namespaced_qns,
                 csharp_method_return_types=self.definition_processor.csharp_method_return_types,
                 function_locations=self.definition_processor.function_locations,
                 dart_extends_type_args=self.definition_processor.dart_extends_type_args,
