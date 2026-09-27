@@ -5136,6 +5136,7 @@ class GraphUpdater:
         # held under the same qn last run, rewriting its path to the added
         # file's: the survivor's old definitions then hang off a Module the
         # delete above, matching the survivor's path, cannot find.
+        first_failure: Exception | None = None
         # Any covered file in flux re-runs it, an added one included.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID and any(
             key in self._cpp_frontend_covered
@@ -5149,9 +5150,18 @@ class GraphUpdater:
             # in run()'s order: clearing it dropped the others' files too, so
             # the file pass parsed them and their output was not regenerated
             # (CodeRabbit, PR #2247).
-            self._run_cpp_frontend()
-            self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
-        first_failure: Exception | None = None
+            # The stale subtrees are already gone, so a failing re-run must
+            # not end the run here: with nothing covered the file pass below
+            # rebuilds those files with tree-sitter, and the error is raised
+            # before the cache commit so the next run retries, as a failed
+            # file is (CodeRabbit, PR #2247).
+            try:
+                self._run_cpp_frontend()
+                self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
+            except Exception as exc:
+                logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
+                self._cpp_frontend_covered = frozenset()
+                first_failure = exc
 
         with Progress(
             SpinnerColumn(),

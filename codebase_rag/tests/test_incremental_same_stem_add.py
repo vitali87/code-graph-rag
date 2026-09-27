@@ -21,6 +21,7 @@ import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag.config import settings
+from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parsers.cpp_frontend import cpp_frontend_available
 from codebase_rag.parsers.frontends import (
     EMITTING_FRONTENDS,
@@ -447,3 +448,42 @@ def test_the_frontends_emission_is_flushed_before_the_stale_deletes(
 
     assert "delete" in graph.events, graph.events
     assert graph.events.index("flush") < graph.events.index("delete"), graph.events
+
+
+@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
+def test_a_failed_rerun_still_rebuilds_the_deleted_files_and_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The re-run comes after the stale subtrees are deleted. Raising out of
+    # it ended the run there and left those files out of the graph until a
+    # later run succeeded; like a failed file, it must let the file pass
+    # rebuild them and raise afterwards (CodeRabbit, PR #2247).
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    root = tmp_path / "proj"
+    _write(root, _CPP)
+    _compile_commands(root, ["use.cpp"])
+    graph = InMemoryGraph()
+    updater = _make_updater(root, graph)
+    updater.run(force=True)
+    (root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
+    _compile_commands(root, ["use.cpp", _CPP_ADDED[0]])
+
+    real_run = GraphUpdater._run_cpp_frontend
+    calls: list[int] = []
+
+    def fail_on_rerun(self: GraphUpdater) -> None:
+        calls.append(1)
+        if len(calls) > 1:
+            raise RuntimeError("frontend re-run failed")
+        real_run(self)
+
+    monkeypatch.setattr(GraphUpdater, "_run_cpp_frontend", fail_on_rerun)
+    with pytest.raises(RuntimeError, match="frontend re-run failed"):
+        updater.run(force=False)
+
+    paths = {
+        props.get(cs.KEY_PATH)
+        for (label, _uid), props in graph.nodes.items()
+        if label == cs.NodeLabel.MODULE
+    }
+    assert {"shape.h", "use.cpp"} <= paths, paths
