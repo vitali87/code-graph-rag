@@ -334,17 +334,7 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         if not arg.startswith("-"):
             return None
 
-        key: str | None = None
-        separated = arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(
-            cmd_parts
-        )
-        if separated:
-            key = cmd_parts[index + 1]
-        elif arg.startswith("-c") and len(arg) > 2:
-            key = arg[2:]
-        elif arg.startswith("--config-env="):
-            key = arg[len("--config-env=") :]
-
+        key = _git_inline_config_key(cmd_parts, index)
         if key and _is_git_config_exec_key(key.split("=", 1)[0]):
             return key.split("=", 1)[0]
 
@@ -356,6 +346,22 @@ def _git_dash_c_exec_key(cmd_parts: list[str]) -> str | None:
         else:
             index += 1
 
+    return None
+
+
+def _git_inline_config_key(cmd_parts: list[str], index: int) -> str | None:
+    """The `key=value` a git global option at `index` sets inline, if any.
+
+    Covers the separated `-c key=value`, the attached `-ckey=value`, and
+    `--config-env=key=ENVVAR`.
+    """
+    arg = cmd_parts[index]
+    if arg in cs.SHELL_GIT_INLINE_CONFIG_FLAGS and index + 1 < len(cmd_parts):
+        return cmd_parts[index + 1]
+    if arg.startswith("-c") and len(arg) > 2:
+        return arg[2:]
+    if arg.startswith("--config-env="):
+        return arg[len("--config-env=") :]
     return None
 
 
@@ -1328,35 +1334,10 @@ def _validate_segment(
             cmd=base_cmd, suggestion=suggestion, available=available_commands
         )
 
-    launched_index = _xargs_launched_index(cmd_parts)
-    if launched_index is not None:
-        if launched_index < 0:
-            return te.COMMAND_DANGEROUS_BLOCKED.format(
-                cmd=base_cmd,
-                reason=(
-                    "xargs carries a flag this validator cannot interpret, so "
-                    "the program it would launch cannot be checked"
-                ),
-            )
-        # Validate the launched command as a segment in its own right, in BOTH
-        # modes. Checking only its name lets a launcher through, since every
-        # launcher is itself allowlisted -- and nesting hides `git -c`, the
-        # unknown-flag sentinel, and a further xargs from every check below,
-        # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
-        # shlex.join, not " ".join: a bare join drops the quoting shlex.split
-        # removed, so a token containing whitespace is re-split into two by the
-        # nested parse. `git -c 'a b' -c core.pager=x log` then presents `b` as
-        # the first non-flag token, which stops _git_dash_c_exec_key's scan
-        # before the real -c behind it -- nesting weakening the decision, the
-        # very thing this recursion exists to prevent.
-        if nested := _validate_segment(
-            shlex.join(cmd_parts[launched_index:]),
-            available_commands,
-            bypass_allowlist,
-            _depth + 1,
-            project_root,
-        ):
-            return nested
+    if refusal := _validate_xargs_launch(
+        cmd_parts, available_commands, bypass_allowlist, _depth, project_root
+    ):
+        return refusal
 
     is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
     if is_dangerous:
@@ -1374,6 +1355,44 @@ def _validate_segment(
             return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 
     return None
+
+
+def _validate_xargs_launch(
+    cmd_parts: list[str],
+    available_commands: str,
+    bypass_allowlist: bool,
+    depth: int,
+    project_root: Path | None,
+) -> str | None:
+    launched_index = _xargs_launched_index(cmd_parts)
+    if launched_index is None:
+        return None
+    if launched_index < 0:
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=cmd_parts[0],
+            reason=(
+                "xargs carries a flag this validator cannot interpret, so "
+                "the program it would launch cannot be checked"
+            ),
+        )
+    # Validate the launched command as a segment in its own right, in BOTH
+    # modes. Checking only its name lets a launcher through, since every
+    # launcher is itself allowlisted -- and nesting hides `git -c`, the
+    # unknown-flag sentinel, and a further xargs from every check below,
+    # because those all inspect cmd_parts[0] only (GHSA rounds 4 and 5).
+    # shlex.join, not " ".join: a bare join drops the quoting shlex.split
+    # removed, so a token containing whitespace is re-split into two by the
+    # nested parse. `git -c 'a b' -c core.pager=x log` then presents `b` as
+    # the first non-flag token, which stops _git_dash_c_exec_key's scan
+    # before the real -c behind it -- nesting weakening the decision, the
+    # very thing this recursion exists to prevent.
+    return _validate_segment(
+        shlex.join(cmd_parts[launched_index:]),
+        available_commands,
+        bypass_allowlist,
+        depth + 1,
+        project_root,
+    )
 
 
 def _has_redirect_operators(parts: list[str]) -> bool:

@@ -667,35 +667,32 @@ def add_grammar(
 
     assert language_name is not None
 
-    if node_types_path := _find_node_types_path(grammar_path, language_name):
-        if categories := _parse_node_types_file(node_types_path):
-            functions = categories.functions
-            classes = categories.classes
-            modules = categories.modules
-            calls = categories.calls
-        else:
-            functions = [cs.LANG_FALLBACK_METHOD_NODE]
-            classes = list(cs.LANG_DEFAULT_CLASS_NODES)
-            modules = list(cs.LANG_DEFAULT_MODULE_NODES)
-            calls = list(cs.LANG_DEFAULT_CALL_NODES)
-    else:
-        click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
-        categories = _prompt_for_node_categories()
-        functions = categories.functions
-        classes = categories.classes
-        modules = categories.modules
-        calls = categories.calls
-
+    categories = _resolve_node_categories(grammar_path, language_name)
     new_language_spec = LanguageSpec(
         language=language_name,
         file_extensions=tuple(file_extension),
-        function_node_types=tuple(functions),
-        class_node_types=tuple(classes),
-        module_node_types=tuple(modules),
-        call_node_types=tuple(calls),
+        function_node_types=tuple(categories.functions),
+        class_node_types=tuple(categories.classes),
+        module_node_types=tuple(categories.modules),
+        call_node_types=tuple(categories.calls),
     )
 
     _update_config_file(language_name, new_language_spec)
+
+
+def _resolve_node_categories(grammar_path: str, language_name: str) -> NodeCategories:
+    node_types_path = _find_node_types_path(grammar_path, language_name)
+    if not node_types_path:
+        click.echo(cs.LANG_ERR_NODE_TYPES_WARNING.format(name=language_name))
+        return _prompt_for_node_categories()
+    if categories := _parse_node_types_file(node_types_path):
+        return categories
+    return NodeCategories(
+        functions=[cs.LANG_FALLBACK_METHOD_NODE],
+        classes=list(cs.LANG_DEFAULT_CLASS_NODES),
+        modules=list(cs.LANG_DEFAULT_MODULE_NODES),
+        calls=list(cs.LANG_DEFAULT_CALL_NODES),
+    )
 
 
 @cli.command(help=ch.CMD_LANGUAGE_LIST, short_help=ch.CMD_LANGUAGE_LIST)
