@@ -127,7 +127,7 @@ Setting `CGR_STACK_BIND_HOST` widens the bind deliberately (for example to `0.0.
 
 Containers take these values when they are created, so after setting or changing them run `cgr daemon down` and then `cgr daemon up`. A stack that is already running keeps its old configuration. `cgr daemon up` warns when a running Memgraph or Qdrant still accepts connections without the configured credentials, or when the running Qdrant rejects the configured key because it was started with a different one.
 
-Before starting the stack, `cgr daemon up` asks `docker compose config` what each container would receive and refuses to start if that differs from these settings, or if it cannot tell because that command fails while credentials are configured. Three things cause a difference:
+Before starting the stack, `cgr daemon up` asks `docker compose config` what each container would receive and refuses to start if that differs from these settings, or if it cannot tell because that command fails. Three things cause a difference:
 
 - **A compose file rendered before this support.** It lacks the `environment` entries that pass the values through. Re-render it with the same three steps as above, or list `MEMGRAPH_USER` and `MEMGRAPH_PASSWORD` under the `memgraph` service's `environment`, and `QDRANT__SERVICE__API_KEY` under the `qdrant` service's, by hand.
 - **A value written into the compose file.** It takes precedence over the settings.

@@ -211,29 +211,7 @@ class StackManager:
         for a variable missing from its environment) can each diverge from
         the settings. Values are compared, never logged.
         """
-        result = subprocess.run(
-            self._compose_cmd("config", "--format", "json"),
-            capture_output=True,
-            text=True,
-            encoding=root_cs.ENCODING_UTF8,
-            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
-            check=False,
-            env=self._compose_env(),
-        )
-        try:
-            # YAML is a superset of JSON, so a Compose release that prints
-            # YAML despite `--format json` is still read correctly.
-            config: JsonValue = yaml.safe_load(result.stdout or "")
-        except yaml.YAMLError:
-            config = None
-        if result.returncode != 0 or not isinstance(config, dict):
-            detail = (result.stderr or "").strip()
-            # Unverified credentials could mean an open stack, so starting is
-            # refused; with none configured there is nothing to protect.
-            if self._auth_variables():
-                raise StackError(cs.ERR_AUTH_NOT_VERIFIED.format(detail=detail))
-            logger.warning(cs.WARN_AUTH_NOT_VERIFIED.format(detail=detail))
-            return
+        config = self._resolved_config()
         configured = {
             name: value
             for variables in self._auth_variables().values()
@@ -251,6 +229,38 @@ class StackManager:
                     variables=", ".join(mismatched), path=self.compose_file
                 )
             )
+
+    def _resolved_config(self) -> dict[str, JsonValue]:
+        """The project as `docker compose config` resolves it, or StackError.
+
+        JSON is asked for first because it is unambiguous; plain `config`,
+        which prints YAML, covers a Compose release without `--format`. Both
+        are read as YAML, a superset of JSON, which also covers a release that
+        prints YAML despite the flag. Unchecked credentials could leave the
+        stack open or locked to a key the app lacks, so a project neither form
+        can render is not started.
+        """
+        detail = ""
+        for args in cs.COMPOSE_CONFIG_ATTEMPTS:
+            result = subprocess.run(
+                self._compose_cmd(*args),
+                capture_output=True,
+                text=True,
+                encoding=root_cs.ENCODING_UTF8,
+                timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+                check=False,
+                env=self._compose_env(),
+            )
+            detail = (result.stderr or "").strip()
+            if result.returncode != 0:
+                continue
+            try:
+                config = yaml.safe_load(result.stdout or "")
+            except yaml.YAMLError:
+                continue
+            if isinstance(config, dict):
+                return config
+        raise StackError(cs.ERR_AUTH_NOT_VERIFIED.format(detail=detail))
 
     def warn_if_auth_not_enforced(self) -> None:
         """Flag a running stack whose authentication differs from the settings.

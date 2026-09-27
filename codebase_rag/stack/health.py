@@ -8,6 +8,11 @@ import mgclient  # ty: ignore[unresolved-import]
 
 from . import constants as cs
 
+# The Qdrant probes can carry the API key, and urllib's default opener would
+# route even a loopback request through an HTTP_PROXY that no_proxy does not
+# exempt, handing the key to the proxy.
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 
 def _bolt_reachable(
     host: str, port: int, credentials: tuple[str, str] | None = None
@@ -71,7 +76,7 @@ def _qdrant_data_reachable(port: int, headers: dict[str, str], timeout: float) -
         f"http://127.0.0.1:{port}{cs.QDRANT_DATA_PROBE_PATH}", headers=headers
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
+        with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             return resp.status == 200
     except OSError:
         return False

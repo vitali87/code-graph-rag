@@ -76,15 +76,10 @@ ERR_COMPOSE_AUTH_MISMATCH = (
     "it and run 'cgr daemon up'), or a value written into it or an .env file "
     "next to it overrides them; remove that value."
 )
+COMPOSE_CONFIG_ATTEMPTS = (("config", "--format", "json"), ("config",))
 ERR_AUTH_NOT_VERIFIED = (
-    "Credentials are configured, but 'docker compose config' failed, so it "
-    "cannot be checked that the stack would use them: {detail}. Not starting "
-    "the stack."
-)
-WARN_AUTH_NOT_VERIFIED = (
-    "Could not check which credentials Compose passes to the stack "
-    "('docker compose config' failed: {detail}); starting it anyway, since "
-    "none are configured."
+    "'docker compose config' failed, so it cannot be checked which "
+    "credentials the stack would start with: {detail}. Not starting the stack."
 )
 WARN_QDRANT_REJECTS_KEY = (
     "The running Qdrant rejects the configured QDRANT_API_KEY, so it was "

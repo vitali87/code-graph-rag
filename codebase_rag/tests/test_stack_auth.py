@@ -8,10 +8,12 @@ resolve something else.
 
 from __future__ import annotations
 
+import http.server
 import json
 import subprocess
+import threading
 import urllib.error
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from email.message import Message
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -263,22 +265,37 @@ FAILED_CONFIG = subprocess.CompletedProcess(
 )
 
 
-@pytest.mark.usefixtures("credentials")
-def test_verify_refuses_to_start_when_compose_config_fails(tmp_path: Path) -> None:
-    # Unchecked credentials could mean an open stack.
+@pytest.mark.parametrize("configured", ["credentials", "no_credentials"])
+def test_verify_refuses_to_start_when_compose_config_fails(
+    tmp_path: Path, request: pytest.FixtureRequest, configured: str
+) -> None:
+    # Unchecked, the stack could start open, or with a key from an .env file
+    # beside the compose file that the app does not have.
+    request.getfixturevalue(configured)
+
     with pytest.raises(StackError) as exc:
         _verify_with(_manager(tmp_path), FAILED_CONFIG)
 
     assert "unknown flag: --format" in str(exc.value)
 
 
-@pytest.mark.usefixtures("no_credentials")
-def test_verify_warns_and_continues_without_credentials(tmp_path: Path) -> None:
+@pytest.mark.usefixtures("credentials")
+def test_verify_falls_back_to_plain_config_without_the_format_flag(
+    tmp_path: Path,
+) -> None:
+    services = {service: {"environment": env} for service, env in MATCHING_ENV.items()}
+    plain = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=yaml.safe_dump({"services": services}), stderr=""
+    )
     mgr = _manager(tmp_path)
+    with patch(
+        "codebase_rag.stack.manager.subprocess.run", side_effect=[FAILED_CONFIG, plain]
+    ) as run:
+        mgr._verify_resolved_auth()
 
-    messages = _warnings_from(lambda: _verify_with(mgr, FAILED_CONFIG))
-
-    assert any("unknown flag: --format" in m for m in messages)
+    json_call, plain_call = run.call_args_list
+    assert "--format" in json_call.args[0]
+    assert plain_call.args[0][-1] == "config"
 
 
 @pytest.mark.usefixtures("credentials")
@@ -338,22 +355,22 @@ def _ok_response() -> MagicMock:
 
 def test_qdrant_anonymous_probe_reads_a_data_endpoint() -> None:
     with patch.object(
-        health.urllib.request, "urlopen", return_value=_ok_response()
-    ) as urlopen:
+        health._DIRECT_OPENER, "open", return_value=_ok_response()
+    ) as open_url:
         assert health.qdrant_accepts_anonymous(6333)
 
-    request = urlopen.call_args.args[0]
+    request = open_url.call_args.args[0]
     assert request.full_url.endswith(cs.QDRANT_DATA_PROBE_PATH)
     assert not request.has_header(cs.QDRANT_API_KEY_HEADER.capitalize())
 
 
 def test_qdrant_key_probe_sends_the_configured_key() -> None:
     with patch.object(
-        health.urllib.request, "urlopen", return_value=_ok_response()
-    ) as urlopen:
+        health._DIRECT_OPENER, "open", return_value=_ok_response()
+    ) as open_url:
         assert health.qdrant_accepts_key(6333, "qdrant-key")
 
-    request = urlopen.call_args.args[0]
+    request = open_url.call_args.args[0]
     assert request.get_header(cs.QDRANT_API_KEY_HEADER.capitalize()) == "qdrant-key"
 
 
@@ -361,8 +378,43 @@ def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
     unauthorized = urllib.error.HTTPError(
         "http://127.0.0.1:6333/collections", 401, "Unauthorized", Message(), None
     )
-    with patch.object(health.urllib.request, "urlopen", side_effect=unauthorized):
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=unauthorized):
         assert not health.qdrant_accepts_anonymous(6333)
+
+
+@pytest.fixture
+def local_qdrant_port() -> Iterator[int]:
+    """A loopback HTTP server that answers 200, standing in for Qdrant."""
+
+    class Ok(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *_: object) -> None:
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Ok)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_qdrant_key_probe_bypasses_an_http_proxy(
+    local_qdrant_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Through the proxy, the api-key header would reach it; the proxy here is
+    # a closed port, so the probe only succeeds if it connects directly.
+    for name in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert health.qdrant_accepts_key(local_qdrant_port, "qdrant-key")
 
 
 def _ensure_running_on_a_healthy_stack(
