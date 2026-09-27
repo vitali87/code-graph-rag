@@ -62,9 +62,11 @@ jobs:
       - name: Determine bump type
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_type
+        env:
+          DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "type=${{ github.event.inputs.bump_type }}" >> $GITHUB_OUTPUT
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$DISPATCH_BUMP_TYPE" >> "$GITHUB_OUTPUT"
           else
             echo "type=patch" >> $GITHUB_OUTPUT
           fi
@@ -72,8 +74,13 @@ jobs:
       - name: Bump version
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_version
+        # Step outputs arrive through env, never `${{ }}` in the script:
+        # GitHub pastes an expression into the script text before bash runs,
+        # so a crafted version would execute before any check below saw it.
+        env:
+          CURRENT: ${{ steps.get_version.outputs.current }}
+          BUMP_TYPE: ${{ steps.bump_type.outputs.type }}
         run: |
-          CURRENT="${{ steps.get_version.outputs.current }}"
           # Validated BEFORE any arithmetic: bash evaluates `$(( ))` operands
           # as expressions, so a crafted component could run commands there.
           if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -83,7 +90,7 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
           MAJOR=$((10#$MAJOR)); MINOR=$((10#$MINOR)); PATCH=$((10#$PATCH))
 
-          case "${{ steps.bump_type.outputs.type }}" in
+          case "$BUMP_TYPE" in
             major)
               MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
               ;;
@@ -92,6 +99,10 @@ jobs:
               ;;
             patch)
               PATCH=$((PATCH + 1))
+              ;;
+            *)
+              echo "::error::unknown bump type '$BUMP_TYPE'"
+              exit 1
               ;;
           esac
 
@@ -119,7 +130,7 @@ jobs:
           fi
 
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "Bumping version from $CURRENT to $NEW_VERSION (type: ${{ steps.bump_type.outputs.type }})"
+          echo "Bumping version from $CURRENT to $NEW_VERSION (type: $BUMP_TYPE)"
 
       - name: Decide whether this tag ships a release
         if: steps.check_manual.outputs.skip == 'false'
