@@ -75,6 +75,7 @@ from .types_defs import (
     DuplicateMember,
     DuplicatesConfig,
     DuplicatesReport,
+    PropertyValue,
     ResultRow,
 )
 from .utils.path_utils import (
@@ -341,6 +342,48 @@ def _confirm_destructive_clean(
         raise typer.Exit(1)
 
 
+def _sync_marker_params(project_name: str) -> dict[str, PropertyValue]:
+    return {cs.KEY_PROJECT_NAME: project_name, cs.KEY_RUN_ID: cs.CLI_SYNC_RUN_ID}
+
+
+def _mark_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+    """Put the `:IncompleteRun` marker down before the sync writes (#2219).
+
+    The same marker the MCP mutating paths write (#1679), so a later MCP
+    process refuses to hydrate from a graph an interrupted CLI sync left
+    partial. Failing to write it aborts the sync: nothing has changed yet,
+    and proceeding would make exactly that partial graph look complete.
+    """
+    params = _sync_marker_params(project_name)
+    params[cs.KEY_WRITING] = True
+    try:
+        ingestor.execute_write(cq.CYPHER_MARK_PROJECT_INCOMPLETE, params)
+    except Exception as exc:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_SYNC_MARKER_FAILED.format(project=project_name),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1) from exc
+
+
+def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> None:
+    """Take the marker off once the sync is recorded; never fails the sync.
+
+    The graph is whole by now, so a failed clear only leaves a stale marker
+    for the next sync of the project to clear (see `CLI_SYNC_RUN_ID`).
+    """
+    try:
+        ingestor.execute_write(
+            cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, _sync_marker_params(project_name)
+        )
+    except Exception as exc:
+        logger.warning(
+            ls.CLI_SYNC_MARKER_NOT_CLEARED.format(project=project_name, error=exc)
+        )
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -373,6 +416,9 @@ def _run_graph_sync(
             # hits and can map onto unrelated nodes in the rebuilt graph.
             clear_all_embeddings()
 
+        # After the wipe, which would delete the marker with everything else,
+        # and before `ensure_constraints`, whose migration can already purge.
+        _mark_sync_incomplete(ingestor, project_name)
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()
@@ -390,6 +436,7 @@ def _run_graph_sync(
         )
         updater.run()
         cgr_state.record_sync(project_name)
+        _clear_sync_incomplete(ingestor, project_name)
 
         if output:
             _info(style(cs.CLI_MSG_EXPORTING_TO.format(path=output), cs.Color.CYAN))
@@ -1318,12 +1365,33 @@ def status_command() -> None:
     )
     app_context.console.print(f"compose:  {status.compose_file}")
     timestamps = cgr_state.read_sync_timestamps()
-    if not timestamps:
+    incomplete = (
+        _projects_with_incomplete_runs() if status.memgraph_reachable else set()
+    )
+    if not timestamps and not incomplete:
         app_context.console.print("syncs:    (no projects synced via cgr yet)")
         return
     app_context.console.print("syncs:")
-    for project, ts in sorted(timestamps.items()):
-        app_context.console.print(f"  - {project}: last sync {ts}")
+    for project in sorted(timestamps.keys() | incomplete):
+        ts = timestamps.get(project)
+        line = f"  - {project}: last sync {ts}" if ts else f"  - {project}:"
+        if project in incomplete:
+            line = f"{line} ({cs.CLI_STATUS_SYNC_INCOMPLETE})"
+        app_context.console.print(line)
+
+
+def _projects_with_incomplete_runs() -> set[str]:
+    """Projects with an outstanding `:IncompleteRun` marker (#2219).
+
+    Best effort: status must still print when the graph cannot be read.
+    """
+    try:
+        with connect_memgraph(1) as ingestor:
+            rows = ingestor.fetch_all(cq.CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS)
+    except Exception as exc:
+        logger.warning(ls.CLI_SYNC_MARKERS_UNREADABLE.format(error=exc))
+        return set()
+    return {str(row["project"]) for row in rows if row.get("project")}
 
 
 @app.command(
