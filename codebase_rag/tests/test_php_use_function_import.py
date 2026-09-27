@@ -92,6 +92,8 @@ def test_reparse_clears_stale_php_function_imports(tmp_path: Path) -> None:
 
 def _use_clauses(source: bytes) -> list[Node]:
     parsers, _ = load_parsers()
+    if cs.SupportedLanguage.PHP not in parsers:
+        pytest.skip("php tree-sitter grammar not installed")
     tree = parsers[cs.SupportedLanguage.PHP].parse(source)
     clauses: list[Node] = []
     stack = [tree.root_node]
