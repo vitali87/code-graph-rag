@@ -1277,7 +1277,11 @@ class _StatefulIngestor:
                 if node is not None and isinstance(names, list):
                     node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
-                self._delete_module_subtree(path)
+                self._delete_module_subtree(
+                    path,
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                )
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
                 # absolute path (issue #897).
@@ -1329,9 +1333,26 @@ class _StatefulIngestor:
             if node_label == label and props.get(key) == path
         }
 
-    def _delete_module_subtree(self, path: PropertyValue) -> None:
+    def _delete_module_subtree(
+        self,
+        path: PropertyValue,
+        project_name: str | None,
+        project_prefix: str | None,
+    ) -> None:
+        # Scoped like the real query: another project in the shared graph can
+        # hold the same relative path, and only a module whose qn is the
+        # project name or starts with its prefix goes (issue #2172). A missing
+        # scope matches nothing, as `= null` does in Cypher.
         doomed: set[_NodeId] = set()
-        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        frontier = [
+            node
+            for node in self._nodes_at_path(_MODULE_LABEL, path)
+            if (qn := _text(self.nodes[node].get(cs.KEY_QUALIFIED_NAME)))
+            and (
+                qn == project_name
+                or (project_prefix is not None and qn.startswith(project_prefix))
+            )
+        ]
         while frontier:
             node = frontier.pop()
             if node in doomed:
