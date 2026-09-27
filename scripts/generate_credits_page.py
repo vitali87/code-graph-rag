@@ -35,6 +35,11 @@ ENCODING = "utf-8"
 # would end the link or open raw HTML are percent-encoded.
 LINK_SCHEMES = frozenset({"http", "https"})
 URL_SAFE_CHARS = ":/?#[]@!$&'*+,;=%~"
+# HTML escaping stops tags but not Markdown: `[x](javascript:...)` in a
+# component's metadata would still render as a link. Escaping the backslash
+# and the link brackets makes any such text literal; ordinary distribution
+# names and versions contain none of them.
+MARKDOWN_LINK_CHARS = ("\\", "[", "]")
 
 PAGE_HEADER = """\
 # Credits
@@ -84,6 +89,14 @@ def _load_notices() -> ModuleType:
     return module
 
 
+def _inline_text(value: str) -> str:
+    """Third-party `value` as literal text in a Markdown line."""
+    text = html.escape(value)
+    for char in MARKDOWN_LINK_CHARS:
+        text = text.replace(char, f"\\{char}")
+    return text
+
+
 def _link_target(url: str) -> str | None:
     """`url` made safe inside a Markdown link, or None when it is not a web URL."""
     parts = urlsplit(url)
@@ -126,9 +139,9 @@ def render(entries: Iterable[tuple[NoticeEntry, str]]) -> str:
     for notice, url in ordered:
         parts.append(
             ENTRY.format(
-                name=html.escape(notice.name),
-                version=html.escape(notice.version),
-                license=html.escape(notice.license_line()),
+                name=_inline_text(notice.name),
+                version=_inline_text(notice.version),
+                license=_inline_text(notice.license_line()),
                 url=url,
                 text=html.escape("\n\n".join(notice.texts)),
             )

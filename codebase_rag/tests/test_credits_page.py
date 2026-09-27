@@ -100,6 +100,22 @@ def test_notice_metadata_is_escaped(page_module: ModuleType) -> None:
     assert "<i>" not in text
 
 
+def test_notice_metadata_cannot_form_a_markdown_link(page_module: ModuleType) -> None:
+    # HTML escaping leaves Markdown link syntax intact, so a name or licence
+    # of `[x](javascript:...)` would still render as a link (CodeRabbit, PR
+    # #2225).
+    class _Notice:
+        name, version, texts = "[Visible](javascript:alert(1))", "1", ("t",)
+
+        @staticmethod
+        def license_line() -> str:
+            return "[MIT](https://evil.example)"
+
+    text = page_module.render([(_Notice(), "https://x.example")])
+    assert "## \\[Visible\\](javascript:alert(1))" in text
+    assert "**Licence:** \\[MIT\\](https://evil.example)" in text
+
+
 @pytest.mark.parametrize(
     ("fields", "expected"),
     [
