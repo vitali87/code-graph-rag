@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 from tree_sitter import Node
 
+from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.go.type_inference import GoTypeInferenceEngine
 from codebase_rag.stack.health import _http_reachable
@@ -36,10 +37,9 @@ def test_an_unreachable_endpoint_reads_as_down(error: OSError) -> None:
 
 def _go_call(source: str) -> Node:
     parsers, _ = load_parsers()
-    go = next((p for lang, p in parsers.items() if lang.value == "go"), None)
-    if go is None:
+    if cs.SupportedLanguage.GO not in parsers:
         pytest.skip("go parser not available")
-    stack = [go.parse(source.encode()).root_node]
+    stack = [parsers[cs.SupportedLanguage.GO].parse(source.encode()).root_node]
     while stack:
         node = stack.pop()
         if node.type == "call_expression":
