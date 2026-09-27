@@ -261,8 +261,9 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
         with cache_path.open(encoding="utf-8") as f:
             data = load_json(f)
         if isinstance(data, dict):
-            logger.info(ls.HASH_CACHE_LOADED, count=len(data), path=cache_path)
-            return data
+            hashes = {k: v for k, v in data.items() if isinstance(v, str)}
+            logger.info(ls.HASH_CACHE_LOADED, count=len(hashes), path=cache_path)
+            return hashes
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(ls.HASH_CACHE_LOAD_FAILED, path=cache_path, error=e)
     return {}
