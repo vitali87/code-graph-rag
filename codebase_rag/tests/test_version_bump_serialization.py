@@ -163,32 +163,95 @@ def test_nothing_is_tagged_or_released_without_a_pushed_bump(name: str) -> None:
 
 DECIDE_STUBS = r"""
 gh() {
-  case "$2" in
+  local url=""
+  for arg in "$@"; do
+    case "$arg" in repos/*) url="$arg" ;; esac
+  done
+  case "$url" in
     */releases/latest) printf 'v0.0.1\n' ;;
-    */compare/*) printf '%b' "$RANGE" ;;
-    */pulls) printf '%s\n' "${LABELS[$(basename "$(dirname "$2")")]:-}" ;;
+    */compare/*)
+      printf '%s\n' "$*" > compare_call
+      [ "$COMPARE_FAILS" = true ] && return 1
+      printf '%b' "$RANGE"
+      ;;
+    */pulls) printf '%s\n' "${LABELS[$(basename "$(dirname "$url")")]:-}" ;;
     *) return 1 ;;
   esac
 }
 git() {
   case "$1" in
     log) printf '%s\n' "${MESSAGES[${@: -1}]:-}" ;;
-    ls-remote) printf '' ;;
+    ls-remote)
+      if [ "$2" = --exit-code ]; then
+        [ "$TAG_EXISTS" = true ]
+      fi
+      ;;
   esac
 }
 """
 
 
-def _decide(tmp_path: Path, declare: str, range_: str) -> dict[str, str]:
-    stubs = declare + DECIDE_STUBS
-    result, out = _run(
+def _decide_run(
+    tmp_path: Path, declare: str, range_: str, **env: str
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    return _run(
         "Decide whether this tag ships a release",
-        stubs,
+        declare + DECIDE_STUBS,
         tmp_path,
-        {"CURRENT": "0.0.1", "RANGE": range_, "RELEASE_EVERY": "50"},
+        {
+            "CURRENT": "0.0.1",
+            "RANGE": range_,
+            "RELEASE_EVERY": "50",
+            "TAG_EXISTS": "true",
+            "COMPARE_FAILS": "false",
+            **env,
+        },
     )
+
+
+def _decide(tmp_path: Path, declare: str, range_: str) -> dict[str, str]:
+    result, out = _decide_run(tmp_path, declare, range_)
     assert result.returncode == 0, result.stderr
     return out
+
+
+def test_every_page_of_the_range_is_read(tmp_path: Path) -> None:
+    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
+    _decide(tmp_path, declare, f"{SHA}\\n")
+    call = (tmp_path / "compare_call").read_text(encoding="utf-8")
+    assert "--paginate" in call.split()
+    assert "per_page=100" in call
+
+
+@pytest.mark.parametrize("range_", ["", "not-a-sha\\n"])
+def test_unreadable_range_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path, range_: str
+) -> None:
+    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
+    result, out = _decide_run(tmp_path, declare, range_)
+    assert result.returncode != 0
+    assert "refusing to decide the release" in result.stdout
+    assert "release" not in out
+
+
+def test_failed_compare_call_fails_the_run(tmp_path: Path) -> None:
+    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
+    result, out = _decide_run(tmp_path, declare, f"{SHA}\\n", COMPARE_FAILS="true")
+    assert result.returncode != 0
+    assert "could not list the commits" in result.stdout
+    assert "release" not in out
+
+
+def test_without_a_previous_tag_the_triggering_commit_is_scanned(
+    tmp_path: Path,
+) -> None:
+    declare = (
+        f"declare -A MESSAGES=([{SHA}]='fix: y [security]')\ndeclare -A LABELS=()\n"
+    )
+    result, out = _decide_run(tmp_path, declare, "", TAG_EXISTS="false")
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "compare_call").exists()
+    assert out["security"] == "true"
 
 
 def test_security_fix_in_an_earlier_commit_of_the_range_ships(tmp_path: Path) -> None:
@@ -234,6 +297,8 @@ def test_non_sha_range_entries_never_reach_git(tmp_path: Path) -> None:
             "CURRENT": "0.0.1",
             "RANGE": f"--output={marker}\\n{SHA}\\n",
             "RELEASE_EVERY": "50",
+            "TAG_EXISTS": "true",
+            "COMPARE_FAILS": "false",
         },
     )
     assert result.returncode == 0, result.stderr
