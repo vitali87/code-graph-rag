@@ -15,6 +15,7 @@ from .config import settings
 from .constants import (
     PAYLOAD_NODE_ID,
     PAYLOAD_QUALIFIED_NAME,
+    QDRANT_INSECURE_URL_SCHEME,
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
 )
@@ -161,7 +162,9 @@ def get_qdrant_client(validate: bool = True) -> Any:
     _ensure_client_backend(VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
-            client = QdrantClient(url=settings.QDRANT_URL)
+            client = QdrantClient(
+                url=settings.QDRANT_URL, api_key=_qdrant_api_key(settings.QDRANT_URL)
+            )
         else:
             try:
                 client = QdrantClient(path=settings.QDRANT_DB_PATH)
@@ -180,6 +183,17 @@ def get_qdrant_client(validate: bool = True) -> Any:
         _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
     return _CLIENT
+
+
+def _qdrant_api_key(url: str) -> str | None:
+    api_key = settings.QDRANT_API_KEY or None
+    if (
+        api_key
+        and urlsplit(url).scheme == QDRANT_INSECURE_URL_SCHEME
+        and not settings.QDRANT_ALLOW_INSECURE_API_KEY
+    ):
+        raise ValueError(ex.QDRANT_API_KEY_OVER_HTTP)
+    return api_key
 
 
 def _ensure_qdrant_collection(client: Any, validate: bool) -> None:
