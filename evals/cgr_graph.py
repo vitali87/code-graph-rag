@@ -1281,6 +1281,7 @@ class _StatefulIngestor:
                     path,
                     _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
                     _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                    params.get(cs.KEY_NESTED_PROJECTS) if params else None,
                 )
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
@@ -1338,20 +1339,45 @@ class _StatefulIngestor:
         path: PropertyValue,
         project_name: str | None,
         project_prefix: str | None,
+        nested_projects: PropertyValue = None,
     ) -> None:
         # Scoped like the real query: another project in the shared graph can
         # hold the same relative path, and only a module whose qn is the
         # project name or starts with its prefix goes (issue #2172). A missing
-        # scope matches nothing, as `= null` does in Cypher.
+        # scope matches nothing, as `= null` does in Cypher. A registered
+        # project whose name extends this one (`svc.v2` under `svc`) matches
+        # that prefix too, and its modules are excluded like the real query's
+        # `$nested_projects` clause does (issue #1985).
+        nested_names = (
+            [n for n in nested_projects if isinstance(n, str)]
+            if isinstance(nested_projects, list)
+            else []
+        )
+        # The real query also reads the nested projects from the graph's own
+        # Project nodes, so an empty parameter (registry unread) still spares
+        # them (CodeRabbit, PR #2125).
+        if project_prefix is not None:
+            nested_names += [
+                name
+                for label, name in self.nodes
+                if label == cs.NodeLabel.PROJECT.value
+                and isinstance(name, str)
+                and name.startswith(project_prefix)
+            ]
+
+        def in_scope(qn: str) -> bool:
+            if qn != project_name and not (
+                project_prefix is not None and qn.startswith(project_prefix)
+            ):
+                return False
+            return not any(qn == n or qn.startswith(f"{n}.") for n in nested_names)
+
         doomed: set[_NodeId] = set()
         frontier = [
             node
             for node in self._nodes_at_path(_MODULE_LABEL, path)
             if (qn := _text(self.nodes[node].get(cs.KEY_QUALIFIED_NAME)))
-            and (
-                qn == project_name
-                or (project_prefix is not None and qn.startswith(project_prefix))
-            )
+            and in_scope(qn)
         ]
         while frontier:
             node = frontier.pop()

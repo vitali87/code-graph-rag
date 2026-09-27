@@ -1062,6 +1062,12 @@ GLOSS_REANCHOR_FAILED = (
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_SKIPPED_REGISTRY_UNREAD = (
+    "Project registry unreadable; left {count} qualified-name rows unpruned so "
+    "a project whose name extends this one keeps its nodes. The next healthy "
+    "run prunes them."
+)
+PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"

@@ -178,6 +178,11 @@ DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
 # was unreadable) is still owed; the in-sync fast path refuses until a batch
 # run has done it (issue #2193).
 EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
+# Present while an orphan prune the last run cut short is still owed: a path
+# read failed, or the project registry was unreadable and rows whose owner it
+# could not establish were left (issue #1985). Unchanged files would otherwise
+# take the in-sync fast path, which never prunes, and keep those rows forever.
+PRUNE_PENDING_FILENAME = ".cgr-prune-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and

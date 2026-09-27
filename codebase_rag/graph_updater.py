@@ -1106,6 +1106,7 @@ class GraphUpdater:
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1817,6 +1818,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2010,6 +2012,10 @@ class GraphUpdater:
         # path, never re-issues them, and the orphan survives until a full
         # rebuild. Same invariant as #1615, on the writes that pass fixed.
         self.ingestor.flush_all()
+        # A complete prune settles an owed one only once its deletes are
+        # durable: cleared before this flush, a failed flush would leave the
+        # orphan AND an unmarked tree the next run skips (CodeRabbit, #2125).
+        self._settle_prune_marker()
 
         self._generate_semantic_embeddings()
 
@@ -2277,6 +2283,34 @@ class GraphUpdater:
             # A delete that failed is owed exactly like one that was skipped.
             self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _record_prune_pending(self, pending: bool) -> None:
+        """Owe a cut-short orphan prune to the next run, or mark it settled.
+
+        Owing is written at once. Settling only notes that this run's prune
+        was complete: the prune covers the whole project every time it runs,
+        so it settles whatever an earlier run left, but not until its deletes
+        are flushed (`_settle_prune_marker`).
+        """
+        self._prune_settled = not pending
+        if not pending:
+            return
+        try:
+            (self.repo_path / cs.PRUNE_PENDING_FILENAME).touch()
+        except OSError:
+            # Best effort, like the EXPOSES marker: a read-only tree must not
+            # lose the run to a marker it could not write.
+            logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
+
+    def _settle_prune_marker(self) -> None:
+        """Remove an owed-prune marker once a complete prune's deletes flush."""
+        if not self._prune_settled:
+            return
+        self._prune_settled = False
+        try:
+            (self.repo_path / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
+        except OSError:
+            logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
     def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
         """Owe a skipped EXPOSES cleanup to the next run, or settle it.
@@ -4365,8 +4399,17 @@ class GraphUpdater:
                     cs.KEY_PATH: file_key,
                     cs.KEY_PROJECT_NAME: self.project_name,
                     cs.KEY_PROJECT_PREFIX: self.project_name + ".",
+                    cs.KEY_NESTED_PROJECTS: self._nested_project_names(),
                 },
             )
+
+    def _nested_project_names(self) -> list[str]:
+        """Registered projects whose names extend this one, whose modules
+        the prefix-scoped module delete must leave alone (issue #1985)."""
+        prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        return [
+            name for name in self._registered_project_names() if name.startswith(prefix)
+        ]
 
     def _diff_dir_against_cache(
         self,
@@ -4594,6 +4637,8 @@ class GraphUpdater:
         # hash below would send the run into the endpoint passes that owe it
         # (issue #2193).
         if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+            return False
+        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
             return False
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -6546,6 +6591,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -6858,8 +6904,8 @@ class GraphUpdater:
 
         logger.info(ls.PRUNE_START)
         total_pruned = 0
+        registry_skipped = 0
 
-        project_prefix = self.project_name + "."
         repo_abs = self.repo_path.resolve().as_posix()
         prune_specs: list[tuple[str, str, str]] = [
             (cs.CYPHER_ALL_FILE_PATHS, cs.CYPHER_DELETE_FILE, "File"),
@@ -6922,13 +6968,21 @@ class GraphUpdater:
                 # dropped it here and let a stale root Package survive beside
                 # the Folder that replaced it. `_package_paths` reads these
                 # same rows and admits both forms; the two must agree.
-                if (
-                    isinstance(qn, str)
-                    and qn
-                    and qn != self.project_name
-                    and not qn.startswith(project_prefix)
-                ):
-                    continue
+                # Ownership, not the prefix: `svc.` prefixes `svc.v2`'s rows
+                # too, and a file only `svc.v2` holds is absent from `svc`'s
+                # tree, so the prefix rule pruned it (issue #1985).
+                # With the registry unread `_owns` degrades to that same
+                # prefix rule, so a row it cannot place is left for the next
+                # healthy run, which prunes the whole project again
+                # (CodeRabbit, PR #2125). Path-keyed rows carry no qn and
+                # still prune.
+                if isinstance(qn, str) and qn:
+                    owned = self._owns(qn)
+                    if self._registry_unread:
+                        registry_skipped += 1
+                        continue
+                    if not owned:
+                        continue
                 stale_kind = (label == "Folder" and path in packages_now) or (
                     label == "Package" and path not in packages_now
                 )
@@ -6963,6 +7017,10 @@ class GraphUpdater:
                         )
                 total_pruned += len(orphans)
 
+        # Rows left for the next healthy run are only swept by one that
+        # actually prunes, so owe it through a marker the in-sync fast path
+        # refuses on (CodeRabbit, PR #2125).
+        self._record_prune_pending(read_failed or registry_skipped > 0)
         if read_failed:
             # The same outage that broke the path reads would break (or act
             # on stale state through) the cleanup below; leave everything
@@ -6979,6 +7037,8 @@ class GraphUpdater:
         # code node, e.g. an endpoint whose route changed on a rebuild.
         prune_unanchored_resources(self.ingestor)
 
+        if registry_skipped:
+            logger.warning(ls.PRUNE_SKIPPED_REGISTRY_UNREAD, count=registry_skipped)
         if total_pruned:
             logger.info(ls.PRUNE_COMPLETE, count=total_pruned)
         else:
