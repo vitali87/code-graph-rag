@@ -34,6 +34,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Protocol
 
 from .. import constants as cs
+from .. import exceptions as ex
+from ..exceptions import ReadOnlyQueryError
 from ..types_defs import BatchParams, BatchWrapper, PropertyValue
 
 
@@ -176,16 +178,26 @@ class Neo4jConnection:
         pending: list[dict[str, _PlanField]] = [plan] if plan else []
         while pending:
             node = pending.pop()
-            args = node.get(cs.NEO4J_PLAN_ARGS)
-            details = (
-                args.get(cs.NEO4J_PLAN_DETAILS) if isinstance(args, dict) else None
-            )
+            args = node.get(cs.NEO4J_PLAN_ARGS) or {}
+            children = node.get(cs.NEO4J_PLAN_CHILDREN) or []
+            # The read-only guard checks every operator this returns, so a
+            # node it cannot fully walk must refuse the query rather than be
+            # skipped: a skipped child is an operator nobody inspected
+            # (CodeRabbit, PR #2255).
+            if not isinstance(args, dict) or not isinstance(children, list):
+                raise ReadOnlyQueryError(
+                    ex.READ_ONLY_UNREADABLE_PLAN.format(query=query)
+                )
+            nodes = [child for child in children if isinstance(child, dict)]
+            if len(nodes) != len(children):
+                raise ReadOnlyQueryError(
+                    ex.READ_ONLY_UNREADABLE_PLAN.format(query=query)
+                )
+            details = args.get(cs.NEO4J_PLAN_DETAILS)
             operators.append(
                 (str(node.get(cs.NEO4J_PLAN_OPERATOR_TYPE, "")), str(details or ""))
             )
-            children = node.get(cs.NEO4J_PLAN_CHILDREN)
-            if isinstance(children, list):
-                pending.extend(c for c in children if isinstance(c, dict))
+            pending.extend(nodes)
         return operators
 
     def close(self) -> None:

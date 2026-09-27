@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from codebase_rag.exceptions import ReadOnlyQueryError
 from codebase_rag.services.neo4j_driver import (
     Neo4jConnection,
     Neo4jCursor,
@@ -165,16 +166,12 @@ class _PlanSession:
 
 class TestExplain:
     def test_every_operator_of_a_nested_plan_is_returned(self) -> None:
-        # The plan arrives as nested dicts; `args` and `children` are read
-        # only when they have the shape the walk expects (issue #2191 typed
-        # the plan instead of passing the driver's `Any` through).
         plan = {
             "operatorType": "Produce",
             "args": {"Details": "n"},
             "children": [
                 {"operatorType": "Scan", "args": {"Details": "n:L"}},
-                {"operatorType": "Odd", "args": "not a mapping", "children": "x"},
-                "not a node",
+                {"operatorType": "Leaf"},
             ],
         }
         session = _PlanSession(plan)
@@ -182,11 +179,31 @@ class TestExplain:
         operators = Neo4jConnection(session).explain("MATCH (n:L) RETURN n")
 
         assert sorted(operators) == [
-            ("Odd", ""),
+            ("Leaf", ""),
             ("Produce", "n"),
             ("Scan", "n:L"),
         ]
         assert session.calls[0].endswith("MATCH (n:L) RETURN n")
+
+    # The read-only guard checks every operator `explain` returns, so a node
+    # it cannot fully walk refuses the query: skipped, it would be an
+    # operator nobody inspected (issue #2191; CodeRabbit on PR #2255).
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            {"operatorType": "Odd", "args": "not a mapping"},
+            {"operatorType": "Odd", "children": "not a list"},
+            {"operatorType": "Odd", "children": ["not a node"]},
+        ],
+        ids=["args", "children", "child"],
+    )
+    def test_a_node_that_cannot_be_walked_refuses_the_query(
+        self, malformed: dict
+    ) -> None:
+        plan = {"operatorType": "Produce", "children": [malformed]}
+
+        with pytest.raises(ReadOnlyQueryError):
+            Neo4jConnection(_PlanSession(plan)).explain("MATCH (n) RETURN n")
 
     def test_a_statement_without_a_plan_has_no_operators(self) -> None:
         assert Neo4jConnection(_PlanSession(None)).explain("RETURN 1") == []
