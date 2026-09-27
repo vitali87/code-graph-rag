@@ -59,8 +59,11 @@ static cgr_edge cgr_table[CGR_TABLE_SIZE];
 static pthread_mutex_t cgr_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local void *cgr_stack[CGR_STACK_MAX];
 /* The shim's own frame address at each enter. The stack grows down, so a
- * live caller's entry lies above every callee's; an entry at or below a new
- * call is one a longjmp or exception already left. */
+ * live caller's entry lies at or above every callee's: above for a real
+ * call, level for a call the compiler inlined (its hooks still run, from the
+ * caller's own frame). An entry strictly below a new call is one a longjmp
+ * or exception already left. Equal addresses stay ambiguous, so they are
+ * never taken as proof. */
 static _Thread_local uintptr_t cgr_frames[CGR_STACK_MAX];
 static _Thread_local int cgr_depth = 0;
 /* Set while this thread is inside the shim. A signal handler that is itself
@@ -211,9 +214,9 @@ void __cyg_profile_func_enter(void *this_fn, void *call_site) {
   pthread_once(&cgr_once, cgr_register_atexit);
   uintptr_t frame = (uintptr_t)__builtin_frame_address(0);
   if (cgr_depth > 0 && cgr_depth <= CGR_STACK_MAX) {
-    if (frame >= cgr_frames[cgr_depth - 1]) {
-      /* The recorded caller is not above this call: it is a frame a longjmp
-       * or exception skipped, and the edge below names it wrongly. */
+    if (frame > cgr_frames[cgr_depth - 1]) {
+      /* The recorded caller lies below this call: it is a frame a longjmp or
+       * exception skipped, and the edge below names it wrongly. */
       cgr_mark(&cgr_unwound);
     }
     cgr_record(cgr_stack[cgr_depth - 1], this_fn);
@@ -238,9 +241,16 @@ void __cyg_profile_func_exit(void *this_fn, void *call_site) {
     return; /* its enter was skipped too, and marked the trace */
   }
   cgr_busy = 1;
+  uintptr_t frame = (uintptr_t)__builtin_frame_address(0);
   if (cgr_depth > CGR_STACK_MAX) {
     cgr_depth--; /* beyond the stored frames; already marked dropped */
   } else if (cgr_depth > 0 && cgr_stack[cgr_depth - 1] == this_fn) {
+    if (frame > cgr_frames[cgr_depth - 1]) {
+      /* Same function, different invocation: an exit above the top entry's
+       * frame belongs to an outer frame of this function, and the top is a
+       * recursive frame a jump skipped. */
+      cgr_mark(&cgr_unwound);
+    }
     cgr_depth--;
   } else if (cgr_depth > 0) {
     /* Not the top: a longjmp or exception skipped the exits above it. Calls

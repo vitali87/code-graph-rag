@@ -54,7 +54,7 @@ def _sanitizers_link(tmp_path: Path) -> bool:
     return built.returncode == 0
 
 
-def _build_and_run(tmp_path: Path, source: str) -> Path:
+def _build_and_run(tmp_path: Path, source: str, optimise: str = "-O0") -> Path:
     if not _sanitizers_link(tmp_path):
         pytest.skip("C compiler with ASan/UBSan unavailable")
     (tmp_path / "main.c").write_text(textwrap.dedent(source), encoding="utf-8")
@@ -64,7 +64,7 @@ def _build_and_run(tmp_path: Path, source: str) -> Path:
             str(cc),
             "-finstrument-functions",
             "-g",
-            "-O0",
+            optimise,
             "-pthread",
             *_SANITIZE,
             str(tmp_path / "main.c"),
@@ -172,6 +172,49 @@ def test_a_stale_caller_is_caught_even_when_no_exit_runs(tmp_path: Path) -> None
     assert _markers(addrs) == {"unwound 1"}
 
 
+def test_a_jump_between_recursive_frames_is_caught_at_the_exit(
+    tmp_path: Path,
+) -> None:
+    # The inner `run` jumps straight back to the outer one, so the outer's
+    # exit finds a `run` on top and matches it by address: only the frame
+    # check at the exit tells the invocations apart. `main` then calls a
+    # function with a large frame, which the enter check alone can miss,
+    # and leaves through exit() so no later exit notices either.
+    addrs = _build_and_run(
+        tmp_path,
+        """
+        #include <setjmp.h>
+        #include <stdlib.h>
+        #include <string.h>
+
+        static jmp_buf env;
+
+        static void run(int nested) {
+            if (nested) {
+                longjmp(env, 1);
+            }
+            if (setjmp(env) == 0) {
+                run(1);
+            }
+        }
+
+        static int big(void) {
+            volatile char pad[1 << 16];
+            memset((char *)pad, 1, sizeof pad);
+            return pad[100];
+        }
+
+        int main(void) {
+            run(0);
+            int value = big();
+            exit(value == 1 ? 0 : 1);
+        }
+        """,
+    )
+
+    assert _markers(addrs) == {"unwound 1"}
+
+
 def test_depth_past_the_stack_saturates_and_marks_the_trace(tmp_path: Path) -> None:
     # No exit resynchronises the depth, so it climbs past CGR_STACK_MAX and
     # toward the saturation ceiling; the old signed counter would wrap.
@@ -224,3 +267,33 @@ def test_ordinary_recursion_stays_exact(tmp_path: Path) -> None:
 
 def test_the_unwound_message_is_distinct_from_dropped() -> None:
     assert cs.TRACE_ERR_ADDRS_UNWOUND != cs.TRACE_ERR_ADDRS_DROPPED
+
+
+@pytest.mark.parametrize("optimise", ["-O1", "-O2", "-O3"])
+def test_inlined_calls_in_an_optimised_build_stay_unmarked(
+    tmp_path: Path, optimise: str
+) -> None:
+    # The optimiser inlines the recursion but keeps each inlined call's
+    # hooks, which then run from the caller's own frame: a level frame must
+    # not read as a skipped one, or every optimised build would be refused.
+    addrs = _build_and_run(
+        tmp_path,
+        """
+        #include <string.h>
+
+        static int fib(int n) { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
+        static int big(int n) {
+            volatile char pad[4096];
+            memset((char *)pad, n, sizeof pad);
+            return pad[7] + (n ? big(n - 1) : 0);
+        }
+        static int twice(int n) { return fib(n) + fib(n) + big(20); }
+
+        int main(void) {
+            return twice(15) > 0 ? 0 : 1;
+        }
+        """,
+        optimise,
+    )
+
+    assert _markers(addrs) == set()

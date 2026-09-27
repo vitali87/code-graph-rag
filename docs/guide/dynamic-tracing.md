@@ -424,7 +424,10 @@ conversion also rejects:
 - a call whose caller's frame is not above it on the stack.
 
 Either way the shim resynchronises its depth, so a long-running program cannot
-overflow it. Programs that switch stacks, through `sigaltstack` signal handlers
+overflow it. The second check only acts on a frame strictly above the recorded
+caller: an inlined call's hooks run from its caller's own frame, so equal
+addresses are not treated as proof. A jump that lands where a new call reuses
+the skipped frame's exact address can therefore still go unnoticed. Programs that switch stacks, through `sigaltstack` signal handlers
 or coroutines, can trip the second check and are refused. Build such
 workloads with g++, which runs exit hooks while unwinding exceptions, or trace
 them another way.
