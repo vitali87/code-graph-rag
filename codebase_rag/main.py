@@ -55,7 +55,12 @@ from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
 from .cli_runtime import app_context, connect_memgraph, dim, style
-from .config import ModelConfig, load_ignore_patterns, settings
+from .config import (
+    ModelConfig,
+    load_ignore_patterns,
+    provider_env_api_key,
+    settings,
+)
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
@@ -1552,7 +1557,14 @@ def _switched_model_config(
         # The endpoint, key and project settings belong to the previous
         # provider: carried across, an OpenAI model would be sent to a local
         # Ollama endpoint, so a new provider starts from its own defaults.
-        config = ModelConfig(provider=provider_name, model_id=model_id)
+        # The key is the one the provider itself falls back to, so the token
+        # counter, which reads `api_key` directly, sends that same key rather
+        # than none (issue #2195).
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            api_key=provider_env_api_key(provider_name),
+        )
     # An env-configured Ollama role may leave its endpoint unset.
     if provider_name == cs.Provider.OLLAMA and not config.endpoint:
         config = replace(

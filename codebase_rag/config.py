@@ -137,6 +137,18 @@ PROVIDER_ENV_KEYS = {
 }
 
 
+def provider_env_api_key(provider: str) -> str | None:
+    """The key `provider` falls back to when none is configured for a role.
+
+    `_resolve_api_key` in providers/base.py reads the same variable, so a
+    config built for a provider chosen on the command line carries the key the
+    provider will actually send; the context token counter reads `api_key`
+    directly (#2195).
+    """
+    env_var = PROVIDER_ENV_KEYS.get(provider.lower())
+    return normalised_credential(os.environ.get(env_var)) if env_var else None
+
+
 @dataclass
 class ModelConfig:
     provider: str
