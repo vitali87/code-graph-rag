@@ -42,7 +42,7 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="demo">
@@ -51,10 +51,9 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowl
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Cross-Service Consumers**: `endpoints`, `endpoint_callers` and `remote_dependencies` MCP tools read the EXPOSES / RESOLVES_TO edges, and `cgr dead-code --no-endpoint-roots` reports an endpoint no indexed call site reaches.
-- **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
-- **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.
-- **Gloss Node & Notes**: Introduced the Gloss node for agent-authored notes and enabled writing and reading Gloss notes via the MCP server.
+- **Code Generation**: Split Cypher response cleaning and AST-grep rule validation into smaller, more manageable helpers for improved clarity and maintainability.
+- **Scripting Improvements**: Resolved an issue where closed pull request run associations were incorrectly reported as missing, and improved error reporting in scripts to avoid over-claiming failing checks.
+- **Data Handling**: Enhanced the handling of CONTAINS_SECTION in the double's module subtree and refined snippet lookup to project the matched node's own path.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -75,7 +74,7 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema.
+1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
 ```

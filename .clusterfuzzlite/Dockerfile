@@ -21,7 +21,7 @@
 # So: stay on the 20.04 base (glibc 2.31, matching the runner) and get 3.12
 # from uv's standalone CPython, which is built for an ancient glibc floor --
 # `objdump -T` on its libpython reports a maximum requirement of GLIBC_2.9.
-FROM gcr.io/oss-fuzz-base/base-builder-python
+FROM gcr.io/oss-fuzz-base/base-builder-python@sha256:aac6099136dd15a1f35400dac58cef67fa02fcd4138c68c254976fc2229c3950
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git && \

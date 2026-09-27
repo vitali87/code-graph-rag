@@ -290,9 +290,14 @@ class _StatefulIngestor:
         """
         if len(edge) == 6:
             return dict(self.edge_props.get(edge, {}))  # type: ignore[arg-type]
+        # Only the source node's own adjacency can hold the edge's sites, so
+        # read that rather than rebuilding every edge in the store per call
+        # (issue #2116).
         merged: PropertyDict = {}
+        endpoint = tuple(edge)
         for keyed in sorted(
-            (e for e in self.keyed_edges if e[:5] == tuple(edge)), key=repr
+            (e for e in self._out.get((edge[0], edge[1]), ()) if e[:5] == endpoint),
+            key=repr,
         ):
             merged.update(self.edge_props.get(keyed, {}))
         return merged
@@ -1047,6 +1052,44 @@ class _StatefulIngestor:
                             seen_paths.add(importer_path)
                             importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
                 return importer_rows
+            case cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS:
+                # Modules whose recorded unresolved references an added file
+                # satisfies, by an exact name or under a qn prefix (issue
+                # #1568). Emulated for the same reason as the specifier
+                # lookup below: an unanswered query reads as "no waiters".
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
+                wanted = (
+                    {n for n in raw_names if isinstance(n, str)}
+                    if isinstance(raw_names, list)
+                    else set()
+                )
+                wanted_prefixes = (
+                    [p for p in raw_prefixes if isinstance(p, str)]
+                    if isinstance(raw_prefixes, list)
+                    else []
+                )
+                waiting: set[str] = set()
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
+                    in_project = (prefix and qn.startswith(prefix)) or qn == own_name
+                    if not path or not in_project:
+                        continue
+                    if not isinstance(recorded, list):
+                        continue
+                    if any(
+                        n in wanted
+                        or any(str(n).startswith(p) for p in wanted_prefixes)
+                        for n in recorded
+                    ):
+                        waiting.add(path)
+                return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
                 # Modules carrying a dropped relative specifier (issue #1714).
                 # Emulated rather than left to fall through: an unanswered
@@ -1183,13 +1226,20 @@ class _StatefulIngestor:
                     continue
                 pairs = [(None, (to_label, to_val))]
             else:
-                # Module -DEFINES-> container -DEFINES_METHOD-> Method.
+                # Module -DEFINES-> container -DEFINES_METHOD-> Method, read
+                # from the container's own adjacency: scanning every edge per
+                # container made this quadratic (issue #2116). A method
+                # reached through several sites appears once, as in `edges`.
                 pairs = [
-                    (to_val, (m_label, m_val))
-                    for (c_label, c_val, m_rel, m_label, m_val) in self.edges
-                    if m_rel == cs.RelationshipType.DEFINES_METHOD.value
-                    and (c_label, c_val) == (to_label, to_val)
-                    and m_label == target_label
+                    (to_val, method)
+                    for method in {
+                        (m_label, m_val)
+                        for _cl, _cv, m_rel, m_label, m_val, _site in self._out.get(
+                            (to_label, to_val), ()
+                        )
+                        if m_rel == cs.RelationshipType.DEFINES_METHOD.value
+                        and m_label == target_label
+                    }
                 ]
             for container_qn, node_id in pairs:
                 props = self.nodes.get(node_id)
@@ -1212,6 +1262,20 @@ class _StatefulIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
+                # Modules with nothing unresolved this parse (issue #1568).
+                raw_qns = params.get(cs.KEY_QNS) if params else None
+                for qn in raw_qns if isinstance(raw_qns, list) else []:
+                    node = self.nodes.get((_MODULE_LABEL, qn))
+                    if node is not None:
+                        node[cs.KEY_UNRESOLVED_REFERENCES] = []
+            case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
+                # One module's list, replaced so a resolved name leaves it.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
                 self._delete_module_subtree(path)
             case cs.CYPHER_DELETE_FILE:
