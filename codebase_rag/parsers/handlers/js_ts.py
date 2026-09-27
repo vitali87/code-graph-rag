@@ -11,6 +11,19 @@ if TYPE_CHECKING:
     from ...types_defs import ASTNode
 
 
+def _enclosing_declarator_name(node: ASTNode) -> str | None:
+    # The first identifier of the nearest `variable_declarator` ancestor that
+    # has one names an arrow function (`const f = () => ...`).
+    current = node.parent
+    while current:
+        if current.type == cs.TS_VARIABLE_DECLARATOR:
+            for child in current.children:
+                if child.type == cs.TS_IDENTIFIER and child.text:
+                    return safe_decode_text(child)
+        current = current.parent
+    return None
+
+
 class JsTsHandler(BaseLanguageHandler):
     __slots__ = ()
 
@@ -67,13 +80,7 @@ class JsTsHandler(BaseLanguageHandler):
             return safe_decode_text(name_node)
 
         if node.type == cs.TS_ARROW_FUNCTION:
-            current = node.parent
-            while current:
-                if current.type == cs.TS_VARIABLE_DECLARATOR:
-                    for child in current.children:
-                        if child.type == cs.TS_IDENTIFIER and child.text:
-                            return safe_decode_text(child)
-                current = current.parent
+            return _enclosing_declarator_name(node)
 
         return None
 

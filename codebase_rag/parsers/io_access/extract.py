@@ -71,27 +71,32 @@ def _python_parameter_names(scope_node: Node) -> set[str]:
         return set()
     names: set[str] = set()
     for param in params.named_children:
-        if param.type in (
-            cs.TS_PY_DEFAULT_PARAMETER,
-            cs.TS_PY_TYPED_DEFAULT_PARAMETER,
-        ):
-            name = param.child_by_field_name(cs.TS_FIELD_NAME)
-            if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
-                names.add(name.text.decode(cs.ENCODING_UTF8))
-        elif param.type == cs.TS_PY_TYPED_PARAMETER:
-            # A typed parameter has no `name` field: the binding identifier is
-            # the DIRECT child before the `type` field (`os: int` -> os); the
-            # annotation identifier sits inside the type field and is never a
-            # binding here.
-            name = next(
-                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
-                None,
-            )
-            if name is not None and name.text is not None:
-                names.add(name.text.decode(cs.ENCODING_UTF8))
-        else:
-            names |= _binding_identifiers(param)
+        names |= _python_parameter_bindings(param)
     return names
+
+
+def _python_parameter_bindings(param: Node) -> set[str]:
+    if param.type in (
+        cs.TS_PY_DEFAULT_PARAMETER,
+        cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+    ):
+        name = param.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
+            return {name.text.decode(cs.ENCODING_UTF8)}
+        return set()
+    if param.type == cs.TS_PY_TYPED_PARAMETER:
+        # A typed parameter has no `name` field: the binding identifier is the
+        # DIRECT child before the `type` field (`os: int` -> os); the
+        # annotation identifier sits inside the type field and is never a
+        # binding here.
+        name = next(
+            (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
+            None,
+        )
+        if name is not None and name.text is not None:
+            return {name.text.decode(cs.ENCODING_UTF8)}
+        return set()
+    return _binding_identifiers(param)
 
 
 def _global_declared_names(scope_node: Node) -> set[str]:
