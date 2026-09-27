@@ -36,6 +36,9 @@ UNKNOWN_PROVIDER = "Unknown provider '{provider}'. Available providers: {availab
 # Dependency errors
 SEMANTIC_EXTRA = "Semantic search requires 'semantic' extra: uv sync --extra semantic"
 
+# Input errors
+JSON_TOO_DEEP = "JSON nesting exceeds the decoder's recursion limit"
+
 # OpenAI-compatible embedding errors
 OPENAI_EMBEDDING_HTTP_ERROR = (
     "OpenAI-compatible embedding request failed with status {status}: {body}"
