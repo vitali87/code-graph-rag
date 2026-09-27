@@ -7043,6 +7043,7 @@ class CallProcessor:
                     local_var_types,
                     class_context,
                     seen,
+                    node.start_byte,
                 )
             stack.extend(node.children)
 
@@ -7120,6 +7121,7 @@ class CallProcessor:
                     local_var_types,
                     class_ctx,
                     seen,
+                    node.start_byte,
                 )
             stack.extend(node.children)
 
@@ -7161,8 +7163,14 @@ class CallProcessor:
         base = dart_utils.dart_ambiguous_construction_base(node)
         if base is None:
             return False
+        # An import-prefixed base is dotted (`p.Box`, issue #2033) while the
+        # shadow spans are keyed by the bare binder, so check the LEADING
+        # segment: a local named `p` shadows the prefix and makes
+        # `p.Box < b > (1).x` a comparison, exactly as a local `Box` does for
+        # the unprefixed form.
+        binder = base.split(cs.SEPARATOR_DOT, 1)[0]
         pos = node.start_byte
-        return any(lo <= pos < hi for lo, hi in shadow_spans().get(base, ()))
+        return any(lo <= pos < hi for lo, hi in shadow_spans().get(binder, ()))
 
     def _dart_unshadowed_name(
         self,
@@ -7187,6 +7195,7 @@ class CallProcessor:
         local_var_types: dict[str, str] | None,
         class_context: str | None,
         seen: set[str],
+        call_point: int | None = None,
     ) -> None:
         if read_name in seen:
             return
@@ -7202,7 +7211,13 @@ class CallProcessor:
                 res_qn = candidate
         if res_qn is None:
             resolved = self._resolver.resolve_function_call(
-                read_name, module_qn, local_var_types, class_context, caller_qn
+                read_name,
+                module_qn,
+                local_var_types,
+                class_context,
+                caller_qn,
+                language=cs.SupportedLanguage.DART,
+                call_point=call_point,
             )
             if not resolved:
                 return
