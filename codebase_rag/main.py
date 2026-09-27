@@ -56,14 +56,14 @@ from . import logs as ls
 from .config import (
     ModelConfig,
     load_ignore_patterns,
-    provider_default_kwargs,
+    provider_env_api_key,
     settings,
 )
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
 from .providers.base import get_provider_from_config
-from .services import QueryProtocol
+from .services import ReadOnlyQueryProtocol
 from .services.graph_service import MemgraphIngestor
 from .services.llm import (
     CypherGenerator,
@@ -1551,6 +1551,31 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
+def _switched_model_config(
+    base_config: ModelConfig, provider_name: str, model_id: str
+) -> ModelConfig:
+    if provider_name == base_config.provider:
+        config = replace(base_config, model_id=model_id)
+    else:
+        # The endpoint, key and project settings belong to the previous
+        # provider: carried across, an OpenAI model would be sent to a local
+        # Ollama endpoint, so a new provider starts from its own defaults.
+        # The key is the one the provider itself falls back to, so the token
+        # counter, which reads `api_key` directly, sends that same key rather
+        # than none (issue #2195).
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            api_key=provider_env_api_key(provider_name),
+        )
+    # An env-configured Ollama role may leave its endpoint unset.
+    if provider_name == cs.Provider.OLLAMA and not config.endpoint:
+        config = replace(
+            config, endpoint=settings.ollama_endpoint, api_key=cs.DEFAULT_API_KEY
+        )
+    return config
+
+
 def _create_model_from_string(
     model_string: str, current_override_config: ModelConfig | None = None
 ) -> tuple[Model, str, ModelConfig]:
@@ -1566,17 +1591,7 @@ def _create_model_from_string(
     if not provider_name:
         raise ValueError(ex.PROVIDER_EMPTY)
 
-    if provider_name == base_config.provider:
-        config = replace(base_config, model_id=model_id)
-    elif provider_name == cs.Provider.OLLAMA:
-        config = ModelConfig(
-            provider=provider_name,
-            model_id=model_id,
-            endpoint=settings.ollama_endpoint,
-            api_key=cs.DEFAULT_API_KEY,
-        )
-    else:
-        config = ModelConfig(provider=provider_name, model_id=model_id)
+    config = _switched_model_config(base_config, provider_name, model_id)
 
     canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
     provider = get_provider_from_config(config)
@@ -1723,18 +1738,8 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
 
-    # Only a model change keeps the configured key, endpoint and project;
-    # another provider starts from its own defaults (#2195).
-    if provider == current_config.provider:
-        kwargs = current_config.to_update_kwargs()
-    else:
-        kwargs = provider_default_kwargs(provider)
-
-    if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
-        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
-        kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
-
-    set_method(provider, model, **kwargs)
+    config = _switched_model_config(current_config, provider, model)
+    set_method(config.provider, config.model_id, **config.to_update_kwargs())
 
 
 def update_model_settings(
@@ -2002,7 +2007,7 @@ def _cli_query_scope(active_projects: list[str] | None) -> str | None:
 
 def _initialize_services_and_agent(
     repo_path: str,
-    ingestor: QueryProtocol,
+    ingestor: ReadOnlyQueryProtocol,
     active_projects: list[str] | None = None,
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames, str]:
     """Build the orchestrator, its tools, and the shared session services.

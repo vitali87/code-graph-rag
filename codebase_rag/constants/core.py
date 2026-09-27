@@ -71,6 +71,7 @@ class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
     DELETED = "deleted"
+    MOVED = "moved"
 
 
 REALTIME_LOGGER_FORMAT = (
@@ -173,6 +174,10 @@ HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
 # re-parses it with the delete-before-reparse a KNOWN file gets (issue #1983).
 HASH_CACHE_UNREADABLE = "unreadable"
 DIR_MTIMES_FILENAME = ".cgr-dir-mtimes.json"
+# Present while an EXPOSES cleanup the last run skipped (its project registry
+# was unreadable) is still owed; the in-sync fast path refuses until a batch
+# run has done it (issue #2193).
+EXPOSES_CLEANUP_PENDING_FILENAME = ".cgr-exposes-cleanup-pending"
 PARSER_FINGERPRINT_FILENAME = ".cgr-parser-fingerprint"
 DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # The exclusion set the last run indexed under, covering both the excludes and
@@ -181,6 +186,11 @@ DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # only the CLI --exclude flags do, so without this the sync check cannot tell
 # that the eligible set moved (issue #1606).
 EXCLUSION_STATE_FILENAME = ".cgr-exclusion-state.json"
+# Each project's own stamp inside the exclusion state file, keyed by project
+# name. The top-level keys stay the LAST run's stamp, which is what the
+# repository-wide hash cache belongs to; this map is what lets every project
+# indexed from one tree read its own scope back (issue #1987).
+EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"

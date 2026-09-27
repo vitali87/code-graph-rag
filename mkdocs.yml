@@ -120,6 +120,11 @@ nav:
     - Troubleshooting: advanced/troubleshooting.md
   - Roadmap: roadmap.md
   - Contributing: contributing.md
+  - Credits: credits.md
+
+# Generates credits.md from the third-party notices at build time (#2175).
+hooks:
+  - scripts/mkdocs_credits_hook.py
 
 # Internal analysis artifacts kept in the repo but not published to the doc site nav.
 not_in_nav: |

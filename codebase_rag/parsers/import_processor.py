@@ -25,7 +25,13 @@ from ..types_defs import (
 )
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
-from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
+from .dart import (
+    dart_binding_spans,
+    dart_extract_uri,
+    dart_import_prefix,
+    dart_local_name,
+    dart_resolve_import,
+)
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -481,6 +487,18 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _include_path_suffix(include_path: str) -> str:
+    """A written include path as the repository path suffix it names:
+    normalised, with every `.` and `..` segment dropped wherever it falls
+    (after `normpath`, only leading `..` segments can remain)."""
+    parts = [
+        part
+        for part in posixpath.normpath(include_path.replace("\\", "/")).split("/")
+        if part not in ("", ".", "..")
+    ]
+    return "/".join(parts)
+
+
 def _dotted_include_path(include_path: str) -> str:
     """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
 
@@ -557,6 +575,8 @@ class ImportProcessor:
         "exclude_paths",
         "unignore_paths",
         "import_mapping",
+        "csharp_static_imports",
+        "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
@@ -576,6 +596,7 @@ class ImportProcessor:
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
         "unresolved_specifiers",
+        "unresolved_references",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -599,6 +620,8 @@ class ImportProcessor:
         "rust_fn_scope_mod_imports",
         "rust_block_items",
         "rust_block_item_qns",
+        "dart_prefix_shadows",
+        "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -625,6 +648,17 @@ class ImportProcessor:
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # `using static N.T;` brings T's MEMBERS into bare-call scope, which
+        # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
+        # bare `Member()` has no entry to resolve through. Module qn -> the set
+        # of (enclosing namespace, statically imported type path), probed as an
+        # extra bare-call scope (issue #2005). The namespace is "" for a
+        # file-level directive; one inside `namespace N { ... }` scopes only N.
+        self.csharp_static_imports: dict[str, set[tuple[str, str]]] = {}
+        # `global using static N.T;` is in scope in EVERY file of the
+        # compilation. Keyed by the DECLARING module, so a re-parse or a
+        # removal of that file drops exactly its own directives.
+        self.csharp_global_static_imports: dict[str, set[str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -650,6 +684,13 @@ class ImportProcessor:
         # never re-parsed when the file is finally created (issue #1714).
         # Recorded here so the importer stays findable from the path alone.
         self.unresolved_specifiers: dict[str, set[str]] = {}
+        # Per module qn: every name the module referenced and could not
+        # resolve, from any pass (a dropped import, an include naming no
+        # file, a base class resolved nowhere, a call with no callee). The
+        # class and call processors record into the same dict; the updater
+        # writes it onto the Module node after Pass 3, and matches an added
+        # file against it to find the modules that waited (issue #1568).
+        self.unresolved_references: dict[str, set[str]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -739,6 +780,15 @@ class ImportProcessor:
         # from reaching them from outside their block (issue #1061).
         self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
         self.rust_block_item_qns: set[str] = set()
+        # Dart: {module qn: {import prefix: [byte spans where a local or
+        # parameter of that name shadows it]}} (issue #2033).
+        self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
+        # `import 'other.dart' as helper;` binds `helper` to other.dart even
+        # when an unprefixed `import 'helper.dart';` already owns that key in
+        # import_mapping. Kept separately so BOTH imports keep their IMPORTS
+        # edge (those come from import_mapping's values) while the name the
+        # source writes resolves to the aliased library (Greptile, #2033).
+        self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -971,6 +1021,8 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -989,6 +1041,14 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # The Dart prefix maps share the same invariant. Both are written
+        # only when the file HAS prefixed imports, so removing the last one
+        # left the previous parse's entries in place: a stale alias kept
+        # resolving a name the file no longer binds, and a stale shadow span
+        # kept suppressing a fold at a line that had moved (Copilot,
+        # PR #2040).
+        self.dart_prefix_shadows.pop(module_qn, None)
+        self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(
@@ -1088,6 +1148,7 @@ class ImportProcessor:
         # whose target now exists, would otherwise keep nominating this file
         # for ever (issue #1714).
         self.unresolved_specifiers.pop(module_qn, None)
+        self.unresolved_references.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -1124,7 +1185,7 @@ class ImportProcessor:
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
-                    self._parse_dart_imports(captures, module_qn)
+                    self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
                 case _:
@@ -1334,6 +1395,8 @@ class ImportProcessor:
         self._csharp_module_identifiers.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.
@@ -1363,6 +1426,17 @@ class ImportProcessor:
             for namespace, declared_types in namespaces.items():
                 namespace_modules.setdefault(namespace, {})[module_qn] = declared_types
         return namespace_modules
+
+    def recover_unparsed_csharp_state(self, known_module_paths: dict[str, str]) -> None:
+        """Rebuild the per-file C# scans for modules this run did not parse.
+
+        An incremental run re-parses only CHANGED files, so an unchanged
+        file's declared namespaces, identifiers and `global using static`
+        directives are recovered here from a targeted parse of its source.
+        Run before Pass 3: a global static import in an unchanged file scopes
+        the bare calls of every re-parsed one (CodeRabbit, PR #2036).
+        """
+        self._recover_unparsed_csharp_namespaces(known_module_paths)
 
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
@@ -1395,6 +1469,7 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(tree.root_node)
             )
+            self._collect_csharp_global_static_imports(tree.root_node, module_qn)
 
     def _emit_csharp_internal_imports(
         self,
@@ -1553,6 +1628,7 @@ class ImportProcessor:
                         from_module=entry.module_qn,
                         to_module=entry.full_name,
                     )
+                    self.note_unresolved(entry.module_qn, entry.full_name)
                     continue
                 self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
                 emitted += 1
@@ -1591,6 +1667,8 @@ class ImportProcessor:
                         from_module=entry.module_qn,
                         to_module=module_path,
                     )
+                    self.note_unresolved(entry.module_qn, module_path)
+                    self.note_unresolved(entry.module_qn, entry.full_name)
                     continue
                 module_path = verified
             self._emit_import_edge(entry, target_label, module_path)
@@ -3343,6 +3421,13 @@ class ImportProcessor:
             return f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
         return None
 
+    def note_unresolved(self, module_qn: str, name: str) -> None:
+        """Record that `module_qn` referenced `name` and could not resolve it
+        (issue #1568). Any pass may call this; the set is cleared when the
+        module is parsed again, so it always describes the current source."""
+        if name:
+            self.unresolved_references.setdefault(module_qn, set()).add(name)
+
     def _note_unresolved_js_specifier(self, module_qn: str, specifier: str) -> None:
         """Record a RELATIVE specifier that names nothing on disk (issue #1714).
 
@@ -3614,29 +3699,94 @@ class ImportProcessor:
                             path=resolved_path,
                         )
 
-    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
+    @staticmethod
+    def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
+        # `using Alias = Target;` marks the alias with a `name` field; the
+        # imported path is then the OTHER name node. Plain/static/global
+        # forms have no `name` field, so the sole name node is the path.
         name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
+        alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+        target = None
+        for child in import_node.children:
+            if child.type in name_types and child != alias_node:
+                target = child
+        if target is None:
+            return None
+        imported_path = safe_decode_with_fallback(target)
+        if not imported_path:
+            return None
+        return imported_path, alias_node
+
+    def _record_csharp_static_import(
+        self,
+        import_node: Node,
+        module_qn: str,
+        imported_path: str,
+        alias_node: Node | None,
+        global_only: bool = False,
+    ) -> None:
+        # `using static` is marked by a literal `static` child; an alias
+        # form (`using static X = N.T;`) is not a member import.
+        modifiers = {child.type for child in import_node.children}
+        if alias_node is not None or cs.TS_CSHARP_STATIC not in modifiers:
+            return
+        is_global = cs.TS_CSHARP_GLOBAL in modifiers
+        if global_only and not is_global:
+            return
+        if is_global:
+            self.csharp_global_static_imports.setdefault(module_qn, set()).add(
+                imported_path
+            )
+        else:
+            self.csharp_static_imports.setdefault(module_qn, set()).add(
+                (self._csharp_enclosing_namespace(import_node), imported_path)
+            )
+
+    @staticmethod
+    def _csharp_enclosing_namespace(node: Node) -> str:
+        # The dotted name of the `namespace N { ... }` blocks around `node`,
+        # outermost first. A file-scoped `namespace N;` covers the whole file,
+        # so a directive under it is file-level and is not counted.
+        parts: list[str] = []
+        parent = node.parent
+        while parent is not None:
+            if parent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+                name = safe_decode_with_fallback(
+                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                )
+                if name:
+                    parts.append(name)
+            parent = parent.parent
+        return cs.SEPARATOR_DOT.join(reversed(parts))
+
+    def _collect_csharp_global_static_imports(self, root: Node, module_qn: str) -> None:
+        # A `global using` must precede every other member of the file, so
+        # the directives are direct children of the compilation unit.
+        for import_node in root.children:
+            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                continue
+            if parsed := self._csharp_using_target(import_node):
+                imported_path, alias_node = parsed
+                self._record_csharp_static_import(
+                    import_node, module_qn, imported_path, alias_node, global_only=True
+                )
+
+    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
                 continue
-            # `using Alias = Target;` marks the alias with a `name` field; the
-            # imported path is then the OTHER name node. Plain/static/global
-            # forms have no `name` field, so the sole name node is the path.
-            alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            target = None
-            for child in import_node.children:
-                if child.type in name_types and child != alias_node:
-                    target = child
-            if target is None:
+            parsed = self._csharp_using_target(import_node)
+            if parsed is None:
                 continue
-            imported_path = safe_decode_with_fallback(target)
-            if not imported_path:
-                continue
+            imported_path, alias_node = parsed
             if alias_node is not None and alias_node.text:
                 local_name = safe_decode_with_fallback(alias_node)
             else:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
+            self._record_csharp_static_import(
+                import_node, module_qn, imported_path, alias_node
+            )
             self._record_import_site(
                 module_qn,
                 local_name,
@@ -4374,7 +4524,11 @@ class ImportProcessor:
             return resolved
         # A quoted include matching no repo file is a third-party header; a
         # project-rooted qn would be a phantom. Segmented like the system
-        # branch above, for the same reason (issue #1758).
+        # branch above, for the same reason (issue #1758). Recorded for the
+        # day the header is added (issue #1568), normalised to the repo path
+        # suffix an added file offers: `./include/base.h` and
+        # `../include/base.h` both wait on `include/base.h` (bot review).
+        self.note_unresolved(module_qn, _include_path_suffix(include_path))
         return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
@@ -4601,12 +4755,15 @@ class ImportProcessor:
                 node_type=import_node.type,
             )
 
-    def _parse_dart_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_dart_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
         # Dart import/export/part directives carry a URI string. `dart:` and
         # `package:` targets are external (kept verbatim); relative paths and part
         # files resolve to a project-internal module qn. A `part of my.library;`
         # directive names a dotted library, not a file, so it has no URI and is
         # skipped.
+        prefixes: set[str] = set()
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             uri = dart_extract_uri(import_node)
             if not uri:
@@ -4615,6 +4772,47 @@ class ImportProcessor:
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                # `import 'lib.dart' as p;` binds the library's names under
+                # `p`, and the file-derived key never appears in the source,
+                # so a prefixed reference (`p.Box`) resolves only once the
+                # PREFIX is a key too (issue #2033). Both keys are kept: the
+                # file-derived one still serves an unprefixed import of the
+                # same file elsewhere in the module.
+                # An alias must not clobber a key another import already
+                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+                # would otherwise drop the first import entirely, since the
+                # file-derived key and the alias collide. The prefix is the
+                # name the source uses for THIS import, so it is only added
+                # where it is free.
+                prefix = dart_import_prefix(import_node)
+                if prefix:
+                    # An explicit `as` prefix is the name the SOURCE uses for
+                    # this import, so it owns that name outright. Recorded in
+                    # its own map rather than overwriting import_mapping,
+                    # whose values carry the IMPORTS edges: writing it there
+                    # dropped the colliding unprefixed import entirely.
+                    # Several imports may SHARE a prefix (`import 'a.dart' as
+                    # p; import 'b.dart' as p;`), so every library is kept and
+                    # the fold picks the one defining the name (CodeRabbit,
+                    # PR #2040).
+                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+                        prefix, []
+                    ).append(full_name)
+                    if prefix not in self.import_mapping[module_qn]:
+                        self.import_mapping[module_qn][prefix] = full_name
+                        # Its IMPORTS edge carries a span and alias like every
+                        # other binding (Copilot, PR #2040).
+                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    prefixes.add(prefix)
+        # A local or parameter of the same name SHADOWS the prefix inside its
+        # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
+        # local_var_types, so the type map cannot answer this. The binding is
+        # syntactic, so record its span here and let the fold check the call
+        # site against it (issue #2033).
+        if root_node is not None and prefixes:
+            self.dart_prefix_shadows[module_qn] = dart_binding_spans(
+                root_node, frozenset(prefixes)
+            )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):

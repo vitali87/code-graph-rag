@@ -373,6 +373,79 @@ class TestUpdateModelSettings:
         assert kwargs[cs.FIELD_ENDPOINT] == "http://localhost:11434"
         assert kwargs[cs.FIELD_API_KEY] == cs.DEFAULT_API_KEY
 
+    def test_switch_from_ollama_drops_ollama_endpoint_and_key(self) -> None:
+        fake_settings = MagicMock()
+        fake_settings.parse_model_string.return_value = ("openai", "gpt-4o")
+        fake_settings.active_orchestrator_config = ModelConfig(
+            provider=cs.Provider.OLLAMA,
+            model_id="llama3.2",
+            endpoint="http://localhost:11434/v1",
+            api_key=cs.DEFAULT_API_KEY,
+        )
+
+        with patch("codebase_rag.main.settings", fake_settings):
+            _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, "openai:gpt-4o")
+
+        kwargs = fake_settings.set_orchestrator.call_args.kwargs
+        assert kwargs[cs.FIELD_ENDPOINT] is None
+        assert kwargs[cs.FIELD_API_KEY] is None
+
+    def test_switch_from_azure_drops_endpoint_and_project(self) -> None:
+        fake_settings = MagicMock()
+        fake_settings.parse_model_string.return_value = ("anthropic", "claude")
+        fake_settings.active_cypher_config = ModelConfig(
+            provider="azure",
+            model_id="gpt-4o",
+            endpoint="https://example.openai.azure.com",
+            api_key="azure-key",
+            project_id="azure-project",
+            region="eastus",
+        )
+
+        with patch("codebase_rag.main.settings", fake_settings):
+            _update_single_model_setting(cs.ModelRole.CYPHER, "anthropic:claude")
+
+        provider, model = fake_settings.set_cypher.call_args.args
+        assert (provider, model) == ("anthropic", "claude")
+        kwargs = fake_settings.set_cypher.call_args.kwargs
+        assert kwargs[cs.FIELD_ENDPOINT] is None
+        assert kwargs[cs.FIELD_API_KEY] is None
+        assert kwargs["project_id"] is None
+
+    def test_same_provider_keeps_endpoint_and_key(self) -> None:
+        fake_settings = MagicMock()
+        fake_settings.parse_model_string.return_value = ("openai", "gpt-4o-mini")
+        fake_settings.active_orchestrator_config = ModelConfig(
+            provider="openai",
+            model_id="gpt-4o",
+            endpoint="https://proxy.example.com/v1",
+            api_key="sk-test",
+        )
+
+        with patch("codebase_rag.main.settings", fake_settings):
+            _update_single_model_setting(
+                cs.ModelRole.ORCHESTRATOR, "openai:gpt-4o-mini"
+            )
+
+        provider, model = fake_settings.set_orchestrator.call_args.args
+        assert (provider, model) == ("openai", "gpt-4o-mini")
+        kwargs = fake_settings.set_orchestrator.call_args.kwargs
+        assert kwargs[cs.FIELD_ENDPOINT] == "https://proxy.example.com/v1"
+        assert kwargs[cs.FIELD_API_KEY] == "sk-test"
+
+    def test_update_model_settings_switch_from_default_ollama(self) -> None:
+        # End to end through the real settings object; blanking the role's
+        # provider overrides any env config so the role defaults to Ollama,
+        # whose endpoint must not follow an OpenAI model.
+        fresh = AppConfig(ORCHESTRATOR_PROVIDER="", ORCHESTRATOR_MODEL="")
+        with patch("codebase_rag.main.settings", fresh):
+            update_model_settings("openai:gpt-4o", None)
+
+        config = fresh.active_orchestrator_config
+        assert (config.provider, config.model_id) == ("openai", "gpt-4o")
+        assert config.endpoint is None
+        assert config.api_key is None
+
     def test_update_model_settings_dispatches_both_roles(self) -> None:
         with patch("codebase_rag.main._update_single_model_setting") as single:
             update_model_settings("anthropic:claude", "openai:gpt")
@@ -473,7 +546,9 @@ class TestProviderSwitchStartsFromProviderDefaults:
             cs.FIELD_API_KEY: None,
             cs.FIELD_ENDPOINT: None,
             "project_id": None,
-            "region": cs.DEFAULT_REGION,
+            # `ModelConfig`'s own default, as main's `_switched_model_config`
+            # builds it; the provider fills in its region.
+            "region": None,
             "provider_type": None,
             "thinking_budget": None,
             "service_account_file": None,

@@ -325,6 +325,16 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
+class CSharpCallShape(NamedTuple):
+    """How a C# method may be called: the arguments every call must pass
+    (parameters with neither a default nor `params`), whether a `params`
+    tail takes extra arguments, and whether it is static."""
+
+    required: int
+    variadic: bool
+    is_static: bool
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 
@@ -982,7 +992,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,

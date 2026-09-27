@@ -312,6 +312,67 @@ class TestPruneOrphanNodes:
         ]
         assert delete_module_calls == []
 
+    def test_prune_tells_a_real_inline_named_file_from_a_nested_synthetic_one(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The synthetic test is the basename with no extension (#1967).
+
+        A whole-path prefix test kept a deleted real `inline_module_widget.py`
+        forever and pruned a nested synthetic `pkg/inline_module_data` as an
+        absent file (CodeRabbit, PR #1967)."""
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        project_name = py_project.resolve().name
+        mock_ingestor.fetch_all.side_effect = [
+            [],
+            [
+                {
+                    "path": "inline_module_widget.py",
+                    "qualified_name": f"{project_name}.inline_module_widget",
+                },
+                {
+                    "path": "pkg/inline_module_data",
+                    "qualified_name": f"{project_name}.pkg.lib.data",
+                },
+            ],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        deleted = [
+            c.args[1]["path"]
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_MODULE
+        ]
+        assert deleted == ["inline_module_widget.py"]
+
+    def test_existing_module_paths_keep_a_real_inline_named_file(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The delete-before-reingest probe uses the same basename test
+        (CodeRabbit, PR #1967)."""
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers={},
+            queries={},
+        )
+        mock_ingestor.fetch_all.side_effect = None
+        mock_ingestor.fetch_all.return_value = [
+            {cs.KEY_PATH: "inline_module_widget.py"},
+            {cs.KEY_PATH: "pkg/inline_module_data"},
+            {cs.KEY_PATH: "module_a.py"},
+        ]
+        assert updater._existing_module_paths() == frozenset(
+            {"inline_module_widget.py", "module_a.py"}
+        )
+
 
 class TestCypherDeleteModuleQuery:
     def test_query_does_not_traverse_calls_edges(self) -> None:

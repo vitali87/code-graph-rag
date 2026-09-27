@@ -76,8 +76,8 @@ public class Use {
 def test_static_method_call_resolves(
     csharp_project: Path, mock_ingestor: MagicMock
 ) -> None:
-    # Same-class static helper call, resolved via the trie/simple-name
-    # lookup (typed receiver and new->ctor resolution land in Phase 3).
+    # A same-class static helper remains reachable through C#'s enclosing-type
+    # lookup without relying on the global simple-name trie.
     (csharp_project / "Calc.cs").write_text(
         """
 namespace N;
@@ -93,6 +93,37 @@ public class Calc {
     targets = _call_targets(mock_ingestor)
     # Square takes one parameter, so it registers with a signature (Phase 3).
     assert any(t.endswith("N.Calc.Square(int)") for t in targets), targets
+
+
+def test_unresolved_bare_call_does_not_fall_to_name_trie(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    (csharp_project / "Other.cs").write_text(
+        """
+namespace Other;
+public static class X {
+    public static int Abs(int x) => x;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static System.Math;
+namespace App;
+public class A {
+    public int Run() { return Abs(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert not any(
+        source.endswith("App.A.Run") and target.endswith("Other.X.Abs(int)")
+        for source, target in pairs
+    ), pairs
 
 
 def _reference_targets(mock_ingestor: MagicMock) -> set[str]:
@@ -822,3 +853,478 @@ public class Factory {
     refs = _reference_targets(mock_ingestor)
     assert any(t.endswith("N.Factory.Make.Cleanup") for t in refs), refs
     assert not any(t.endswith("N.Decoy.Cleanup") for t in refs), refs
+
+
+def test_static_import_member_call_resolves(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `using static` brings the TYPE's members into bare-call scope. Dropping
+    # the name-trie fallback for bare calls must not take this with it: the
+    # call is unambiguous (one `Twice` in the project) and first-party, so the
+    # edge is real, not a name-wide guess (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class MathHelpers {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.MathHelpers;
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert any(t.endswith("Helpers.MathHelpers.Twice(int)") for t in targets), targets
+
+
+def test_enclosing_delegate_field_beats_a_static_import(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A member of the enclosing type beats a static import in C#, so
+    # `Callback()` on a delegate-typed field is Delegate.Invoke (external),
+    # not the statically imported `Callback` (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static void Callback() { }
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using System;
+using static Helpers.H;
+namespace App;
+public class A {
+    private Action Callback;
+    public void Run() { Callback(); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any("Helpers.H.Callback" in t for t in targets), targets
+
+
+def test_ambiguous_static_imports_emit_no_edge(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Two statically imported types declaring the same-name same-arity member
+    # is CS0121 in C#. Picking one would emit a different edge per run, since
+    # the stored imports are a set, so refuse instead (#2005).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class First {
+    public static int Twice(int x) => x * 2;
+}
+public static class Second {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.First;
+using static Helpers.Second;
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = _call_targets(mock_ingestor)
+    assert not any("Twice" in t for t in targets), targets
+
+
+def test_global_static_import_reaches_every_file(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `global using static` puts the type's members in bare-call scope for
+    # the whole compilation, not only the file that declares it (Greptile,
+    # #2036). Now that a bare miss no longer falls to the name trie, a call
+    # in another file reaches the member only through this scope.
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class MathHelpers {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "Usings.cs").write_text(
+        "global using static Helpers.MathHelpers;\n", encoding="utf-8"
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    public int Run() { return Twice(3); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        source.endswith("App.A.Run") and target.endswith("MathHelpers.Twice(int)")
+        for source, target in pairs
+    ), pairs
+
+
+def test_static_import_keeps_a_same_arity_overload_family(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Same-name same-arity overloads on ONE imported type are a family C#
+    # picks from by argument type, not the CS0121 ambiguity two imported
+    # types make. Refusing them dropped the call; the enclosing-type tier
+    # keeps such a family, so the static tier does too (Greptile, #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Parsing {
+    public static int Parse(string s) => 0;
+    public static int Parse(char c) => 0;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Parsing;
+namespace App;
+public class A {
+    public int Run() { return Parse("1"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        source.endswith("App.A.Run") and ".Parsing.Parse(" in target
+        for source, target in pairs
+    ), pairs
+
+
+def test_bare_calls_bind_defaulted_and_params_overloads(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A bare call that omits a defaulted argument or expands a `params`
+    # tail matches no overload by exact arity. The name-wide fallback used
+    # to catch it; with that closed to bare calls (#2005) the enclosing type
+    # and `using static` tiers must accept a compatible arity themselves
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static int Opt(int a, int b = 1) => a;
+    public static int Many(params int[] xs) => 0;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.H;
+namespace App;
+public class A {
+    void Log(string m, int level = 0) { }
+    void Sum(params int[] xs) { }
+    public void Run() { Log("x"); Sum(1, 2, 3); Opt(1); Many(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    for callee in ("A.Log(string, int)", "A.Sum(int[])", "H.Opt(int, int)"):
+        assert any(t.endswith(callee) for t in targets), (callee, targets)
+    assert any(t.endswith("H.Many(int[])") for t in targets), targets
+
+
+def test_extra_arguments_without_a_params_tail_bind_nothing(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # MORE arguments than parameters compiles only through `params`, so a
+    # non-array tail is no candidate and the call stays unresolved.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void Handler(int a) { }
+    public void Run() { Handler(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert not any("Handler" in t for t in targets), targets
+
+
+def test_an_exact_arity_overload_beats_a_defaulted_one(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # C# prefers the overload that needs no default filled in.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void Log(string m) { }
+    void Log(string m, int level = 0) { }
+    public void Run() { Log("x"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.Log(string)") for t in targets), targets
+    assert not any(t.endswith("A.Log(string, int)") for t in targets), targets
+
+
+def test_a_required_parameter_is_never_omitted(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # FEWER arguments than parameters binds only when the omitted ones are
+    # defaulted: `Pair(1)` does not compile against `Pair(int a, int b)`, so
+    # no edge may claim it (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class G {
+    public static int Pair(int a, int b) => a;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.G;
+namespace App;
+public class A {
+    void Log(string m, int level) { }
+    public void Run() { Pair(1); Log("x"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert not any("Pair" in t or "Log" in t for t in targets), targets
+
+
+def test_a_namespace_scoped_static_import_stays_in_its_namespace(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `using static` inside `namespace In1 { ... }` is in scope in In1 only;
+    # the sibling namespace's bare `Twice(2)` must not bind through it
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+namespace Outer {
+    namespace In1 {
+        using static Helpers.H;
+        public class A { public void Run() { Twice(1); } }
+    }
+    namespace In2 {
+        public class B { public void Run() { Twice(2); } }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("Outer.In1.A.Run") and t.endswith("H.Twice(int)") for s, t in pairs
+    ), pairs
+    assert not any(s.endswith("Outer.In2.B.Run") for s, _t in pairs), pairs
+
+
+def test_a_fixed_array_parameter_takes_no_extra_arguments(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only `params T[]` takes extra arguments; a plain `int[]` parameter
+    # does not, however near its count (CodeRabbit, PR #2036).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void M(int[] values) { }
+    void M(object value, int b = 0, int c = 0, int d = 0) { }
+    public void Run() { M(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.M(object, int, int, int)") for t in targets), targets
+    assert not any(t.endswith("A.M(int[])") for t in targets), targets
+
+
+def test_an_explicit_type_argument_binds_the_generic_overload(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `M<int>(1)` cannot bind the non-generic `M(int)`, even though its
+    # arity is exact (CodeRabbit, PR #2036).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void M(int x) { }
+    void M<T>(T value, int extra = 0) { }
+    public void Run() { M<int>(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.M(T, int)") for t in targets), targets
+    assert not any(t.endswith("A.M(int)") for t in targets), targets
+
+
+def test_static_imports_form_one_method_group(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `M(int)` from one imported type and `M(string)` from another are one
+    # method group; the literal argument picks `M(int)` (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Ints { public static void M(int x) { } }
+public static class Strings { public static void M(string s) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Ints;
+using static Helpers.Strings;
+namespace App;
+public class A {
+    public void Run() { M(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Ints.M(int)") for t in targets), targets
+    assert not any(t.endswith("Strings.M(string)") for t in targets), targets
+
+
+def test_using_static_imports_only_declared_static_members(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # An instance method, and a static one the type only inherits, are not
+    # imported by `using static`, so neither makes the real target ambiguous
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public class Base { public static void Twice(int x) { } }
+public class Derived : Base { public void Twice(int x, int y) { } }
+public static class Real { public static void Twice(int x) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Derived;
+using static Helpers.Real;
+namespace App;
+public class A {
+    public void Run() { Twice(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Real.Twice(int)") for t in targets), targets
+    assert not any(".Base.Twice" in t or ".Derived.Twice" in t for t in targets), (
+        targets
+    )
+
+
+def test_a_suffixed_numeric_literal_is_typed_by_its_suffix(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `1.0m` is decimal and `1L` long, not double and int: typed by the
+    # default, each was refused by its only fitting overload (CodeRabbit,
+    # PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Money { public static void M(decimal d) { } }
+public static class Text { public static void M(string s) { } }
+public static class Wide { public static void N(long v) { } }
+public static class Narrow { public static void N(short v) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Money;
+using static Helpers.Text;
+using static Helpers.Wide;
+using static Helpers.Narrow;
+namespace App;
+public class A {
+    public void Run() { M(1.0m); N(1L); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Money.M(decimal)") for t in targets), targets
+    assert any(t.endswith("Wide.N(long)") for t in targets), targets
+    assert not any(
+        t.endswith(("Text.M(string)", "Narrow.N(short)")) for t in targets
+    ), targets
