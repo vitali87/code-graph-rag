@@ -320,6 +320,10 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_EXPANSION_FAILED = (
+    "Could not list the files a directory event covers: {error}. Re-indexing "
+    "the whole repository instead."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
