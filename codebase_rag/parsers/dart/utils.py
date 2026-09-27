@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from tree_sitter import Node
 
 from ... import constants as cs
@@ -149,10 +151,72 @@ def _construction_class_name(node: Node) -> str | None:
         cs.TS_DART_NEW_EXPRESSION,
         cs.TS_DART_CONST_OBJECT_EXPRESSION,
     ):
-        for child in node.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and child.text:
-                return decode_node_text(child.text)
-        return None
+        return _explicit_construction_name(node)
+    return _mis_parsed_generic_name(node)
+
+
+def _construction_name_parts(node: Node) -> tuple[list[str], str | None]:
+    """The leading `type_identifier`s of a construction expression, and the
+    trailing `identifier` if one follows them."""
+    type_names: list[str] = []
+    trailing: str | None = None
+    for child in node.named_children:
+        if not child.text:
+            continue
+        if child.type == cs.TS_DART_TYPE_IDENTIFIER:
+            type_names.append(decode_node_text(child.text))
+        elif child.type == cs.TS_DART_IDENTIFIER:
+            trailing = decode_node_text(child.text)
+            break
+        elif type_names:
+            break
+    return type_names, trailing
+
+
+def _explicit_construction_name(node: Node) -> str | None:
+    """`new X(1)` / `const X(1)`: the class, keeping an import prefix and
+    dropping a named constructor."""
+    # Node type alone cannot split these, because the trailing
+    # `identifier` means different things:
+    #   `new X(1)`           -> type_identifier(X)
+    #   `new p.X(1)`         -> type_identifier(p) + identifier(X)
+    #   `new X.named(1)`     -> type_identifier(X) + identifier(named)
+    #   `new p.X.named(1)`   -> type_identifier(p, X) + identifier(named)
+    # The rule is POSITIONAL: every type_identifier belongs to the type
+    # (an import prefix is kept so the resolver can fold it against the
+    # import map, issue #2033), and a trailing identifier is the CLASS
+    # only when no type_identifier has named it yet -- otherwise it is a
+    # named constructor, which is not part of the receiver's type and
+    # made the read resolve against `X.named` rather than `X`.
+    # Keep every type_identifier, then the trailing identifier, and let
+    # the CALLER drop a named constructor. The node types cannot settle
+    # it here: after one type_identifier the trailing identifier is the
+    # CLASS in `new p.X(1)` (prefix + class) and the CONSTRUCTOR in
+    # `new X.named(1)` (class + constructor), identically shaped. The
+    # resolver holds the import map and the registry, so it can tell a
+    # prefix from a class; this function cannot (issue #2033).
+    #
+    # A dotted name must therefore resolve as a whole OR fall back to its
+    # head: `X.named` is not a definition while `X` is, which is exactly
+    # how the caller recognises a named constructor.
+    type_names, trailing = _construction_name_parts(node)
+    if not type_names:
+        return trailing
+    # Two type_identifiers already name prefix AND class (`new p.X.named`),
+    # so a trailing identifier is the named constructor and is dropped.
+    # With exactly one, the trailing identifier is the CLASS and the
+    # type_identifier was the prefix (`new p.X(1)`); with none it is a
+    # named constructor on a bare class (`new X.named(1)`), which main
+    # dropped by returning the first type_identifier and which must keep
+    # being dropped or the read resolves against `X.named`.
+    if len(type_names) == 1 and trailing is not None:
+        return f"{type_names[0]}{cs.SEPARATOR_DOT}{trailing}"
+    return cs.SEPARATOR_DOT.join(type_names)
+
+
+def _mis_parsed_generic_name(node: Node) -> str | None:
+    """`X<int>(1)`: the grammar reads the angle brackets as comparisons, so
+    the class leads the left operand of a `<` ... `>` relational pair."""
     if node.type != cs.TS_DART_RELATIONAL_EXPRESSION:
         return None
     # Match the mis-parsed-generic shape: exactly
@@ -176,12 +240,21 @@ def _construction_class_name(node: Node) -> str | None:
         return None
     if _relational_operator_text(node) != cs.DART_ANGLE_CLOSE:
         return None
-    # The left spine is `X < int`: the class is its leading identifier. Any
-    # other shape (a parenthesized or call left operand) is not a construction.
+    # The left spine is `X < int`, or `p.X < int` under an import prefix, so
+    # the class is the leading identifier plus any member selectors before
+    # the operator (issue #2033). Any other shape (a parenthesized or call
+    # left operand) is not a construction.
     spine = children[0].named_children
     if not spine or spine[0].type != cs.TS_DART_IDENTIFIER or not spine[0].text:
         return None
-    return decode_node_text(spine[0].text)
+    names = [decode_node_text(spine[0].text)]
+    for child in spine[1:]:
+        if child.type != cs.TS_DART_SELECTOR:
+            break
+        if (member := _selector_member_name(child)) is None:
+            return None
+        names.append(member)
+    return cs.SEPARATOR_DOT.join(names)
 
 
 def _construction_receiver_class(
@@ -397,10 +470,13 @@ def dart_ambiguous_construction_base(selector_node: Node) -> str | None:
 
     `X<int>(1).m` and the chained comparison `a < b > (1).m` parse
     identically, so the generic-construction reading of a receiver is only a
-    guess (issue #2015). Returns the leading identifier when THIS read took
-    that reading, for the caller to reject when a local or parameter of that
-    name is in scope (then it is a comparison, not a construction). Returns
-    None for every unambiguous shape, including `new X(1).m`.
+    guess (issue #2015). Returns the name that reading would construct when
+    THIS read took it, for the caller to reject when a local or parameter
+    shadows it (then it is a comparison, not a construction). Returns None
+    for every unambiguous shape, including `new X(1).m`.
+
+    The name is DOTTED under an import prefix (`p.Box`, issue #2033), so a
+    caller matching it against bare binders must take the leading segment.
     """
     receiver = selector_node.prev_named_sibling
     if receiver is None or receiver.type != cs.TS_DART_PARENTHESIZED_EXPRESSION:
@@ -504,6 +580,46 @@ def dart_local_name(uri: str) -> str:
     return segment or uri
 
 
+def _walk_named(node: Node) -> Iterator[Node]:
+    # Depth-first over named descendants, the node itself first.
+    yield node
+    for child in node.named_children:
+        yield from _walk_named(child)
+
+
+def dart_import_prefix(import_node: Node) -> str | None:
+    """The `as` prefix of a Dart import, or None when it has none.
+
+    `import 'lib.dart' as p;` binds every name from that library under `p`,
+    so a member reached through it (`p.Box`) resolves only if the PREFIX is
+    registered as an import key; the file-derived key `lib` never appears in
+    the source. The prefix is the `import_specification`'s own `identifier`
+    child, which is where the grammar puts it for `as` and `deferred as`
+    alike; a `show`/`hide` name is nested inside a `combinator` node instead,
+    so scanning only DIRECT children cannot mistake one for a prefix
+    (issue #2033).
+    """
+    # The capture is the whole `import_or_export`, so the specification sits
+    # a level or two down (import_or_export > library_import >
+    # import_specification); walk to it rather than assuming a direct child.
+    spec = next(
+        (
+            node
+            for node in _walk_named(import_node)
+            if node.type == cs.TS_DART_IMPORT_SPECIFICATION
+        ),
+        None,
+    )
+    if spec is None:
+        return None
+    # The prefix is the specification's own identifier child. Any identifier
+    # deeper down belongs to a `show`/`hide` combinator, not to `as`.
+    for child in spec.named_children:
+        if child.type == cs.TS_DART_IDENTIFIER and child.text:
+            return decode_node_text(child.text)
+    return None
+
+
 def dart_resolve_import(uri: str, module_qn: str, project_name: str) -> str:
     """Full import target: external URIs kept verbatim, relative paths resolved.
 
@@ -525,3 +641,140 @@ def dart_resolve_import(uri: str, module_qn: str, project_name: str) -> str:
     if parts and parts[-1].endswith(cs.DART_EXT):
         parts[-1] = parts[-1][: -len(cs.DART_EXT)]
     return cs.SEPARATOR_DOT.join(parts)
+
+
+# Node types that scope a Dart binding, and the subset whose binder is live
+# only AFTER its own declaration (a for-in iterable and a try body precede
+# their binder). Mirrors the call processor's shadow walk; kept here so the
+# import processor can record spans without importing that module.
+_SHADOW_SCOPE_TYPES = frozenset(
+    {
+        cs.TS_DART_BLOCK,
+        cs.TS_DART_FUNCTION_EXPRESSION,
+        cs.TS_DART_LOCAL_FUNCTION_DECLARATION,
+        cs.TS_DART_FOR_STATEMENT,
+        cs.TS_DART_TRY_STATEMENT,
+    }
+)
+_STATEMENT_SCOPE_TYPES = frozenset({cs.TS_DART_FOR_STATEMENT, cs.TS_DART_TRY_STATEMENT})
+_SIGNATURE_TYPES = frozenset(
+    {
+        cs.TS_DART_FUNCTION_SIGNATURE,
+        cs.TS_DART_METHOD_SIGNATURE,
+        cs.TS_DART_FORMAL_PARAMETER_LIST,
+    }
+)
+_BODY_TYPES = frozenset({cs.TS_DART_FUNCTION_BODY, cs.TS_DART_BLOCK})
+_LOCAL_DECLARATION_TYPES = frozenset(
+    {
+        cs.TS_DART_INITIALIZED_VARIABLE_DEFINITION,
+        cs.TS_DART_INITIALIZED_IDENTIFIER,
+    }
+)
+
+
+def _following_body_span(signature: Node) -> tuple[int, int] | None:
+    """The span of the body a signature introduces, if it has one.
+
+    A `formal_parameter_list` has no sibling after it -- the signature ABOVE
+    it is the node the body follows -- so a caller walks up and asks again
+    rather than treating the first miss as "no scope".
+    """
+    body = signature.next_named_sibling
+    while body is not None and body.type not in _BODY_TYPES:
+        body = body.next_named_sibling
+    return (body.start_byte, body.end_byte) if body is not None else None
+
+
+def _binding_scope_span(decl: Node, root: Node) -> tuple[int, int] | None:
+    """The byte span a binding shadows, or None when it scopes nothing here.
+
+    A PARAMETER lives in the signature, which is a SIBLING of the body in
+    this grammar, so walking up finds no block: its scope is the body that
+    follows its signature. Falling through to the whole root instead would
+    make one function's parameter shadow the entire file -- measured, it
+    swallowed an unrelated read 45 bytes later.
+    """
+    anc = decl.parent
+    while anc is not None and anc is not root:
+        if anc.type in _SHADOW_SCOPE_TYPES:
+            if anc.type in _STATEMENT_SCOPE_TYPES:
+                return (decl.end_byte, anc.end_byte)
+            return (anc.start_byte, anc.end_byte)
+        if anc.type in _SIGNATURE_TYPES and (span := _following_body_span(anc)):
+            return span
+        anc = anc.parent
+    return None
+
+
+def _pattern_bound_names(node: Node) -> list[str]:
+    """`var (alpha, beta) = rhs` binds every identifier inside the *_pattern
+    subtree; the RHS expression binds nothing.
+
+    Mirrors `call_processor._dart_pattern_bound_names`. Omitting it left a
+    pattern binding invisible to the shadow check while the older
+    `local_var_types` guard could not see it either (it has no inferable
+    type), so `var (p, q) = (1, 2)` reproduced the very defect the span
+    guard exists to stop.
+    """
+    names: list[str] = []
+    stack = [
+        child
+        for child in node.named_children
+        if child.type.endswith(cs.DART_PATTERN_NODE_SUFFIX)
+    ]
+    while stack:
+        current = stack.pop()
+        if current.type == cs.TS_DART_IDENTIFIER and current.text:
+            names.append(decode_node_text(current.text))
+        stack.extend(current.named_children)
+    return names
+
+
+def _bound_names(node: Node) -> list[str]:
+    """The name(s) a parameter or local declaration binds.
+
+    Deliberately syntactic: `var p = 1` binds `p` whether or not any type can
+    be inferred for it, which is the whole point -- an untyped local never
+    reaches `local_var_types` (issue #2033).
+    """
+    if node.type in (cs.TS_DART_FORMAL_PARAMETER, cs.TS_DART_CATCH_PARAMETERS):
+        return [
+            name
+            for child in node.named_children
+            if child.type == cs.TS_DART_IDENTIFIER
+            and child.text
+            and (name := decode_node_text(child.text))
+        ]
+    if node.type == cs.TS_DART_PATTERN_VARIABLE_DECLARATION:
+        return _pattern_bound_names(node)
+    if node.type in _LOCAL_DECLARATION_TYPES or node.type == cs.TS_DART_FOR_LOOP_PARTS:
+        declared = next(
+            (c for c in node.named_children if c.type == cs.TS_DART_IDENTIFIER),
+            None,
+        )
+        if declared is not None and declared.text:
+            return [decode_node_text(declared.text)]
+    return []
+
+
+def dart_binding_spans(
+    root: Node, names: frozenset[str]
+) -> dict[str, list[tuple[int, int]]]:
+    """`{name: [byte span it is bound in]}` for the given names only.
+
+    Used to tell a local or parameter that SHADOWS an import prefix from the
+    prefix itself: inside one of these spans the bare name is that binding,
+    so a chain rooted at it must not fold through the import map.
+    """
+    if not names:
+        return {}
+    spans: dict[str, list[tuple[int, int]]] = {}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        for name in _bound_names(node):
+            if name in names and (span := _binding_scope_span(node, root)):
+                spans.setdefault(name, []).append(span)
+        stack.extend(node.children)
+    return spans
