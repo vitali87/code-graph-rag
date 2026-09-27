@@ -187,30 +187,36 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
     for path_arg in _rm_operands(cmd_parts[1:]):
-        if path_arg in ("*", ".", ".."):
-            return True, f"rm targeting dangerous path: {path_arg}"
-        # Joining onto the root is the platform's own absoluteness test: an
-        # absolute target replaces the root outright, a relative one lands
-        # under it. A `startswith("/")` check is POSIX-only: on Windows a
-        # rooted, drive-less target such as `/x` would resolve on the Python
-        # process's drive rather than the root's, the drive rm runs on.
-        try:
-            resolved = (project_root / path_arg).resolve()
-        except (OSError, ValueError):
-            return True, f"rm with invalid path: {path_arg}"
-        if resolved == project_root:
-            return True, "rm targeting the project root"
-        resolved_str = str(resolved)
-        if resolved == resolved.parent:
-            return True, "rm targeting root directory"
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            parts = resolved.parts
-            if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
-                return True, f"rm targeting system directory: {resolved_str}"
-            return True, f"rm targeting path outside project: {resolved_str}"
+        if (reason := _dangerous_rm_target(path_arg, project_root)) is not None:
+            return True, reason
     return False, ""
+
+
+def _dangerous_rm_target(path_arg: str, project_root: Path) -> str | None:
+    if path_arg in ("*", ".", ".."):
+        return f"rm targeting dangerous path: {path_arg}"
+    # Joining onto the root is the platform's own absoluteness test: an
+    # absolute target replaces the root outright, a relative one lands under
+    # it. A `startswith("/")` check is POSIX-only: on Windows a rooted,
+    # drive-less target such as `/x` would resolve on the Python process's
+    # drive rather than the root's, the drive rm runs on.
+    try:
+        resolved = (project_root / path_arg).resolve()
+    except (OSError, ValueError):
+        return f"rm with invalid path: {path_arg}"
+    if resolved == project_root:
+        return "rm targeting the project root"
+    resolved_str = str(resolved)
+    if resolved == resolved.parent:
+        return "rm targeting root directory"
+    try:
+        resolved.relative_to(project_root)
+    except ValueError:
+        parts = resolved.parts
+        if len(parts) >= 2 and parts[1] in cs.SHELL_SYSTEM_DIRECTORIES:
+            return f"rm targeting system directory: {resolved_str}"
+        return f"rm targeting path outside project: {resolved_str}"
+    return None
 
 
 def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
@@ -244,27 +250,30 @@ def _git_escapes_project(cmd_parts: list[str], project_root: Path) -> tuple[bool
             index += 1
             continue
 
-        if not target:
-            continue
-        # Joining onto the root is the platform's own absoluteness test: an
-        # absolute target replaces the root outright, a relative one lands
-        # under it. A `startswith("/")` check is POSIX-only: on Windows a
-        # rooted, drive-less target such as `/x` would resolve on the Python
-        # process's drive rather than the root's, which is the drive git
-        # itself runs on (its cwd is the root).
-        try:
-            resolved = (project_root / target).resolve()
-        except (OSError, ValueError):
-            return True, f"git pointed at an unresolvable path: {target}"
-
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            return True, (
-                f"git pointed outside the project at {resolved}, whose config "
-                "git would execute"
-            )
+        if target and (reason := _git_target_escape(target, project_root)):
+            return True, reason
     return False, ""
+
+
+def _git_target_escape(target: str, project_root: Path) -> str | None:
+    # Joining onto the root is the platform's own absoluteness test: an
+    # absolute target replaces the root outright, a relative one lands under
+    # it. A `startswith("/")` check is POSIX-only: on Windows a rooted,
+    # drive-less target such as `/x` would resolve on the Python process's
+    # drive rather than the root's, which is the drive git itself runs on
+    # (its cwd is the root).
+    try:
+        resolved = (project_root / target).resolve()
+    except (OSError, ValueError):
+        return f"git pointed at an unresolvable path: {target}"
+    try:
+        resolved.relative_to(project_root)
+    except ValueError:
+        return (
+            f"git pointed outside the project at {resolved}, whose config "
+            "git would execute"
+        )
+    return None
 
 
 def _check_pipeline_patterns(full_command: str) -> str | None:

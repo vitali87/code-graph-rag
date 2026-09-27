@@ -964,21 +964,21 @@ def java_positional_parameter_slots(
         elif param.type == cs.TS_SPREAD_PARAMETER:
             if variadic_index is None:
                 variadic_index = len(names)
-            declarator = next(
-                (
-                    c
-                    for c in param.named_children
-                    if c.type == cs.TS_VARIABLE_DECLARATOR
-                ),
-                None,
-            )
-            name = (
-                declarator.child_by_field_name(cs.FIELD_NAME)
-                if declarator is not None
-                else None
-            )
-            names.append(safe_decode_text(name) if name is not None else None)
+            names.append(_java_spread_parameter_name(param))
     return names, variadic_index
+
+
+def _java_spread_parameter_name(param: Node) -> str | None:
+    declarator = next(
+        (c for c in param.named_children if c.type == cs.TS_VARIABLE_DECLARATOR),
+        None,
+    )
+    name = (
+        declarator.child_by_field_name(cs.FIELD_NAME)
+        if declarator is not None
+        else None
+    )
+    return safe_decode_text(name) if name is not None else None
 
 
 def csharp_positional_parameter_slots(
