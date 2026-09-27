@@ -21,6 +21,7 @@ from codebase_rag.tools.shell_command import (
     _has_redirect_operators,
     _has_subshell,
     _is_blocked_command,
+    _is_code_runner,
     _is_dangerous_command,
     _is_dangerous_rm,
     _is_dangerous_rm_path,
@@ -3380,6 +3381,125 @@ class TestYoloLauncherConfinement:
         # ahead of the utility keeps naming `cat` on every platform.
         assert _xargs_launched_command(["xargs", "-0pt", "cat"]) == "cat"
         assert _validate_segment("xargs -0pt cat", "", True) is None
+
+
+class TestYoloCodeRunners:
+    # `--yolo` bypasses the allowlist, so a shell or interpreter named at the
+    # top of a segment ran unattended: `python3 -c ...` executed while
+    # `xargs python3 -c ...` was refused as a launcher.
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "sh -c id",
+            "bash -c id",
+            "zsh -c id",
+            "python3 -c 1",
+            "node -e 1",
+            "php -r 1",
+            "gawk 'BEGIN{print 1 | \"id\"}'",
+            "vim -c '!id' -c q",
+            # Version, case and extension spellings of the same interpreter.
+            "python3.12 -c 1",
+            "python3.13t -c 1",
+            "lua5.4 -e 1",
+            "PYTHON3 -c 1",
+            "python.exe -c 1",
+            # Launchers that would carry a blocked program past the name check.
+            "env python3 -c 1",
+            "timeout 5 sh -c id",
+            "nice bash",
+            "stdbuf -o0 sh -c id",
+            "ssh -o ProxyCommand=id host",
+            # Build and package tools run project-defined code.
+            "make",
+            "npm test",
+            "cargo run",
+            "go run .",
+            "pip install .",
+        ),
+    )
+    def test_yolo_blocks_code_runners(self, command: str) -> None:
+        error = _validate_segment(command, "", True)
+        assert error is not None, f"yolo let a code runner through: {command}"
+        assert "runs arbitrary code" in error
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            # The over-block side: stripping a version suffix must not turn an
+            # ordinary program into a listed stem.
+            "printf hello",
+            "date",
+            "sha256sum README.md",
+            "md5sum README.md",
+            "base64 README.md",
+            "bzip2 -k README.md",
+            "curl http://example.com",
+            "git status",
+            "rg foo",
+            "sed -n 1p README.md",
+            "awk '{print $1}' README.md",
+        ),
+    )
+    def test_yolo_allows_other_programs(self, command: str) -> None:
+        assert _validate_segment(command, "", True) is None
+
+    async def test_yolo_does_not_run_a_shell(self, temp_project_root: Path) -> None:
+        commander = ShellCommander(
+            str(temp_project_root), timeout=5, is_yolo=lambda: True
+        )
+        tool = create_shell_command_tool(commander)
+        mock_ctx = MagicMock()
+        mock_ctx.tool_call_approved = False
+        result = await tool.function(mock_ctx, "sh -c 'echo pwned > marker'")
+        assert result.return_code != 0
+        assert "runs arbitrary code" in result.stderr
+        assert not (temp_project_root / "marker").exists()
+
+    def test_code_runner_on_the_allowlist_still_runs_with_approval(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The block applies only while the allowlist is bypassed; an operator
+        # who allowlists a runner keeps it in the approval-gated default mode.
+        monkeypatch.setattr(
+            settings,
+            "SHELL_COMMAND_ALLOWLIST",
+            settings.SHELL_COMMAND_ALLOWLIST | {"make"},
+        )
+        assert _validate_segment("make", "") is None
+        assert _requires_approval("make")
+
+    def test_no_default_allowlisted_command_is_a_code_runner(self) -> None:
+        assert not [c for c in settings.SHELL_COMMAND_ALLOWLIST if _is_code_runner(c)]
+
+
+class TestRespelledProgramNames:
+    # macOS and Windows resolve program names case-insensitively, and Windows
+    # appends `.exe`, so each of these runs the named program while missing
+    # every check that compares against its exact name.
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "XARGS python3 -c 1",
+            "xargs.exe sh -c id",
+            "Git -c core.pager=id log",
+            "RG --pre=id foo",
+            "SED -n '1e id' README.md",
+            "DD if=/dev/zero of=out",
+        ),
+    )
+    @pytest.mark.parametrize("bypass_allowlist", (True, False))
+    def test_respelled_name_is_refused(
+        self, command: str, bypass_allowlist: bool
+    ) -> None:
+        error = _validate_segment(command, "", bypass_allowlist)
+        assert error is not None, f"re-spelled name got through: {command}"
+        assert "re-spelled" in error
+
+    def test_exact_name_is_not_mistaken_for_a_respelling(self) -> None:
+        assert _validate_segment("git status", "") is None
 
 
 def test_symlink_write_target_keeps_the_slash_anchor_broad() -> None:

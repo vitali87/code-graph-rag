@@ -133,6 +133,27 @@ def _is_blocked_command(cmd: str) -> bool:
     return cmd in cs.SHELL_DANGEROUS_COMMANDS
 
 
+_PROGRAM_VERSION_SUFFIX = re.compile(cs.SHELL_PROGRAM_VERSION_SUFFIX_PATTERN)
+
+
+def _canonical_program_name(name: str) -> str:
+    """The program a case-insensitive, extension-appending lookup finds.
+
+    macOS and Windows resolve program names case-insensitively, and Windows
+    also finds `git.exe` for `git`, so `XARGS` and `xargs.exe` both run xargs.
+    """
+    lowered = name.lower()
+    for extension in cs.SHELL_WINDOWS_EXECUTABLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return lowered.removesuffix(extension)
+    return lowered
+
+
+def _is_code_runner(name: str) -> bool:
+    stem = _PROGRAM_VERSION_SUFFIX.sub("", _canonical_program_name(name))
+    return stem in cs.SHELL_CODE_RUNNER_COMMANDS
+
+
 def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False
@@ -1205,6 +1226,11 @@ def _is_dangerous_command(
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
 
+    if bypass_allowlist and _is_code_runner(base_cmd):
+        return True, (
+            f"{base_cmd} runs arbitrary code; blocked when the allowlist is bypassed"
+        )
+
     if bypass_allowlist and base_cmd in cs.SHELL_LAUNCHER_COMMANDS:
         # Two launchers state what they will run and can be vetted even here;
         # the rest take no inspectable argument and are blocked outright.
@@ -1310,6 +1336,22 @@ def _validate_segment(
             reason=(
                 "a path-qualified program name bypasses every name-keyed "
                 "check; invoke the command by its bare name"
+            ),
+        )
+
+    # A re-spelled name escapes those checks the same way: `XARGS` runs xargs
+    # on macOS and Windows without the vetting of what xargs launches, and
+    # `DD` runs dd without the blocked-command check.
+    canonical = _canonical_program_name(base_cmd)
+    if canonical != base_cmd and (
+        canonical in settings.SHELL_COMMAND_ALLOWLIST
+        or canonical in cs.SHELL_DANGEROUS_COMMANDS
+    ):
+        return te.COMMAND_DANGEROUS_BLOCKED.format(
+            cmd=base_cmd,
+            reason=(
+                "a re-spelled program name bypasses every name-keyed check; "
+                f"invoke it as {canonical}"
             ),
         )
 

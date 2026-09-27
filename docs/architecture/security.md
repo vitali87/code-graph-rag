@@ -181,7 +181,13 @@ access and trust in the MCP client.
 The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
 paths against the target project root. YOLO mode relaxes approval and allowlist
-checks, while destructive-path screening remains.
+checks, while destructive-path screening remains. Under YOLO, shells, language
+interpreters, program launchers such as `env` and `timeout`, and build or
+package tools such as `make` and `npm` stay blocked by name, including version,
+case and `.exe` spellings of those names. That list is a backstop, not a
+boundary. Programs not on it still run, and so does a file that a permitted
+command writes for something else to execute later, such as a git hook. Run YOLO
+only in a disposable environment, such as a container.
 
 Graph queries written by the model are treated as untrusted and must stay
 read-only. They are screened as text first: write keywords outside string
