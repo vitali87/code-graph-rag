@@ -872,17 +872,49 @@ def head_check_runs(head: str, name: str) -> list[dict[str, Any]] | None:
     a binding cannot be judged from it. None when the call fails or returns
     something else: unread is not the same as "no run".
     """
-    parsed = _json_dict(
+    # Paginated: `per_page` caps at 100, and the bound App's run can sit on
+    # a later page, which a first-page read reports as absent (bot review).
+    pages = _page_stream(
         _gh_stdout_or_empty(
             "api",
+            "--paginate",
             f"repos/{REPO}/commits/{head}/check-runs"
             f"?check_name={quote(name)}&per_page=100",
         )
     )
-    runs = parsed.get("check_runs")
-    if not isinstance(runs, list):
+    if not pages:
         return None
-    return [run for run in runs if isinstance(run, dict)]
+    runs: list[dict[str, Any]] = []
+    for page in pages:
+        found = page.get("check_runs")
+        if not isinstance(found, list):
+            return None
+        runs.extend(run for run in found if isinstance(run, dict))
+    return runs
+
+
+def _page_stream(raw: str) -> list[dict[str, Any]] | None:
+    """Each page of a `gh api --paginate` response, or None if any is unread.
+
+    Without `--jq` the pages arrive as concatenated JSON objects. A page that
+    does not decode leaves the answer unknown, not shorter: a run on it may
+    be the one being looked for.
+    """
+    decoder = json.JSONDecoder()
+    pages: list[dict[str, Any]] = []
+    index = 0
+    while True:
+        while index < len(raw) and raw[index].isspace():
+            index += 1
+        if index >= len(raw):
+            return pages
+        try:
+            page, index = decoder.raw_decode(raw, index)
+        except ValueError:
+            return None
+        if not isinstance(page, dict):
+            return None
+        pages.append(page)
 
 
 def _app_id(run: dict[str, Any]) -> object:
@@ -915,7 +947,9 @@ def app_binding_reasons(
                 + (f" (posted by App(s) {', '.join(others)})" if others else "")
             )
             continue
-        latest = max(own, key=lambda run: str(run.get("started_at") or ""))
+        # By creation: a queued re-run has no `started_at` yet, so ordering
+        # on it let an older success outrank the pending run (bot review).
+        latest = max(own, key=lambda run: str(run.get("created_at") or ""))
         if str(latest.get("status") or "").lower() != "completed":
             reasons.append(f"'{name}' from App {app} has not concluded")
             continue

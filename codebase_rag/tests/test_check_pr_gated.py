@@ -643,6 +643,7 @@ def _app_run(app: int, conclusion: str = "success") -> dict[str, object]:
         "name": REQUIRED_CONTEXT,
         "status": "completed",
         "conclusion": conclusion,
+        "created_at": "2026-09-22T10:00:00Z",
         "started_at": "2026-09-22T10:00:00Z",
         "app": {"id": app},
     }
@@ -844,3 +845,46 @@ def test_a_bound_required_contexts_green_status_is_read_through_state(
     failing = [*_GREEN, status_context(REQUIRED_CONTEXT, "FAILURE")]
     reasons, _ = _gate_a_green_pr(monkeypatch, failing, protection=_CLASSIC_BOUND)
     assert reasons == [f"'{REQUIRED_CONTEXT}' concluded FAILURE"]
+
+
+def test_a_queued_rerun_outranks_an_older_success_of_the_bound_app() -> None:
+    """A queued run has no `started_at`, so ordering on it picked the older
+    success and read a pending requirement as satisfied (bot review on #2155)."""
+    older = _app_run(_BOUND_APP)
+    rerun = {
+        **_app_run(_BOUND_APP),
+        "status": "queued",
+        "conclusion": None,
+        "created_at": "2026-09-22T11:00:00Z",
+        "started_at": None,
+    }
+    reasons = check_pr_gated.app_binding_reasons(
+        REQUIRED_CONTEXT, {_BOUND_APP}, [older, rerun]
+    )
+    assert reasons == [f"'{REQUIRED_CONTEXT}' from App {_BOUND_APP} has not concluded"]
+
+
+def test_the_bound_apps_run_on_a_later_page_is_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`per_page` caps at 100; the bound App's run on page two was read as
+    absent (bot review on #2155)."""
+    pages = [
+        {"check_runs": [_app_run(_OTHER_APP)] * 100},
+        {"check_runs": [_app_run(_BOUND_APP)]},
+    ]
+    stream = "\n".join(json.dumps(page) for page in pages)
+    monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *_a: stream)
+    runs = check_pr_gated.head_check_runs("abc123", REQUIRED_CONTEXT)
+    assert runs is not None and len(runs) == 101
+    assert (
+        check_pr_gated.app_binding_reasons(REQUIRED_CONTEXT, {_BOUND_APP}, runs) == []
+    )
+
+
+def test_an_unreadable_page_leaves_the_check_runs_unread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = json.dumps({"check_runs": [_app_run(_OTHER_APP)]}) + "\n{not json"
+    monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *_a: stream)
+    assert check_pr_gated.head_check_runs("abc123", REQUIRED_CONTEXT) is None
