@@ -2728,7 +2728,7 @@ def test_xargs_flag_cannot_hide_the_launched_program(flag: str, spelling: str) -
     parts = ["xargs", flag, "1", "python3", "-c", "1"]
     if spelling == "bare":
         parts = ["xargs", flag, "python3", "-c", "1"]
-    assert _validate_segment(" ".join(parts), "", True) is not None, (
+    assert _validate(" ".join(parts)) is not None, (
         f"{flag} hid the launched program ({spelling})"
     )
 
@@ -3002,7 +3002,7 @@ def test_sed_payload_blocked_in_any_pipeline_segment(command: str) -> None:
     ),
 )
 def test_two_reading_operands_never_hide_the_payload(segment: str) -> None:
-    assert _validate_segment(segment, "", True) is not None, (
+    assert _validate(segment) is not None, (
         f"a two-reading operand hid the payload: {segment}"
     )
 
@@ -3182,63 +3182,52 @@ def test_xargs_flag_arity_matches_the_manual(flag: str, arity: str) -> None:
         ), f"{flag} absorbed its cluster remainder as an attached value"
 
 
-class TestYoloLauncherConfinement:
-    # `--yolo` sets bypass_allowlist, so the allowlist stops constraining the
-    # segment at all and every launcher on it becomes unattended RCE. Blocking
-    # launchers outright is the same call already made for `rm -rf` and for
-    # `git config` exec keys (GHSA-2rr7-8xrw-gmhr): approval is not a control
-    # when nothing is there to approve.
+_UNCONFINED_UNDER_YOLO = (
+    "sh -c 'echo ok'",
+    "python3 -c 1",
+    "/bin/sh -c 'echo ok'",
+    "/usr/bin/xargs -n1 sh -c 'echo ok'",
+    "xargs python3 -c 1",
+    "xargs -n1 python3 -c 1",
+    "xargs -i python3 cat",
+    "xargs -R 2 python3 -c 1",
+    "uv run python -c 1",
+    "pytest",
+    "pre-commit run",
+    "find . -name x -exec python3 -c 1 ;",
+    "find . -name x -execdir python3 -c 1 +",
+    "xargs uv run python -c 1",
+    "xargs pytest",
+    "xargs xargs python3 -c 1",
+    "xargs find . -exec python3 {} ;",
+)
 
-    @pytest.mark.parametrize(
-        "command",
-        (
-            "xargs python3 -c \"import subprocess;subprocess.call(['id'])\"",
-            "uv run python -c 1",
-            # The `;` MUST be escaped. Unescaped, the shell parser consumes it
-            # as a separator and find fails on its own syntax, so the assertion
-            # passes against unfixed code and proves nothing.
-            'find . -name x -exec python3 -c "1" \\;',
-            'find . -name x -execdir python3 -c "1" +',
-            # A git global option that takes a separate value must not be
-            # mistaken for the subcommand: that would stop the scan before
-            # the `-c` behind it and wave the whole attack through.
-            # Unknown-flag bypass: `-J` was not in the value-flag set, so the
-            # scan stepped over it, read `cat` as the program, and let python3
-            # through. The scan now fails closed on any flag it cannot name.
-            'xargs -J cat python3 -c "1"',
-            # Bundled short flags and `--` are ordinary xargs spellings, so
-            # each is a route to the same bypass if the scan mishandles it.
-            'xargs -n1 python3 -c "1"',
-            'xargs -I{} python3 -c "1"',
-            'xargs -0pt python3 -c "1"',
-            'xargs -- python3 -c "1"',
-            # The GNU optional-argument spellings are asserted at the
-            # validator level instead (test_yolo_blocks_gnu_optional_arg_
-            # launchers below). This test executes the command, and BSD/macOS
-            # xargs rejects -i/-l/--replace/--max-lines/--eof itself, so
-            # `return_code != 0` would hold here even with a validator that
-            # allowed everything -- passing for the platform's reason rather
-            # than for the fix's.
-        ),
-    )
-    async def test_yolo_still_blocks_launchers(
-        self, temp_project_root: Path, command: str
-    ) -> None:
-        commander = ShellCommander(
-            str(temp_project_root), timeout=5, is_yolo=lambda: True
+
+class TestYoloLaunchers:
+    # Yolo turns the allowlist off, so it confines nothing: `sh -c` or an
+    # interpreter one-liner runs any program on PATH. Refusing the launchers
+    # the allowlist happens to hold (xargs, uv, pytest, pre-commit, find), or
+    # a path-qualified program name, only suggested otherwise, so under yolo
+    # they now run like everything else.
+
+    @pytest.mark.parametrize("command", _UNCONFINED_UNDER_YOLO)
+    def test_yolo_does_not_refuse_launchers(self, command: str) -> None:
+        assert _validate_segment(command, "", True) is None, (
+            f"yolo refused a command it cannot confine: {command}"
         )
-        tool = create_shell_command_tool(commander)
-        mock_ctx = MagicMock()
-        mock_ctx.tool_call_approved = False
-        result = await tool.function(mock_ctx, command)
-        assert result.return_code != 0, f"yolo executed a launcher: {command}"
+
+    @pytest.mark.parametrize("command", _UNCONFINED_UNDER_YOLO)
+    def test_normal_mode_still_refuses_or_asks(self, command: str) -> None:
+        assert _validate(command) is not None or _requires_approval(command), (
+            f"normal mode would run this unattended: {command}"
+        )
 
     @pytest.mark.parametrize(
         "command",
         (
-            # The over-block side of the same boundary. Without these, a
-            # scanner that simply blocked everything would satisfy every
-            # must-block case above.
+            # The over-block side of the shared git and xargs scanners.
+            # Without these, a scanner that simply blocked everything would
+            # satisfy every must-block case below.
             "git commit -c core.pager=x --allow-empty -m probe",
             "git -C . status",
             "git -c color.ui=always status",
@@ -3256,20 +3245,10 @@ class TestYoloLauncherConfinement:
         # unvetted, so neither may be refused.
         assert _validate_segment(command, "", True) is None
 
+    @pytest.mark.parametrize("bypass", (False, True))
     @pytest.mark.parametrize(
         "command",
         (
-            "xargs -i python3 cat",
-            "xargs --replace python3 cat",
-            "xargs -l node cat",
-            "xargs --max-lines python3 cat",
-            "xargs --eof python3 cat",
-            # Moved from the execution-level list: BSD xargs/find reject these
-            # themselves, and every git invocation exits 128 in the bare temp
-            # fixture, so `return_code != 0` held there with the validator
-            # fully disabled. Asserted against the validator, they discriminate
-            # on every platform.
-            'find . -name x -execdir python3 -c "1" +',
             "git -c alias.z=!id z",
             "git -c core.sshCommand=id status",
             "git --config-env=core.pager=EVIL log",
@@ -3285,25 +3264,20 @@ class TestYoloLauncherConfinement:
             "git --html-path -c core.pager=id log",
             "git --man-path -c core.sshCommand=id log",
             "git --info-path -c alias.z=!id z",
-            'xargs -R 2 python3 -c "1"',
-            'xargs -S 100 python3 -c "1"',
             'xargs --nosuchflag python3 -c "1"',
-            # A launcher nested under xargs must be vetted like a top-level
-            # segment: every launcher is itself allowlisted, so membership
-            # alone let `xargs uv run python -c ...` through (GHSA round 4).
-            "xargs uv run python -c 1",
-            "xargs pytest",
-            "xargs pre-commit run",
-            "xargs xargs python3 -c 1",
+            # A command nested under xargs is vetted like a top-level segment.
             "xargs git -c core.sshCommand=id status",
-            "xargs find . -exec python3 {} ;",
         ),
     )
-    def test_yolo_blocks_gnu_optional_arg_launchers(self, command: str) -> None:
-        # Asserted against the validator rather than by executing, so the
-        # result reflects the fix on every platform: BSD xargs rejects these
-        # spellings on its own, which would mask what is being tested.
-        assert _validate_segment(command, "", True) is not None
+    def test_shared_checks_refuse_in_both_modes(
+        self, command: str, bypass: bool
+    ) -> None:
+        # These checks exist for normal mode, where git and xargs are
+        # allowlisted, and run under yolo only because the code path is
+        # shared: there they are no boundary, since `sh -c` does the same
+        # thing. Asserted against the validator because every git invocation
+        # exits 128 in the bare temp fixture, whatever the validator decides.
+        assert _validate_segment(command, "", bypass) is not None
 
     @pytest.mark.parametrize(
         "command",
@@ -3499,12 +3473,11 @@ def test_exec_anchors_never_run_in_the_filename_slot() -> None:
 def test_path_qualified_program_names_are_refused() -> None:
     """A qualified argv[0] reaches none of the name-keyed guards.
 
-    Every guard compares `cmd_parts[0]` to a bare literal, so under --yolo
-    (allowlist bypassed) `/usr/bin/xargs -n1 sh -c id` was verified executing
-    with `rc=0` while bare `xargs` was blocked; the same held for sed, git and
-    rg. The qualified form is refused rather than reduced to a basename,
-    because the allowlist holds bare names and basenaming would also admit
-    `/tmp/evil/sed` -- a different binary wearing an allowlisted name.
+    Every guard compares `cmd_parts[0]` to a bare literal, so the allowlist is
+    what refuses the qualified form: it holds bare names, which also keeps out
+    `/tmp/evil/sed` -- a different binary wearing an allowlisted name, which
+    reducing to a basename would admit. Under yolo the allowlist is off, and
+    these run like any other command (TestYoloLaunchers).
     """
     allowlist = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
 
@@ -3517,12 +3490,10 @@ def test_path_qualified_program_names_are_refused() -> None:
         "./xargs -n1 sh -c id",
         "/tmp/evil/sed -e 1d f",
     ):
-        # Both modes: the allowlist is not what stops these under --yolo.
-        assert _validate_segment(command, allowlist, True), command
         assert _validate_segment(command, allowlist, False), command
 
     # The recursion must inherit the rule, not just the top-level segment.
-    assert _validate_segment("xargs /usr/bin/sh -c id", allowlist, True)
+    assert _validate_segment("xargs /usr/bin/sh -c id", allowlist, False)
 
     # Bare names are unaffected.
     for command in ("git status", "rg foo", "xargs -n1 cat", "sed -i 1d src/f.py"):

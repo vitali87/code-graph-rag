@@ -37,7 +37,7 @@ os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
 import atheris
 
 with atheris.instrument_imports():
-    from codebase_rag.constants import security as cs
+    from codebase_rag.config import settings
     from codebase_rag.tools.shell_command import (
         _check_pipeline_patterns,
         _check_segment_patterns,
@@ -128,7 +128,7 @@ def _classify(command: str) -> tuple[bool, str]:
         # executing empty commands would not show up as a mismatch.
         return True, "empty command"
 
-    available = ", ".join(sorted(cs.SHELL_LAUNCHER_COMMANDS))
+    available = ", ".join(sorted(settings.SHELL_COMMAND_ALLOWLIST))
     for group in groups:
         for segment in group.commands:
             segment = segment.strip()

@@ -1191,9 +1191,7 @@ def _rg_exec_flag(cmd_parts: list[str]) -> str | None:
     return _program_naming_flag(cmd_parts, cs.SHELL_RG_EXEC_FLAGS)
 
 
-def _is_dangerous_command(
-    cmd_parts: list[str], full_segment: str, bypass_allowlist: bool = False
-) -> tuple[bool, str]:
+def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool, str]:
     if not cmd_parts:
         return False, ""
 
@@ -1204,44 +1202,6 @@ def _is_dangerous_command(
 
     if _is_dangerous_rm(cmd_parts):
         return True, "rm with dangerous flags"
-
-    if bypass_allowlist and base_cmd in cs.SHELL_LAUNCHER_COMMANDS:
-        # Two launchers state what they will run and can be vetted even here;
-        # the rest take no inspectable argument and are blocked outright.
-        # `find` launches a program only via a mutating action, so read-only
-        # find stays usable under yolo -- the point of yolo is unattended work.
-        if base_cmd == cs.SHELL_CMD_XARGS:
-            index = _xargs_launched_index(cmd_parts)
-            if index is None:
-                # Bare xargs defaults to echo and launches nothing of its own.
-                confined = True
-            elif index < 0:
-                confined = False
-            else:
-                # Vet the launched command as a segment in its own right.
-                # Allowlist membership alone is not safety: every launcher is
-                # itself allowlisted, so `xargs uv run python -c ...` would
-                # otherwise pass the check that blocks `uv run python -c ...`.
-                launched_parts = cmd_parts[index:]
-                nested_dangerous, _ = _is_dangerous_command(
-                    launched_parts,
-                    " ".join(launched_parts),
-                    bypass_allowlist,
-                )
-                confined = (
-                    launched_parts[0] in settings.SHELL_COMMAND_ALLOWLIST
-                    and not nested_dangerous
-                )
-        elif base_cmd == cs.SHELL_CMD_FIND:
-            confined = not _find_requires_approval(cmd_parts)
-        else:
-            confined = False
-
-        if not confined:
-            return True, (
-                f"{base_cmd} launches arbitrary programs; blocked when the "
-                "allowlist is bypassed"
-            )
 
     if flag := _git_exec_flag(cmd_parts):
         return True, f"git {flag} names a program git will run"
@@ -1296,23 +1256,10 @@ def _validate_segment(
 
     base_cmd = cmd_parts[0]
 
-    # Every guard below keys on the program NAME, so a path-qualified spelling
-    # would reach none of them: `/usr/bin/xargs -n1 sh -c id` was verified
-    # executing under --yolo while bare `xargs` was blocked, and the same held
-    # for sed, git and rg. Refuse the qualified form outright rather than
-    # reduce it to a basename -- the allowlist holds bare names, so basenaming
-    # would also admit `/tmp/evil/sed`, a DIFFERENT binary wearing an
-    # allowlisted name. Refusing loses nothing: every allowlisted command is
-    # resolved through PATH at execution anyway.
-    if "/" in base_cmd or os.sep in base_cmd:
-        return te.COMMAND_DANGEROUS_BLOCKED.format(
-            cmd=base_cmd,
-            reason=(
-                "a path-qualified program name bypasses every name-keyed "
-                "check; invoke the command by its bare name"
-            ),
-        )
-
+    # The allowlist holds bare names, so it also refuses a path-qualified
+    # spelling (`/tmp/evil/sed`) that every name-keyed check below would miss.
+    # Under yolo nothing here is a boundary: the allowlist is off, and
+    # `sh -c` or an interpreter one-liner runs whatever these checks refuse.
     if not bypass_allowlist and base_cmd not in settings.SHELL_COMMAND_ALLOWLIST:
         suggestion = cs.GREP_SUGGESTION if base_cmd == cs.SHELL_CMD_GREP else ""
         return te.COMMAND_NOT_ALLOWED.format(
@@ -1349,7 +1296,7 @@ def _validate_segment(
         ):
             return nested
 
-    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment, bypass_allowlist)
+    is_dangerous, reason = _is_dangerous_command(cmd_parts, segment)
     if is_dangerous:
         return te.COMMAND_DANGEROUS_BLOCKED.format(cmd=base_cmd, reason=reason)
 

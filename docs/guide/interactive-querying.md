@@ -92,6 +92,25 @@ The interactive agent has access to these tools:
 | `find_duplicate_code` | Finds structurally duplicated functions and methods (copy-pastes, including renamed and lightly edited copies) by comparing AST fingerprints stored in the graph. Returns clone groups with file:line locations, largest first: 'exact' groups are certain copies, 'similar' pairs carry a branch-overlap score. Use it to answer DRY questions ('where is this logic repeated?') and before writing a new helper to check whether an implementation already exists. Tune with 'threshold' (0-1 similarity, default 0.8) and 'min_size' (skeleton nodes, filters trivial getters). |
 <!-- /SECTION:agentic_tools -->
 
+## YOLO Mode
+
+By default the agent asks before it runs a shell command or edits a file, and it
+only runs commands on an allowlist. Pressing **Shift+Tab** switches to YOLO
+mode, which turns both off. Pressing it at an approval prompt also approves the
+command waiting there. Press Shift+Tab again to switch back.
+
+**YOLO mode gives no protection.** The agent can run any program on your machine
+without asking: shells, interpreters and network tools such as `curl`, with your
+user's privileges and environment variables, including any API keys you have
+exported. A few checks from the default mode still run and refuse commands such
+as `rm -rf /`, but they are not a safeguard: the same command wrapped in
+`sh -c` runs. Anything the agent reads, including repository files, tool output
+and web research summaries, can steer it into running commands.
+
+Use YOLO mode only in a disposable, isolated environment, such as a container
+holding nothing you would mind losing or leaking. See the
+[Security Model](../architecture/security.md#agent-tools-and-untrusted-instructions).
+
 ## Intelligent File Editing
 
 The agent uses AST-based function targeting with Tree-sitter for precise code modifications:

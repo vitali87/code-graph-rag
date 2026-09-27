@@ -62,7 +62,7 @@ is a separate trust boundary between project changes and distributed artifacts.
 | Malicious input exploits a parser or corrupts analysis | Tree-sitter paths parse rather than run the analysed program; XML parsing uses `defusedxml`. | Parser bugs and incorrect results remain possible. Keep dependencies updated and verify security-sensitive conclusions. |
 | Repository build logic executes during indexing | C# defaults to Tree-sitter; Roslyn-backed modes require an explicit configuration choice. | Toolchain-backed analysis and preprocessing run with host privileges. Review the modes below and isolate untrusted workloads. |
 | Prompt injection steers the agent through repository or web content | CLI web research uses a separate agent with only the search tool; its summary is marked as untrusted data. | The main agent still interprets repository content and research summaries. These measures do not guarantee that it ignores malicious instructions; review proposed actions. |
-| Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed, and YOLO mode relaxes checks. Keep approvals enabled and restrict the account's privileges. |
+| Tool use modifies unintended files or executes unwanted commands | File tools validate project paths; default CLI shell execution uses command filtering and approval checks. | Commands are not OS-sandboxed. YOLO mode gives no protection: the agent can run any command without asking. Keep approvals enabled and restrict the account's privileges. |
 | Source code, queries or credentials reach an unintended recipient | Provider configuration controls destinations; CLI research/search checks queries against recorded repository content. | Remote inference intentionally sends data, and text matching is not comprehensive data-loss prevention. Audit providers, MCP clients and tool egress; keep secrets out of inputs. |
 | Unauthorized access to graph data or privileged MCP tools | New database stacks bind loopback by default; HTTP MCP requires a bearer token for a non-loopback bind. | Old Compose files can remain exposed; loopback is not per-user isolation. Protect remote transport, tokens and host access. |
 | Large inputs, queries or tool calls exhaust resources | Shell pipelines, search requests and several toolchain calls have timeouts. | These are not global CPU, memory, disk or request quotas. Apply resource limits and avoid exposing the service to untrusted workloads. |
@@ -180,8 +180,17 @@ access and trust in the MCP client.
 
 The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
-paths against the target project root. YOLO mode relaxes approval and allowlist
-checks, while destructive-path screening remains.
+paths against the target project root.
+
+YOLO mode, toggled with Shift+Tab in the CLI, gives no protection. It turns off
+both the approval prompt and the allowlist, so the agent can run any program on
+the host without asking, with the user's privileges and inherited environment,
+including network tools such as `curl`. The default mode's command checks still
+run because the code is shared, and they refuse a few commands such as
+`rm -rf /`, but they are not a boundary: the same command wrapped in `sh -c` or
+an interpreter one-liner runs. Any repository text, tool result or web summary
+that steers the model can therefore run commands. Use YOLO mode only in a
+disposable, isolated environment. The MCP server has no YOLO mode.
 
 Graph queries written by the model are treated as untrusted and must stay
 read-only. They are screened as text first: write keywords outside string

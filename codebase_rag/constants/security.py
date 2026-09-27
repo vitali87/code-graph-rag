@@ -302,13 +302,7 @@ SHELL_GIT_REPO_LOCATION_FLAGS = frozenset({"-C", "--git-dir", "--work-tree"})
 SHELL_GIT_INLINE_CONFIG_FLAGS = frozenset({"-c", "--config-env"})
 
 SHELL_CMD_XARGS = "xargs"
-SHELL_CMD_FIND = "find"
 
-# Allowlisted commands that are general-purpose program launchers: each can be
-# steered into running a program the allowlist never vetted. Under `--yolo` the
-# allowlist is bypassed wholesale, so these are blocked outright there rather
-# than merely gated behind an approval nobody is present to give
-# (GHSA-wvxg-744g-6pcg).
 # Depth cap for launcher-nesting recursion. Each level consumes at least one
 # token, so real commands never approach it; the cap converts a pathological
 # input from a runtime RecursionError into a validator refusal.
@@ -555,9 +549,6 @@ SHELL_AWK_EXEC_TOKENS = (
     # output list, which is what distinguishes it from a `>` comparison
     # (`NR>1`), so match the construct rather than the target's spelling.
 )
-
-SHELL_LAUNCHER_COMMANDS = frozenset({"xargs", "uv", "pytest", "pre-commit", "find"})
-
 
 # `xargs` flags that take a separate value argument; the value is not the
 # command xargs will launch, so the scan must step over both (GHSA-wvxg-744g-6pcg).
