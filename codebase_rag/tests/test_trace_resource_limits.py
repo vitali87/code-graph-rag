@@ -146,7 +146,7 @@ def _trickle_server(*, in_headers: bool) -> Iterator[tuple[str, threading.Event]
                     return
                 time.sleep(0.05)
 
-        def log_message(self, *_args: object) -> None:
+        def log_message(self, *_args: str) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -178,7 +178,7 @@ def test_a_trickling_server_is_abandoned_at_the_timeout(in_headers: bool) -> Non
 def test_a_fetch_error_is_raised_not_reported_as_a_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def broken(*_args: object) -> bytes:
+    def broken(_url: str, _headers: tuple[str, ...], _timeout: float) -> bytes:
         raise ValueError("bad port")
 
     monkeypatch.setattr(trace_cli, "_fetch_pprof", broken)
