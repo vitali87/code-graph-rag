@@ -876,7 +876,8 @@ def test_the_bound_apps_run_on_a_later_page_is_found(
     stream = "\n".join(json.dumps(page) for page in pages)
     monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", lambda *_a: stream)
     runs = check_pr_gated.head_check_runs("abc123", REQUIRED_CONTEXT)
-    assert runs is not None and len(runs) == 101
+    assert runs is not None
+    assert len(runs) == 101
     assert (
         check_pr_gated.app_binding_reasons(REQUIRED_CONTEXT, {_BOUND_APP}, runs) == []
     )
