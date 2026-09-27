@@ -2716,8 +2716,20 @@ class GraphUpdater:
             # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
                 continue
-            # A survivor of a stem in flux re-parses unseeded (issue #1569).
+            # A survivor of a stem in flux re-parses unseeded (issue #1569),
+            # on the same terms `_forget_flux_stem_qns` applies to an
+            # in-memory claim: one that cannot be opened is not re-parsed and
+            # keeps its qn, and one that opens has its claim recorded so a
+            # failed read can restore it. A fresh updater holds no in-memory
+            # claim, so without this the graph's was the only copy, and an
+            # added sibling took the bare qn from under the unread survivor's
+            # subtree (issue #2232).
             if _stem_key(path) in flux_stems:
+                survivor = self.repo_path / path
+                if not _opens_for_reading(survivor):
+                    module_map.setdefault(qn, survivor)
+                else:
+                    self._forgotten_flux_claims.setdefault(path, (qn, survivor))
                 continue
             module_map.setdefault(qn, self.repo_path / path)
 
