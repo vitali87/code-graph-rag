@@ -1026,3 +1026,84 @@ public class A {
         source.endswith("App.A.Run") and ".Parsing.Parse(" in target
         for source, target in pairs
     ), pairs
+
+
+def test_bare_calls_bind_defaulted_and_params_overloads(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # A bare call that omits a defaulted argument or expands a `params`
+    # tail matches no overload by exact arity. The name-wide fallback used
+    # to catch it; with that closed to bare calls (#2005) the enclosing type
+    # and `using static` tiers must accept a compatible arity themselves
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static int Opt(int a, int b = 1) => a;
+    public static int Many(params int[] xs) => 0;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.H;
+namespace App;
+public class A {
+    void Log(string m, int level = 0) { }
+    void Sum(params int[] xs) { }
+    public void Run() { Log("x"); Sum(1, 2, 3); Opt(1); Many(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    for callee in ("A.Log(string, int)", "A.Sum(int[])", "H.Opt(int, int)"):
+        assert any(t.endswith(callee) for t in targets), (callee, targets)
+    assert any(t.endswith("H.Many(int[])") for t in targets), targets
+
+
+def test_extra_arguments_without_a_params_tail_bind_nothing(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # MORE arguments than parameters compiles only through `params`, so a
+    # non-array tail is no candidate and the call stays unresolved.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void Handler(int a) { }
+    public void Run() { Handler(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert not any("Handler" in t for t in targets), targets
+
+
+def test_an_exact_arity_overload_beats_a_defaulted_one(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # C# prefers the overload that needs no default filled in.
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void Log(string m) { }
+    void Log(string m, int level = 0) { }
+    public void Run() { Log("x"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.Log(string)") for t in targets), targets
+    assert not any(t.endswith("A.Log(string, int)") for t in targets), targets

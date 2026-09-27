@@ -66,6 +66,42 @@ def _arity(leaf: str) -> int:
     return count
 
 
+def _param_types(leaf: str) -> list[str]:
+    # The depth-0 parameter types of a signatured leaf, split as _arity
+    # counts them: `M(int, Dictionary<K, V>)` -> ["int", "Dictionary<K, V>"].
+    open_idx = leaf.find(cs.CHAR_PAREN_OPEN)
+    if open_idx < 0:
+        return []
+    inner = leaf[open_idx + 1 : leaf.rfind(cs.CHAR_PAREN_CLOSE)]
+    if not inner.strip():
+        return []
+    types: list[str] = []
+    depth = 0
+    start = 0
+    for idx, ch in enumerate(inner):
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        elif ch == cs.CHAR_COMMA and depth == 0:
+            types.append(inner[start:idx].strip())
+            start = idx + 1
+    types.append(inner[start:].strip())
+    return types
+
+
+def _accepts_arg_count(leaf: str, arg_count: int) -> bool:
+    # Can a call with `arg_count` arguments bind this overload without an
+    # exact arity match? The signature records parameter TYPES only, so:
+    # FEWER arguments than parameters compiles only when the rest have
+    # defaults, which a compiling call site vouches for; MORE compiles only
+    # through a trailing `params T[]`, whose type is an array.
+    types = _param_types(leaf)
+    if arg_count < len(types):
+        return True
+    return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
+
+
 class _Sentinel:
     """Distinct from every real result, including None."""
 
@@ -702,7 +738,7 @@ class CSharpTypeInferenceEngine:
         # generic_name, `M(...)` a plain identifier).
         generic_call = func.type == cs.TS_CSHARP_GENERIC_NAME
         for class_qn in self._caller_class_candidates(caller_qn, module_qn):
-            matches = self._find_arity_matches_across_parts(class_qn, name, arg_count)
+            matches = self._find_bare_call_matches(class_qn, name, arg_count)
             if matches:
                 preferred = [
                     m
@@ -752,6 +788,15 @@ class CSharpTypeInferenceEngine:
                 type_qn, name, arg_count
             )
         families = [matches for matches in matches_by_type.values() if matches]
+        if not families:
+            # Exact arity first, as C# prefers the unexpanded form; only when
+            # no imported type has one may a defaulted or `params` overload
+            # bind (CodeRabbit, PR #2036).
+            families = [
+                matches
+                for type_qn in matches_by_type
+                if (matches := self._find_compatible_matches(type_qn, name, arg_count))
+            ]
         if len(families) == 1:
             (matches,) = families
             preferred = [
@@ -1571,6 +1616,29 @@ class CSharpTypeInferenceEngine:
             self._collect_arity_matches(root, method_name, arg_count, seen, out)
         return out
 
+    def _find_bare_call_matches(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> list[str]:
+        # A bare call no longer falls to the name-wide trie (#2005), so an
+        # overload bound through a default or a `params` tail must be found
+        # here; exact arity still wins when the type has one.
+        return self._find_arity_matches_across_parts(
+            class_qn, method_name, arg_count
+        ) or self._find_compatible_matches(class_qn, method_name, arg_count)
+
+    def _find_compatible_matches(
+        self, class_qn: str, method_name: str, arg_count: int
+    ) -> list[str]:
+        # Nearest parameter count first, the overload C#'s betterness rules
+        # favour (fewest defaults filled, fewest `params` elements).
+        seen: set[str] = set()
+        out: list[str] = []
+        for root in self._partial_roots(class_qn):
+            self._collect_arity_matches(
+                root, method_name, arg_count, seen, out, compatible=True
+            )
+        return sorted(out, key=lambda qn: abs(_arity(qn) - arg_count))
+
     def _collect_arity_matches(
         self,
         class_qn: str,
@@ -1578,6 +1646,7 @@ class CSharpTypeInferenceEngine:
         arg_count: int,
         seen: set[str],
         out: list[str],
+        compatible: bool = False,
     ) -> None:
         if class_qn in seen:
             return
@@ -1586,10 +1655,16 @@ class CSharpTypeInferenceEngine:
         out.extend(
             qn
             for qn in self._direct_same_name_methods(class_qn, method_name)
-            if _arity(qn[len(prefix) :]) == arg_count
+            if (
+                _accepts_arg_count(qn[len(prefix) :], arg_count)
+                if compatible
+                else _arity(qn[len(prefix) :]) == arg_count
+            )
         )
         for base_qn in self.class_inheritance.get(class_qn, []):
-            self._collect_arity_matches(base_qn, method_name, arg_count, seen, out)
+            self._collect_arity_matches(
+                base_qn, method_name, arg_count, seen, out, compatible
+            )
 
     def csharp_same_arity_family(self, method_qn: str) -> list[str]:
         # Signature-suffixed siblings of a resolved bare call that differ
