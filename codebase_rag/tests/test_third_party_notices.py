@@ -1249,3 +1249,73 @@ class TestNativeNoticesEndToEnd:
 
         assert not output.exists()
         assert "native libraries cannot be checked" in capsys.readouterr().err
+
+
+class TestCPythonIncorporatedSoftware:
+    """Code CPython compiles into its own modules has no library file to find.
+
+    The v0.0.996 Linux binary carries libmpdec inside `_decimal`, Expat inside
+    `pyexpat` and HACL* inside `_sha2`/`_md5` with no separate `.so`, so the
+    native-library scan cannot see them (#2174).
+    """
+
+    def test_the_cpython_notice_carries_incorporated_software(
+        self, notices: ModuleType
+    ) -> None:
+        cpython = notices.native_notices(None)[0]
+
+        assert len(cpython.texts) == 2
+        incorporated = cpython.texts[1]
+        assert "Licenses and Acknowledgements for Incorporated Software" in incorporated
+        assert "libmpdec" in incorporated
+        assert "expat" in incorporated
+        assert "HACL* Contributors" in incorporated
+
+    def test_an_unvendored_python_minor_refuses_the_notice(
+        self, notices: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Python upgrade must bring its own list, not reuse an older one."""
+        monkeypatch.setattr(
+            notices.platform, "python_version_tuple", lambda: ("3", "99", "0")
+        )
+
+        with pytest.raises(notices.NativeLicenseError, match="cpython-3.99"):
+            notices.native_notices(None)
+
+
+class TestBootloaderNotice:
+    def test_the_bootloader_licence_and_exception_are_reproduced(
+        self, notices: ModuleType
+    ) -> None:
+        from importlib.metadata import version
+
+        notice = notices.bootloader_notice()
+
+        assert notice.name == "PyInstaller bootloader"
+        assert notice.version == version("pyinstaller")
+        assert notice.license == "GPL-2.0-or-later WITH Bootloader-exception"
+        assert "Bootloader Exception" in "\n".join(notice.texts)
+
+    def test_a_missing_pyinstaller_refuses_the_notice(
+        self, notices: ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from importlib.metadata import PackageNotFoundError
+
+        def _missing(name: str) -> None:
+            raise PackageNotFoundError(name)
+
+        monkeypatch.setattr(notices, "distribution", _missing)
+
+        with pytest.raises(notices.NativeLicenseError, match="bootloader"):
+            notices.bootloader_notice()
+
+    def test_main_writes_the_bootloader_and_incorporated_software(
+        self, notices: ModuleType, tmp_path: Path
+    ) -> None:
+        output = tmp_path / "notices.txt"
+
+        assert notices.main(["--output", str(output)]) == 0
+
+        text = output.read_text(encoding="utf-8")
+        assert "\nPyInstaller bootloader " in text
+        assert "Licenses and Acknowledgements for Incorporated Software" in text
