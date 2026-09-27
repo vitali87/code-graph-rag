@@ -15,9 +15,13 @@ import pytest
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 from codebase_rag.graph_updater import (
+    _EMPTY_DELOMBOK_STATE,
     GraphUpdater,
+    _load_delombok_state,
+    _load_dir_mtimes,
     _load_exclusion_state,
     _load_hash_cache,
+    _load_project_stamps,
 )
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.utils.json_io import loads_json
@@ -87,4 +91,7 @@ def test_deep_state_files_read_as_absent(temp_repo: Path) -> None:
     stamp.write_text(_DEEP, encoding="utf-8")
 
     assert _load_hash_cache(cache) == {}
+    assert _load_dir_mtimes(cache) == {}
     assert _load_exclusion_state(stamp) is None
+    assert _load_project_stamps(stamp) == {}
+    assert _load_delombok_state(stamp) == _EMPTY_DELOMBOK_STATE
