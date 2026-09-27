@@ -3349,21 +3349,46 @@ class FlowProcessor:
         has_else = False
         for clause in node.children:
             if clause.type == cs.TS_PY_ELIF_CLAUSE:
-                elif_cond = clause.child_by_field_name(cs.TS_FIELD_CONDITION)
-                if elif_cond is not None:
-                    state = self._walk_stmt(elif_cond, state, ctx)
-                elif_body = clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE)
-                if elif_body is not None:
-                    branch_exits.append(self._walk_stmt(elif_body, dict(state), ctx))
+                state = self._walk_elif(clause, state, ctx, branch_exits)
             elif clause.type == cs.TS_PY_ELSE_CLAUSE:
                 has_else = True
-                else_body = clause.child_by_field_name(cs.FIELD_BODY)
-                if else_body is not None:
-                    branch_exits.append(self._walk_stmt(else_body, dict(state), ctx))
+                self._walk_branch(
+                    clause.child_by_field_name(cs.FIELD_BODY), state, ctx, branch_exits
+                )
         # No else means the skip path preserves the incoming state.
         if not has_else:
             branch_exits.append(dict(state))
         return self._merge(branch_exits) if branch_exits else state
+
+    def _walk_elif(
+        self,
+        clause: Node,
+        state: _TaintMap,
+        ctx: _FlowCtx,
+        branch_exits: list[_TaintMap],
+    ) -> _TaintMap:
+        # An elif condition runs on every path that reaches it, so it
+        # advances the shared state; its body is one more exclusive branch.
+        elif_cond = clause.child_by_field_name(cs.TS_FIELD_CONDITION)
+        if elif_cond is not None:
+            state = self._walk_stmt(elif_cond, state, ctx)
+        self._walk_branch(
+            clause.child_by_field_name(cs.TS_FIELD_CONSEQUENCE),
+            state,
+            ctx,
+            branch_exits,
+        )
+        return state
+
+    def _walk_branch(
+        self,
+        body: Node | None,
+        state: _TaintMap,
+        ctx: _FlowCtx,
+        branch_exits: list[_TaintMap],
+    ) -> None:
+        if body is not None:
+            branch_exits.append(self._walk_stmt(body, dict(state), ctx))
 
     def _walk_loop(self, node: Node, state: _TaintMap, ctx: _FlowCtx) -> _TaintMap:
         # The while-condition / for-iterable runs before the body.
