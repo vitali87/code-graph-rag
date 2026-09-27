@@ -574,6 +574,25 @@ def _cpp_include_local_name(include_path: str) -> str:
     return header_name
 
 
+def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
+    """Return (imported dotted path, local name) for one `use` clause."""
+    qn_node = next(
+        (c for c in clause.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
+        None,
+    )
+    if not qn_node:
+        return None
+    imported_path = safe_decode_with_fallback(qn_node)
+    if not imported_path:
+        return None
+    imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
+    if alias_node and alias_node.text:
+        return imported_path, safe_decode_with_fallback(alias_node)
+    parts = imported_path.split(cs.SEPARATOR_DOT)
+    return imported_path, parts[-1] if parts else imported_path
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -3585,29 +3604,33 @@ class ImportProcessor:
             ):
                 continue
             arg = next((a for a in args_node.children if a.type == cs.TS_STRING), None)
-            if arg is None:
-                continue
-            # A CommonJS `require()` reads a dual-package exports map from
-            # the require side.
-            require_text = safe_decode_with_fallback(arg).strip("'\"")
-            resolved_module = self._resolve_js_module_path(
-                require_text, current_module, True
-            )
-            self._note_unresolved_js_specifier(current_module, require_text)
-            if name_node.type == cs.TS_IDENTIFIER:
-                # `const fs = require('fs')`: bind the whole module.
-                var_name = safe_decode_with_fallback(name_node)
-                self.import_mapping[current_module][var_name] = resolved_module
-                self._record_import_site(current_module, var_name, decl_node)
-                logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
-            elif name_node.type == cs.TS_OBJECT_PATTERN:
-                # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
-                # local to module.imported, mirroring how ESM named imports resolve.
-                for local, imported in _js_destructured_names(name_node):
-                    full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
-                    self.import_mapping[current_module][local] = full
-                    self._record_import_site(current_module, local, decl_node, imported)
-                    logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
+            if arg is not None:
+                self._bind_js_require(name_node, arg, decl_node, current_module)
+
+    def _bind_js_require(
+        self, name_node: Node, arg: Node, decl_node: Node, current_module: str
+    ) -> None:
+        # A CommonJS `require()` reads a dual-package exports map from the
+        # require side.
+        require_text = safe_decode_with_fallback(arg).strip("'\"")
+        resolved_module = self._resolve_js_module_path(
+            require_text, current_module, True
+        )
+        self._note_unresolved_js_specifier(current_module, require_text)
+        if name_node.type == cs.TS_IDENTIFIER:
+            # `const fs = require('fs')`: bind the whole module.
+            var_name = safe_decode_with_fallback(name_node)
+            self.import_mapping[current_module][var_name] = resolved_module
+            self._record_import_site(current_module, var_name, decl_node)
+            logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
+        elif name_node.type == cs.TS_OBJECT_PATTERN:
+            # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
+            # local to module.imported, mirroring how ESM named imports resolve.
+            for local, imported in _js_destructured_names(name_node):
+                full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
+                self.import_mapping[current_module][local] = full
+                self._record_import_site(current_module, local, decl_node, imported)
+                logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
         source_module = None
@@ -4707,22 +4730,10 @@ class ImportProcessor:
         for child in use_node.named_children:
             if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
                 continue
-            qn_node = next(
-                (c for c in child.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
-                None,
-            )
-            if not qn_node:
+            binding = _php_use_clause_binding(child)
+            if binding is None:
                 continue
-            imported_path = safe_decode_with_fallback(qn_node)
-            if not imported_path:
-                continue
-            imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
-            alias_node = child.child_by_field_name("alias")
-            if alias_node and alias_node.text:
-                local_name = safe_decode_with_fallback(alias_node)
-            else:
-                parts = imported_path.split(cs.SEPARATOR_DOT)
-                local_name = parts[-1] if parts else imported_path
+            imported_path, local_name = binding
             self.import_mapping[module_qn][local_name] = imported_path
             self._record_import_site(
                 module_qn,
