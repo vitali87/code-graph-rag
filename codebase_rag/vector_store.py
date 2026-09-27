@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import atexit
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
@@ -12,7 +12,12 @@ from loguru import logger
 from . import exceptions as ex
 from . import logs as ls
 from .config import settings
-from .constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME, VectorStoreBackend
+from .constants import (
+    PAYLOAD_NODE_ID,
+    PAYLOAD_QUALIFIED_NAME,
+    VECTOR_DIM_SETTINGS,
+    VectorStoreBackend,
+)
 from .utils.dependencies import has_pymilvus, has_qdrant_client
 
 _RETRIEVE_BATCH_SIZE = 1000
@@ -629,6 +634,31 @@ def _uses_milvus_lite_30_cosine_distance() -> bool:
     return lite_version.startswith("3.0")
 
 
+def _configured_vector_dim(backend: VectorStoreBackend) -> int:
+    if backend == VectorStoreBackend.MILVUS:
+        return settings.MILVUS_VECTOR_DIM
+    return settings.QDRANT_VECTOR_DIM
+
+
+def _check_vector_dims(
+    backend: VectorStoreBackend, vectors: Iterable[list[float]]
+) -> None:
+    # A model whose output size differs from the collection's fails every
+    # write with an opaque backend error, which the batch wrapper swallows
+    # one batch at a time; raising here names the setting to change once.
+    expected = _configured_vector_dim(backend)
+    for vector in vectors:
+        if len(vector) != expected:
+            raise ValueError(
+                ex.EMBEDDING_DIM_MISMATCH.format(
+                    dim=len(vector),
+                    backend=backend,
+                    expected=expected,
+                    setting=VECTOR_DIM_SETTINGS[backend],
+                )
+            )
+
+
 def store_embedding(node_id: int, embedding: list[float], qualified_name: str) -> None:
     store_embedding_batch([(node_id, embedding, qualified_name)])
 
@@ -637,6 +667,7 @@ def store_embedding_batch(points: Sequence[tuple[int, list[float], str]]) -> int
     vector_store = _get_vector_store()
     if vector_store is None:
         return 0
+    _check_vector_dims(vector_store.backend, (emb for _, emb, _ in points))
     return vector_store.store_embedding_batch(points)
 
 
@@ -669,4 +700,5 @@ def search_embeddings(
     vector_store = _get_vector_store()
     if vector_store is None:
         return []
+    _check_vector_dims(vector_store.backend, (query_embedding,))
     return vector_store.search_embeddings(query_embedding, top_k=top_k, project=project)
