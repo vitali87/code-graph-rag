@@ -21,7 +21,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import cgr_state
+from . import (
+    _cli_env,  # noqa: F401  (must run before settings load)
+    cgr_state,
+)
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
@@ -104,6 +107,13 @@ def delete_project_embeddings(*args: Any, **kwargs: Any) -> None:
     from .vector_store import delete_project_embeddings as impl
 
     return impl(*args, **kwargs)
+
+
+def _import_vector_store() -> None:
+    # The embedding wrappers import lazily. A clean run resolves the module
+    # before it wipes anything, so a broken install stops with the graph
+    # intact rather than after `clean_database`.
+    importlib.import_module(".vector_store", __package__)
 
 
 def update_model_settings(*args: Any, **kwargs: Any) -> None:
@@ -446,6 +456,12 @@ def _run_graph_sync(
     skip_embeddings: bool | None = None,
     assume_yes: bool = False,
 ) -> None:
+    # Resolved before any graph write: see `_import_vector_store`.
+    from .graph_updater import GraphUpdater
+
+    if clean:
+        _import_vector_store()
+
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
     exclude_paths = cli_excludes | cgrignore.exclude or None
@@ -472,8 +488,6 @@ def _run_graph_sync(
         ingestor.ensure_constraints()
 
         parsers, queries = load_parsers()
-
-        from .graph_updater import GraphUpdater
 
         updater = GraphUpdater(
             ingestor=ingestor,
@@ -703,6 +717,7 @@ def start(
 
     if clean and not update_graph:
         repo_to_clean = Path(target_repo_path)
+        _import_vector_store()
         with connect_memgraph(effective_batch_size) as ingestor:
             _confirm_destructive_clean(ingestor, resolved_project_name, yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
