@@ -26,6 +26,7 @@ from .ast_cache import BoundedASTCache
 from .capture import CaptureSelection, default_capture
 from .config import settings
 from .function_registry import FunctionRegistryTrie
+from .gloss_anchor import ParsedSource, parse_source
 from .gloss_repair import repair_unanchored
 from .language_spec import (
     LANGUAGE_FQN_SPECS,
@@ -850,6 +851,37 @@ def _project_root_for_single_file(target: Path) -> Path:
     return git_root if git_root is not None else target.parent
 
 
+def _definition_names(node: Node) -> set[str]:
+    """Simple names a captured definition node declares: its `name` field, or
+    the `name` fields of its named children (a Go `type_declaration` holds
+    `type_spec`s), or the identifier under a C++ declarator chain."""
+    names: set[str] = set()
+    if (name := node.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+        names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+        return names
+    declarator = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    while declarator is not None:
+        inner = declarator.child_by_field_name(cs.FIELD_DECLARATOR)
+        if inner is None:
+            if declarator.text:
+                names.add(declarator.text.decode(cs.ENCODING_UTF8, errors="replace"))
+            break
+        declarator = inner
+    if names:
+        return names
+    for child in node.named_children:
+        if (name := child.child_by_field_name(cs.FIELD_NAME)) is not None and name.text:
+            names.add(name.text.decode(cs.ENCODING_UTF8, errors="replace"))
+    return names
+
+
+def _read_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -978,6 +1010,11 @@ class GraphUpdater:
         # Module qns read back from the graph on incremental runs; deferred
         # import verification counts them as real internal targets.
         self._rehydrated_module_qns: set[str] = set()
+        # Registered project names, read once per run (issue #1970).
+        self._registered_projects: list[str] | None = None
+        # Whether that read failed: the list then holds this project alone,
+        # which cannot tell a nested project's rows from this one's.
+        self._registry_unread = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1686,6 +1723,8 @@ class GraphUpdater:
         # discard dead code (issue #1647).
         self._cache_discarded_in_memory = False
         self._parser_changed = False
+        self._registered_projects = None
+        self._registry_unread = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -1819,6 +1858,13 @@ class GraphUpdater:
         # this run deleted or renamed, so every run starts Pass 3 with empty
         # caches, as the watcher's per-event pass already does (issue #1575).
         self.factory.call_processor.reset_resolution_caches()
+        # A run that re-parses every file re-walks every file, so the
+        # callable-flow records start empty: a reused updater's records for a
+        # file deleted since would otherwise keep emitting its call sites'
+        # edges. An incremental run keeps them, since finalize still needs the
+        # seeds of files it does not re-walk.
+        if self._is_full_build:
+            self.factory.call_processor.reset_callable_flow()
         logger.info(ls.PASS_3_CALLS)
         self._process_function_calls()
 
@@ -1834,6 +1880,7 @@ class GraphUpdater:
         # LINQ query-operator edges join AFTER Pass 3 with the complete
         # function-location registry (both ends must be registered nodes).
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
 
         self.factory.definition_processor.process_all_method_overrides()
 
@@ -2098,6 +2145,12 @@ class GraphUpdater:
         # cleanup prunes the outdated endpoint node.
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        # With the registry unread, ownership degrades to the prefix rule and
+        # `svc.v2`'s handlers can pass as `svc`'s, so no delete runs at all;
+        # emission only MERGEs, and the next healthy run cleans up
+        # (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
@@ -2129,6 +2182,10 @@ class GraphUpdater:
         # Ownership is the DEFINES containment closure from each Module
         # node, so prefix-sharing sibling modules keep their endpoints.
         if not isinstance(self.ingestor, QueryProtocol):
+            return
+        # Same reason as the handler cleanup: a seeded module map can hold a
+        # sibling project's modules when the registry could not be read.
+        if self._registry_unread:
             return
         try:
             self.ingestor.execute_write(
@@ -2212,8 +2269,15 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
+        # These modules feed the EXPOSES cleanup, a DELETE. With the registry
+        # unread, ownership degrades to the prefix rule and `svc.v2`'s
+        # modules pass as `svc`'s, so read nothing, as a failed module read
+        # does; the next healthy run cleans up (CodeRabbit, PR #2129).
+        if self._registry_unread:
+            return []
         return out
 
     def _rehydrated_route_handlers(
@@ -2227,7 +2291,8 @@ class GraphUpdater:
         except Exception:
             return []
         out: list[tuple[cs.NodeLabel, str, list[str], str | None]] = []
-        for row in rows:
+        # `svc.` also selects `svc.v2`'s handlers (issue #2126).
+        for row in self._owned_rows(rows, cs.KEY_QUALIFIED_NAME):
             if not isinstance(row, dict):
                 continue
             entry = _route_handler_entry(row, already_pending, module_qns)
@@ -2270,7 +2335,8 @@ class GraphUpdater:
             if not isinstance(row, dict):
                 continue
             qn, rel_path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
-            if isinstance(qn, str) and isinstance(rel_path, str):
+            # `svc.` also selects `svc.v2`'s modules (issues #2126, #1991).
+            if isinstance(qn, str) and isinstance(rel_path, str) and self._owns(qn):
                 out.append((qn, self.repo_path / rel_path))
         return out
 
@@ -2342,8 +2408,11 @@ class GraphUpdater:
             # A full build re-parses every file: ingest queues everything.
             return
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_PROJECT_PARAMETER_TYPES, project_params
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2380,7 +2449,10 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params)
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_FIELD_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_field_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
@@ -2400,6 +2472,49 @@ class GraphUpdater:
                 )
             )
 
+    def _registered_project_names(self) -> list[str]:
+        """Every project the graph holds, longest name first, read once per
+        run. Degrades to this project alone, which keeps the prefix rule."""
+        if self._registered_projects is not None:
+            return self._registered_projects
+        names: set[str] = {self.project_name}
+        try:
+            rows = self.ingestor.fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="registered projects")
+            self._registry_unread = True
+            rows = []
+        for row in rows:
+            name = row.get(cs.KEY_NAME)
+            if isinstance(name, str) and name:
+                names.add(name)
+        registered = sorted(names, key=str.__len__, reverse=True)
+        self._registered_projects = registered
+        return registered
+
+    def _owns(self, qn: str) -> bool:
+        """Whether this project, not another whose name it is a dotted prefix
+        of, owns `qn`. Every rehydration read is scoped by `STARTS WITH
+        $project_prefix`, and `svc.` selects `svc.v2`'s rows too; the owner
+        is the LONGEST registered project name the qn sits under, the way
+        `gloss_repair._projects_of` decides it (issue #1970)."""
+        if qn != self.project_name and not qn.startswith(
+            f"{self.project_name}{cs.SEPARATOR_DOT}"
+        ):
+            return False
+        for name in self._registered_project_names():
+            if qn == name or qn.startswith(f"{name}{cs.SEPARATOR_DOT}"):
+                return name == self.project_name
+        return True
+
+    def _owned_rows(self, rows: list[ResultRow], key: str) -> list[ResultRow]:
+        """`rows` whose `key` names a qualified name this project owns."""
+        return [
+            row
+            for row in rows
+            if isinstance(qn := row.get(key), str) and self._owns(qn)
+        ]
+
     def _rehydrate_registry_from_graph(self) -> None:
         # Incremental runs populate the function registry only from re-parsed
         # files. Read every definition's qualified name back from the graph and
@@ -2412,7 +2527,10 @@ class GraphUpdater:
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
-            rows = self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params)
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_DEFINITION_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
+            )
         except Exception:
             # Rehydration completes cross-file resolution for files this run
             # did not re-parse: a FULL build parsed them all, so it degrades
@@ -2504,8 +2622,9 @@ class GraphUpdater:
         # C++20 module-impl resolution must count them as real targets, or
         # an incremental run would drop edges a clean index emits.
         try:
-            module_rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_MODULE_QNS, project_params
+            module_rows = self._owned_rows(
+                self.ingestor.fetch_all(cs.CYPHER_ALL_MODULE_QNS, project_params),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2570,6 +2689,13 @@ class GraphUpdater:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             path = row.get(cs.KEY_PATH)
             if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            # The read is unscoped, so a nested project's row reaches here.
+            # Paths are RELATIVE, so `svc.v2`'s `api.py` passes the
+            # eligible_paths guard below and would seed `svc.v2.api` onto
+            # THIS project's api.py -- the cross-project ownership bug this
+            # change exists to close (issue #1970).
+            if not self._owns(qn):
                 continue
             if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
                 continue
@@ -2666,9 +2792,12 @@ class GraphUpdater:
             return
         class_inheritance = self.factory.definition_processor.class_inheritance
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_INHERITS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_INHERITS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_CHILD_QN,
             )
         except Exception:
             if not self._is_full_build:
@@ -2724,9 +2853,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.csharp_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_CSHARP_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2765,9 +2897,12 @@ class GraphUpdater:
             return
         locations = self.factory.definition_processor.go_type_locations
         try:
-            rows = self.ingestor.fetch_all(
-                cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
-                {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+            rows = self._owned_rows(
+                self.ingestor.fetch_all(
+                    cs.CYPHER_ALL_GO_TYPE_LOCATIONS,
+                    {cs.KEY_PROJECT_PREFIX: self.project_name + "."},
+                ),
+                cs.KEY_QUALIFIED_NAME,
             )
         except Exception:
             if not self._is_full_build:
@@ -2816,7 +2951,9 @@ class GraphUpdater:
             cs.CYPHER_ALL_METHOD_LOCATIONS,
         ):
             try:
-                rows = self.ingestor.fetch_all(query, params)
+                rows = self._owned_rows(
+                    self.ingestor.fetch_all(query, params), cs.KEY_QUALIFIED_NAME
+                )
             except Exception:
                 if not self._is_full_build:
                     raise
@@ -2972,6 +3109,162 @@ class GraphUpdater:
             | self._specifier_waiter_keys(present_keys)
         )
 
+    def _unresolved_reference_waiters(
+        self,
+        added: list[tuple[str, bytes]],
+        modified: list[tuple[str, bytes]] | None = None,
+    ) -> list[str]:
+        """Files whose recorded unresolved references an ADDED file, or a
+        definition a MODIFIED file gained, satisfies.
+
+        Offered per added file: its module qn (a dropped `from .base import`
+        recorded the guessed qn), its import spellings, every suffix of its
+        path (a quoted include is recorded as a repository path suffix), and
+        the simple names it defines (a base class or a callee is recorded by
+        its written name); a Rust `use` records the whole path, matched under
+        the module qn as a prefix. A modified file offers only the simple
+        names it defines now and did not before (a Go or Java caller of a
+        same-package function has no edge into the file that gains it; bot
+        review on PR #1979). A failed read degrades to the previous
+        behaviour, never worse (issue #1568).
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return []
+        names: set[str] = set(self._module_names_for([key for key, _b in added]))
+        prefixes: set[str] = set()
+        for key, file_bytes in added:
+            module_qn = base_module_qn(Path(key), self.project_name)
+            names.add(module_qn)
+            prefixes.add(f"{module_qn}{cs.SEPARATOR_DOT}")
+            parts = PurePosixPath(key).parts
+            names.update(cs.SEPARATOR_SLASH.join(parts[i:]) for i in range(len(parts)))
+            names.update(self._defined_simple_names(key, file_bytes))
+        if modified:
+            known = self._known_simple_names_by_path([key for key, _b in modified])
+            for key, file_bytes in modified:
+                had = known.get(key, set())
+                if "*" in had:
+                    continue
+                names.update(self._defined_simple_names(key, file_bytes) - had)
+        if not names:
+            return []
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS,
+                {
+                    cs.CYPHER_PARAM_NAMES: sorted(names),
+                    cs.CYPHER_PARAM_PREFIXES: sorted(prefixes),
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    # The root module (`__init__.py`, `mod.rs`) IS the
+                    # project name, not under its prefix (bot review).
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references")
+            return []
+        return sorted(
+            {
+                path
+                for row in rows
+                if isinstance(path := row.get(cs.KEY_CALLER_PATH), str) and path
+            }
+        )
+
+    def _known_simple_names_by_path(self, keys: list[str]) -> dict[str, set[str]]:
+        """The simple names of the definitions the graph holds per file, so a
+        modified file's GAINED definitions can be told from the ones it had.
+        A failed read marks every file fully known: nothing extra is offered."""
+        known: dict[str, set[str]] = {}
+        try:
+            rows = self.ingestor.fetch_all(
+                cq.CYPHER_DELTA_DEFINITIONS,
+                {
+                    cs.KEY_PROJECT_PREFIX: self.project_name + cs.SEPARATOR_DOT,
+                    cs.CYPHER_PARAM_PATHS: keys,
+                },
+            )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="known definitions")
+            return {key: {"*"} for key in keys}
+        for row in rows:
+            qn, path = row.get(cs.KEY_QUALIFIED_NAME), row.get(cs.KEY_PATH)
+            if isinstance(qn, str) and isinstance(path, str):
+                known.setdefault(path, set()).add(
+                    qn_markers.strip_dup_marker(
+                        qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.CHAR_PAREN_OPEN, 1)[
+                            0
+                        ]
+                    )
+                )
+        return known
+
+    def _defined_simple_names(self, key: str, file_bytes: bytes) -> set[str]:
+        """The simple names of the functions and classes a file defines, from
+        a parse of its bytes with the language's combined query: what a
+        waiting module wrote as a base or a callee (issue #1568). A language
+        without a parser or a combined query offers nothing."""
+        language = get_language_for_extension(PurePosixPath(key).suffix)
+        parser = self.parsers.get(language) if language is not None else None
+        query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language) if language else None
+        if parser is None or query is None:
+            return set()
+        try:
+            tree = parser.parse(file_bytes)
+            captures = sorted_captures(QueryCursor(query), tree.root_node)
+        except Exception:
+            return set()
+        names: set[str] = set()
+        for capture in (cs.CAPTURE_FUNCTION, cs.CAPTURE_CLASS):
+            for node in captures.get(capture, ()):
+                names.update(_definition_names(node))
+        return names
+
+    def _write_unresolved_references(self) -> None:
+        """Write every re-parsed module's unresolved references onto its node,
+        the empty list included, so a name that now resolves is gone (issue
+        #1568). A property SET rather than a second node write: a node write
+        carrying two keys reads as the whole node to every store that does
+        not merge. Flushed first so the Module nodes of a first build exist
+        to match; the modules with nothing recorded (most) are cleared in
+        one statement, the rest set one by one. A store that cannot take a
+        write is left as it was, which reads as "nothing waited"."""
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        recorded = self.factory.import_processor.unresolved_references
+        cleared: list[str] = []
+        pending: list[tuple[str, list[str]]] = []
+        for (
+            module_qn,
+            path,
+        ) in self.factory.definition_processor.module_qn_to_file_path.items():
+            try:
+                key = path.relative_to(self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if key not in self._reparsed_file_keys:
+                continue
+            names = sorted(recorded.get(module_qn, ()))
+            if names:
+                pending.append((module_qn, names))
+            else:
+                cleared.append(module_qn)
+        if not cleared and not pending:
+            return
+        self.ingestor.flush_all()
+        try:
+            if cleared:
+                self.ingestor.execute_write(
+                    cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES, {cs.KEY_QNS: cleared}
+                )
+            for module_qn, names in pending:
+                self.ingestor.execute_write(
+                    cs.CYPHER_SET_UNRESOLVED_REFERENCES,
+                    {cs.KEY_QN: module_qn, cs.CYPHER_PARAM_NAMES: names},
+                )
+        except Exception:
+            logger.warning(ls.PRUNE_QUERY_FAILED, label="unresolved references write")
+
     def _foreign_definer_keys(self, gone_keys: Iterable[str]) -> set[str]:
         """Files that registered definitions keyed under a module going away.
 
@@ -3064,14 +3357,15 @@ class GraphUpdater:
         except Exception:
             logger.warning(ls.PRUNE_QUERY_FAILED, label="Package")
             return None
-        prefix = self.project_name + cs.SEPARATOR_DOT
         paths: set[str] = set()
         for row in rows:
             path = row.get(cs.KEY_PATH)
             qn = row.get(cs.KEY_QUALIFIED_NAME)
             if not isinstance(path, str) or not isinstance(qn, str):
                 continue
-            if qn == self.project_name or qn.startswith(prefix):
+            # Ownership, not the prefix: a package only `svc.v2` holds would
+            # otherwise count as one of `svc`'s (issue #2126).
+            if self._owns(qn):
                 paths.add(path)
         return paths
 
@@ -3224,6 +3518,14 @@ class GraphUpdater:
         self._parsed_files = [
             entry for entry in self._parsed_files if entry[0] != file_path
         ]
+        # Same for its callable-flow records: a re-parse re-records them on
+        # the walk, a deletion never does. Through `_call_processor`, not the
+        # property: the property builds the processor on first access, and
+        # building it here, before the definition pass, snapshots half-built
+        # state (a C# method then ingested under a bare, unnamespaced name).
+        # With no processor yet there are no records to drop.
+        if self.factory._call_processor is not None:
+            self.factory._call_processor.forget_callable_flow(file_path)
 
         relative_path = cached_relative_path(file_path, self.repo_path)
         path_parts = (
@@ -3616,12 +3918,13 @@ class GraphUpdater:
     def _prune_class_keyed_maps(
         self, module_qn_prefixes: set[str], file_path: Path
     ) -> None:
-        """Drop a removed file's entries from `class_inheritance` and
-        `class_field_types`.
+        """Drop a removed file's entries from `class_inheritance`,
+        `class_field_types` and the C# partial groups.
 
-        Both are keyed by a CLASS qn and neither was ever mentioned in
-        `remove_file_from_state`, so a deleted file's rows outlived it on a
-        reused updater (issue #1772). That is a wrong answer rather than a
+        All three are keyed by a CLASS qn; the first two were never mentioned
+        in `remove_file_from_state`, so a deleted file's rows outlived it on a
+        reused updater (issue #1772), and the partial groups were not either
+        (issue #2016). That is a wrong answer rather than a
         missing one: `class_field_types` types a receiver reached through a
         field, and `class_inheritance` is walked to reach base-class members
         and drives the OVERRIDES arbitration -- both at a class that is gone.
@@ -3672,6 +3975,16 @@ class GraphUpdater:
         for qn in stale:
             processor.class_inheritance.pop(qn, None)
             processor.class_field_types.pop(qn, None)
+            # A partial part leaves its group too. The group list is the
+            # very list `_csharp_partial_index` holds under the syntactic
+            # key, so removing the part there keeps both views in step;
+            # without this a re-parse appended the part again and a deleted
+            # part kept typing its siblings' members (issue #2016).
+            if (group := processor.csharp_partial_groups.pop(qn, None)) is not None:
+                # One pass, and IN PLACE: the list is the very object
+                # `_csharp_partial_index` holds, so rebinding a new list
+                # would leave that view holding the old one (bot review).
+                group[:] = [part for part in group if part != qn]
             # Same ownership, same reason (issue #1629): every C# class has
             # an entry, not only the generic ones #1769's sweep covers.
             namespaced = processor.csharp_class_namespaced.pop(qn, None)
@@ -3717,11 +4030,17 @@ class GraphUpdater:
         except Exception:
             return None
         try:
+            # A row without a qualified name (an older reader's shape) keeps
+            # the prefix rule the query itself applied.
             return frozenset(
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
                 and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and (
+                    not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    or self._owns(qn)
+                )
             )
         except (TypeError, AttributeError):
             return frozenset()
@@ -4484,6 +4803,31 @@ class GraphUpdater:
         foreign_definers = self._foreign_definer_keys(
             {*reindexed_keys, *deleted_before_parse}
         )
+        # An ADDED file has no inbound edges for the caller query to follow:
+        # the files that referenced it while it was missing recorded the
+        # names they could not resolve, and are found from those (issue
+        # #1568). The importer lookup existed for the scoped path only.
+        # On a full build every file is new and the graph holds no waiter,
+        # so the lookup (which parses each added file once more) is skipped.
+        added_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if is_new
+            ]
+        )
+        added_keys = [key for key, _b in added_entries]
+        modified_entries = (
+            []
+            if is_full_build
+            else [
+                (file_key, file_bytes)
+                for _fp, file_key, is_new, file_bytes in changed_entries
+                if not is_new
+            ]
+        )
         affected = 0
         for caller_key in sorted(
             {
@@ -4492,6 +4836,8 @@ class GraphUpdater:
                 ),
                 *siblings,
                 *foreign_definers,
+                *self._unresolved_importer_keys(added_keys),
+                *self._unresolved_reference_waiters(added_entries, modified_entries),
             }
         ):
             if caller_key in present:
@@ -5470,7 +5816,10 @@ class GraphUpdater:
             self.ingestor.execute_write(stale, {cs.KEY_PATH: absolute})
 
     def _reingest_dependents(
-        self, present: dict[str, Path], gone: dict[str, Path]
+        self,
+        present: dict[str, Path],
+        gone: dict[str, Path],
+        created: set[str] | None = None,
     ) -> dict[str, Path]:
         # Files whose bindings the change can move (one level, from the
         # graph's own edges) plus any file whose delombok overlay changed.
@@ -5482,6 +5831,20 @@ class GraphUpdater:
         for caller_key in (
             *self._affected_caller_keys(keys),
             *self._unresolved_importer_keys(sorted(present)),
+            # Created files offer everything; modified files offer only the
+            # definitions they gained (bot review on PR #1979).
+            *self._unresolved_reference_waiters(
+                [
+                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
+                    for key, path in sorted(present.items())
+                    if created is not None and key in created
+                ],
+                [
+                    (key, self._delombok_overlay.get(key, _read_bytes(path)))
+                    for key, path in sorted(present.items())
+                    if created is None or key not in created
+                ],
+            ),
         ):
             caller_path = self.repo_path / caller_key
             if (
@@ -5622,6 +5985,7 @@ class GraphUpdater:
         import_processor.requeue_csharp_import_edges()
         import_processor.flush_deferred_import_edges(known_module_paths)
         self._emit_csharp_query_calls()
+        self._write_unresolved_references()
         self.factory.definition_processor.process_all_method_overrides()
         # Endpoints and route registrations, scoped to the re-parsed modules:
         # the project-wide passes would load every route-capable module's
@@ -5693,6 +6057,27 @@ class GraphUpdater:
                     error=unlink_error,
                 )
 
+    def indexed_files_under(self, directory: Path) -> list[Path]:
+        """Files the last run or re-ingest indexed beneath `directory`.
+
+        A deleted or moved-away directory arrives from the watcher as one
+        event and its files are no longer on disk to list. The hash cache is
+        the record every run and `reingest` keep of what they indexed, so it
+        names exactly the files whose nodes must now go.
+        """
+        try:
+            prefix = directory.relative_to(self.repo_path).as_posix()
+        except ValueError:
+            return []
+        if prefix == ".":
+            return []
+        hashes = _load_hash_cache(self.repo_path / cs.HASH_CACHE_FILENAME)
+        return [
+            self.repo_path / key
+            for key in sorted(hashes)
+            if key.startswith(prefix + "/")
+        ]
+
     def reingest(
         self,
         paths: Iterable[Path | str],
@@ -5737,6 +6122,9 @@ class GraphUpdater:
         # aborts (it must, or the run drops cross-file edges under a
         # success log) and whether unchanged handlers rehydrate.
         self._is_full_build = False
+        # A project registered since the last run must not read as owned.
+        self._registered_projects = None
+        self._registry_unread = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -5786,7 +6174,11 @@ class GraphUpdater:
             flipped_dirs, flip_siblings = self._reingest_package_flip(present, gone)
             survivors.update(flip_siblings)
 
-            affected = self._reingest_dependents({**present, **survivors}, gone)
+            affected = self._reingest_dependents(
+                {**present, **survivors},
+                gone,
+                created={key for key in present if key not in hashes},
+            )
             all_keys = sorted({*present, *gone, *survivors, *affected})
             captured = self._capture_inbound_edges(all_keys)
         except Exception as exc:
@@ -5955,7 +6347,11 @@ class GraphUpdater:
             # A note whose name did not come back is placed by content hash
             # (MOVED) or marked AMBIGUOUS / LOST. Before the mentions restore,
             # so a note that moved gets its MENTIONS edges back this run.
-            repair_unanchored(self.ingestor.fetch_all, self.ingestor.execute_write)
+            repair_unanchored(
+                self.ingestor.fetch_all,
+                self.ingestor.execute_write,
+                self._read_project_source,
+            )
             self.ingestor.execute_write(cq.CYPHER_REANCHOR_GLOSS_MENTIONS)
             # Then grade: the subject's `anchor_hash` was just re-emitted by
             # the parse, so comparing it with the note's recorded hash here
@@ -5963,6 +6359,26 @@ class GraphUpdater:
             self.ingestor.execute_write(cq.CYPHER_GRADE_GLOSS_ANCHORS)
         except Exception as error:  # noqa: BLE001 -- see docstring
             logger.warning(ls.GLOSS_REANCHOR_FAILED.format(error=error))
+
+    def _read_project_source(self, project_name: str, path: str) -> ParsedSource | None:
+        """A file of THIS updater's project, parsed, for the gloss quote tier.
+
+        Another project's definition carries a relative path that may exist
+        under this checkout too and would read the wrong file, so a note
+        about another project gets no source here (the `source_root_for`
+        rule). A path that escapes the root, or cannot be read, is None.
+        """
+        if project_name != self.project_name:
+            return None
+        root = self.repo_path.resolve()
+        target = (root / path).resolve()
+        if root not in (target, *target.parents):
+            return None
+        try:
+            text = target.read_text(encoding=cs.ENCODING_UTF8, errors="replace")
+        except OSError:
+            return None
+        return ParsedSource(text, parse_source(self.parsers, target, text))
 
     def _prune_orphan_nodes(self) -> None:
         """Remove graph nodes whose files/folders no longer exist on disk."""

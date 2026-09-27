@@ -26,7 +26,7 @@ class TestQueryTruncation:
         self, mock_ingestor: MagicMock, mock_cypher_gen: MagicMock
     ) -> None:
         rows: list[ResultRow] = [{"name": f"node_{i}"} for i in range(600)]
-        mock_ingestor.fetch_all.return_value = rows
+        mock_ingestor.fetch_read_only.return_value = rows
 
         tool = create_query_tool(mock_ingestor, mock_cypher_gen)
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:
@@ -46,7 +46,7 @@ class TestQueryTruncation:
             {"name": f"function_{i}", "body": f"def func_{i}(): pass  # {'x' * 200}"}
             for i in range(100)
         ]
-        mock_ingestor.fetch_all.return_value = rows
+        mock_ingestor.fetch_read_only.return_value = rows
 
         tool = create_query_tool(mock_ingestor, mock_cypher_gen)
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:
@@ -63,7 +63,7 @@ class TestQueryTruncation:
         self, mock_ingestor: MagicMock, mock_cypher_gen: MagicMock
     ) -> None:
         rows: list[ResultRow] = [{"name": f"node_{i}"} for i in range(5)]
-        mock_ingestor.fetch_all.return_value = rows
+        mock_ingestor.fetch_read_only.return_value = rows
 
         tool = create_query_tool(mock_ingestor, mock_cypher_gen)
         with patch("codebase_rag.tools.codebase_query.settings") as mock_settings:

@@ -59,6 +59,7 @@ from .utils import (
     python_parameter_names,
     safe_decode_text,
     sorted_captures,
+    written_simple_name,
 )
 
 
@@ -83,6 +84,18 @@ class _FactoryCall(NamedTuple):
     factory_qn: str
     positional: tuple[str, ...]
     keyword: tuple[tuple[str, str], ...]
+
+
+class _FileCallableFlow:
+    # One file's callable-flow records. Kept per file because the processor
+    # outlives a pass: a re-walk must replace only that file's records, while
+    # a file the pass leaves alone still seeds slots finalize resolves.
+    __slots__ = ("args", "returned_callables", "factory_calls")
+
+    def __init__(self) -> None:
+        self.args: list[_CallableFlowArg] = []
+        self.returned_callables: dict[str, set[str]] = {}
+        self.factory_calls: list[_FactoryCall] = []
 
 
 _TYPED_LANGUAGES = frozenset(
@@ -805,11 +818,10 @@ def _go_variant_spans(
                 return None
             spans.append(declarations[0][1])
             continue
-        suffix = marker.rpartition(cs.DUP_QN_MARKER)[2]
-        line_text = suffix.split(cs.DUP_QN_COLUMN_MARKER, 1)[0]
-        if not line_text.isdigit() or int(line_text) not in by_line:
+        line = qn_markers.marker_line(marker)
+        if line is None or line not in by_line:
             return None
-        spans.append(by_line[int(line_text)])
+        spans.append(by_line[line])
     return spans
 
 
@@ -1145,6 +1157,7 @@ class _JsFileBindingCollector:
 class CallProcessor:
     __slots__ = (
         "ingestor",
+        "_note_unresolved",
         "_site_node",
         "_resolution",
         "_site_cache",
@@ -1161,9 +1174,8 @@ class CallProcessor:
         "_resolver",
         "_string_call_specs",
         "_flow_param_names",
-        "_flow_args",
-        "_returned_callables",
-        "_factory_calls",
+        "_callable_flow",
+        "_flow_bucket",
         "_io_processor",
         "_flow_processor",
         "_rpc_exposure",
@@ -1240,6 +1252,9 @@ class CallProcessor:
         self.js_symbol_member_types: dict[str, set[str]] = {}
         self._js_proto_evidence_cache: dict[tuple[str, str | None], bool] = {}
 
+        # The import processor owns the record (#1568); every pass notes
+        # through it so the empty-name guard lives in one place.
+        self._note_unresolved = import_processor.note_unresolved
         self._resolver = CallResolver(
             function_registry=function_registry,
             import_processor=import_processor,
@@ -1254,13 +1269,14 @@ class CallProcessor:
         # Inter-procedural callable-parameter flow: ordered params per function and
         # the per-call-site argument bindings, resolved to a fixpoint in finalize.
         self._flow_param_names: dict[str, list[str]] = {}
-        self._flow_args: list[_CallableFlowArg] = []
-        # Return-value / factory tracing: functions each function may return
-        # (nested closures), and call sites `x = factory(...); x(cb)` where cb
-        # flows into the returned closure's callable parameter. Resolved to a
-        # fixpoint in finalize, so factory and call site may be in any order.
-        self._returned_callables: dict[str, set[str]] = {}
-        self._factory_calls: list[_FactoryCall] = []
+        # Return-value / factory tracing rides along: functions each function
+        # may return (nested closures), and call sites `x = factory(...); x(cb)`
+        # where cb flows into the returned closure's callable parameter.
+        # Resolved to a fixpoint in finalize, so factory and call site may be
+        # in any order. Keyed by the file whose walk recorded them, and the
+        # file being walked writes into `_flow_bucket`.
+        self._callable_flow: dict[Path, _FileCallableFlow] = {}
+        self._flow_bucket = _FileCallableFlow()
         selection = capture if capture is not None else ALL_ENABLED
         self._io_processor = IOAccessProcessor(
             ingestor,
@@ -1740,6 +1756,9 @@ class CallProcessor:
     ) -> None:
         relative_path = cached_relative_path(file_path, self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
+        # A re-walk describes the file's current source; appending to the old
+        # records kept a removed call site's callback edge alive forever.
+        self._flow_bucket = self._callable_flow[file_path] = _FileCallableFlow()
 
         module_qn: str | None = None
         try:
@@ -3939,6 +3958,12 @@ class CallProcessor:
                 )
 
             if not callee_info:
+                if call_name and language not in cs.IMPORT_BOUND_CALL_LANGUAGES:
+                    # The callee may be defined by a file added later; keep
+                    # its simple name so that file's arrival re-parses this
+                    # one (issue #1568). Not where an import would be needed
+                    # anyway: the importer lookup finds those waiters.
+                    self._note_unresolved(module_qn, written_simple_name(call_name))
                 if (
                     is_js_ts
                     and class_context
@@ -6140,17 +6165,17 @@ class CallProcessor:
                     # whichever branch ran, so record EVERY twin; recording one
                     # leaves the others unreachable and falsely dead.
                     if nested_qn in registry:
-                        self._returned_callables.setdefault(caller_qn, set()).update(
-                            registry.variants(nested_qn)
-                        )
+                        self._flow_bucket.returned_callables.setdefault(
+                            caller_qn, set()
+                        ).update(registry.variants(nested_qn))
                     elif (
                         resolved := resolve_func(
                             name, module_qn, local_var_types, class_context, caller_qn
                         )
                     ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
-                        self._returned_callables.setdefault(caller_qn, set()).update(
-                            registry.variants(resolved[1])
-                        )
+                        self._flow_bucket.returned_callables.setdefault(
+                            caller_qn, set()
+                        ).update(registry.variants(resolved[1]))
             stack.extend(node.children)
 
     def _build_factory_alias_map(
@@ -6289,7 +6314,7 @@ class CallProcessor:
             )
         )
         if any(pos_qns) or kw_qns:
-            self._factory_calls.append(
+            self._flow_bucket.factory_calls.append(
                 _FactoryCall(scope_qn, factory_qn, pos_qns, kw_qns)
             )
 
@@ -6373,6 +6398,22 @@ class CallProcessor:
                         )
                         self._record_csharp_cross_module_use(module_qn, target_qn)
                     return
+            else:
+                # `recv.Name` is a method group only on a receiver the engine
+                # can type; nothing else about it reaches the simple-name
+                # fallback, which bound an untyped `@override.Value` to a
+                # same-named first-party property (issue #1998).
+                engine = self._resolver.type_inference.csharp_type_inference
+                for target_qn in engine.csharp_member_group_argument(
+                    arg_node, local_var_types or {}, module_qn, caller_qn
+                ):
+                    ensure_rel(
+                        source_spec,
+                        rel_type,
+                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, target_qn),
+                    )
+                    self._record_csharp_cross_module_use(module_qn, target_qn)
+                return
         if not (
             resolved := resolve_func(
                 arg_text, module_qn, local_var_types, class_context, caller_qn
@@ -6513,7 +6554,7 @@ class CallProcessor:
             if not arg_text:
                 continue
             if arg_node.type == cs.TS_PY_IDENTIFIER and arg_text in caller_params:
-                self._flow_args.append(
+                self._flow_bucket.args.append(
                     _CallableFlowArg(
                         callee_qn, position, keyword_name, "", caller_qn, arg_text
                     )
@@ -6523,7 +6564,7 @@ class CallProcessor:
                 arg_text, module_qn, local_var_types, class_context, caller_qn
             )
             if resolved is not None and resolved[0] in callable_labels:
-                self._flow_args.append(
+                self._flow_bucket.args.append(
                     _CallableFlowArg(
                         callee_qn, position, keyword_name, resolved[1], "", ""
                     )
@@ -6546,7 +6587,12 @@ class CallProcessor:
         registry = self._resolver.function_registry
         seeds: dict[tuple[str, str], set[str]] = defaultdict(set)
         edges: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
-        for arg in self._flow_args:
+        file_flows = self._callable_flow.values()
+        returned_callables: dict[str, set[str]] = defaultdict(set)
+        for flow in file_flows:
+            for producer_qn, returned in flow.returned_callables.items():
+                returned_callables[producer_qn] |= returned
+        for arg in (arg for flow in file_flows for arg in flow.args):
             if arg.keyword:
                 param_name = arg.keyword
             else:
@@ -6568,7 +6614,7 @@ class CallProcessor:
         # functions are no longer roots, so this producer edge keeps a genuinely
         # used closure (a returned decorator/formatter) live without reviving the
         # closures of an unreachable outer function.
-        for producer_qn, returned in self._returned_callables.items():
+        for producer_qn, returned in returned_callables.items():
             producer_type = registry.get(producer_qn)
             if producer_type is None:
                 continue
@@ -6586,8 +6632,8 @@ class CallProcessor:
                     (closure_type, cs.KEY_QUALIFIED_NAME, closure_qn),
                 )
 
-        for fc in self._factory_calls:
-            for closure_qn in self._returned_callables.get(fc.factory_qn, ()):
+        for fc in (fc for flow in file_flows for fc in flow.factory_calls):
+            for closure_qn in returned_callables.get(fc.factory_qn, ()):
                 # The returned closure runs when the alias is called, so it is
                 # reachable from the enclosing scope.
                 closure_type = registry.get(closure_qn)
@@ -7710,6 +7756,16 @@ class CallProcessor:
             return True
         recorded = self._recorded_caller(node, module_qn)
         return recorded is None or not recorded.is_named
+
+    def forget_callable_flow(self, file_path: Path) -> None:
+        # A deleted file is never re-walked, so nothing else replaces its
+        # records; left in place they keep emitting its call sites' edges.
+        self._callable_flow.pop(file_path, None)
+
+    def reset_callable_flow(self) -> None:
+        # For a pass that re-walks every file: records of a file deleted
+        # since the last pass would otherwise outlive it.
+        self._callable_flow.clear()
 
     def reset_js_receiver_bindings(self) -> None:
         # Despite the historical name this clears ALL per-run JS call-pass

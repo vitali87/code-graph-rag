@@ -41,6 +41,7 @@ class GoogleProviderType(StrEnum):
 # Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
+LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
@@ -92,6 +93,14 @@ class EmbeddingDevice(StrEnum):
 class VectorStoreBackend(StrEnum):
     QDRANT = "qdrant"
     MILVUS = "milvus"
+
+
+# The setting that sizes each backend's collection, named in the error raised
+# when the embedding model's output does not match it.
+VECTOR_DIM_SETTINGS: dict[VectorStoreBackend, str] = {
+    VectorStoreBackend.QDRANT: "QDRANT_VECTOR_DIM",
+    VectorStoreBackend.MILVUS: "MILVUS_VECTOR_DIM",
+}
 
 
 # Batches between torch.mps.empty_cache() calls: dropping the Metal

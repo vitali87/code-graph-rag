@@ -6,6 +6,8 @@ description: "Configure Code-Graph-RAG with provider settings, environment varia
 
 Configuration is managed through environment variables in the `.env` file. The provider-explicit configuration supports mixing different providers for orchestrator and cypher models.
 
+Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role uses the local Ollama default (`llama3.2`). Setting only one of them (for example `ORCHESTRATOR_PROVIDER=anthropic` without `ORCHESTRATOR_MODEL`) is an error: `cgr start` exits with a message naming the missing variable, and `cgr doctor` reports it as a failed check.
+
 ## Provider Examples
 
 ### All Ollama (Local Models)
