@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...decorators import recursion_guard
+from ...decorators import depth_guard, recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
 from .utils import (
@@ -799,6 +799,10 @@ class JavaMethodResolverMixin:
             class_qn, method_name, tuple(_java_param_type_names(method_qn))
         )
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _do_resolve_java_method_call(
         self,
         call_node: ASTNode,

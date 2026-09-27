@@ -1297,9 +1297,15 @@ class CallResolver:
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
-        if result := self._resolve_enclosing_scope(
-            call_name, caller_qn, module_qn, language
-        ):
+        # `new X(...)` names a type, so an enclosing scope answers it only
+        # with a class: a static factory named like the class it constructs
+        # (`Some.LogEventProperty()` building `new LogEventProperty()`) is the
+        # enclosing member, and taking it bound nothing at all (issue #1997).
+        if (
+            result := self._resolve_enclosing_scope(
+                call_name, caller_qn, module_qn, language
+            )
+        ) and (not constructing or result[0] == cs.NodeLabel.CLASS.value):
             return result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
