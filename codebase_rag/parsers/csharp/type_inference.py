@@ -1357,29 +1357,39 @@ class CSharpTypeInferenceEngine:
         if unwrapped is None:
             return None
         receiver = unwrapped
-        if receiver.type == cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION:
-            type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
-            raw = safe_decode_text(type_node) if type_node else None
-            return generic_arity_of_type_text(raw) if raw else None
-        if receiver.type == cs.TS_CSHARP_CAST_EXPRESSION:
+        if receiver.type in (
+            cs.TS_CSHARP_OBJECT_CREATION_EXPRESSION,
+            cs.TS_CSHARP_CAST_EXPRESSION,
+        ):
             type_node = receiver.child_by_field_name(cs.FIELD_TYPE)
             raw = safe_decode_text(type_node) if type_node else None
             return generic_arity_of_type_text(raw) if raw else None
         if receiver.type == cs.TS_CSHARP_INVOCATION_EXPRESSION:
-            # Full caller context: locals and imports participate in the
-            # inner resolution exactly as they did for the instance path.
-            inner = self.resolve_csharp_method_call(
+            return self._invocation_return_arity(
                 receiver, local_var_types, module_qn, caller_qn
             )
-            if inner is not None and (
-                entry := self.csharp_method_return_types.get(inner[1])
-            ):
-                return entry[1]
-            return None
         if receiver.type == cs.TS_CSHARP_THIS:
             class_qn = self._containing_class_qn(caller_qn)
             if class_qn is not None:
                 return self.csharp_class_generic_arity.get(class_qn, 0)
+        return None
+
+    def _invocation_return_arity(
+        self,
+        invocation: Node,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_qn: str | None,
+    ) -> int | None:
+        # Full caller context: locals and imports participate in the inner
+        # resolution exactly as they did for the instance path.
+        inner = self.resolve_csharp_method_call(
+            invocation, local_var_types, module_qn, caller_qn
+        )
+        if inner is not None and (
+            entry := self.csharp_method_return_types.get(inner[1])
+        ):
+            return entry[1]
         return None
 
     def _registered_type_declares(self, type_name: str, method_name: str) -> bool:

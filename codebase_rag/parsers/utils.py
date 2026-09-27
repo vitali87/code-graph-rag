@@ -571,14 +571,9 @@ def _scan_invoked_parameters(
     while stack:
         node = stack.pop()
         for child in node.children:
-            if child.type == config.call_type:
-                fn = child.child_by_field_name(cs.FIELD_FUNCTION)
-                if (
-                    fn is not None
-                    and fn.type == config.identifier_type
-                    and (name := safe_decode_text(fn)) in candidates
-                ):
-                    invoked.add(name)
+            name = _bare_call_name(child, config)
+            if name is not None and name in candidates:
+                invoked.add(name)
             if child.type in config.closure_types:
                 inner = candidates - bound_names(child)
                 _scan_invoked_parameters(child, inner, invoked, config, bound_names)
@@ -586,6 +581,16 @@ def _scan_invoked_parameters(
             if child.type in config.opaque_types:
                 continue
             stack.append(child)
+
+
+def _bare_call_name(node: Node, config: _CallableScanConfig) -> str | None:
+    # The callee name of a call by bare identifier (`cb()`), else None.
+    if node.type != config.call_type:
+        return None
+    fn = node.child_by_field_name(cs.FIELD_FUNCTION)
+    if fn is None or fn.type != config.identifier_type:
+        return None
+    return safe_decode_text(fn)
 
 
 def _go_scope_bound_names(scope_node: Node) -> set[str]:
