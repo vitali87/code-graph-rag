@@ -1,9 +1,10 @@
 import json
 import re
+import tomllib
 from pathlib import Path
+from typing import Any
 
 import defusedxml.ElementTree as ET
-import toml
 from loguru import logger
 
 from .. import constants as cs
@@ -25,6 +26,11 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
     return name, spec
 
 
+def _load_toml(file_path: Path) -> dict[str, Any]:
+    with file_path.open("rb") as f:
+        return tomllib.load(f)
+
+
 class DependencyParser:
     __slots__ = ()
 
@@ -38,7 +44,7 @@ class PyProjectTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
-            data = toml.load(file_path)
+            data = _load_toml(file_path)
 
             if poetry_deps := (
                 data.get(cs.DEP_KEY_TOOL, {})
@@ -133,7 +139,7 @@ class CargoTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
-            data = toml.load(file_path)
+            data = _load_toml(file_path)
 
             deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
             for dep_name, dep_spec in deps.items():

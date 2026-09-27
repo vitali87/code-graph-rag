@@ -27,7 +27,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("build_binary.tomllib.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == [
@@ -49,7 +49,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("build_binary.tomllib.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == [
@@ -71,7 +71,7 @@ class TestGetTreesitterPackages:
             }
         }
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("build_binary.tomllib.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == ["tree_sitter_python", "tree_sitter_rust"]
@@ -79,7 +79,7 @@ class TestGetTreesitterPackages:
     def test_returns_empty_list_when_no_treesitter_extra(self) -> None:
         mock_pyproject = {"project": {"optional-dependencies": {}}}
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("build_binary.tomllib.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == []
@@ -87,7 +87,7 @@ class TestGetTreesitterPackages:
     def test_returns_empty_list_when_no_optional_dependencies(self) -> None:
         mock_pyproject = {"project": {}}
 
-        with patch("build_binary.toml.load", return_value=mock_pyproject):
+        with patch("build_binary.tomllib.load", return_value=mock_pyproject):
             packages = _get_treesitter_packages()
 
         assert packages == []
