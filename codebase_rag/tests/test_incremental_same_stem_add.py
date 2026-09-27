@@ -259,3 +259,53 @@ def test_a_survivor_that_opens_but_cannot_be_read_keeps_its_module(
     for module, defined in _defines_by_module(graph).items():
         foreign = {pair for pair in defined if pair[1] != modules.get(module)}
         assert not foreign, (module, modules.get(module), foreign)
+
+
+@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
+@pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
+def test_an_added_same_stem_sibling_matches_a_clean_libclang_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reuse: bool
+) -> None:
+    # With the compile database present on BOTH runs, the frontend emits the
+    # header's subtree before `_process_files` deletes the stem-flux
+    # survivors' old subtrees by path, and the file pass skips covered files,
+    # so nothing restored the header: the incremental graph kept last run's
+    # `proj.shape.geo.Shape` and lost `proj.shape.h.*` (#2231).
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    sources = ["use.cpp", _CPP_ADDED[0]]
+
+    golden_root = tmp_path / "golden" / "proj"
+    _write(golden_root, {**_CPP, _CPP_ADDED[0]: _CPP_ADDED[1]})
+    _compile_commands(golden_root, sources)
+    golden = InMemoryGraph()
+    golden_updater = _make_updater(golden_root, golden)
+    golden_updater.run(force=True)
+
+    incr_root = tmp_path / "incr" / "proj"
+    _write(incr_root, _CPP)
+    _compile_commands(incr_root, ["use.cpp"])
+    incr = InMemoryGraph()
+    updater = _make_updater(incr_root, incr)
+    updater.run(force=True)
+    (incr_root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
+    _compile_commands(incr_root, sources)
+    if not reuse:
+        updater = _make_updater(incr_root, incr)
+    updater.run(force=False)
+
+    # The registry too: it held both `proj.shape.geo.Shape*` and
+    # `proj.shape.h.geo.Shape*` after the incremental run.
+    assert set(updater.factory.function_registry.keys()) == set(
+        golden_updater.factory.function_registry.keys()
+    )
+
+    (golden_nodes, golden_rels), (nodes, rels) = golden.snapshot(), incr.snapshot()
+    assert golden_nodes, "the clean index is empty, so the comparison proves nothing"
+    assert nodes == golden_nodes, {
+        "extra": sorted(map(str, nodes - golden_nodes)),
+        "missing": sorted(map(str, golden_nodes - nodes)),
+    }
+    assert rels == golden_rels, {
+        "extra": sorted(map(str, rels - golden_rels)),
+        "missing": sorted(map(str, golden_rels - rels)),
+    }

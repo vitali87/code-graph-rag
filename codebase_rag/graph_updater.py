@@ -4979,6 +4979,27 @@ class GraphUpdater:
         # deletion block repeats this harmlessly.
         for deleted_key in deleted_before_parse:
             self.remove_file_from_state(self.repo_path / deleted_key)
+        # LIBCLANG ran before this method and emitted the covered files'
+        # subtrees; the delete above matches by path, so it took any it had
+        # just written for a stem-flux survivor, and the loop below skips
+        # covered files, so nothing re-emits them (issue #2231). Run it again
+        # now that the stale subtrees are gone, as reingest does before its
+        # re-parse. HYBRID runs after Pass 2 and never meets this delete.
+        #
+        # An ADDED covered file goes first too. Its only subtree is what that
+        # first pass wrote, and the pass MERGEd onto the Module a survivor
+        # held under the same qn last run, rewriting its path to the added
+        # file's: the survivor's old definitions then hang off a Module the
+        # delete above, matching the survivor's path, cannot find.
+        if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID and any(
+            key in self._cpp_frontend_covered
+            for key in (*reindexed_keys, *deleted_before_parse)
+        ):
+            for _fp, file_key, is_new, _b in changed_entries:
+                if is_new and file_key in self._cpp_frontend_covered:
+                    self._delete_module_entities(file_key)
+            self._cpp_frontend_covered = frozenset()
+            self._run_cpp_frontend()
         first_failure: Exception | None = None
 
         with Progress(
