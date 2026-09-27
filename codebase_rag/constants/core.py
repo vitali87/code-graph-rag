@@ -186,6 +186,11 @@ DELOMBOK_STATE_FILENAME = ".cgr-delombok-state.json"
 # only the CLI --exclude flags do, so without this the sync check cannot tell
 # that the eligible set moved (issue #1606).
 EXCLUSION_STATE_FILENAME = ".cgr-exclusion-state.json"
+# Each project's own stamp inside the exclusion state file, keyed by project
+# name. The top-level keys stay the LAST run's stamp, which is what the
+# repository-wide hash cache belongs to; this map is what lets every project
+# indexed from one tree read its own scope back (issue #1987).
+EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"

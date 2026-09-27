@@ -629,8 +629,9 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
         frozenset({"generated_src"}),
         frozenset({"build"}),
     )
-    # Another project indexed from the same tree overwrites the stamp; the
-    # check for the first project refuses rather than borrowing that scope.
+    # Another project indexed from the same tree takes the top-level stamp,
+    # but each keeps its own entry, so the first project's check still reads
+    # ITS scope rather than borrowing the other's (issue #1987).
     GraphUpdater(
         ingestor=_StatefulIngestor(),
         repo_path=root,
@@ -640,9 +641,14 @@ def test_check_uses_the_scope_the_graph_was_indexed_under(temp_repo: Path) -> No
     ).run(force=True)
     from codebase_rag.structural_check import CheckError
 
-    with pytest.raises(CheckError):
-        indexed_scope(root, PROJECT)
+    assert indexed_scope(root, PROJECT) == (
+        frozenset({"generated_src"}),
+        frozenset({"build"}),
+    )
     assert indexed_scope(root, "other_project") == (None, None)
+    # A project that never indexed this tree still has no scope to borrow.
+    with pytest.raises(CheckError):
+        indexed_scope(root, "never_indexed", explicit=True)
 
 
 def test_indexing_two_projects_on_one_tree_does_not_reuse_fast_path(
@@ -982,7 +988,8 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
         frozenset({"generated_src"}),
         None,
     )
-    # A stamp from a project that is not this tree under any name still refuses.
+    # A later project's run takes the top-level stamp, but the unnamed run's
+    # own entry still answers for this tree's default name (issue #1987)...
     GraphUpdater(
         ingestor=_StatefulIngestor(),
         repo_path=root,
@@ -991,8 +998,11 @@ def test_check_accepts_a_stamp_written_under_the_repositorys_default_name(
         project_name="other_project",
     ).run(force=True)
     own_name = derive_project_name(root)
+    assert indexed_scope(root, own_name) == (frozenset({"generated_src"}), None)
+    # ...while a stamp from a project that is not this tree under any name
+    # still refuses a name nothing indexed.
     with pytest.raises(CheckError):
-        indexed_scope(root, own_name)
+        indexed_scope(root, "unrelated", explicit=True)
 
 
 def test_check_refuses_the_default_names_stamp_for_a_named_project(

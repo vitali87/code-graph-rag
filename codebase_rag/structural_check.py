@@ -24,7 +24,7 @@ from tree_sitter import Parser
 
 from . import constants as cs
 from .config import load_ignore_patterns
-from .graph_updater import GraphUpdater, _load_exclusion_state
+from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries
 from .utils.path_utils import derive_project_name
@@ -120,6 +120,41 @@ def _stamp_is_named(stored: dict[str, list[str] | str]) -> bool:
     return bool(stored.get("named"))
 
 
+def _stamp_belongs_to(
+    stored: dict[str, list[str] | str],
+    repo_root: Path,
+    project_name: str,
+    explicit: bool,
+) -> bool:
+    owner = stored.get("project")
+    if _stamp_is_named(stored):
+        return owner == project_name
+    default_names = {derive_project_name(repo_root), repo_root.resolve().name}
+    return not explicit and owner in default_names and project_name in default_names
+
+
+def _own_project_stamp(
+    stamps: dict[str, dict[str, list[str] | str]],
+    repo_root: Path,
+    project_name: str,
+    explicit: bool,
+) -> dict[str, list[str] | str] | None:
+    """This project's own entry from the per-project map, if it has one."""
+    exact = stamps.get(project_name)
+    if exact is not None and _stamp_belongs_to(
+        exact, repo_root, project_name, explicit
+    ):
+        return exact
+    return next(
+        (
+            stamp
+            for stamp in stamps.values()
+            if _stamp_belongs_to(stamp, repo_root, project_name, explicit)
+        ),
+        None,
+    )
+
+
 def indexed_scope(
     repo_root: Path, project_name: str, *, explicit: bool = False
 ) -> tuple[frozenset[str] | None, frozenset[str] | None]:
@@ -140,7 +175,18 @@ def indexed_scope(
     the wrong project silently re-ingests files the index left out, or drops
     files it deliberately kept.
     """
-    stored = _load_exclusion_state(repo_root / cs.EXCLUSION_STATE_FILENAME)
+    state_path = repo_root / cs.EXCLUSION_STATE_FILENAME
+    stored = _load_exclusion_state(state_path)
+    # Every project indexed from this tree keeps its own entry, so one that
+    # a later project's run overwrote at the top level still has its scope
+    # (issue #1987). Its ownership is judged by the same rule as the
+    # top-level stamp below; with no entry that is this project's, the
+    # top-level stamp decides as it did before the map existed.
+    own = _own_project_stamp(
+        _load_project_stamps(state_path), repo_root, project_name, explicit
+    )
+    if own is not None:
+        stored = own
     if stored is not None:
         owner = stored.get("project")
         # `cgr index` without --project stamps the bare directory name
@@ -157,16 +203,7 @@ def indexed_scope(
         # an unnamed stamp does not serve `--project myrepo`, because the
         # last unnamed run of this tree overwrote whatever the named project
         # had stamped, and its scope is simply gone rather than inferable.
-        default_names = {derive_project_name(repo_root), repo_root.resolve().name}
-        stamp_named = _stamp_is_named(stored)
-        if stamp_named:
-            mine = owner == project_name
-        else:
-            mine = (
-                not explicit
-                and owner in default_names
-                and project_name in default_names
-            )
+        mine = _stamp_belongs_to(stored, repo_root, project_name, explicit)
         if isinstance(owner, str) and not mine:
             raise CheckError(
                 cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
