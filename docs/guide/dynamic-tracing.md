@@ -410,18 +410,24 @@ a project frame is excluded from the converted trace; addresses that do not
 symbolise at all (stripped symbols, missing debug info) are additionally
 counted and reported, so that symbolisation gap is visible rather than silent. Overhead is one mutex-guarded table insert per call — fine
 for test workloads, not for production; the edge table holds 65k distinct
-pairs, and conversion **rejects** a trace the shim marked `dropped` (table
-overflowed, or calls nested deeper than the 4096-frame stack) rather than pass
-off an incomplete call graph as exact.
+pairs, and conversion **rejects** a trace the shim marked `dropped`: edges
+were lost because the table filled, calls nested deeper than its 4096-frame
+stack, or an instrumented signal handler ran while the shim was busy. It does
+not pass off an incomplete call graph as exact.
 
-Frames left through `longjmp` or a C++ exception never run their exit hook.
-The shim discards them at the next exit of a function below them, so a jump
-that lands in a function which later returns keeps its counts exact. A jump
-that lands in a frame that never returns while the program runs, such as a
-recovery loop in `main`, attributes the next calls to a skipped frame until the
-depth passes the stack, at which point the trace is marked `dropped`. An
-instrumented signal handler that fires while its thread is inside the shim is
-not recorded.
+Frames left through `longjmp`, or through a C++ exception under clang++, never
+run their exit hook, so a call made afterwards can name a skipped frame as its
+caller. The shim detects this in two ways and marks the trace `unwound`, which
+conversion also rejects:
+
+- an exit that does not match the innermost recorded frame;
+- a call whose caller's frame is not above it on the stack.
+
+Either way the shim resynchronises its depth, so a long-running program cannot
+overflow it. Programs that switch stacks, through `sigaltstack` signal handlers
+or coroutines, can trip the second check and are refused. Build such
+workloads with g++, which runs exit hooks while unwinding exceptions, or trace
+them another way.
 
 ## Recording a production trace (eBPF continuous profilers)
 

@@ -75,8 +75,14 @@ TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
 TRACE_ERR_BAD_ADDRS = "{path} is not a cgr instrumented address trace."
 TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise."
 TRACE_ERR_ADDRS_DROPPED = (
-    "{path} overflowed the shim's edge table: call edges were dropped, so the "
-    "trace is incomplete and cannot honour exact invocation counts."
+    "{path} lost call edges (the shim's edge table filled, calls nested deeper "
+    "than its stack, or a signal handler called in while the shim was busy), "
+    "so the trace is incomplete and cannot honour exact invocation counts."
+)
+TRACE_ERR_ADDRS_UNWOUND = (
+    "{path} left functions without their exit hook (longjmp, or a C++ exception "
+    "under clang++), so some calls may name the wrong caller and the trace "
+    "cannot honour exact invocation counts."
 )
 TRACE_MSG_ADDRS_UNRESOLVED = (
     "{count} of {total} instrumented addresses did not symbolise to a source "
