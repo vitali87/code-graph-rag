@@ -9,9 +9,17 @@ import mgclient  # ty: ignore[unresolved-import]
 from . import constants as cs
 
 
-def _bolt_reachable(host: str, port: int) -> bool:
+def _bolt_reachable(
+    host: str, port: int, credentials: tuple[str, str] | None = None
+) -> bool:
     try:
-        conn = mgclient.connect(host=host, port=port)
+        if credentials:
+            username, password = credentials
+            conn = mgclient.connect(
+                host=host, port=port, username=username, password=password
+            )
+        else:
+            conn = mgclient.connect(host=host, port=port)
         try:
             cursor = conn.cursor()
             cursor.execute("RETURN 1")
@@ -36,10 +44,11 @@ def wait_for_memgraph(
     port: int,
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
+    credentials: tuple[str, str] | None = None,
 ) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if _bolt_reachable(host, port):
+        if _bolt_reachable(host, port, credentials):
             return True
         time.sleep(interval)
     return False

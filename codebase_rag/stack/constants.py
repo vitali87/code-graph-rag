@@ -52,6 +52,21 @@ MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 
+# Container variables the compose file passes through without values, so each
+# reaches its service only when `docker compose` runs with it set.
+COMPOSE_ENVIRONMENT_KEY = "environment"
+ENV_MEMGRAPH_USER = "MEMGRAPH_USER"
+ENV_MEMGRAPH_PASSWORD = "MEMGRAPH_PASSWORD"
+ENV_QDRANT_API_KEY = "QDRANT__SERVICE__API_KEY"
+STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_KEY)
+WARN_COMPOSE_AUTH_NOT_WIRED = (
+    "Credentials are configured, but the compose file at {path} does not pass "
+    "{missing} to its services, so the stack starts WITHOUT authentication. "
+    "Run 'cgr daemon down', delete the file and run 'cgr daemon up' to "
+    "re-render it, or list each variable above under its service's "
+    "'environment' and then run 'cgr daemon down' followed by 'cgr daemon up'."
+)
+
 # The substitution that pins published ports to a host address. Its absence
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"

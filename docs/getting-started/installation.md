@@ -183,7 +183,7 @@ Substitute the binary name for your platform. Packages installed from PyPI are p
 cgr daemon up
 ```
 
-This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000.
+This starts the packaged Memgraph + Qdrant stack and waits until it is healthy. It works the same whether you installed from PyPI or from source, since the compose file ships inside the package. Memgraph listens on port 7687 and Memgraph Lab on port 3000. The services are reachable only from this machine and run without authentication by default; to require credentials, see [Turning on authentication](../architecture/security.md#turning-on-authentication).
 
 ## Set Up Environment Variables
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from loguru import logger
 
 from .. import constants as root_cs
 from ..config import settings
+from ..types_defs import JsonValue
 from . import constants as cs
 from .health import wait_for_memgraph, wait_for_qdrant
 
@@ -45,6 +47,30 @@ def _publishes_on_all_interfaces(mapping: object) -> bool:
     return host_ip in ("0.0.0.0", "::", "*")
 
 
+def _memgraph_credentials() -> tuple[str, str] | None:
+    """The Memgraph login the stack creates and probes with, if configured.
+
+    Stripped and required as a pair, the rule the ingestor applies, so the
+    user `cgr daemon up` creates is the one the app then logs in as. Memgraph
+    turns no authentication on for a username without a password.
+    """
+    username = (settings.MEMGRAPH_USERNAME or "").strip()
+    password = (settings.MEMGRAPH_PASSWORD or "").strip()
+    return (username, password) if username and password else None
+
+
+def _declared_environment(spec: JsonValue) -> set[str]:
+    """Variable names a compose service's `environment` declares, either form."""
+    environment = (
+        spec.get(cs.COMPOSE_ENVIRONMENT_KEY) if isinstance(spec, dict) else None
+    )
+    if isinstance(environment, dict):
+        return {str(name) for name in environment}
+    if isinstance(environment, list):
+        return {str(item).split("=", 1)[0].strip() for item in environment}
+    return set()
+
+
 class StackError(RuntimeError):
     pass
 
@@ -76,6 +102,7 @@ class StackManager:
         )
         self.memgraph_host = memgraph_host or settings.MEMGRAPH_HOST
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
+        self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
         self.project_name = project_name
 
@@ -98,10 +125,23 @@ class StackManager:
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
+            self._warn_if_auth_not_wired(target)
         return target
 
     @staticmethod
-    def _public_port_mappings(compose_file: Path) -> list[str]:
+    def _services(compose_file: Path) -> dict[str, JsonValue]:
+        """The `services` mapping of a user-owned compose file, or empty."""
+        try:
+            compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            return {}
+        if not isinstance(compose, dict):
+            return {}
+        services = compose.get("services")
+        return services if isinstance(services, dict) else {}
+
+    @classmethod
+    def _public_port_mappings(cls, compose_file: Path) -> list[str]:
         """Published ports a compose file leaves bound to every interface.
 
         Decided from the parsed `services.*.ports` entries, not from whether
@@ -110,17 +150,8 @@ class StackManager:
         name sitting in a comment, cannot vouch for the rest of the file
         (issue #1012).
         """
-        try:
-            compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError):
-            return []
-        if not isinstance(compose, dict):
-            return []
-        services = compose.get("services")
-        if not isinstance(services, dict):
-            return []
         public: list[str] = []
-        for service, spec in services.items():
+        for service, spec in cls._services(compose_file).items():
             if not isinstance(spec, dict):
                 continue
             # The file is user-owned, so `ports` can be any YAML value; a
@@ -153,6 +184,56 @@ class StackManager:
                 path=compose_file, mappings=", ".join(public)
             )
         )
+
+    def _auth_variables(self) -> dict[str, dict[str, str]]:
+        """Container variables to set per service, from the configured secrets."""
+        wanted: dict[str, dict[str, str]] = {}
+        if self.memgraph_credentials:
+            username, password = self.memgraph_credentials
+            wanted[cs.SERVICE_MEMGRAPH] = {
+                cs.ENV_MEMGRAPH_USER: username,
+                cs.ENV_MEMGRAPH_PASSWORD: password,
+            }
+        if settings.QDRANT_API_KEY:
+            wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: settings.QDRANT_API_KEY}
+        return wanted
+
+    def _warn_if_auth_not_wired(self, compose_file: Path) -> None:
+        """Flag configured credentials a stale compose file would drop.
+
+        A file rendered before the stack passed credentials through lacks the
+        `environment` entries, so the containers would start open while the
+        user believes they set a password.
+        """
+        services = self._services(compose_file)
+        missing = [
+            f"{service}: {name}"
+            for service, variables in self._auth_variables().items()
+            for name in variables
+            if name not in _declared_environment(services.get(service))
+        ]
+        if missing:
+            logger.warning(
+                cs.WARN_COMPOSE_AUTH_NOT_WIRED.format(
+                    path=compose_file, missing=", ".join(missing)
+                )
+            )
+
+    def _compose_env(self) -> dict[str, str]:
+        """The environment `docker compose up` runs in.
+
+        Settings, which also read the .env file, are the one source of the
+        credentials: an inherited MEMGRAPH_PASSWORD or Qdrant key is dropped
+        rather than creating a login the app does not know.
+        """
+        env = {
+            name: value
+            for name, value in os.environ.items()
+            if name not in cs.STACK_AUTH_ENV_VARS
+        }
+        for variables in self._auth_variables().values():
+            env.update(variables)
+        return env
 
     def warn_if_ports_are_public(self) -> None:
         """Warn about public port bindings independently of the start path.
@@ -210,6 +291,7 @@ class StackManager:
             encoding=root_cs.ENCODING_UTF8,
             timeout=timeout,
             check=False,
+            env=self._compose_env(),
         )
         if result.returncode != 0:
             raise StackError(
@@ -273,7 +355,12 @@ class StackManager:
                 port=self.memgraph_port,
             )
         )
-        if not wait_for_memgraph(self.memgraph_host, self.memgraph_port, timeout):
+        if not wait_for_memgraph(
+            self.memgraph_host,
+            self.memgraph_port,
+            timeout,
+            credentials=self.memgraph_credentials,
+        ):
             raise StackError(
                 cs.ERR_STACK_NOT_HEALTHY.format(
                     service=cs.SERVICE_MEMGRAPH, timeout=timeout
@@ -295,7 +382,11 @@ class StackManager:
 
     def status(self) -> StackStatus:
         memgraph_ok = wait_for_memgraph(
-            self.memgraph_host, self.memgraph_port, timeout=0.1, interval=0.0
+            self.memgraph_host,
+            self.memgraph_port,
+            timeout=0.1,
+            interval=0.0,
+            credentials=self.memgraph_credentials,
         )
         qdrant_ok = wait_for_qdrant(self.qdrant_port, timeout=0.1, interval=0.0)
         match (memgraph_ok, qdrant_ok):

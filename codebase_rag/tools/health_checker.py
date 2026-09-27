@@ -31,7 +31,10 @@ def _backend_connection() -> Iterator[ConnectionProtocol]:
     leak a whole driver per health check.
     """
     ingestor = MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+        host=settings.MEMGRAPH_HOST,
+        port=settings.MEMGRAPH_PORT,
+        username=settings.MEMGRAPH_USERNAME,
+        password=settings.MEMGRAPH_PASSWORD,
     )
     conn = ingestor._create_connection()
     try:
