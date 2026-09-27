@@ -9,6 +9,7 @@ from pydantic_ai import Tool
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -16,6 +17,8 @@ from .. import logs as ls
 from ..config import settings
 from ..console_marks import status_mark
 from ..constants import (
+    QUERY_CELL_CONTROL_CHARS,
+    QUERY_CELL_CONTROL_ESCAPE,
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
@@ -762,6 +765,25 @@ def _names_another_project(value: object, prefix: str) -> bool:
     return True
 
 
+_CONTROL_CHARS = re.compile(QUERY_CELL_CONTROL_CHARS)
+
+
+def _plain_cell(value: str) -> Text:
+    """A result cell that prints exactly what the graph holds (#2260).
+
+    Values come from the indexed code and from MCP `annotate` glosses, so
+    neither Rich markup (`list[int]` lost its subscript, `[/]` raised, a
+    `[link=...]` became a live hyperlink) nor terminal control sequences
+    may take effect. `Text` is never parsed as markup; control characters
+    are shown as `\\xNN` escapes.
+    """
+    return Text(
+        _CONTROL_CHARS.sub(
+            lambda m: QUERY_CELL_CONTROL_ESCAPE.format(code=ord(m.group())), value
+        )
+    )
+
+
 def create_query_tool(
     ingestor: ReadOnlyQueryProtocol,
     cypher_gen: CypherGenerator,
@@ -828,21 +850,19 @@ def create_query_tool(
                 )
                 headers = results[0].keys()
                 for header in headers:
-                    table.add_column(header)
+                    table.add_column(_plain_cell(str(header)))
 
                 for row in results:
                     renderable_values = []
                     for value in row.values():
                         if value is None:
-                            renderable_values.append("")
+                            renderable_values.append(Text())
                         elif isinstance(value, bool):
                             renderable_values.append(
-                                status_mark(value, console.encoding)
+                                Text(status_mark(value, console.encoding))
                             )
-                        elif isinstance(value, int | float):
-                            renderable_values.append(str(value))
                         else:
-                            renderable_values.append(str(value))
+                            renderable_values.append(_plain_cell(str(value)))
                     table.add_row(*renderable_values)
 
                 console.print(
