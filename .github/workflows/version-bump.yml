@@ -180,26 +180,28 @@ jobs:
         if: steps.decide.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          LATEST_TAG: ${{ steps.decide.outputs.latest }}
         run: |
           # target_commitish lets the API build notes for a tag that does not
           # exist yet, so the news can be folded into the commit that gets
           # tagged below (issue #1146).
           gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="v${{ steps.bump_version.outputs.new }}" \
+            -f tag_name="v${NEW_VERSION}" \
             -f target_commitish="${GITHUB_SHA}" \
-            -f previous_tag_name="${{ steps.decide.outputs.latest }}" \
+            -f previous_tag_name="${LATEST_TAG}" \
             --jq .body > /tmp/notes.md
 
       - name: Prepend security notice
         if: steps.decide.outputs.release == 'true' && steps.decide.outputs.security == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHSA: ${{ steps.decide.outputs.ghsa }}
         run: |
           # A security release must never ship silent notes: always prepend a
           # 🔒 Security section, enriched from the advisory when it is already
           # published, else a pointer to it. Guarantees the disclaimer even if
           # the advisory is published after the release is cut (issue #1149).
-          GHSA="${{ steps.decide.outputs.ghsa }}"
           DETAIL=""
           if [ -n "$GHSA" ]; then
             DETAIL=$(gh api "repos/${GITHUB_REPOSITORY}/security-advisories/${GHSA}" \
@@ -375,13 +377,17 @@ jobs:
 
       - name: Update pyproject.toml
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          sed -i 's/^version = ".*"/version = "${{ steps.bump_version.outputs.new }}"/' pyproject.toml
+          sed -i "s/^version = \".*\"/version = \"${NEW_VERSION}\"/" pyproject.toml
 
       - name: Update server.json
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          sed -i 's/"version": "[^"]*"/"version": "${{ steps.bump_version.outputs.new }}"/g' server.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${NEW_VERSION}\"/g" server.json
 
       # uv.lock carries its own copy of the project version. Left behind, it
       # disagrees with pyproject.toml on committed main (`uv lock --check`
@@ -451,11 +457,13 @@ jobs:
 
       - name: Commit version bump
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml server.json uv.lock NEWS.md README.md
-          git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
+          git commit -m "chore: bump version to ${NEW_VERSION}"
           git push
 
       - name: Require successful CI for the release source
@@ -534,20 +542,23 @@ jobs:
         if: steps.check_manual.outputs.skip == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          RELEASE: ${{ steps.decide.outputs.release }}
         run: |
-          git tag "v${{ steps.bump_version.outputs.new }}"
-          if [ "${{ steps.decide.outputs.release }}" = "true" ]; then
-            git push origin "v${{ steps.bump_version.outputs.new }}"
+          git tag "v${NEW_VERSION}"
+          if [ "$RELEASE" = "true" ]; then
+            git push origin "v${NEW_VERSION}"
           else
-            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${{ steps.bump_version.outputs.new }}"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
       - name: Create release
         if: steps.decide.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          TAG="v${{ steps.bump_version.outputs.new }}"
+          TAG="v${NEW_VERSION}"
           : > /tmp/body.md
           # The 🔒 Security disclaimer must lead the release body, above the
           # AI highlights and the generated changelog (issue #1149).

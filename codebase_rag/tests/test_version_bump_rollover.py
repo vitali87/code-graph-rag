@@ -7,6 +7,8 @@ from typing import TypedDict
 import pytest
 import yaml
 
+from codebase_rag import constants as cs
+
 WORKFLOW = (
     Path(__file__).resolve().parents[2] / ".github" / "workflows" / "version-bump.yml"
 )
@@ -38,7 +40,12 @@ def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess
         "BUMP_TYPE": bump_type,
     }
     return subprocess.run(
-        [bash, "-e", "-c", script], capture_output=True, text=True, env=env, check=False
+        [bash, "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        encoding=cs.ENCODING_UTF8,
+        env=env,
+        check=False,
     )
 
 
@@ -112,3 +119,13 @@ def test_unknown_bump_type_is_refused() -> None:
     result = _bump("0.0.1", "patch; touch /tmp/x")
     assert result.returncode != 0
     assert "unknown bump type" in result.stdout
+
+
+def test_no_step_script_interpolates_expressions() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    offenders = [
+        step["name"]
+        for step in workflow["jobs"]["bump-version"]["steps"]
+        if "${{" in step.get("run", "")
+    ]
+    assert offenders == []
