@@ -5089,11 +5089,16 @@ class GraphUpdater:
                 # the hash pass restored the unreadable ones' claims. Left
                 # unparsed its subtree stays, so it keeps its claim as they do
                 # and is marked for retry (CodeRabbit, PR #2248).
+                #
+                # The retry mark is owed whether or not a claim was forgotten:
+                # an unopenable survivor keeps its seeded claim, and without
+                # the mark its unchanged hash lets the next run skip it for
+                # good (CodeRabbit, PR #2248).
                 if caller_key in self._forgotten_flux_claims:
                     self._restore_unreadable_flux_claims({caller_key})
-                    unreadable_keys.add(caller_key)
-                    if not _vanished(caller_path):
-                        new_hashes[caller_key] = cs.HASH_CACHE_UNREADABLE
+                unreadable_keys.add(caller_key)
+                if not _vanished(caller_path):
+                    new_hashes[caller_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
             changed_entries.append((caller_path, caller_key, False, caller_bytes))

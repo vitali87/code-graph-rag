@@ -148,3 +148,42 @@ def test_an_unchanged_survivor_whose_reparse_read_fails_keeps_its_module(
     assert "util.c" in after.values(), after
     cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
     assert cache.get("util.h") == cs.HASH_CACHE_UNREADABLE, cache
+
+
+def test_an_unchanged_unopenable_survivor_is_marked_for_retry(
+    temp_repo: Path,
+) -> None:
+    # Unopenable, the survivor keeps its seeded claim and records none to
+    # restore; its failed re-parse read must still mark it for retry, or its
+    # unchanged hash lets the next run skip it for good (CodeRabbit, PR
+    # #2248).
+    root = temp_repo / "proj"
+    root.mkdir()
+    (root / "util.h").write_text(_HEADER, encoding="utf-8")
+    (root / "main.c").write_text(_MAIN, encoding="utf-8")
+    store = _StatefulIngestor()
+    _index(store, root, force=True)
+    (root / "util.c").write_text(_ADDED, encoding="utf-8")
+    header = root / "util.h"
+    real_open, real_read_bytes = builtins.open, Path.read_bytes
+
+    def denied(path: object) -> None:
+        if Path(str(path)) == header:
+            raise PermissionError(13, "Permission denied", str(path))
+
+    def open_denied(file, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        denied(file)
+        return real_open(file, *args, **kwargs)
+
+    def read_bytes_denied(self: Path) -> bytes:
+        denied(self)
+        return real_read_bytes(self)
+
+    with (
+        patch("builtins.open", open_denied),
+        patch.object(Path, "read_bytes", read_bytes_denied),
+    ):
+        _index(store, root, force=False)
+
+    cache = json.loads((root / cs.HASH_CACHE_FILENAME).read_text(encoding="utf-8"))
+    assert cache.get("util.h") == cs.HASH_CACHE_UNREADABLE, cache
