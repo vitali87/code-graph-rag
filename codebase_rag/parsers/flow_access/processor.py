@@ -527,6 +527,27 @@ def _merge_optional_taints(left: Taint | None, right: Taint | None) -> Taint | N
     return _merge_taint(left, right)
 
 
+def _keyword_argument(node: Node) -> tuple[str, Node] | None:
+    # A Python `name=value` argument as (name, value), or None when either
+    # half is missing.
+    key = node.child_by_field_name(cs.TS_FIELD_NAME)
+    value = node.child_by_field_name(cs.FIELD_VALUE)
+    if key is None or key.text is None or value is None:
+        return None
+    return key.text.decode(cs.ENCODING_UTF8), value
+
+
+def _arg_handle_targets(
+    handle_text: str | None, handles: _HandleMap
+) -> list[tuple[ResourceKind, str]]:
+    bindings = handles.get(handle_text) if handle_text is not None else None
+    if bindings:
+        return [(b.kind, b.identity) for b in bindings]
+    if handle_text in LIBC_STD_STREAMS:
+        return [(LIBC_STD_STREAMS[handle_text], DYNAMIC_TARGET)]
+    return [(ResourceKind.FILE, DYNAMIC_TARGET)]
+
+
 def _is_short_circuit(node: Node) -> bool:
     operator = node.child_by_field_name(cs.FIELD_OPERATOR)
     return (
@@ -1930,13 +1951,7 @@ class FlowProcessor:
         # The handle argument resolves to its resource(s): a bound handle (possibly
         # several after a branch merge), a pre-bound std stream (`fprintf(stderr,..)`),
         # or an untracked FILE* known only by signature (<dynamic>).
-        bindings = handles.get(handle_text) if handle_text is not None else None
-        if bindings:
-            targets = [(b.kind, b.identity) for b in bindings]
-        elif handle_text in LIBC_STD_STREAMS:
-            targets = [(LIBC_STD_STREAMS[handle_text], DYNAMIC_TARGET)]
-        else:
-            targets = [(ResourceKind.FILE, DYNAMIC_TARGET)]
+        targets = _arg_handle_targets(handle_text, handles)
         for index, (_via, taint) in enumerate(args):
             # Only the DATA payload flows to the file: `fwrite(buf, size, n, f)`
             # writes arg 0, so a tainted `size`/`n` is control metadata, not a leak.
@@ -3657,19 +3672,11 @@ class FlowProcessor:
             if child.type == cs.TS_COMMENT:
                 continue
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                key = child.child_by_field_name(cs.TS_FIELD_NAME)
-                value = child.child_by_field_name(cs.FIELD_VALUE)
-                if key is not None and key.text is not None and value is not None:
+                if (keyword := _keyword_argument(child)) is not None:
+                    name, value = keyword
                     taint = self._py_value_taint(value, tainted, ctx)
                     if taint is not None:
-                        out.append(
-                            (
-                                taint,
-                                VIA_KW_FORMAT.format(
-                                    name=key.text.decode(cs.ENCODING_UTF8)
-                                ),
-                            )
-                        )
+                        out.append((taint, VIA_KW_FORMAT.format(name=name)))
                 continue
             taint = self._py_value_taint(child, tainted, ctx)
             if taint is not None:
@@ -3751,19 +3758,11 @@ class FlowProcessor:
             if child.type == cs.TS_COMMENT:
                 continue
             if child.type == cs.TS_PY_KEYWORD_ARGUMENT:
-                key = child.child_by_field_name(cs.TS_FIELD_NAME)
-                value = child.child_by_field_name(cs.FIELD_VALUE)
-                if key is not None and key.text is not None and value is not None:
+                if (keyword := _keyword_argument(child)) is not None:
+                    name, value = keyword
                     params = self._value_params(value, tainted)
                     if params:
-                        out.append(
-                            (
-                                params,
-                                VIA_KW_FORMAT.format(
-                                    name=key.text.decode(cs.ENCODING_UTF8)
-                                ),
-                            )
-                        )
+                        out.append((params, VIA_KW_FORMAT.format(name=name)))
                 continue
             params = self._value_params(child, tainted)
             if params:

@@ -311,6 +311,28 @@ def _chain_links(
     return sorted(found)
 
 
+def _chain_link_sites(
+    kind: str,
+    path: str,
+    source: bytes,
+    line: int,
+    col: int,
+    old_name: str,
+    owner: str,
+    token: tuple[int, int],
+) -> list[RenameSite]:
+    # `obj.helper(1).helper(2)`: a link of the chain the index has no row
+    # for (the receiver's type was not inferred) binds to nobody the graph
+    # knows. It is renamed only as a guess the caller opts into with
+    # allow_heuristic; `plan` drops it where a row covers it.
+    language = get_language_for_extension(Path(path).suffix)
+    return [
+        RenameSite(kind, path, link[0], link[1], owner, _CHAIN)
+        for link in _chain_links(source, language, line, col, old_name)
+        if link != token
+    ]
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -574,16 +596,10 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
-        if kind != "call":
-            return
-        # `obj.helper(1).helper(2)`: a link of the chain the index has no
-        # row for (the receiver's type was not inferred) binds to nobody
-        # the graph knows. It is renamed only as a guess the caller opts
-        # into with allow_heuristic; `plan` drops it where a row covers it.
-        language = get_language_for_extension(Path(path).suffix)
-        for link in _chain_links(source, language, line, col, old_name):
-            if link != token:
-                sites.append(RenameSite(kind, path, link[0], link[1], owner, _CHAIN))
+        if kind == "call":
+            sites.extend(
+                _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
+            )
 
     def _import_sites(self, qn: str, old_name: str) -> list[tuple[ImportSite, str]]:
         module_qn, _path = self._module_of(qn)
