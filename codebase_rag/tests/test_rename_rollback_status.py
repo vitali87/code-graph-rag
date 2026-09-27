@@ -139,7 +139,7 @@ def test_cli_failed_contract_exits_nonzero_and_serializes_rollback_status(
             "codebase_rag.graph_cli._project_and_fetch",
             return_value=(PROJECT, store.fetch_all, MagicMock()),
         ),
-        patch("codebase_rag.cli.GraphUpdater", return_value=updater),
+        patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch.object(updater, "reingest", side_effect=reingest),
     ):
         result = CliRunner().invoke(

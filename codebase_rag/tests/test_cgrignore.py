@@ -282,7 +282,7 @@ def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
 class TestCgrignoreLoadedWithoutInteractiveSetup:
     runner = CliRunner()
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_loads_cgrignore_without_interactive_setup(
@@ -311,7 +311,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
         assert "vendor" in updater_kwargs["exclude_paths"]
         assert "build" in updater_kwargs["exclude_paths"]
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.ProtobufFileIngestor")
     @patch("codebase_rag.cli.load_ignore_patterns")
@@ -342,7 +342,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
         assert updater_kwargs["unignore_paths"] == frozenset({"dist/assets"})
         assert "dist" in updater_kwargs["exclude_paths"]
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_merges_cli_excludes_with_cgrignore(
@@ -377,7 +377,7 @@ class TestCgrignoreLoadedWithoutInteractiveSetup:
         assert "from_cli" in updater_kwargs["exclude_paths"]
 
     @patch("codebase_rag.cli.prompt_for_unignored_directories")
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_start_does_not_prompt_without_interactive_setup(

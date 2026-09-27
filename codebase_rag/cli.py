@@ -6,11 +6,12 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
+from typing import Any
 
 import click
 import typer
@@ -20,12 +21,16 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from . import cgr_state
+from . import (
+    _cli_env,  # noqa: F401  (must run before settings load)
+    cgr_state,
+)
 from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
 from .capture import CaptureSelection, resolve_capture, split_spec
+from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
 from .editing.cli import cli as edits_cli
@@ -38,19 +43,6 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
-from .graph_updater import GraphUpdater
-from .main import (
-    _create_configuration_table,
-    app_context,
-    connect_memgraph,
-    export_graph_to_file,
-    main_async,
-    main_optimize_async,
-    main_single_query,
-    prompt_for_unignored_directories,
-    style,
-    update_model_settings,
-)
 from .parser_loader import load_parsers
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import MemgraphIngestor
@@ -83,7 +75,6 @@ from .utils.path_utils import (
     project_roots_from_rows,
     resolve_repo_path,
 )
-from .vector_store import clear_all_embeddings, delete_project_embeddings
 from .workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 from .workspaces.cli import cli as workspace_cli
 
@@ -99,6 +90,73 @@ def _vendored_click_exception() -> type[click.ClickException]:
 
 
 _CLICK_EXCEPTIONS = (click.ClickException, _vendored_click_exception())
+
+
+# `codebase_rag.main` imports pydantic-ai and every provider SDK, and
+# `codebase_rag.vector_store` imports the Qdrant and Milvus clients; together
+# they cost over a second, and every `cgr` invocation imports this module
+# (issue #2253). These wrappers defer those imports to the commands that need
+# them and keep the names patchable attributes of `cli`.
+def clear_all_embeddings(*args: Any, **kwargs: Any) -> None:
+    from .vector_store import clear_all_embeddings as impl
+
+    return impl(*args, **kwargs)
+
+
+def delete_project_embeddings(*args: Any, **kwargs: Any) -> None:
+    from .vector_store import delete_project_embeddings as impl
+
+    return impl(*args, **kwargs)
+
+
+def _import_vector_store() -> None:
+    # The embedding wrappers import lazily. A clean run resolves the module
+    # before it wipes anything, so a broken install stops with the graph
+    # intact rather than after `clean_database`.
+    importlib.import_module(".vector_store", __package__)
+
+
+def update_model_settings(*args: Any, **kwargs: Any) -> None:
+    from .main import update_model_settings as impl
+
+    return impl(*args, **kwargs)
+
+
+def prompt_for_unignored_directories(*args: Any, **kwargs: Any) -> frozenset[str]:
+    from .main import prompt_for_unignored_directories as impl
+
+    return impl(*args, **kwargs)
+
+
+def export_graph_to_file(*args: Any, **kwargs: Any) -> bool:
+    from .main import export_graph_to_file as impl
+
+    return impl(*args, **kwargs)
+
+
+def _create_configuration_table(*args: Any, **kwargs: Any) -> Table:
+    from .main import _create_configuration_table as impl
+
+    return impl(*args, **kwargs)
+
+
+def main_single_query(*args: Any, **kwargs: Any) -> None:
+    from .main import main_single_query as impl
+
+    return impl(*args, **kwargs)
+
+
+def main_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
+    from .main import main_async as impl
+
+    return impl(*args, **kwargs)
+
+
+def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
+    from .main import main_optimize_async as impl
+
+    return impl(*args, **kwargs)
+
 
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
@@ -398,6 +456,12 @@ def _run_graph_sync(
     skip_embeddings: bool | None = None,
     assume_yes: bool = False,
 ) -> None:
+    # Resolved before any graph write: see `_import_vector_store`.
+    from .graph_updater import GraphUpdater
+
+    if clean:
+        _import_vector_store()
+
     cgrignore = load_ignore_patterns(repo)
     cli_excludes = frozenset(exclude) if exclude else frozenset()
     exclude_paths = cli_excludes | cgrignore.exclude or None
@@ -653,6 +717,7 @@ def start(
 
     if clean and not update_graph:
         repo_to_clean = Path(target_repo_path)
+        _import_vector_store()
         with connect_memgraph(effective_batch_size) as ingestor:
             _confirm_destructive_clean(ingestor, resolved_project_name, yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -818,6 +883,8 @@ def index(
             repo_path=str(repo_to_index),
         )
         parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo_to_index,
@@ -1264,6 +1331,8 @@ def rename_command(
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:  # type: ignore[attr-defined]
         parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
             ingestor=ingestor,  # type: ignore[arg-type]
             repo_path=repo_path.resolve(),

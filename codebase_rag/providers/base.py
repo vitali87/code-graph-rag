@@ -1,28 +1,27 @@
 from __future__ import annotations
 
 import difflib
+import importlib.util
 import os
 from abc import ABC, abstractmethod
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 from loguru import logger
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
-from pydantic_ai.providers.anthropic import (
-    AnthropicProvider as PydanticAnthropicProvider,
-)
-from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
-from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
-from pydantic_ai.providers.google_cloud import GoogleCloudProvider
-from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, normalised_credential, settings
+
+# Each provider imports its pydantic-ai model and provider classes inside
+# `create_model`, so building one model loads one SDK rather than all of them
+# (issue #2253). These names are for annotations only.
+if TYPE_CHECKING:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 
 class ModelProvider(ABC):
@@ -146,6 +145,12 @@ class GoogleProvider(ModelProvider):
             raise ValueError(ex.GOOGLE_VERTEX_NO_PROJECT)
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> GoogleModel:
+        from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+        from pydantic_ai.providers.google import (
+            GoogleProvider as PydanticGoogleProvider,
+        )
+        from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+
         self.validate_config()
 
         if self.provider_type == cs.GoogleProviderType.VERTEX:
@@ -203,6 +208,11 @@ class OpenAIProvider(ApiKeyProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIResponsesModel:
+        from pydantic_ai.models.openai import OpenAIResponsesModel
+        from pydantic_ai.providers.openai import (
+            OpenAIProvider as PydanticOpenAIProvider,
+        )
+
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
@@ -235,6 +245,11 @@ class OllamaProvider(ModelProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import (
+            OpenAIProvider as PydanticOpenAIProvider,
+        )
+
         self.validate_config()
 
         provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
@@ -258,6 +273,11 @@ class AnthropicProvider(ApiKeyProvider):
         return cs.Provider.ANTHROPIC
 
     def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
+        from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+        from pydantic_ai.providers.anthropic import (
+            AnthropicProvider as PydanticAnthropicProvider,
+        )
+
         self.validate_config()
         # api_key is guaranteed to be set by validate_config
         assert self.api_key is not None
@@ -301,6 +321,9 @@ class AzureOpenAIProvider(ApiKeyProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
+
         self.validate_config()
         # api_key and endpoint are guaranteed to be set by validate_config
         assert self.api_key is not None
@@ -334,6 +357,15 @@ class MiniMaxProvider(ApiKeyProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel | AnthropicModel:
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.anthropic import (
+            AnthropicProvider as PydanticAnthropicProvider,
+        )
+        from pydantic_ai.providers.openai import (
+            OpenAIProvider as PydanticOpenAIProvider,
+        )
+
         self.validate_config()
         # api_key is guaranteed to be set by validate_config
         assert self.api_key is not None
@@ -355,14 +387,25 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.MINIMAX: MiniMaxProvider,
 }
 
+
+def _litellm_importable() -> bool:
+    # `LiteLLMProvider` imports pydantic-ai's LiteLLM support only when it
+    # builds a model, so importing it cannot tell whether that support exists.
+    # Ask the import system instead, without loading the module.
+    try:
+        return importlib.util.find_spec(cs.PYDANTIC_AI_LITELLM_MODULE) is not None
+    except ImportError:
+        return False
+
+
 # Import LiteLLM provider after base classes are defined to avoid circular import
-try:
+if _litellm_importable():
     from .litellm import LiteLLMProvider
 
     PROVIDER_REGISTRY[cs.Provider.LITELLM_PROXY] = LiteLLMProvider
     _litellm_available = True
-except ImportError as e:
-    logger.debug(f"LiteLLM provider not available: {e}")
+else:
+    logger.debug("LiteLLM provider not available")
     _litellm_available = False
 
 

@@ -9,14 +9,14 @@ from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
 from . import exceptions as ex
 from . import logs
 from .graph_dialects import DIALECT_MEMGRAPH, available_dialects
-from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from .types_defs import CgrignorePatterns, ModelConfigKwargs, PropertyValue
 
 # Load only the configuration file in the invocation directory.  The default
 # python-dotenv discovery walks parent directories, which can silently import
@@ -194,6 +194,32 @@ class AppConfig(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_provider_key_inputs(
+        cls, data: dict[str, PropertyValue]
+    ) -> dict[str, PropertyValue]:
+        """Accept a provider key in `.env`, as the missing-key message says.
+
+        `format_missing_api_key_errors` tells the user to put e.g.
+        `ANTHROPIC_API_KEY` in `.env`, and `load_dotenv` above puts it in
+        `os.environ`, where the key gate and the providers read it. It is not
+        a setting of its own, so the `.env` source handed it over as an extra
+        input and every command failed at start-up (issue #2194). Dropped here,
+        before the extra check; a provider variable that IS a declared field
+        (`ORCHESTRATOR_API_KEY`) is kept, and any other undeclared key is
+        still refused.
+        """
+        declared = {name.lower() for name in cls.model_fields}
+        provider_keys = {
+            env_var.lower() for env_var in PROVIDER_ENV_KEYS.values()
+        } - declared
+        return {
+            name: value
+            for name, value in data.items()
+            if name.lower() not in provider_keys
+        }
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
     # so an existing install keeps its behaviour without touching config;

@@ -255,8 +255,8 @@ class TestAnthropicProvider:
         with pytest.raises(ValueError, match="Anthropic provider requires api_key"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_anthropic_model_creation(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -267,8 +267,8 @@ class TestAnthropicProvider:
         mock_anthropic_model.assert_called_once()
         assert result == mock_model
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_anthropic_model_enables_prompt_caching(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -327,8 +327,8 @@ class TestAzureOpenAIProvider:
         with pytest.raises(ValueError, match="Azure OpenAI provider requires endpoint"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.base.PydanticAzureProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.azure.AzureProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_azure_model_creation(
         self, mock_chat_model: Any, mock_azure_provider: Any
     ) -> None:
@@ -391,8 +391,8 @@ class TestMiniMaxProvider:
             provider = MiniMaxProvider()
             assert provider.api_key == "env-mm-key"
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_minimax_openai_model_creation(
         self, mock_chat_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -410,8 +410,8 @@ class TestMiniMaxProvider:
         )
         assert result == mock_model
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_minimax_anthropic_model_creation(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -444,8 +444,8 @@ class TestMiniMaxProvider:
 
 
 class TestModelCreation:
-    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
+    @patch("pydantic_ai.providers.google.GoogleProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
     def test_google_model_creation_without_thinking_budget(
         self, mock_google_model: Any, mock_google_provider: Any
     ) -> None:
@@ -471,9 +471,9 @@ class TestModelCreation:
         # not smuggle in an unrelated setting.
         assert "google_thinking_config" not in call_kwargs["settings"]
 
-    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
-    @patch("codebase_rag.providers.base.GoogleModelSettings")
+    @patch("pydantic_ai.providers.google.GoogleProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
+    @patch("pydantic_ai.models.google.GoogleModelSettings")
     def test_google_model_creation_with_thinking_budget(
         self,
         mock_model_settings: Any,
@@ -508,8 +508,8 @@ class TestModelCreation:
         assert "settings" in call_kwargs
         assert call_kwargs["settings"] == mock_settings
 
-    @patch("codebase_rag.providers.base.GoogleCloudProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
+    @patch("pydantic_ai.providers.google_cloud.GoogleCloudProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
     def test_google_vertex_model_creation_uses_cloud_provider(
         self, mock_google_model: Any, mock_cloud_provider: Any
     ) -> None:
@@ -538,8 +538,8 @@ class TestModelCreation:
             settings={"max_tokens": settings.MODEL_MAX_TOKENS},
         )
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIResponsesModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIResponsesModel")
     def test_openai_model_creation(
         self, mock_openai_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -557,8 +557,8 @@ class TestModelCreation:
             "gpt-4o", provider=mock_openai_provider.return_value
         )
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_ollama_model_creation(
         self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -662,8 +662,8 @@ class TestLiteLLMProvider:
         with pytest.raises(ValueError, match="LiteLLM proxy server not responding"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider")
-    @patch("codebase_rag.providers.litellm.OpenAIChatModel")
+    @patch("pydantic_ai.providers.litellm.LiteLLMProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     @patch("httpx.Client")
     def test_litellm_model_creation(
         self, mock_client: Any, mock_chat_model: Any, mock_litellm_provider: Any
