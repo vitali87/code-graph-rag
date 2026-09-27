@@ -112,9 +112,7 @@ def _backtick_identifier(query: str, start: int) -> tuple[int, str]:
 
 def is_allowed_procedure(name: str) -> bool:
     """Whether a generated query may CALL this procedure."""
-    return name not in cs.CYPHER_DENIED_PROCEDURES and name.startswith(
-        tuple(cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES)
-    )
+    return name in cs.CYPHER_ALLOWED_PROCEDURES
 
 
 class PlanOperator(NamedTuple):

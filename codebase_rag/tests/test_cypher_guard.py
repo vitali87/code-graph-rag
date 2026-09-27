@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
+from codebase_rag import prompts
 from codebase_rag.graph_dialects import DIALECT_MEMGRAPH, get_dialect
 from codebase_rag.services.cypher_guard import (
     check_plan,
@@ -71,8 +73,27 @@ class TestIsAllowedProcedure:
     def test_read_only_procedures_are_allowed(self, name: str) -> None:
         assert is_allowed_procedure(name)
 
-    @pytest.mark.parametrize("name", sorted(cs.CYPHER_DENIED_PROCEDURES))
-    def test_denied_procedures_are_refused_despite_their_prefix(
+    @pytest.mark.parametrize("name", ["schema.assert", "graph_util.chain_nodes"])
+    def test_writing_procedures_in_allowed_modules_are_refused(self, name: str) -> None:
+        assert is_allowed_procedure(name) is False
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            # Modules whose other procedures are allowed. A module prefix
+            # admitted all of these; only a listed name may pass now, so a
+            # procedure a later MAGE release adds stays refused until vetted.
+            "graph_util.future_writer",
+            "schema.drop_all",
+            "path.anything",
+            "nxalg.write_graph",
+            "pagerank.set",
+            # A prefix of an allowed name is not that name.
+            "pagerank.ge",
+            "pagerank",
+        ],
+    )
+    def test_unlisted_procedures_in_allowed_modules_are_refused(
         self, name: str
     ) -> None:
         assert is_allowed_procedure(name) is False
@@ -82,6 +103,15 @@ class TestIsAllowedProcedure:
     )
     def test_procedures_outside_the_families_are_refused(self, name: str) -> None:
         assert is_allowed_procedure(name) is False
+
+    def test_every_procedure_the_prompt_recommends_is_allowed(self) -> None:
+        recommended = set(
+            re.findall(r"CALL ([a-z_]+\.[a-z_]+)\(", prompts._MAGE_SECTIONS)
+        )
+        assert recommended, "the prompt's procedure list could not be read"
+        assert recommended <= cs.CYPHER_ALLOWED_PROCEDURES, sorted(
+            recommended - cs.CYPHER_ALLOWED_PROCEDURES
+        )
 
 
 class TestTextValidatorsSeeThroughQuoting:
@@ -191,7 +221,13 @@ class TestCheckMemgraphPlan:
             _check_memgraph(_SUBQUERY_WRITE_PLAN, "q")
 
     @pytest.mark.parametrize(
-        "name", ["mg.create_module_file", "graph_util.chain_nodes", "schema.assert"]
+        "name",
+        [
+            "mg.create_module_file",
+            "graph_util.chain_nodes",
+            "schema.assert",
+            "graph_util.future_writer",
+        ],
     )
     def test_disallowed_procedure_is_refused(self, name: str) -> None:
         with pytest.raises(ex.ReadOnlyQueryError, match=name):
