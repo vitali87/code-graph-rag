@@ -21,6 +21,10 @@ class Architecture(StrEnum):
 BINARY_NAME_TEMPLATE = "code-graph-rag-{system}-{machine}"
 BINARY_FILE_PERMISSION = 0o755
 DIST_DIR = "dist"
+# PyInstaller appends `.exe` to the `--name` it is given on Windows, so the
+# built file is not at `dist/<name>` there.
+WINDOWS_SYSTEM = "windows"
+WINDOWS_EXECUTABLE_SUFFIX = ".exe"
 BYTES_PER_MB_FLOAT = 1024 * 1024
 
 PYPROJECT_PATH = "pyproject.toml"
@@ -49,6 +53,16 @@ PYINSTALLER_ENTRY_POINT = "main.py"
 # one-file binary. Every importer guards the import, and interactive input
 # goes through prompt_toolkit, so nothing loses behaviour without it.
 PYINSTALLER_EXCLUDED_MODULES = ["logfire", "readline"]
+
+# Archive entries a release binary must never carry, matched against the last
+# path segment of each TOC name. Checked on the built archive, so a new route
+# that pulls the library back in fails the build instead of shipping.
+FORBIDDEN_BUNDLE_ENTRY_PATTERNS = (
+    r"libreadline\.so(\.\d+)*",
+    r"libreadline(\.\d+)*\.dylib",
+    r"readline(\.cpython-[^/\\]+|\.abi3)?\.so",
+    r"readline(\.cp\d+-[^/\\]+)?\.pyd",
+)
 
 TOML_KEY_PROJECT = "project"
 TOML_KEY_OPTIONAL_DEPS = "optional-dependencies"

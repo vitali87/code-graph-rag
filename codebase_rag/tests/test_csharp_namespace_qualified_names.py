@@ -273,9 +273,6 @@ class TestObjectCreationNamesAType:
             "proj.test.Serilog.Tests.Core.CapturingTests.CapturingTests.Direct",
             ctor,
         ) in calls, sorted(calls)
-        # `new LogEventProperty(...)` INSIDE the same-named factory binds
-        # nothing on main either (the member tier answers before the
-        # fallback); that gap is pre-existing and not asserted here.
         instantiates = {
             (str(source), str(target))
             for _sl, source, rel, _tl, target in store.edges
@@ -285,6 +282,15 @@ class TestObjectCreationNamesAType:
             "proj.test.Serilog.Tests.Core.CapturingTests.CapturingTests.Direct",
             "proj.src.Serilog.Events.LogEventProperty.LogEventProperty",
         ) in instantiates, sorted(instantiates)
+        # INSIDE the same-named factory too: the enclosing-scope tier found
+        # the factory itself and the construction bound nothing (#1997).
+        factory = "proj.test.Serilog.Tests.Support.Some.Some.LogEventProperty"
+        assert (factory, ctor) in calls, sorted(calls)
+        assert (
+            factory,
+            "proj.src.Serilog.Events.LogEventProperty.LogEventProperty",
+        ) in instantiates, sorted(instantiates)
+        assert (factory, factory) not in calls, sorted(calls)
         # The control: a plain call of the factory still binds the method.
         assert (
             "proj.test.Serilog.Tests.Core.CapturingTests.CapturingTests.Made",

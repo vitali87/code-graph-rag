@@ -187,6 +187,28 @@ CPYTHON_COMPONENT = "CPython"
 CPYTHON_LICENSE = "PSF-2.0"
 CPYTHON_LICENSE_FILE = "LICENSE.txt"
 BUNDLED_AS = "(bundled as {files})"
+# CPython compiles third-party code straight into its own modules (libmpdec
+# into `_decimal`, Expat into `pyexpat`, HACL* into the hash modules), so no
+# separate library file reveals it. Its `LICENSE.txt` does not list them on
+# POSIX builds; `Doc/license.rst` does, and is vendored per minor version so
+# a Python upgrade without a matching file stops the release.
+CPYTHON_INCORPORATED_FILE = "cpython-{major}.{minor}-incorporated.txt"
+MISSING_INCORPORATED_ERROR = (
+    "no {file} under {dir}; vendor the 'Licenses and Acknowledgements for "
+    "Incorporated Software' section of CPython {major}.{minor}'s Doc/license.rst"
+)
+
+# The bootloader is linked into every one-file binary. PyInstaller's own
+# licence file carries both the GPL and the bootloader exception that lets
+# the binary take any licence, so it is read from the installed PyInstaller,
+# which is the one that built the binary.
+BOOTLOADER_DISTRIBUTION = "pyinstaller"
+BOOTLOADER_COMPONENT = "PyInstaller bootloader"
+BOOTLOADER_LICENSE = "GPL-2.0-or-later WITH Bootloader-exception"
+MISSING_BOOTLOADER_ERROR = (
+    "PyInstaller is not installed or ships no licence file; the bootloader is "
+    "in every binary and its licence and exception must be reproduced"
+)
 
 
 @dataclass(frozen=True)
@@ -635,10 +657,41 @@ def _cpython_license_text() -> str:
     )
 
 
-def _native_text(component: NativeComponent) -> str:
+def _cpython_incorporated_text() -> str:
+    major, minor, _ = platform.python_version_tuple()
+    name = CPYTHON_INCORPORATED_FILE.format(major=major, minor=minor)
+    path = NATIVE_TEXTS_DIR / name
+    if not path.is_file():
+        raise NativeLicenseError(
+            MISSING_INCORPORATED_ERROR.format(
+                file=name, dir=NATIVE_TEXTS_DIR, major=major, minor=minor
+            )
+        )
+    return path.read_text(encoding=ENCODING).strip()
+
+
+def _native_texts(component: NativeComponent) -> tuple[str, ...]:
     if component.text_file is None:
-        return _cpython_license_text()
-    return (NATIVE_TEXTS_DIR / component.text_file).read_text(encoding=ENCODING).strip()
+        return (_cpython_license_text(), _cpython_incorporated_text())
+    return (
+        (NATIVE_TEXTS_DIR / component.text_file).read_text(encoding=ENCODING).strip(),
+    )
+
+
+def bootloader_notice() -> Notice:
+    try:
+        dist = distribution(BOOTLOADER_DISTRIBUTION)
+    except PackageNotFoundError as error:
+        raise NativeLicenseError(MISSING_BOOTLOADER_ERROR) from error
+    texts = _license_texts(dist)
+    if not texts:
+        raise NativeLicenseError(MISSING_BOOTLOADER_ERROR)
+    return Notice(
+        name=BOOTLOADER_COMPONENT,
+        version=dist.version,
+        license=BOOTLOADER_LICENSE,
+        texts=texts,
+    )
 
 
 def native_notices(libraries: frozenset[str] | None) -> list[Notice]:
@@ -689,7 +742,7 @@ def native_notices(libraries: frozenset[str] | None) -> list[Notice]:
                 name=component.name,
                 version=version,
                 license=component.license,
-                texts=(_native_text(component),),
+                texts=_native_texts(component),
             )
         )
     return notices
@@ -749,6 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         notices = collect_notices(runtime_closure().values(), bundled)
         notices += native_notices(libraries)
+        notices.append(bootloader_notice())
     except (UnreadableLicenseError, NativeLicenseError) as error:
         print(error, file=sys.stderr)  # noqa: T201
         return 1

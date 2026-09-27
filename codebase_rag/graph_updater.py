@@ -124,6 +124,25 @@ from .utils.path_utils import (
 from .utils.source_extraction import extract_source_with_fallback
 
 
+def _is_inline_module_path(path: str) -> bool:
+    """Whether `path` is the SYNTHETIC path of a bodied inline module.
+
+    Those are written as `inline_module_<name>` with no extension
+    (class_ingest/mixin.py), so the prefix alone is not the test: a real
+    file may legitimately be called `inline_module_widget.py`, and
+    treating it as synthetic drops it from the owner map (Copilot,
+    PR #1935).
+
+    Matched on the BASENAME, not the whole path: the producer writes no
+    directory component, so a path-anchored test could only ever match at
+    the repository root, and an extensionless `inline_module_data` there
+    was still read as synthetic while `pkg/inline_module_data` was not
+    (local review, PR #1967).
+    """
+    name = Path(path).name
+    return name.startswith(cs.INLINE_MODULE_PATH_PREFIX) and not Path(name).suffix
+
+
 def _persisted_int(value: object) -> int | None:
     # bool is an int subclass; a stray True would key as 1 and shadow a real
     # entry, so it is rejected explicitly (same discipline as the C# path).
@@ -213,6 +232,14 @@ def _vanished(filepath: Path) -> bool:
 def _hash_file(filepath: Path) -> str:
     data = filepath.read_bytes()
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
+
+
+def _opens_for_reading(path: Path) -> bool:
+    try:
+        with open(path, "rb"):
+            return True
+    except OSError:
+        return False
 
 
 def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
@@ -915,6 +942,9 @@ class GraphUpdater:
         # such a run re-resolves all edges itself, so graph reads may degrade
         # on failure; an incremental run's correctness depends on them.
         self._is_full_build = False
+        # path -> module qualified name as the graph records it, read once
+        # per rehydration for the requeues (issue #1935).
+        self._module_qns_by_path: dict[str, str] | None = None
         if repo_path.is_file():
             resolved = repo_path.resolve()
             self._single_file = resolved
@@ -959,6 +989,9 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
+        # key, so a survivor that turns out unreadable gets its claim back.
+        self._forgotten_flux_claims: dict[str, tuple[str, Path]] = {}
         # Hybrid-mode macro uses awaiting a caller: attribution needs the
         # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
@@ -1015,6 +1048,7 @@ class GraphUpdater:
         # Whether that read failed: the list then holds this project alone,
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1725,6 +1759,7 @@ class GraphUpdater:
         self._parser_changed = False
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -1892,6 +1927,7 @@ class GraphUpdater:
         # Call-registered routes (Express, net/http, echo, gin) become
         # endpoints too, so JS and Go servers are linkable (issue #886).
         self._emit_route_call_endpoints()
+        self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
@@ -2151,13 +2187,34 @@ class GraphUpdater:
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
             )
         except Exception:
+            # A delete that failed is owed exactly like one that was skipped.
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
+        """Owe a skipped EXPOSES cleanup to the next run, or settle it.
+
+        A batch run's endpoint passes cover every module, so one that ran
+        its cleanups settles whatever an earlier run owed; any run that
+        skipped one leaves the marker for the next (issue #2193).
+        """
+        marker = self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        try:
+            if self._exposes_cleanup_skipped:
+                marker.touch()
+            elif cleared_by_this_run:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            # Best effort, as every other state file here: a read-only tree
+            # must not lose the run to a marker it could not write.
+            logger.debug("EXPOSES cleanup marker not updated")
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2187,12 +2244,14 @@ class GraphUpdater:
         # Same reason as the handler cleanup: a seeded module map can hold a
         # sibling project's modules when the registry could not be read.
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
             )
         except Exception:
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _route_source(
@@ -2367,6 +2426,73 @@ class GraphUpdater:
             logger.info("Anchored {} artefacts to contract operations", anchored)
             self.ingestor.flush_all()
 
+    def _recorded_module_qn(self, path: str) -> str:
+        """The module qualified name the graph records for `path`.
+
+        A requeued type fact must carry the owner the clean pass gave it.
+        `base_module_qn` runs BEFORE disambiguation, so it cannot reproduce
+        a suffixed name (`proj.lib.d.ts` beside `proj.lib`, `proj.settings.py`
+        beside `proj.settings`): the fact would then resolve its annotation
+        through the BARE module's scope and gain an edge to the other file's
+        type, an edge a clean index never has (issue #1935). The graph knows
+        the answer; it is read once per rehydration, and the derivation is
+        only the fallback for a path the graph does not hold.
+        """
+        if self._module_qns_by_path is None:
+            self._module_qns_by_path = self._read_module_qns_by_path()
+        recorded = self._module_qns_by_path.get(path)
+        if recorded is not None:
+            return recorded
+        return base_module_qn(Path(path), self.project_name)
+
+    def _read_module_qns_by_path(self) -> dict[str, str]:
+        # Scoped in the query: the shared graph holds every project, and a
+        # module of another project may record the same relative path.
+        # A bodied Rust inline module (`mod alpha { .. }`) records its
+        # enclosing FILE's path too, so several modules can share one path;
+        # the clean pass owns a definition by the file module, which is the
+        # shortest of those names (the inline ones nest under it), so the
+        # shortest wins here and the requeue agrees with a clean index
+        # (bot review on PR #1967: keyed on the last row returned, an
+        # unrelated edit rehydrated `alpha.make` under `beta`).
+        if not isinstance(self.ingestor, QueryProtocol):
+            return {}
+        # The same posture as every other read in `_rehydrate_registry_from_graph`
+        # (local review): a full build parsed every file and degrades to the
+        # bare derivation with a warning; an incremental run would requeue
+        # under the wrong owner, so the outage aborts it.
+        try:
+            rows = self.ingestor.fetch_all(
+                cs.CYPHER_PROJECT_MODULE_PATHS,
+                {
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    cs.KEY_PROJECT_PREFIX: f"{self.project_name}{cs.SEPARATOR_DOT}",
+                },
+            )
+        except Exception as exc:
+            if not self._is_full_build:
+                # The module paths are unknown, the same outage the reingest
+                # guard reports, so it says so rather than leaking the raw error.
+                raise RuntimeError(ls.REINGEST_MODULE_PATHS_UNKNOWN) from exc
+            logger.warning(ls.REHYDRATE_QUERY_FAILED)
+            return {}
+        found: dict[str, str] = {}
+        for row in rows:
+            qn = row.get(cs.KEY_QUALIFIED_NAME)
+            path = row.get(cs.KEY_PATH)
+            if not isinstance(qn, str) or not isinstance(path, str) or not path:
+                continue
+            if _is_inline_module_path(path):
+                continue
+            # The read is prefix-scoped, and `svc.` selects `svc.v2`'s
+            # modules too; a nested project's module must not become this
+            # file's recorded owner (#1970; bot review).
+            if not self._owns(qn):
+                continue
+            if path not in found or (len(qn), qn) < (len(found[path]), found[path]):
+                found[path] = qn
+        return found
+
     def _requeue_type_facts(
         self, node_type: NodeType, qn: str, path: str, row: ResultRow
     ) -> None:
@@ -2380,7 +2506,7 @@ class GraphUpdater:
             PendingTypeFact(
                 node_type.value,
                 qn,
-                base_module_qn(Path(path), self.project_name),
+                self._recorded_module_qn(path),
                 return_type if isinstance(return_type, str) else None,
                 [str(p) for p in param_types]
                 if isinstance(param_types, list)
@@ -2434,7 +2560,7 @@ class GraphUpdater:
                 continue
             pending.append(
                 PendingParameterType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name, path
+                    qn, self._recorded_module_qn(path), type_name, path
                 )
             )
 
@@ -2468,9 +2594,7 @@ class GraphUpdater:
             if path in self._reparsed_file_keys:
                 continue
             pending.append(
-                PendingFieldType(
-                    qn, base_module_qn(Path(path), self.project_name), type_name, path
-                )
+                PendingFieldType(qn, self._recorded_module_qn(path), type_name, path)
             )
 
     def _registered_project_names(self) -> list[str]:
@@ -2525,6 +2649,9 @@ class GraphUpdater:
         # INSTANTIATES into any unchanged file (issue #532, outbound half).
         if not isinstance(self.ingestor, QueryProtocol):
             return
+        # Read afresh each run: a module may have gained or lost its suffix
+        # since the last one, and the requeues below all consult this.
+        self._module_qns_by_path = None
         added = 0
         project_params = {cs.KEY_PROJECT_PREFIX: self.project_name + "."}
         try:
@@ -2698,7 +2825,7 @@ class GraphUpdater:
             # change exists to close (issue #1970).
             if not self._owns(qn):
                 continue
-            if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+            if _is_inline_module_path(path):
                 continue
             # Only seed modules whose file survives this run (still eligible).
             # A file deleted OR newly excluded this cycle is gone from
@@ -2710,6 +2837,70 @@ class GraphUpdater:
             if _stem_key(path) in flux_stems:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
+
+    def _forget_flux_stem_qns(self, flux_stems: set[str]) -> None:
+        """Drop the module-qn claims of every file on a stem in flux.
+
+        Seeding skips a flux-stem survivor so it re-parses unseeded, but a
+        reused updater (the watcher, the MCP server) still holds the claim
+        its previous run wrote: `util.h` keeps `proj.util`, so an added
+        `util.c` is suffixed to `proj.util.c` where a clean index gives it
+        the bare qn (issue #2022). Its definitions stay registered under the
+        old qn too, so the re-parse marks the new owner's same-named
+        function as a duplicate. Every file on the stem re-parses this run
+        and writes its state again in walk order, so the old state goes
+        first; `remove_file_from_state` finds it through the recorded qn,
+        so it runs before the claim is dropped.
+
+        Survivors only: a file deleted this run keeps its state until the
+        deletion step, since the foreign-definer lookup reads it to find the
+        files that define into the departing module (issue #1660). A
+        survivor that cannot be opened keeps its claim as well: the run
+        leaves its graph subtree in place, and the added sibling would
+        otherwise take the bare qn over a Module still defining the
+        survivor's functions.
+
+        In LIBCLANG mode the frontend has already registered a covered
+        file's current definitions and the file pass will skip it, so its
+        frontend registrations are kept, as in the re-parse loop.
+        """
+        if not flux_stems:
+            return
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        on_stem: dict[Path, str] = {}
+        for path in module_map.values():
+            try:
+                key = cached_relative_path(path, self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if _stem_key(key) in flux_stems and _opens_for_reading(path):
+                on_stem[path] = key
+        # Recorded first: `remove_file_from_state` drops the claim itself.
+        for qn, path in module_map.items():
+            if path in on_stem:
+                self._forgotten_flux_claims[on_stem[path]] = (qn, path)
+        for path in sorted(on_stem):
+            self.remove_file_from_state(
+                path, frontend_current=on_stem[path] in self._cpp_frontend_covered
+            )
+        for qn in [qn for qn, path in module_map.items() if path in on_stem]:
+            del module_map[qn]
+
+    def _restore_unreadable_flux_claims(self, unreadable_keys: set[str]) -> None:
+        """Give an unreadable flux-stem survivor back the claim it lost.
+
+        `_forget_flux_stem_qns` checks that a survivor opens, but the read
+        that decides whether it is parsed comes later and can still fail. The
+        run then leaves the survivor's subtree in place, and without its
+        claim an added same-stem sibling would take the bare qn over a Module
+        still defining the survivor's functions. Runs before any file is
+        parsed, so the sibling is suffixed as it is when the survivor does
+        not open at all.
+        """
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        for key in unreadable_keys & self._forgotten_flux_claims.keys():
+            qn, path = self._forgotten_flux_claims[key]
+            module_map.setdefault(qn, path)
 
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
@@ -4038,7 +4229,7 @@ class GraphUpdater:
                 path
                 for row in rows
                 if isinstance(path := row.get(cs.KEY_PATH), str)
-                and not path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+                and not _is_inline_module_path(path)
                 and (
                     not isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
                     or self._owns(qn)
@@ -4186,7 +4377,11 @@ class GraphUpdater:
         # on this path degrades quietly, so a read-only tree reaches here
         # having survived all of them and must not lose the whole indexing run
         # to a file it only wanted to delete (issue #1647).
-        for stale in (cache_path, self.repo_path / cs.DIR_MTIMES_FILENAME):
+        for stale in (
+            cache_path,
+            self.repo_path / cs.DIR_MTIMES_FILENAME,
+            self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+        ):
             try:
                 stale.unlink(missing_ok=True)
             except OSError as e:
@@ -4270,6 +4465,11 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return False
+        # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
+        # hash below would send the run into the endpoint passes that owe it
+        # (issue #2193).
+        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return False
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -4545,7 +4745,11 @@ class GraphUpdater:
                 | (old_hashes.keys() - eligible_keys)
             }
         )
+        # Per run: a full build forgets nothing, and a reused updater must not
+        # restore a claim an earlier run recorded.
+        self._forgotten_flux_claims = {}
         if not is_full_build:
+            self._forget_flux_stem_qns(flux_stems)
             self._seed_module_qns_from_graph(eligible_keys, flux_stems)
         # A full build can still land on a graph that already holds this
         # project: the cache lives in the repo working tree, the graph does
@@ -4717,6 +4921,8 @@ class GraphUpdater:
             else:
                 logger.debug(ls.FILE_HASH_NEW, path=file_key)
             changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+        self._restore_unreadable_flux_claims(unreadable_keys)
 
         # Before deleting any changed file's subtree (which removes the inbound
         # CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
@@ -6001,6 +6207,9 @@ class GraphUpdater:
         }
         self._emit_pending_endpoints(only=touched_modules)
         self._emit_route_call_endpoints(only=touched_modules)
+        # A scoped pass covers only the touched modules, so it can owe a
+        # cleanup but never settle one owed from elsewhere.
+        self._record_exposes_cleanup(cleared_by_this_run=False)
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -6128,6 +6337,7 @@ class GraphUpdater:
         # A project registered since the last run must not read as owned.
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
@@ -6478,7 +6688,7 @@ class GraphUpdater:
                 path = r.get("path")
                 if not isinstance(path, str) or not path:
                     continue
-                if path.startswith(cs.INLINE_MODULE_PATH_PREFIX):
+                if _is_inline_module_path(path):
                     continue
                 abs_path = r.get("absolute_path")
                 qn = r.get("qualified_name", "")
