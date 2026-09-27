@@ -2833,10 +2833,30 @@ class GraphUpdater:
             # shapes.cpp) takes the bare qn a clean index would give it.
             if path not in eligible_paths:
                 continue
-            # A survivor of a stem in flux re-parses unseeded (issue #1569).
+            # A survivor of a stem in flux re-parses unseeded (issue #1569),
+            # on the same terms `_forget_flux_stem_qns` applies to an
+            # in-memory claim: one that cannot be opened is not re-parsed and
+            # keeps its qn, and one that opens has its claim recorded so a
+            # failed read can restore it. A fresh updater holds no in-memory
+            # claim, so without this the graph's was the only copy, and an
+            # added sibling took the bare qn from under the unread survivor's
+            # subtree (issue #2232).
             if _stem_key(path) in flux_stems:
+                self._seed_flux_survivor(qn, path)
                 continue
             module_map.setdefault(qn, self.repo_path / path)
+
+    def _seed_flux_survivor(self, qn: str, path: str) -> None:
+        # An unopenable survivor is not re-parsed and keeps its graph claim;
+        # one that opens re-parses unseeded, its claim recorded for
+        # `_restore_unreadable_flux_claims` should its read fail later.
+        survivor = self.repo_path / path
+        if not _opens_for_reading(survivor):
+            self.factory.definition_processor.module_qn_to_file_path.setdefault(
+                qn, survivor
+            )
+        else:
+            self._forgotten_flux_claims.setdefault(path, (qn, survivor))
 
     def _delete_stale_subtrees(self, keys: Iterable[str]) -> None:
         """Delete the old subtree of every re-parsed or deleted file.
@@ -5067,6 +5087,20 @@ class GraphUpdater:
             try:
                 caller_bytes = caller_path.read_bytes()
             except OSError:
+                # An unchanged flux-stem survivor is first read here, after
+                # the hash pass restored the unreadable ones' claims. Left
+                # unparsed its subtree stays, so it keeps its claim as they do
+                # and is marked for retry (CodeRabbit, PR #2248).
+                #
+                # The retry mark is owed whether or not a claim was forgotten:
+                # an unopenable survivor keeps its seeded claim, and without
+                # the mark its unchanged hash lets the next run skip it for
+                # good (CodeRabbit, PR #2248).
+                if caller_key in self._forgotten_flux_claims:
+                    self._restore_unreadable_flux_claims({caller_key})
+                unreadable_keys.add(caller_key)
+                if not _vanished(caller_path):
+                    new_hashes[caller_key] = cs.HASH_CACHE_UNREADABLE
                 continue
             caller_bytes = self._delombok_overlay.get(caller_key, caller_bytes)
             changed_entries.append((caller_path, caller_key, False, caller_bytes))
