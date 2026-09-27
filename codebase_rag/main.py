@@ -53,6 +53,7 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
+from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import ModelConfig, load_ignore_patterns, settings
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
@@ -108,21 +109,6 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
     from pydantic_ai.usage import RunUsage
-
-
-def style(
-    text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
-) -> str:
-    if modifier == cs.StyleModifier.NONE:
-        return f"[{color}]{text}[/{color}]"
-    return f"[{modifier} {color}]{text}[/{modifier} {color}]"
-
-
-def dim(text: str) -> str:
-    return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
-
-
-app_context = AppContext()
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -1748,16 +1734,6 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
         json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
 
     return graph_data
-
-
-def connect_memgraph(batch_size: int) -> MemgraphIngestor:
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
 
 
 def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:

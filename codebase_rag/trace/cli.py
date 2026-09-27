@@ -39,8 +39,8 @@ def cli() -> None:
 )
 @click.option("--project-name", default=None, help=ch.HELP_TRACE_PROJECT_NAME)
 def ingest_cmd(trace_file: Path, repo_path: Path, project_name: str | None) -> None:
+    from ..cli_runtime import connect_memgraph
     from ..config import settings
-    from ..main import connect_memgraph
     from ..utils.path_utils import derive_project_name
     from .ingest import ingest_trace
     from .records import TraceFormatError
