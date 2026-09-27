@@ -24,6 +24,7 @@
 #endif
 
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,11 @@
 #define CGR_ATTR __attribute__((no_instrument_function))
 
 #define CGR_STACK_MAX 4096
+/* The depth counter saturates here instead of growing without bound: exits
+ * that never run (longjmp, C++ exceptions under clang++) would otherwise
+ * carry a signed int to INT_MAX and past it, and a wrapped negative depth
+ * indexed cgr_stack out of bounds (#2264). */
+#define CGR_DEPTH_CEILING (CGR_STACK_MAX * 2)
 #define CGR_TABLE_BITS 16
 #define CGR_TABLE_SIZE (1u << CGR_TABLE_BITS)
 #define CGR_TABLE_MASK (CGR_TABLE_SIZE - 1u)
@@ -52,12 +58,22 @@ static cgr_edge cgr_table[CGR_TABLE_SIZE];
 static pthread_mutex_t cgr_lock = PTHREAD_MUTEX_INITIALIZER;
 static _Thread_local void *cgr_stack[CGR_STACK_MAX];
 static _Thread_local int cgr_depth = 0;
+/* Set while this thread is inside the shim. A signal handler that is itself
+ * instrumented would otherwise re-enter cgr_record on a thread that already
+ * holds cgr_lock and deadlock; such a nested call is skipped instead. */
+static _Thread_local volatile sig_atomic_t cgr_busy = 0;
 static int cgr_dropped = 0;
 
 CGR_ATTR static uint64_t cgr_hash(void *caller, void *callee) {
   uint64_t h = (uint64_t)(uintptr_t)caller * 0x9E3779B97F4A7C15ull;
   h ^= (uint64_t)(uintptr_t)callee + 0x517CC1B727220A95ull + (h << 6) + (h >> 2);
   return h;
+}
+
+CGR_ATTR static void cgr_mark_dropped(void) {
+  pthread_mutex_lock(&cgr_lock);
+  cgr_dropped = 1;
+  pthread_mutex_unlock(&cgr_lock);
 }
 
 CGR_ATTR static void cgr_record(void *caller, void *callee) {
@@ -173,20 +189,47 @@ CGR_ATTR static void cgr_register_atexit(void) { atexit(cgr_write); }
 
 void __cyg_profile_func_enter(void *this_fn, void *call_site) {
   (void)call_site;
+  if (cgr_busy) {
+    return;
+  }
+  cgr_busy = 1;
   pthread_once(&cgr_once, cgr_register_atexit);
   if (cgr_depth > 0 && cgr_depth <= CGR_STACK_MAX) {
     cgr_record(cgr_stack[cgr_depth - 1], this_fn);
   }
   if (cgr_depth < CGR_STACK_MAX) {
     cgr_stack[cgr_depth] = this_fn;
+  } else {
+    /* Deeper than the stack holds: this frame's callees have no known
+     * caller and go unrecorded, so the counts are no longer exact. */
+    cgr_mark_dropped();
   }
-  cgr_depth++;
+  if (cgr_depth < CGR_DEPTH_CEILING) {
+    cgr_depth++;
+  }
+  cgr_busy = 0;
 }
 
 void __cyg_profile_func_exit(void *this_fn, void *call_site) {
-  (void)this_fn;
   (void)call_site;
-  if (cgr_depth > 0) {
-    cgr_depth--;
+  if (cgr_busy) {
+    return;
   }
+  cgr_busy = 1;
+  if (cgr_depth > CGR_STACK_MAX) {
+    cgr_depth--; /* beyond the stored frames; already marked dropped */
+  } else {
+    /* Pop back to this function's own frame. Normally that is the top; a
+     * longjmp or exception that skipped exits leaves the skipped frames
+     * above it, and they are discarded here rather than left to inflate the
+     * depth and mis-parent every later call. An exit with no matching frame
+     * (its enter was skipped) changes nothing. */
+    for (int index = cgr_depth - 1; index >= 0; index--) {
+      if (cgr_stack[index] == this_fn) {
+        cgr_depth = index;
+        break;
+      }
+    }
+  }
+  cgr_busy = 0;
 }
