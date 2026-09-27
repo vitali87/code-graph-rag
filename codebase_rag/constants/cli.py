@@ -746,6 +746,11 @@ QUERY_SUMMARY_TIMEOUT = (
     "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
 )
 QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
+# C0 and C1 control characters other than tab and newline. A graph value is
+# printed to the operator's terminal, so an ESC or OSC sequence stored in a
+# docstring or annotation must be shown, not obeyed (#2260).
+QUERY_CELL_CONTROL_CHARS = r"[\x00-\x08\x0b-\x1f\x7f-\x9f]"
+QUERY_CELL_CONTROL_ESCAPE = "\\x{code:02x}"
 
 MSG_SEMANTIC_NO_RESULTS = (
     "No semantic matches found for query: '{query}'. This could mean:\n"

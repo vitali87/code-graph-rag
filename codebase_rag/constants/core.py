@@ -108,6 +108,11 @@ SEPARATOR_COMMA_SPACE = ", "
 PUNCTUATION_TYPES = (CHAR_PAREN_OPEN, CHAR_PAREN_CLOSE, CHAR_COMMA)
 
 REGEX_METHOD_CHAIN_SUFFIX = r"\)\.[^)]*$"
+# Receiver chains longer than this many hops stay unresolved. Every call in a
+# chain re-reads its whole receiver, so resolving an n-hop chain cost O(n^2):
+# a 20 KB file of `.m()` hops took minutes and gigabytes (#2262). Hand-written
+# fluent chains are far shorter.
+MAX_RECEIVER_CHAIN_HOPS = 64
 REGEX_FINAL_METHOD_CAPTURE = r"\.([^.()]+)$"
 
 DEFAULT_NAME = "Unknown"

@@ -52,10 +52,13 @@ _CALLABLE_LANGUAGE_FAMILIES: tuple[frozenset[cs.SupportedLanguage], ...] = (
 )
 
 
-def _split_receiver_chain(expr: str) -> list[str]:
+def _split_receiver_chain(expr: str) -> list[str] | None:
     # Split a receiver chain (`c.Find(1.5).Root`) on the `.` separators between
     # hops only, never on a `.` inside call arguments, an index, or a generic
     # (`1.5`, `x.y` args, `List<A.B>`), which a naive str.split would mangle.
+    # None for a chain of more than MAX_RECEIVER_CHAIN_HOPS hops, found without
+    # scanning past them: each call in a chain splits its own receiver, so an
+    # unbounded split made one long chain quadratic (#2262).
     parts: list[str] = []
     depth = 0
     current: list[str] = []
@@ -66,6 +69,8 @@ def _split_receiver_chain(expr: str) -> list[str]:
             depth = max(0, depth - 1)
         if char == cs.SEPARATOR_DOT and depth == 0:
             parts.append("".join(current))
+            if len(parts) >= cs.MAX_RECEIVER_CHAIN_HOPS:
+                return None
             current = []
         else:
             current.append(char)
@@ -518,7 +523,11 @@ class CallResolver:
         than a licence to guess; not handled when nothing can be inferred.
         """
         parts = _split_receiver_chain(call_name)
-        if len(parts) < 2 or not parts[0].startswith(cs.CHAR_PAREN_OPEN):
+        if (
+            parts is None
+            or len(parts) < 2
+            or not parts[0].startswith(cs.CHAR_PAREN_OPEN)
+        ):
             return False, None
         receiver = cs.SEPARATOR_DOT.join(parts[:-1])
         method = parts[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -3600,6 +3609,8 @@ class CallResolver:
         # constructor-temporary base (`Reader<T>(...).m()`) types itself from the
         # class registry alone.
         parts = _split_receiver_chain(object_expr)
+        if parts is None:
+            return None
         base = parts[0]
         if not base:
             return None
