@@ -3891,7 +3891,7 @@ class GraphUpdater:
             for qn in (
                 type_inference.csharp_generic_methods
                 | type_inference.csharp_local_functions.keys()
-                | type_inference.csharp_required_arity.keys()
+                | type_inference.csharp_call_shapes.keys()
                 | extension_owners
             )
             if owned(qn)

@@ -1177,3 +1177,115 @@ namespace Outer {
         s.endswith("Outer.In1.A.Run") and t.endswith("H.Twice(int)") for s, t in pairs
     ), pairs
     assert not any(s.endswith("Outer.In2.B.Run") for s, _t in pairs), pairs
+
+
+def test_a_fixed_array_parameter_takes_no_extra_arguments(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # Only `params T[]` takes extra arguments; a plain `int[]` parameter
+    # does not, however near its count (CodeRabbit, PR #2036).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void M(int[] values) { }
+    void M(object value, int b = 0, int c = 0, int d = 0) { }
+    public void Run() { M(1, 2); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.M(object, int, int, int)") for t in targets), targets
+    assert not any(t.endswith("A.M(int[])") for t in targets), targets
+
+
+def test_an_explicit_type_argument_binds_the_generic_overload(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `M<int>(1)` cannot bind the non-generic `M(int)`, even though its
+    # arity is exact (CodeRabbit, PR #2036).
+    (csharp_project / "App.cs").write_text(
+        """
+namespace App;
+public class A {
+    void M(int x) { }
+    void M<T>(T value, int extra = 0) { }
+    public void Run() { M<int>(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("A.M(T, int)") for t in targets), targets
+    assert not any(t.endswith("A.M(int)") for t in targets), targets
+
+
+def test_static_imports_form_one_method_group(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `M(int)` from one imported type and `M(string)` from another are one
+    # method group; the literal argument picks `M(int)` (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Ints { public static void M(int x) { } }
+public static class Strings { public static void M(string s) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Ints;
+using static Helpers.Strings;
+namespace App;
+public class A {
+    public void Run() { M(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Ints.M(int)") for t in targets), targets
+    assert not any(t.endswith("Strings.M(string)") for t in targets), targets
+
+
+def test_using_static_imports_only_declared_static_members(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # An instance method, and a static one the type only inherits, are not
+    # imported by `using static`, so neither makes the real target ambiguous
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public class Base { public static void Twice(int x) { } }
+public class Derived : Base { public void Twice(int x, int y) { } }
+public static class Real { public static void Twice(int x) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Derived;
+using static Helpers.Real;
+namespace App;
+public class A {
+    public void Run() { Twice(1); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Real.Twice(int)") for t in targets), targets
+    assert not any(".Base.Twice" in t or ".Derived.Twice" in t for t in targets), (
+        targets
+    )

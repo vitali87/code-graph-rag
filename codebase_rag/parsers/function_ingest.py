@@ -14,6 +14,7 @@ from ..language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 from ..types_defs import (
     ASTNode,
     CppDefinitionSpan,
+    CSharpCallShape,
     DeferredCppInherit,
     DeferredParentLink,
     FunctionLocation,
@@ -39,7 +40,7 @@ from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
 from .parameter_nodes import (
     PendingParameterType,
-    csharp_required_arity,
+    csharp_call_shape,
     emit_declared_parameters,
 )
 from .rs import utils as rs_utils
@@ -282,7 +283,7 @@ class FunctionIngestMixin:
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
     csharp_generic_methods: set[str]
-    csharp_required_arity: dict[str, int]
+    csharp_call_shapes: dict[str, CSharpCallShape]
     csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
@@ -1832,7 +1833,7 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
-        self.csharp_required_arity[ingested_qn] = csharp_required_arity(func_node)
+        self.csharp_call_shapes[ingested_qn] = csharp_call_shape(func_node)
         if (
             func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
             is not None

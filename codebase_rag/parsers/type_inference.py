@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from .. import constants as cs
 from ..types_defs import (
     ASTNode,
+    CSharpCallShape,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
@@ -61,7 +62,7 @@ class TypeInferenceEngine:
         "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
-        "csharp_required_arity",
+        "csharp_call_shapes",
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
         "csharp_class_namespaced",
@@ -115,7 +116,7 @@ class TypeInferenceEngine:
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
-        csharp_required_arity: dict[str, int] | None = None,
+        csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
@@ -227,8 +228,8 @@ class TypeInferenceEngine:
         self.csharp_generic_methods = (
             csharp_generic_methods if csharp_generic_methods is not None else set()
         )
-        self.csharp_required_arity = (
-            csharp_required_arity if csharp_required_arity is not None else {}
+        self.csharp_call_shapes = (
+            csharp_call_shapes if csharp_call_shapes is not None else {}
         )
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
@@ -346,7 +347,7 @@ class TypeInferenceEngine:
                 csharp_external_sites=self.csharp_external_sites,
                 csharp_local_functions=self.csharp_local_functions,
                 csharp_generic_methods=self.csharp_generic_methods,
-                csharp_required_arity=self.csharp_required_arity,
+                csharp_call_shapes=self.csharp_call_shapes,
                 csharp_class_generic_arity=self.csharp_class_generic_arity,
                 csharp_class_namespaced=self.csharp_class_namespaced,
                 csharp_namespaced_qns=self.csharp_namespaced_qns,
@@ -692,7 +693,7 @@ class TypeInferenceEngine:
         self.csharp_generic_methods -= function_qns
         for qn in function_qns:
             self.csharp_local_functions.pop(qn, None)
-            self.csharp_required_arity.pop(qn, None)
+            self.csharp_call_shapes.pop(qn, None)
         for qn in class_qns:
             self.csharp_class_generic_arity.pop(qn, None)
             # Dropped together: an owner record for a class whose arity is

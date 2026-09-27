@@ -129,6 +129,7 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 # (`override`) from an explicit `new` hide (which must not become OVERRIDES).
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
+TS_CSHARP_MODIFIER_STATIC = "static"
 # A type split across files carries `partial` on every part; parts with the
 # same namespace-qualified name are one logical type, unified for member and
 # base resolution (see csharp_partial_groups).
@@ -353,3 +354,80 @@ TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
 # An enum body and its members (issue #1807).
 TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
 TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"
+
+# A literal argument's C# type, for telling apart same-arity overloads that
+# two `using static` types contribute to one method group (`M(1)` against
+# `M(int)` and `M(string)`). Only literals are typed; any other argument is
+# compatible with every parameter.
+CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
+    "integer_literal": "int",
+    "real_literal": "double",
+    "boolean_literal": "bool",
+    "character_literal": "char",
+    "string_literal": "string",
+    "verbatim_string_literal": "string",
+    "raw_string_literal": "string",
+    "interpolated_string_expression": "string",
+}
+# The parameter types each literal type converts to implicitly. A parameter
+# type outside every set (a user type, a generic parameter) is not judged.
+CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
+    # A constant int converts to every integral type it fits, so the
+    # narrower integral types are accepted too.
+    "int": frozenset(
+        {
+            "int",
+            "long",
+            "short",
+            "ushort",
+            "uint",
+            "ulong",
+            "byte",
+            "sbyte",
+            "nint",
+            "nuint",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Int16",
+            "Int32",
+            "Int64",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "Byte",
+            "SByte",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "double": frozenset({"double", "object", "Double", "Object"}),
+    "bool": frozenset({"bool", "object", "Boolean", "Object"}),
+    "char": frozenset(
+        {
+            "char",
+            "int",
+            "long",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Char",
+            "Int32",
+            "Int64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "string": frozenset({"string", "object", "String", "Object"}),
+}
+CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
+    *CSHARP_LITERAL_ACCEPTS.values()
+)
+CSHARP_SYSTEM_PREFIX = "System."
+CSHARP_NULLABLE_SUFFIX = "?"
