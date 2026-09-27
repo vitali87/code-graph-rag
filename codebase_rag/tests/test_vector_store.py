@@ -88,7 +88,7 @@ def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
             mock_client_cls.return_value = instance
             vs.get_qdrant_client()
 
-    mock_client_cls.assert_called_once_with(url="http://localhost:6333")
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333", api_key=None)
 
 
 def test_get_qdrant_client_passes_api_key_to_server(
@@ -109,7 +109,9 @@ def test_get_qdrant_client_passes_api_key_to_server(
     )
 
 
-def test_get_qdrant_client_omits_blank_api_key(reset_global_client: None) -> None:
+def test_get_qdrant_client_treats_blank_api_key_as_unset(
+    reset_global_client: None,
+) -> None:
     import codebase_rag.vector_store as vs
 
     with (
@@ -120,7 +122,7 @@ def test_get_qdrant_client_omits_blank_api_key(reset_global_client: None) -> Non
         mock_client_cls.return_value.collection_exists.return_value = True
         vs.get_qdrant_client()
 
-    mock_client_cls.assert_called_once_with(url="http://localhost:6333")
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333", api_key=None)
 
 
 def test_get_qdrant_client_ignores_api_key_in_local_mode(

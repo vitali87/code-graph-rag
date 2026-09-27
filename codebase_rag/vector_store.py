@@ -161,7 +161,9 @@ def get_qdrant_client(validate: bool = True) -> Any:
     _ensure_client_backend(VectorStoreBackend.QDRANT)
     if _CLIENT is None:
         if settings.QDRANT_URL:
-            client = QdrantClient(**_qdrant_remote_client_kwargs(settings.QDRANT_URL))
+            client = QdrantClient(
+                url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY or None
+            )
         else:
             try:
                 client = QdrantClient(path=settings.QDRANT_DB_PATH)
@@ -180,15 +182,6 @@ def get_qdrant_client(validate: bool = True) -> Any:
         _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
     return _CLIENT
-
-
-def _qdrant_remote_client_kwargs(url: str) -> dict[str, str]:
-    # A blank key is left out rather than sent: qdrant-client would add an
-    # empty `api-key` header and warn about an insecure connection.
-    kwargs = {"url": url}
-    if settings.QDRANT_API_KEY:
-        kwargs["api_key"] = settings.QDRANT_API_KEY
-    return kwargs
 
 
 def _ensure_qdrant_collection(client: Any, validate: bool) -> None:
