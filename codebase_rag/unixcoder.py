@@ -144,7 +144,7 @@ class UniXcoder(nn.Module):
                 for y in encoder_output.past_key_values
             ]
             beam = Beam(beam_size, eos_id, device)
-            input_ids = beam.getCurrentState().clone()
+            input_ids = beam.get_current_state().clone()
             context_ids = source_ids[i : i + 1, : source_len[i]].repeat(beam_size, 1)
             out = encoder_output.last_hidden_state[i : i + 1, : source_len[i]].repeat(
                 beam_size, 1, 1
@@ -157,9 +157,9 @@ class UniXcoder(nn.Module):
                     out = self.lsm(self.lm_head(hidden_states)).data
                     beam.advance(out)
                     input_ids.data.copy_(
-                        input_ids.data.index_select(0, beam.getCurrentOrigin())
+                        input_ids.data.index_select(0, beam.get_current_origin())
                     )
-                    input_ids = beam.getCurrentState().clone()
+                    input_ids = beam.get_current_state().clone()
                 else:
                     length = context_ids.size(-1) + input_ids.size(-1)
                     out = self.model(
@@ -171,13 +171,13 @@ class UniXcoder(nn.Module):
                     out = self.lsm(self.lm_head(hidden_states)).data
                     beam.advance(out)
                     input_ids.data.copy_(
-                        input_ids.data.index_select(0, beam.getCurrentOrigin())
+                        input_ids.data.index_select(0, beam.get_current_origin())
                     )
                     input_ids = torch.cat(
-                        (input_ids, beam.getCurrentState().clone()), -1
+                        (input_ids, beam.get_current_state().clone()), -1
                     )
-            hyp = beam.getHyp(beam.getFinal())
-            pred = beam.buildTargetTokens(hyp)[:beam_size]
+            hyp = beam.get_hyp(beam.get_final())
+            pred = beam.build_target_tokens(hyp)[:beam_size]
             pred = [
                 torch.cat(
                     [x.view(-1) for x in p] + [zero] * (max_length - len(p))
@@ -215,32 +215,32 @@ class Beam:
         self.eosTop = False
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
-    def getCurrentState(self) -> torch.Tensor:
+    def get_current_state(self) -> torch.Tensor:
         batch = self.nextYs[-1].view(-1, 1)
         return batch
 
-    def getCurrentOrigin(self) -> torch.Tensor:
+    def get_current_origin(self) -> torch.Tensor:
         return self.prevKs[-1]
 
-    def advance(self, wordLk: torch.Tensor) -> None:
-        numWords = wordLk.size(1)
+    def advance(self, word_lk: torch.Tensor) -> None:
+        num_words = word_lk.size(1)
 
         if len(self.prevKs) > 0:
-            beamLk = wordLk + self.scores.unsqueeze(1).expand_as(wordLk)
+            beam_lk = word_lk + self.scores.unsqueeze(1).expand_as(word_lk)
 
             for i in range(self.nextYs[-1].size(0)):
                 if int(self.nextYs[-1][i]) in self._eos:
-                    beamLk[i] = -1e20
+                    beam_lk[i] = -1e20
         else:
-            beamLk = wordLk[0]
-        flatBeamLk = beamLk.view(-1)
-        bestScores, bestScoresId = flatBeamLk.topk(self.size, 0, True, True)
+            beam_lk = word_lk[0]
+        flat_beam_lk = beam_lk.view(-1)
+        best_scores, best_scores_id = flat_beam_lk.topk(self.size, 0, True, True)
 
-        self.scores = bestScores
+        self.scores = best_scores
 
-        prevK = torch.div(bestScoresId, numWords, rounding_mode="floor")
-        self.prevKs.append(prevK)
-        self.nextYs.append(bestScoresId - prevK * numWords)
+        prev_k = torch.div(best_scores_id, num_words, rounding_mode="floor")
+        self.prevKs.append(prev_k)
+        self.nextYs.append(best_scores_id - prev_k * num_words)
 
         for i in range(self.nextYs[-1].size(0)):
             if int(self.nextYs[-1][i]) in self._eos:
@@ -253,7 +253,7 @@ class Beam:
     def done(self) -> bool:
         return self.eosTop and len(self.finished) >= self.size
 
-    def getFinal(self) -> list[tuple[torch.Tensor, int, int]]:
+    def get_final(self) -> list[tuple[torch.Tensor, int, int]]:
         if len(self.finished) == 0:
             self.finished.append((self.scores[0], len(self.nextYs) - 1, 0))
         self.finished.sort(key=lambda a: -a[0])
@@ -267,7 +267,7 @@ class Beam:
             self.finished += unfinished[: self.size - len(self.finished)]
         return self.finished[: self.size]
 
-    def getHyp(
+    def get_hyp(
         self, beam_res: list[tuple[torch.Tensor, int, int]]
     ) -> list[list[torch.Tensor]]:
         hyps: list[list[torch.Tensor]] = []
@@ -279,7 +279,7 @@ class Beam:
             hyps.append(hyp[::-1])
         return hyps
 
-    def buildTargetTokens(
+    def build_target_tokens(
         self, preds: list[list[torch.Tensor]]
     ) -> list[list[torch.Tensor]]:
         sentence: list[list[torch.Tensor]] = []

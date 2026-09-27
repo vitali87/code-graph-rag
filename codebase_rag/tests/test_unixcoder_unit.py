@@ -48,13 +48,13 @@ class TestBeamInit:
 class TestBeamGetCurrentState:
     def test_returns_batch_shaped_tensor(self) -> None:
         beam = Beam(size=5, eos=2, device=torch.device("cpu"))
-        state = beam.getCurrentState()
+        state = beam.get_current_state()
         assert state.shape == (5, 1)
 
     def test_returns_last_nextYs(self) -> None:
         beam = Beam(size=3, eos=2, device=torch.device("cpu"))
         beam.nextYs.append(torch.tensor([1, 2, 3]))
-        state = beam.getCurrentState()
+        state = beam.get_current_state()
         assert torch.all(state.flatten() == torch.tensor([1, 2, 3]))
 
 
@@ -62,7 +62,7 @@ class TestBeamGetCurrentOrigin:
     def test_returns_last_prevKs(self) -> None:
         beam = Beam(size=3, eos=2, device=torch.device("cpu"))
         beam.prevKs.append(torch.tensor([0, 1, 2]))
-        origin = beam.getCurrentOrigin()
+        origin = beam.get_current_origin()
         assert torch.all(origin == torch.tensor([0, 1, 2]))
 
 
@@ -152,14 +152,14 @@ class TestBeamGetFinal:
             (torch.tensor(0.3), 1, 0),
             (torch.tensor(0.5), 1, 1),
         ]
-        final = beam.getFinal()
+        final = beam.get_final()
         assert len(final) == 2
         assert final[0][0] >= final[1][0]
 
     def test_adds_current_state_if_empty_finished(self) -> None:
         beam = Beam(size=2, eos=2, device=torch.device("cpu"))
         beam.nextYs.append(torch.tensor([1, 3]))
-        final = beam.getFinal()
+        final = beam.get_final()
         assert len(final) >= 1
 
 
@@ -170,7 +170,7 @@ class TestBeamBuildTargetTokens:
             [torch.tensor(1), torch.tensor(3), torch.tensor(2), torch.tensor(4)],
             [torch.tensor(5), torch.tensor(6)],
         ]
-        result = beam.buildTargetTokens(preds)
+        result = beam.build_target_tokens(preds)
         assert len(result) == 2
         assert len(result[0]) == 2
         assert len(result[1]) == 2
@@ -180,7 +180,7 @@ class TestBeamBuildTargetTokens:
         preds = [
             [torch.tensor(1), torch.tensor(2), torch.tensor(3)],
         ]
-        result = beam.buildTargetTokens(preds)
+        result = beam.build_target_tokens(preds)
         assert len(result[0]) == 3
 
 
@@ -194,7 +194,7 @@ class TestBeamMultipleEos:
         # on any of them, not just the first.
         beam = Beam(size=1, eos=[2, 99], device=torch.device("cpu"))
         preds = [[torch.tensor(5), torch.tensor(99), torch.tensor(6)]]
-        result = beam.buildTargetTokens(preds)
+        result = beam.build_target_tokens(preds)
         assert len(result[0]) == 1
 
     def test_advance_records_completion_on_alternate_eos(self) -> None:
@@ -250,6 +250,6 @@ class TestBeamGetHyp:
             torch.tensor([3, 4]),
         ]
         beam_res = [(torch.tensor(0.5), 2, 0)]
-        hyps = beam.getHyp(beam_res)
+        hyps = beam.get_hyp(beam_res)
         assert len(hyps) == 1
         assert len(hyps[0]) == 2
