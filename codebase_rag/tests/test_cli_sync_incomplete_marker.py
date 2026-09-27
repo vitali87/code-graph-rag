@@ -92,6 +92,7 @@ def _sync(repo: Path, *, clean: bool = False) -> None:
     _run_graph_sync(
         repo=repo,
         project_name="proj",
+        project_named=True,
         batch_size=10,
         exclude=None,
         interactive_setup=False,
