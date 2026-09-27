@@ -23,6 +23,7 @@ from ..types_defs import (
     LanguageQueries,
     PropertyDict,
 )
+from ..utils.json_io import loads_json
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
 from .dart import (
@@ -343,7 +344,7 @@ def _load_jsonc(path: Path) -> dict | None:
             source = _JSONC_LINE_COMMENT_RE.sub("", source)
             source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
         try:
-            parsed = json.loads(source)
+            parsed = loads_json(source)
         except (json.JSONDecodeError, ValueError):
             continue
         return parsed if isinstance(parsed, dict) else None

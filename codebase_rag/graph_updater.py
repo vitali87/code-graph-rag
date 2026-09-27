@@ -112,6 +112,7 @@ from .types_defs import (
 from .utils import qn_markers
 from .utils.dependencies import has_semantic_dependencies
 from .utils.fqn_resolver import find_function_source_by_fqn
+from .utils.json_io import load_json, loads_json
 from .utils.path_utils import (
     base_module_qn,
     cached_file_identity_posix,
@@ -258,10 +259,11 @@ def _load_hash_cache(cache_path: Path) -> FileHashCache:
         return {}
     try:
         with cache_path.open(encoding="utf-8") as f:
-            data = json.load(f)
+            data = load_json(f)
         if isinstance(data, dict):
-            logger.info(ls.HASH_CACHE_LOADED, count=len(data), path=cache_path)
-            return data
+            hashes = {k: v for k, v in data.items() if isinstance(v, str)}
+            logger.info(ls.HASH_CACHE_LOADED, count=len(hashes), path=cache_path)
+            return hashes
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(ls.HASH_CACHE_LOAD_FAILED, path=cache_path, error=e)
     return {}
@@ -272,7 +274,7 @@ _EMPTY_DELOMBOK_STATE: dict = {"identity": "", "keys": [], "lombok": ""}
 
 def _load_delombok_state(state_path: Path) -> dict:
     try:
-        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+        loaded = loads_json(state_path.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, json.JSONDecodeError):
         return _EMPTY_DELOMBOK_STATE.copy()
     if not isinstance(loaded, dict):
@@ -337,7 +339,7 @@ def _load_exclusion_state(state_path: Path) -> dict[str, list[str] | str] | None
     exclusion set, exactly like a missing parser fingerprint.
     """
     try:
-        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+        loaded = loads_json(state_path.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(loaded, dict):
@@ -377,7 +379,7 @@ def _load_project_stamps(state_path: Path) -> dict[str, dict[str, list[str] | st
     existed has none, which reads as empty.
     """
     try:
-        loaded = json.loads(state_path.read_text(encoding=cs.ENCODING_UTF8))
+        loaded = loads_json(state_path.read_text(encoding=cs.ENCODING_UTF8))
     except (OSError, json.JSONDecodeError):
         return {}
     projects = (
@@ -836,7 +838,7 @@ def _load_dir_mtimes(cache_path: Path) -> DirMtimesCache:
         return {}
     try:
         with cache_path.open(encoding="utf-8") as f:
-            data = json.load(f)
+            data = load_json(f)
         if isinstance(data, dict):
             return {k: float(v) for k, v in data.items() if isinstance(v, int | float)}
     except (json.JSONDecodeError, OSError, ValueError):
