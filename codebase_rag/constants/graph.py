@@ -670,7 +670,7 @@ CYPHER_DELETE_MODULE = (
     "WHERE (m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix) "
     "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
-    "OR m.qualified_name STARTS WITH p + '.') "
+    "OR m.qualified_name STARTS WITH (p + '.')) "
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
