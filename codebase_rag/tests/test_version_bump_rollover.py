@@ -29,7 +29,7 @@ def _bump(current: str, bump_type: str = "patch") -> subprocess.CompletedProcess
         "VERSION_COMPONENT_CAP": str(workflow["env"]["VERSION_COMPONENT_CAP"]),
     }
     return subprocess.run(
-        [bash, "-e", "-c", script], capture_output=True, text=True, env=env
+        [bash, "-e", "-c", script], capture_output=True, text=True, env=env, check=False
     )
 
 
