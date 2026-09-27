@@ -5004,6 +5004,13 @@ class GraphUpdater:
         # every changed file has pre-parsed: a parse failure then leaves
         # the old subtrees in place instead of an emptied graph.
         pre_parsed = self._pre_parse_changed_files(changed_entries)
+        # A frontend that ran before this method may still hold its emission
+        # in the ingestor's buffer, and the deletes below go to the graph
+        # directly: flushed, they see what the frontend wrote whenever the
+        # buffer happened to fill, rather than sometimes the old subtree and
+        # sometimes the new one (CodeRabbit, PR #2247).
+        if self._cpp_frontend_covered:
+            self.ingestor.flush_all()
         for stale_key in (*reindexed_keys, *deleted_before_parse):
             self._delete_module_entities(stale_key)
         # The in-memory side of a deleted file goes now as well: a reused
@@ -5026,9 +5033,10 @@ class GraphUpdater:
         # held under the same qn last run, rewriting its path to the added
         # file's: the survivor's old definitions then hang off a Module the
         # delete above, matching the survivor's path, cannot find.
+        # Any covered file in flux re-runs it, an added one included.
         if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID and any(
             key in self._cpp_frontend_covered
-            for key in (*reindexed_keys, *deleted_before_parse)
+            for key in (*reindexed_keys, *deleted_before_parse, *added_keys)
         ):
             for _fp, file_key, is_new, _b in changed_entries:
                 if is_new and file_key in self._cpp_frontend_covered:

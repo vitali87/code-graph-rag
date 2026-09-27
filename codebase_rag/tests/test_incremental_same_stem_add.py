@@ -363,3 +363,87 @@ def test_the_rerun_keeps_every_emitting_frontends_coverage(
 
     assert "lib.rs" in updater._cpp_frontend_covered
     assert frontend.emits == emits_before + 2, "the re-run skipped the frontend"
+
+
+@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
+@pytest.mark.parametrize("reuse", [False, True], ids=["fresh", "reused"])
+def test_an_added_covered_file_beside_an_uncovered_survivor_matches_a_clean_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reuse: bool
+) -> None:
+    # The only covered file in flux is the ADDED `shape.cpp`; its same-stem
+    # survivor `shape.rs` is tree-sitter's. The frontend's first pass MERGEs
+    # `shape.cpp` onto the Module `shape.rs` held under the bare qn, so the
+    # re-run must fire for an added covered file too (CodeRabbit, PR #2247).
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    base = {
+        "shape.rs": "pub fn area() -> i32 { 1 }\n",
+        "main.cpp": "int main() { return 0; }\n",
+    }
+    added = ("shape.cpp", "int perimeter() { return 2; }\n")
+
+    golden_root = tmp_path / "golden" / "proj"
+    _write(golden_root, {**base, added[0]: added[1]})
+    _compile_commands(golden_root, ["main.cpp", added[0]])
+    golden = InMemoryGraph()
+    _make_updater(golden_root, golden).run(force=True)
+
+    incr_root = tmp_path / "incr" / "proj"
+    _write(incr_root, base)
+    _compile_commands(incr_root, ["main.cpp"])
+    incr = InMemoryGraph()
+    updater = _make_updater(incr_root, incr)
+    updater.run(force=True)
+    (incr_root / added[0]).write_text(added[1])
+    _compile_commands(incr_root, ["main.cpp", added[0]])
+    (updater if reuse else _make_updater(incr_root, incr)).run(force=False)
+
+    (golden_nodes, golden_rels), (nodes, rels) = golden.snapshot(), incr.snapshot()
+    assert golden_nodes, "the clean index is empty, so the comparison proves nothing"
+    assert nodes == golden_nodes, {
+        "extra": sorted(map(str, nodes - golden_nodes)),
+        "missing": sorted(map(str, golden_nodes - nodes)),
+    }
+    assert rels == golden_rels, {
+        "extra": sorted(map(str, rels - golden_rels)),
+        "missing": sorted(map(str, golden_rels - rels)),
+    }
+
+
+class _OrderRecordingGraph(InMemoryGraph):
+    """Records flushes and module deletes in the order they reach the graph."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+
+    def flush_all(self) -> None:
+        self.events.append("flush")
+        super().flush_all()
+
+    def execute_write(self, query: str, params: dict | None = None) -> None:
+        if query == cs.CYPHER_DELETE_MODULE:
+            self.events.append("delete")
+        super().execute_write(query, params)
+
+
+@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
+def test_the_frontends_emission_is_flushed_before_the_stale_deletes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real ingestor buffers the frontend's writes while the deletes go to
+    # the graph at once, so an unflushed emission made the outcome depend on
+    # when the buffer filled (CodeRabbit, PR #2247).
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    root = tmp_path / "proj"
+    _write(root, _CPP)
+    _compile_commands(root, ["use.cpp"])
+    graph = _OrderRecordingGraph()
+    updater = _make_updater(root, graph)
+    updater.run(force=True)
+    (root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
+    _compile_commands(root, ["use.cpp", _CPP_ADDED[0]])
+    graph.events.clear()
+    updater.run(force=False)
+
+    assert "delete" in graph.events, graph.events
+    assert graph.events.index("flush") < graph.events.index("delete"), graph.events
