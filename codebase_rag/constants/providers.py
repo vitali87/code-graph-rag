@@ -95,6 +95,14 @@ class VectorStoreBackend(StrEnum):
     MILVUS = "milvus"
 
 
+# The setting that sizes each backend's collection, named in the error raised
+# when the embedding model's output does not match it.
+VECTOR_DIM_SETTINGS: dict[VectorStoreBackend, str] = {
+    VectorStoreBackend.QDRANT: "QDRANT_VECTOR_DIM",
+    VectorStoreBackend.MILVUS: "MILVUS_VECTOR_DIM",
+}
+
+
 # Batches between torch.mps.empty_cache() calls: dropping the Metal
 # allocator cache every batch costs ~21% throughput (M-series UniXcoder
 # run), so release it periodically to bound growth.

@@ -215,6 +215,14 @@ def _hash_file(filepath: Path) -> str:
     return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
 
+def _opens_for_reading(path: Path) -> bool:
+    try:
+        with open(path, "rb"):
+            return True
+    except OSError:
+        return False
+
+
 def _hash_file_with_bytes(filepath: Path) -> tuple[str, bytes] | None:
     try:
         with open(filepath, "rb") as f:
@@ -959,6 +967,9 @@ class GraphUpdater:
         self.skipped_because_in_sync = False
         self._collected_dir_mtimes: DirMtimesCache = {}
         self._cpp_frontend_covered: frozenset[str] = frozenset()
+        # Module-qn claims `_forget_flux_stem_qns` dropped this run, by file
+        # key, so a survivor that turns out unreadable gets its claim back.
+        self._forgotten_flux_claims: dict[str, tuple[str, Path]] = {}
         # Hybrid-mode macro uses awaiting a caller: attribution needs the
         # tree-sitter definition spans, which exist only after Pass 2.
         self._pending_cpp_macro_calls: list[PendingMacroCall] = []
@@ -1015,6 +1026,7 @@ class GraphUpdater:
         # Whether that read failed: the list then holds this project alone,
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1725,6 +1737,7 @@ class GraphUpdater:
         self._parser_changed = False
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -1891,6 +1904,7 @@ class GraphUpdater:
         # Call-registered routes (Express, net/http, echo, gin) become
         # endpoints too, so JS and Go servers are linkable (issue #886).
         self._emit_route_call_endpoints()
+        self._record_exposes_cleanup(cleared_by_this_run=True)
 
         # ast-grep findings post-pass (opt-in FINDINGS group). Links to the
         # Modules the definition pass already emitted, so no dangling edges.
@@ -2150,13 +2164,34 @@ class GraphUpdater:
         # emission only MERGEs, and the next healthy run cleans up
         # (CodeRabbit, PR #2129).
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
             )
         except Exception:
+            # A delete that failed is owed exactly like one that was skipped.
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
+
+    def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
+        """Owe a skipped EXPOSES cleanup to the next run, or settle it.
+
+        A batch run's endpoint passes cover every module, so one that ran
+        its cleanups settles whatever an earlier run owed; any run that
+        skipped one leaves the marker for the next (issue #2193).
+        """
+        marker = self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        try:
+            if self._exposes_cleanup_skipped:
+                marker.touch()
+            elif cleared_by_this_run:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            # Best effort, as every other state file here: a read-only tree
+            # must not lose the run to a marker it could not write.
+            logger.debug("EXPOSES cleanup marker not updated")
 
     def _emit_route_call_endpoints(self, only: set[str] | None = None) -> None:
         if not self.capture.rel_enabled(cs.RelationshipType.EXPOSES):
@@ -2186,12 +2221,14 @@ class GraphUpdater:
         # Same reason as the handler cleanup: a seeded module map can hold a
         # sibling project's modules when the registry could not be read.
         if self._registry_unread:
+            self._exposes_cleanup_skipped = True
             return
         try:
             self.ingestor.execute_write(
                 CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
             )
         except Exception:
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _route_source(
@@ -2709,6 +2746,70 @@ class GraphUpdater:
             if _stem_key(path) in flux_stems:
                 continue
             module_map.setdefault(qn, self.repo_path / path)
+
+    def _forget_flux_stem_qns(self, flux_stems: set[str]) -> None:
+        """Drop the module-qn claims of every file on a stem in flux.
+
+        Seeding skips a flux-stem survivor so it re-parses unseeded, but a
+        reused updater (the watcher, the MCP server) still holds the claim
+        its previous run wrote: `util.h` keeps `proj.util`, so an added
+        `util.c` is suffixed to `proj.util.c` where a clean index gives it
+        the bare qn (issue #2022). Its definitions stay registered under the
+        old qn too, so the re-parse marks the new owner's same-named
+        function as a duplicate. Every file on the stem re-parses this run
+        and writes its state again in walk order, so the old state goes
+        first; `remove_file_from_state` finds it through the recorded qn,
+        so it runs before the claim is dropped.
+
+        Survivors only: a file deleted this run keeps its state until the
+        deletion step, since the foreign-definer lookup reads it to find the
+        files that define into the departing module (issue #1660). A
+        survivor that cannot be opened keeps its claim as well: the run
+        leaves its graph subtree in place, and the added sibling would
+        otherwise take the bare qn over a Module still defining the
+        survivor's functions.
+
+        In LIBCLANG mode the frontend has already registered a covered
+        file's current definitions and the file pass will skip it, so its
+        frontend registrations are kept, as in the re-parse loop.
+        """
+        if not flux_stems:
+            return
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        on_stem: dict[Path, str] = {}
+        for path in module_map.values():
+            try:
+                key = cached_relative_path(path, self.repo_path).as_posix()
+            except ValueError:
+                continue
+            if _stem_key(key) in flux_stems and _opens_for_reading(path):
+                on_stem[path] = key
+        # Recorded first: `remove_file_from_state` drops the claim itself.
+        for qn, path in module_map.items():
+            if path in on_stem:
+                self._forgotten_flux_claims[on_stem[path]] = (qn, path)
+        for path in sorted(on_stem):
+            self.remove_file_from_state(
+                path, frontend_current=on_stem[path] in self._cpp_frontend_covered
+            )
+        for qn in [qn for qn, path in module_map.items() if path in on_stem]:
+            del module_map[qn]
+
+    def _restore_unreadable_flux_claims(self, unreadable_keys: set[str]) -> None:
+        """Give an unreadable flux-stem survivor back the claim it lost.
+
+        `_forget_flux_stem_qns` checks that a survivor opens, but the read
+        that decides whether it is parsed comes later and can still fail. The
+        run then leaves the survivor's subtree in place, and without its
+        claim an added same-stem sibling would take the bare qn over a Module
+        still defining the survivor's functions. Runs before any file is
+        parsed, so the sibling is suffixed as it is when the survivor does
+        not open at all.
+        """
+        module_map = self.factory.definition_processor.module_qn_to_file_path
+        for key in unreadable_keys & self._forgotten_flux_claims.keys():
+            qn, path = self._forgotten_flux_claims[key]
+            module_map.setdefault(qn, path)
 
     def _prune_stale_seeded_module_qns(
         self, exempt_paths: set[Path] | None = None
@@ -4184,7 +4285,11 @@ class GraphUpdater:
         # on this path degrades quietly, so a read-only tree reaches here
         # having survived all of them and must not lose the whole indexing run
         # to a file it only wanted to delete (issue #1647).
-        for stale in (cache_path, self.repo_path / cs.DIR_MTIMES_FILENAME):
+        for stale in (
+            cache_path,
+            self.repo_path / cs.DIR_MTIMES_FILENAME,
+            self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME,
+        ):
             try:
                 stale.unlink(missing_ok=True)
             except OSError as e:
@@ -4268,6 +4373,11 @@ class GraphUpdater:
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
         if not cache_path.is_file():
+            return False
+        # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
+        # hash below would send the run into the endpoint passes that owe it
+        # (issue #2193).
+        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
             return False
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -4543,7 +4653,11 @@ class GraphUpdater:
                 | (old_hashes.keys() - eligible_keys)
             }
         )
+        # Per run: a full build forgets nothing, and a reused updater must not
+        # restore a claim an earlier run recorded.
+        self._forgotten_flux_claims = {}
         if not is_full_build:
+            self._forget_flux_stem_qns(flux_stems)
             self._seed_module_qns_from_graph(eligible_keys, flux_stems)
         # A full build can still land on a graph that already holds this
         # project: the cache lives in the repo working tree, the graph does
@@ -4715,6 +4829,8 @@ class GraphUpdater:
             else:
                 logger.debug(ls.FILE_HASH_NEW, path=file_key)
             changed_entries.append((filepath, file_key, is_new, file_bytes))
+
+        self._restore_unreadable_flux_claims(unreadable_keys)
 
         # Before deleting any changed file's subtree (which removes the inbound
         # CALLS/IMPORTS/INSTANTIATES edges incident on it), capture those edges
@@ -5998,6 +6114,9 @@ class GraphUpdater:
         }
         self._emit_pending_endpoints(only=touched_modules)
         self._emit_route_call_endpoints(only=touched_modules)
+        # A scoped pass covers only the touched modules, so it can owe a
+        # cleanup but never settle one owed from elsewhere.
+        self._record_exposes_cleanup(cleared_by_this_run=False)
         self._restore_inbound_edges(captured)
         if isinstance(self.ingestor, QueryProtocol):
             self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES)
@@ -6125,6 +6244,7 @@ class GraphUpdater:
         # A project registered since the last run must not read as owned.
         self._registered_projects = None
         self._registry_unread = False
+        self._exposes_cleanup_skipped = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False
