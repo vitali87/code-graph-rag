@@ -919,6 +919,13 @@ MCP_INCOMPLETE_MARKER_RECOVERED = (
     "that stopped before its first graph write, so the graph is as that run "
     "found it; cleared it and continuing."
 )
+CLI_SYNC_MARKER_NOT_CLEARED = (
+    "The sync of {project} finished, but its incomplete-run marker could not "
+    "be cleared: {error}. The graph is complete; the next sync clears it."
+)
+CLI_SYNC_MARKERS_UNREADABLE = (
+    "Could not read incomplete-run markers for cgr status: {error}"
+)
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (

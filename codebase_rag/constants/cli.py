@@ -76,6 +76,21 @@ MSG_SYNCING_WORKSPACE = (
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
 CLI_MSG_CLEANING_DB = "Cleaning database..."
+# The CLI sync's incomplete-run marker (issue #2219). One run id for every CLI
+# sync of a project, not one per run: a CLI sync never publishes its hash cache
+# unless it finishes, so the next successful sync of the project reprocesses
+# the interrupted window and is exactly the run that makes the graph whole
+# again. Sharing the id lets that run's run-scoped clear remove the marker the
+# interrupted one stranded, while MCP runs keep their own ids untouched.
+CLI_SYNC_RUN_ID = "cli-sync"
+CLI_ERR_SYNC_MARKER_FAILED = (
+    "Refusing to sync '{project}': the incomplete-run marker could not be "
+    "written, so an interrupted sync would leave a partial graph that looks "
+    "complete. Check the graph connection and retry."
+)
+CLI_STATUS_SYNC_INCOMPLETE = (
+    "sync interrupted or in progress -- re-run if no sync is active"
+)
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (

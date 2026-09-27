@@ -171,6 +171,13 @@ CYPHER_PROJECT_IS_INCOMPLETE = (
     "coalesce(m.writing, true) AS writing"
 )
 
+# Every project with an outstanding marker, whichever path wrote it: `cgr
+# status` reports them so a sync that was interrupted is visible there, not
+# only to the next MCP process that trips over it (issue #2219).
+CYPHER_PROJECTS_WITH_INCOMPLETE_RUNS = (
+    "MATCH (m:IncompleteRun) RETURN DISTINCT m.project AS project"
+)
+
 CYPHER_DELETE_PROJECT = """
 MATCH (p:Project {name: $project_name})
 OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
