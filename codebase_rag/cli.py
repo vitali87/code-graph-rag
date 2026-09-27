@@ -40,7 +40,6 @@ from .editor_links import (
     url_template_problem,
 )
 from .graph_cli import cli as graph_cli
-from .graph_updater import GraphUpdater
 from .parser_loader import load_parsers
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
 from .services.graph_service import MemgraphIngestor
@@ -474,6 +473,8 @@ def _run_graph_sync(
 
         parsers, queries = load_parsers()
 
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo,
@@ -867,6 +868,8 @@ def index(
             repo_path=str(repo_to_index),
         )
         parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
             ingestor=ingestor,
             repo_path=repo_to_index,
@@ -1313,6 +1316,8 @@ def rename_command(
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
     with ingestor:  # type: ignore[attr-defined]
         parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
             ingestor=ingestor,  # type: ignore[arg-type]
             repo_path=repo_path.resolve(),

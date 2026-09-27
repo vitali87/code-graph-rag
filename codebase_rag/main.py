@@ -29,6 +29,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from pydantic_ai import (
     BinaryContent,
     DeferredToolRequests,
@@ -87,7 +88,6 @@ from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
-    ORANGE_STYLE,
     AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
@@ -109,6 +109,17 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models import Model
     from pydantic_ai.usage import RunUsage
+
+# The chat UI's prompt style. It lives here rather than in types_defs because
+# building it imports prompt_toolkit, which only the interactive loop needs
+# (issue #2253).
+ORANGE_STYLE = Style.from_dict(
+    {
+        "": "#ff8c00",
+        "bottom-toolbar": "noreverse fg:#888888",
+        "bottom-toolbar.text": "noreverse fg:#888888",
+    }
+)
 
 
 def init_session_log(project_root: Path) -> Path:

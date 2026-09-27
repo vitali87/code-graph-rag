@@ -79,7 +79,7 @@ def sync_env(
 
     with (
         patch("codebase_rag.cli.connect_memgraph", return_value=connection),
-        patch("codebase_rag.cli.GraphUpdater", return_value=updater) as cls,
+        patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater) as cls,
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.cgr_state.record_sync", side_effect=record),
         patch("codebase_rag.cli.clear_all_embeddings"),

@@ -65,7 +65,7 @@ def interactive_stdin() -> Generator[None, None, None]:
 @pytest.fixture
 def stub_sync() -> Generator[MagicMock, None, None]:
     with (
-        patch("codebase_rag.cli.GraphUpdater") as mock_updater,
+        patch("codebase_rag.graph_updater.GraphUpdater") as mock_updater,
         patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
         patch("codebase_rag.cli.load_ignore_patterns") as mock_cgrignore,
     ):

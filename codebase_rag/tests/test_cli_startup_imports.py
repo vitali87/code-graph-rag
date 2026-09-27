@@ -6,6 +6,7 @@ and every `mcp-server` spawn. The LLM SDKs cost ~1.5 s of that and are used
 only by the commands that build a model.
 """
 
+import os
 import subprocess
 import sys
 from unittest.mock import patch
@@ -18,7 +19,11 @@ from codebase_rag import cli
 _LLM_PACKAGES = ("pydantic_ai", "anthropic", "openai", "google.genai")
 # Vector-store clients, needed only by commands that touch embeddings.
 _VECTOR_PACKAGES = ("qdrant_client", "pymilvus")
-_HEAVY_PACKAGES = _LLM_PACKAGES + _VECTOR_PACKAGES
+# Loaded at start-up only by accident: logfire through its pydantic plugin,
+# prompt_toolkit through a chat-UI style constant, and the parser stack
+# through subcommand modules that do not parse anything at import.
+_DEFERRED_MODULES = ("logfire", "prompt_toolkit", "codebase_rag.parsers")
+_HEAVY_PACKAGES = _LLM_PACKAGES + _VECTOR_PACKAGES + _DEFERRED_MODULES
 
 # Deadline for the child interpreter, not a performance assertion.
 _TIMEOUT_SECONDS = 120
@@ -29,6 +34,9 @@ def _modules_loaded_by(statement: str) -> list[str]:
         f"import sys\n{statement}\n"
         f"print(','.join(m for m in {_HEAVY_PACKAGES!r} if m in sys.modules))"
     )
+    # The child must not inherit a plugin opt-out from this process (importing
+    # codebase_rag sets one), or the logfire checks would pass vacuously.
+    env = {k: v for k, v in os.environ.items() if k != "PYDANTIC_DISABLE_PLUGINS"}
     result = subprocess.run(
         [sys.executable, "-c", probe],
         capture_output=True,
@@ -36,6 +44,7 @@ def _modules_loaded_by(statement: str) -> list[str]:
         encoding="utf-8",
         timeout=_TIMEOUT_SECONDS,
         check=True,
+        env=env,
     )
     loaded = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""
     return [m for m in loaded.split(",") if m]
@@ -45,6 +54,36 @@ def test_the_probe_sees_an_llm_package_when_one_is_imported() -> None:
     # Known positive: without it an empty list could mean the probe is blind.
     loaded = _modules_loaded_by("import codebase_rag.main")
     assert [m for m in loaded if m in _LLM_PACKAGES] == list(_LLM_PACKAGES)
+
+
+def test_the_probe_sees_the_deferred_modules_when_they_are_imported() -> None:
+    assert "prompt_toolkit" in _modules_loaded_by("import codebase_rag.main")
+    assert "codebase_rag.parsers" in _modules_loaded_by(
+        "import codebase_rag.graph_updater"
+    )
+
+
+def test_the_logfire_plugin_loads_with_a_bare_settings_class() -> None:
+    # Known positive for the plugin check: outside cgr, the first
+    # pydantic-settings class pulls logfire in through its entry point.
+    pytest.importorskip("logfire")
+    statement = (
+        "from pydantic_settings import BaseSettings\n"
+        "class S(BaseSettings):\n"
+        "    x: int = 1\n"
+        "S()"
+    )
+    assert "logfire" in _modules_loaded_by(statement)
+
+
+def test_importing_codebase_rag_keeps_a_user_plugin_setting() -> None:
+    statement = (
+        "import os\n"
+        "os.environ['PYDANTIC_DISABLE_PLUGINS'] = 'my-plugin'\n"
+        "import codebase_rag\n"
+        "assert os.environ['PYDANTIC_DISABLE_PLUGINS'] == 'my-plugin'"
+    )
+    _modules_loaded_by(statement)
 
 
 def test_the_probe_sees_a_vector_client_when_one_is_imported() -> None:
