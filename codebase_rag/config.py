@@ -104,6 +104,23 @@ def format_missing_api_key_errors(
 
 LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA})
 
+
+def normalised_credential(value: str | None) -> str | None:
+    """A credential with surrounding whitespace removed, or None if it is blank
+    or the local-provider placeholder (`cs.DEFAULT_API_KEY`).
+
+    One rule for every source, a role's `api_key` and a provider variable
+    alike (#2119): the environment used to be read raw, so `"  "` or `"ollama"`
+    there passed the start-up gate and failed later in the provider call.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped or stripped == cs.DEFAULT_API_KEY:
+        return None
+    return stripped
+
+
 # The provider-owned variable `validate_api_key` accepts INSTEAD of the role's
 # own `<ROLE>_API_KEY`. Module level so `cgr doctor` can name the same variable
 # the gate reads rather than restating the rule and drifting from it (#1910).
@@ -147,14 +164,10 @@ class ModelConfig:
                 provider_lower == cs.Provider.GOOGLE
                 and self.provider_type == cs.GoogleProviderType.VERTEX
             )
-            or (env_key and os.environ.get(env_key))
+            or (env_key and normalised_credential(os.environ.get(env_key)))
         ):
             return
-        if (
-            not self.api_key
-            or not self.api_key.strip()
-            or self.api_key == cs.DEFAULT_API_KEY
-        ):
+        if normalised_credential(self.api_key) is None:
             error_msg = format_missing_api_key_errors(self.provider, role)
             raise ValueError(error_msg)
 
@@ -355,7 +368,10 @@ class AppConfig(BaseSettings):
     FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
+    # Measured in bytes of source the cached ASTs span (see ast_cache.py).
     CACHE_MAX_MEMORY_MB: int = 500
+    # No longer read (the AST cache now evicts LRU until under its cap); kept
+    # so an existing .env that sets them still validates.
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
@@ -440,6 +456,26 @@ class AppConfig(BaseSettings):
 
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
         model = getattr(self, f"{role_upper}_MODEL", None)
+
+        # Half a role is a mistake, not a request for the default: falling
+        # back to Ollama here skipped the API-key gate (Ollama needs none) and
+        # then failed later as "Ollama not running" or quietly ran a small
+        # local model instead of the one the user asked for.
+        if bool(provider) != bool(model):
+            provider_var, model_var = f"{role_upper}_PROVIDER", f"{role_upper}_MODEL"
+            set_var, value, missing_var = (
+                (provider_var, provider, model_var)
+                if provider
+                else (model_var, model, provider_var)
+            )
+            raise ValueError(
+                ex.MODEL_ROLE_HALF_CONFIGURED.format(
+                    set_var=set_var,
+                    value=value,
+                    missing_var=missing_var,
+                    role=role_upper,
+                )
+            )
 
         if provider and model:
             return ModelConfig(

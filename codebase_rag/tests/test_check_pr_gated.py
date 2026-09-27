@@ -185,7 +185,13 @@ def _gate_a_green_pr(
         "statusCheckRollup": rollup,
         "comments": [
             {
-                "body": "Actionable comments posted: 0",
+                # Anchored to `head`: this helper's PR is gated on every
+                # other axis, and an unanchored verdict is itself a reason
+                # (#1936), so without the anchor the fixture would fail for
+                # a reason the test is not about.
+                "body": (
+                    f"Actionable comments posted: 0\n\nLast reviewed commit: {head}"
+                ),
                 "author": {"login": "greptile-apps[bot]"},
             }
         ],
