@@ -104,6 +104,14 @@ jobs:
         run: |
           uv run ty check codebase_rag --exclude codebase_rag/tests/
 
+      # Again with the optional `neo4j` extra installed: its package types
+      # every statement `LiteralString`, so a checkout with all extras saw
+      # errors the run above could never report (issue #2191).
+      - name: Run type checking with the neo4j extra
+        run: |
+          uv sync --extra treesitter-full --extra semantic --extra milvus --extra test --extra neo4j --group dev
+          uv run ty check codebase_rag --exclude codebase_rag/tests/
+
   test-unit:
     name: Unit Tests (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}

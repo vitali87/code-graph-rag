@@ -135,3 +135,58 @@ class TestConnectionContract:
         with Neo4jConnection(session):
             assert not session.closed
         assert session.closed
+
+
+class _PlanSummary:
+    def __init__(self, plan: dict | None) -> None:
+        self.plan = plan
+
+
+class _PlanResult:
+    def __init__(self, plan: dict | None) -> None:
+        self._plan = plan
+
+    def consume(self) -> _PlanSummary:
+        return _PlanSummary(self._plan)
+
+
+class _PlanSession:
+    def __init__(self, plan: dict | None) -> None:
+        self.calls: list[str] = []
+        self._plan = plan
+
+    def run(self, query: str, parameters: dict | None = None) -> _PlanResult:
+        self.calls.append(query)
+        return _PlanResult(self._plan)
+
+    def close(self) -> None:
+        return None
+
+
+class TestExplain:
+    def test_every_operator_of_a_nested_plan_is_returned(self) -> None:
+        # The plan arrives as nested dicts; `args` and `children` are read
+        # only when they have the shape the walk expects (issue #2191 typed
+        # the plan instead of passing the driver's `Any` through).
+        plan = {
+            "operatorType": "Produce",
+            "args": {"Details": "n"},
+            "children": [
+                {"operatorType": "Scan", "args": {"Details": "n:L"}},
+                {"operatorType": "Odd", "args": "not a mapping", "children": "x"},
+                "not a node",
+            ],
+        }
+        session = _PlanSession(plan)
+
+        operators = Neo4jConnection(session).explain("MATCH (n:L) RETURN n")
+
+        assert sorted(operators) == [
+            ("Odd", ""),
+            ("Produce", "n"),
+            ("Scan", "n:L"),
+        ]
+        assert session.calls[0].endswith("MATCH (n:L) RETURN n")
+
+    def test_a_statement_without_a_plan_has_no_operators(self) -> None:
+        assert Neo4jConnection(_PlanSession(None)).explain("RETURN 1") == []
