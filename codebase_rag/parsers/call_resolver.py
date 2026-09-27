@@ -2935,45 +2935,10 @@ class CallResolver:
         # there wins outright (bot review); otherwise the candidates whose
         # owning type sits DIRECTLY in a namespace (or, for `using static`,
         # a type) the file imports: C# does not import nested namespaces.
-        declared = self.type_inference.csharp_class_namespaced
-        containers: dict[str, str] = {}
-        # What an import must name for each candidate: a type, or a member
-        # reached through its type (`Widget.S()`), is imported by a
-        # namespace directive naming the type's namespace; a BARE member
-        # (`S()`) only by a `using static` naming its declaring type
-        # (bot review).
-        bare = cs.SEPARATOR_DOT not in call_name
-        import_keys: dict[str, str] = {}
-        bare_members: set[str] = set()
-        for qn in candidates:
-            owner = qn
-            while owner and owner not in declared:
-                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
-            if owner:
-                containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
-                if bare and owner != qn:
-                    bare_members.add(qn)
-                import_keys[qn] = (
-                    declared[owner] if qn in bare_members else containers[qn]
-                )
-        # The call site's namespace chain is only known when the file declares
-        # ONE nested chain; with sibling namespaces (`App` and `Other` in one
-        # file) neither is local to every call site, so no local precedence
-        # applies rather than a guessed one (bot review).
-        declared_here = sorted(
-            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
-            key=len,
+        containers, import_keys, bare_members = self._csharp_import_keys(
+            candidates, call_name
         )
-        enclosing: set[str] = set()
-        if declared_here and all(
-            declared_here[-1] == ns
-            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
-            for ns in declared_here
-        ):
-            parts = declared_here[-1].split(cs.SEPARATOR_DOT)
-            enclosing = {
-                cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)
-            }
+        enclosing = self._csharp_enclosing_namespaces(module_qn)
         # A namespace holds types, not members: the caller's namespace makes
         # `App.Widget` nameable, never `App.Widget.S` callable bare. Only a
         # `using static` does that, which the import preference below checks
@@ -2998,6 +2963,55 @@ class CallResolver:
         }
         preferred = [qn for qn in candidates if import_keys.get(qn) in imported]
         return preferred or candidates
+
+    def _csharp_import_keys(
+        self, candidates: list[str], call_name: str
+    ) -> tuple[dict[str, str], dict[str, str], set[str]]:
+        """(candidate -> namespace holding its type, candidate -> what an
+        import must name to make it available, the bare-called members).
+
+        A type, or a member reached through its type (`Widget.S()`), is
+        imported by a namespace directive naming the type's namespace; a BARE
+        member (`S()`) only by a `using static` naming its declaring type
+        (bot review).
+        """
+        declared = self.type_inference.csharp_class_namespaced
+        bare = cs.SEPARATOR_DOT not in call_name
+        containers: dict[str, str] = {}
+        import_keys: dict[str, str] = {}
+        bare_members: set[str] = set()
+        for qn in candidates:
+            owner = qn
+            while owner and owner not in declared:
+                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
+            if not owner:
+                continue
+            containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+            if bare and owner != qn:
+                bare_members.add(qn)
+            import_keys[qn] = declared[owner] if qn in bare_members else containers[qn]
+        return containers, import_keys, bare_members
+
+    def _csharp_enclosing_namespaces(self, module_qn: str) -> set[str]:
+        """Every namespace enclosing the file's call sites, innermost included.
+
+        Only known when the file declares ONE nested chain; with sibling
+        namespaces (`App` and `Other` in one file) neither is local to every
+        call site, so no local precedence applies rather than a guessed one
+        (bot review).
+        """
+        declared_here = sorted(
+            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
+            key=len,
+        )
+        if not declared_here or not all(
+            declared_here[-1] == ns
+            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
+            for ns in declared_here
+        ):
+            return set()
+        parts = declared_here[-1].split(cs.SEPARATOR_DOT)
+        return {cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)}
 
     def _resolve_two_part_call(
         self,
