@@ -871,7 +871,7 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "AND importer.qualified_name STARTS WITH $project_prefix "
     "AND NOT target.qualified_name STARTS WITH $project_prefix "
     "AND ANY(name IN $module_names WHERE target.qualified_name = name "
-    "OR target.qualified_name STARTS WITH name + '.') "
+    "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
 # Modules carrying at least one unresolved relative specifier, with the
