@@ -19,6 +19,7 @@ from ..prompts import (
     build_research_agent_prompt,
 )
 from ..providers.base import get_provider_from_config
+from .cypher_guard import is_allowed_procedure, mask_literals_and_comments
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -105,11 +106,15 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 _VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
-_PROCEDURE_CALL_PATTERN = re.compile(r"\bCALL\s+([\w\.]+)", re.IGNORECASE)
+# Runs on masked text, where comments are spaces and backtick identifiers
+# are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
+# around the dots is legal Cypher and removed before the allowlist check.
+_PROCEDURE_CALL_PATTERN = re.compile(r"\bCALL\s+(\w+(?:\s*\.\s*\w+)*)", re.IGNORECASE)
+_WHITESPACE = re.compile(r"\s+")
 
 
 def _validate_cypher_read_only(query: str) -> None:
-    upper_query = query.upper()
+    upper_query = mask_literals_and_comments(query).upper()
     for keyword, pattern in _CYPHER_DANGEROUS_PATTERNS:
         if pattern.search(upper_query):
             raise ex.LLMGenerationError(
@@ -129,11 +134,9 @@ def _validate_no_unbounded_paths(query: str) -> None:
 
 
 def _validate_call_procedures(query: str) -> None:
-    for match in _PROCEDURE_CALL_PATTERN.finditer(query):
-        name = match.group(1)
-        if not any(
-            name.startswith(prefix) for prefix in cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES
-        ):
+    for match in _PROCEDURE_CALL_PATTERN.finditer(mask_literals_and_comments(query)):
+        name = _WHITESPACE.sub("", match.group(1))
+        if not is_allowed_procedure(name):
             raise ex.LLMGenerationError(
                 ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
             )

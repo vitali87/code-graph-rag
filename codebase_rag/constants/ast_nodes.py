@@ -72,6 +72,24 @@ JS_TS_IMPORT_NODES = (
 JS_TS_LANGUAGES = frozenset(
     {SupportedLanguage.JS, SupportedLanguage.TS, SupportedLanguage.TSX}
 )
+# Languages where a definition in another file is reachable only through an
+# import (or a Rust `use`): a call the resolver could not bind there waits
+# on an import, which the importer lookup finds from the graph, so recording
+# the callee's name would only re-parse every module that calls a method of
+# that name (issue #1568; local review). Go, Java, C#, C++ and their like
+# see same-package or same-namespace definitions with no import at all, and
+# for them the recorded name is the only link.
+IMPORT_BOUND_CALL_LANGUAGES = frozenset(
+    {
+        SupportedLanguage.PYTHON,
+        SupportedLanguage.JS,
+        SupportedLanguage.TS,
+        SupportedLanguage.TSX,
+        SupportedLanguage.RUST,
+        SupportedLanguage.DART,
+        SupportedLanguage.LUA,
+    }
+)
 
 CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
 
