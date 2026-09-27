@@ -1067,6 +1067,7 @@ PRUNE_SKIPPED_REGISTRY_UNREAD = (
     "a project whose name extends this one keeps its nodes. The next healthy "
     "run prunes them."
 )
+PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"

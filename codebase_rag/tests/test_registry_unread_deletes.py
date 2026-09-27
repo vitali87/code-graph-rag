@@ -116,3 +116,76 @@ def test_the_prune_leaves_qualified_rows_when_the_registry_is_unreadable(
     updater._prune_orphan_nodes()
 
     assert cs.CYPHER_DELETE_MODULE not in _written(mock_ingestor)
+
+
+def test_a_prune_that_leaves_rows_owes_the_next_run_a_prune(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    # Skipped rows are only swept by a run that prunes, and an unchanged
+    # tree takes the in-sync fast path, which never does; the marker makes
+    # that fast path refuse (CodeRabbit, PR #2125).
+    _registry_unreadable(mock_ingestor)
+    updater = _updater(temp_repo, mock_ingestor)
+
+    updater._prune_orphan_nodes()
+
+    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+
+
+def test_a_failed_path_read_owes_the_next_run_a_prune(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    def fetch_all(query: str, params: object = None) -> list[dict[str, str]]:
+        if query == cs.CYPHER_ALL_FILE_PATHS:
+            raise ConnectionError("path read failed")
+        return []
+
+    mock_ingestor.fetch_all.side_effect = fetch_all
+    updater = _updater(temp_repo, mock_ingestor)
+
+    updater._prune_orphan_nodes()
+
+    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+
+
+def test_a_complete_prune_settles_what_an_earlier_run_owed(
+    temp_repo: Path, mock_ingestor: MagicMock
+) -> None:
+    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+    mock_ingestor.fetch_all.side_effect = lambda query, params=None: []
+    updater = _updater(temp_repo, mock_ingestor)
+
+    updater._prune_orphan_nodes()
+
+    assert not (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+
+
+def test_an_owed_prune_refuses_the_in_sync_fast_path(temp_repo: Path) -> None:
+    (temp_repo / "api.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def run() -> GraphUpdater:
+        updater = GraphUpdater(
+            ingestor=store,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+            project_name="svc",
+        )
+        updater.run()
+        return updater
+
+    run()
+    assert run().skipped_because_in_sync is True
+    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+
+    owed = run()
+
+    assert owed.skipped_because_in_sync is False
+    assert not (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+    # Removing the marker touched the root directory after the owed run
+    # recorded its mtime, so one more run re-walks (as after the EXPOSES
+    # marker); the run after that is back on the fast path.
+    run()
+    assert run().skipped_because_in_sync is True

@@ -2278,6 +2278,23 @@ class GraphUpdater:
             self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
+    def _record_prune_pending(self, pending: bool) -> None:
+        """Owe a cut-short orphan prune to the next run, or settle it.
+
+        The prune covers the whole project every time it runs, so a
+        complete one settles whatever an earlier run left.
+        """
+        marker = self.repo_path / cs.PRUNE_PENDING_FILENAME
+        try:
+            if pending:
+                marker.touch()
+            else:
+                marker.unlink(missing_ok=True)
+        except OSError:
+            # Best effort, like the EXPOSES marker: a read-only tree must not
+            # lose the run to a marker it could not write.
+            logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
+
     def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
         """Owe a skipped EXPOSES cleanup to the next run, or settle it.
 
@@ -4603,6 +4620,8 @@ class GraphUpdater:
         # hash below would send the run into the endpoint passes that owe it
         # (issue #2193).
         if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+            return False
+        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
             return False
         # Nothing on disk changes when only the exclusion set does, so no
         # hash or directory mtime below can see it: a file excluded by a CLI
@@ -6980,6 +6999,10 @@ class GraphUpdater:
                         )
                 total_pruned += len(orphans)
 
+        # Rows left for the next healthy run are only swept by one that
+        # actually prunes, so owe it through a marker the in-sync fast path
+        # refuses on (CodeRabbit, PR #2125).
+        self._record_prune_pending(read_failed or registry_skipped > 0)
         if read_failed:
             # The same outage that broke the path reads would break (or act
             # on stale state through) the cleanup below; leave everything
