@@ -253,7 +253,6 @@ dev = [
 docs = [
     "mkdocs>=1.6.1,<2",
     "mkdocs-material>=9.7.3",
-    "mkdocs-minify-plugin>=0.8.0",
 ]
 fuzz = [
     "atheris>=2.3.0",
