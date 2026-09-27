@@ -1402,16 +1402,9 @@ class FunctionIngestMixin:
             language == cs.SupportedLanguage.CSHARP
             and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
         ):
-            host = func_node.parent
-            while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
-                host = host.parent
-            if host is not None:
-                from .csharp import utils as csharp_utils
-
-                self.csharp_local_functions[resolution.qualified_name] = (
-                    function_span_key(module_qn, host),
-                    len(csharp_utils.extract_parameter_type_names(func_node)),
-                )
+            self._record_csharp_local_function(
+                func_node, resolution.qualified_name, module_qn
+            )
         record_cpp_definition_span(
             self.cpp_definition_spans,
             language,
@@ -1432,22 +1425,44 @@ class FunctionIngestMixin:
         # pass emits an OVERRIDES edge to Base.m, keeping the dispatch-only override
         # live (field-initialiser anon overrides are recorded in the class-method
         # pass).
-        if (
-            language == cs.SupportedLanguage.JAVA
-            and resolution.name
-            and (
-                base := _java_anon_base_for_function(
-                    func_node, frozenset(lang_config.class_node_types)
-                )
-            )
-        ):
-            self.java_anon_overrides.append(
-                (resolution.qualified_name, resolution.name, base, module_qn)
+        if language == cs.SupportedLanguage.JAVA and resolution.name:
+            self._record_java_anon_override(
+                func_node, resolution, module_qn, lang_config
             )
 
         self._create_function_relationships(
             func_node, resolution, module_qn, language, lang_config
         )
+
+    def _record_csharp_local_function(
+        self, func_node: Node, qualified_name: str, module_qn: str
+    ) -> None:
+        host = func_node.parent
+        while host is not None and host.type not in cs.CSHARP_LOCAL_FN_HOST_TYPES:
+            host = host.parent
+        if host is None:
+            return
+        from .csharp import utils as csharp_utils
+
+        self.csharp_local_functions[qualified_name] = (
+            function_span_key(module_qn, host),
+            len(csharp_utils.extract_parameter_type_names(func_node)),
+        )
+
+    def _record_java_anon_override(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        lang_config: LanguageSpec,
+    ) -> None:
+        base = _java_anon_base_for_function(
+            func_node, frozenset(lang_config.class_node_types)
+        )
+        if base and resolution.name:
+            self.java_anon_overrides.append(
+                (resolution.qualified_name, resolution.name, base, module_qn)
+            )
 
     def _record_cpp_template_child_location(
         self, func_node: Node, module_qn: str, location: FunctionLocation

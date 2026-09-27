@@ -26,7 +26,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -215,26 +215,32 @@ def _best_call_at(
     outermost when no end was recorded.
 
     Extracted from `_callee_span` to keep it under the cognitive complexity
-    limit (S3776). This walk is where that complexity lives: a loop with
-    three levels of nested branching, and nesting multiplies the cost.
-    Extracting the straight-line setup around it would not have helped.
+    limit (S3776); the tree walk itself lives in `_calls_starting_at`.
     """
     best: Node | None = None
+    for node in _calls_starting_at(root, line, col):
+        if node.end_point == recorded_end:
+            return node
+        if best is None or node.end_byte > best.end_byte:
+            best = node
+    return best
+
+
+def _calls_starting_at(root: Node, line: int, col: int) -> Iterator[Node]:
+    """Yield, in walk order, every call node that starts at (line, col).
+
+    Only subtrees whose line span covers `line` are entered.
+    """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    return node
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
+        if (
+            node.start_point == (line - 1, col)
+            and node.child_by_field_name(cs.FIELD_FUNCTION) is not None
+        ):
+            yield node
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
-    return best
 
 
 def _callee_span(

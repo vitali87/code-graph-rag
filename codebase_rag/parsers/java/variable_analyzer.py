@@ -51,6 +51,15 @@ def _java_literal_type(expr_node: ASTNode) -> str | None:
     return None
 
 
+def _first_type_identifier_text(parent: ASTNode) -> str | None:
+    for sibling in parent.children:
+        if sibling.type == cs.TS_TYPE_IDENTIFIER and (
+            text := safe_decode_text(sibling)
+        ):
+            return text
+    return None
+
+
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
@@ -356,19 +365,14 @@ class JavaVariableAnalyzerMixin:
             if not (parent := child.parent):
                 continue
 
-            for sibling in parent.children:
-                if sibling.type == cs.TS_TYPE_IDENTIFIER:
-                    if var_type := safe_decode_text(sibling):
-                        resolved_type = self._resolve_java_type_name(
-                            var_type, module_qn
-                        )
-                        local_var_types[var_name] = resolved_type
-                        logger.debug(
-                            ls.JAVA_ENHANCED_FOR_VAR_ALT,
-                            name=var_name,
-                            type=resolved_type,
-                        )
-                        break
+            if var_type := _first_type_identifier_text(parent):
+                resolved_type = self._resolve_java_type_name(var_type, module_qn)
+                local_var_types[var_name] = resolved_type
+                logger.debug(
+                    ls.JAVA_ENHANCED_FOR_VAR_ALT,
+                    name=var_name,
+                    type=resolved_type,
+                )
 
     @depth_guard(
         max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
