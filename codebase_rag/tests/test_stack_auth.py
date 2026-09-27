@@ -2,15 +2,19 @@
 
 The compose file lists the container variables without values, so each is set
 only when `docker compose` runs with it; `cgr daemon up` fills them from the
-settings the app itself logs in with.
+settings the app itself logs in with, and refuses to start when Compose would
+resolve something else.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
+import urllib.error
 from collections.abc import Callable
+from email.message import Message
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -19,18 +23,22 @@ from loguru import logger
 from codebase_rag.config import settings
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
-from codebase_rag.stack.manager import StackManager
+from codebase_rag.stack.manager import StackError, StackManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "codebase_rag" / "docker-compose.yaml"
 
-STALE_COMPOSE = (
-    "services:\n"
-    "  memgraph:\n"
-    '    ports: ["127.0.0.1:7687:7687"]\n'
-    "  qdrant:\n"
-    '    ports: ["127.0.0.1:6333:6333"]\n'
-)
+MATCHING_ENV = {
+    cs.SERVICE_MEMGRAPH: {
+        cs.ENV_MEMGRAPH_USER: "cgr",
+        cs.ENV_MEMGRAPH_PASSWORD: "s3cret",
+    },
+    cs.SERVICE_QDRANT: {cs.ENV_QDRANT_API_KEY: "qdrant-key"},
+}
+UNRESOLVED_ENV = {
+    cs.SERVICE_MEMGRAPH: {cs.ENV_MEMGRAPH_USER: None, cs.ENV_MEMGRAPH_PASSWORD: None},
+    cs.SERVICE_QDRANT: {cs.ENV_QDRANT_API_KEY: None},
+}
 
 
 @pytest.fixture
@@ -51,7 +59,7 @@ def _manager(tmp_path: Path) -> StackManager:
     return StackManager(home=tmp_path / "cgr-home", package_compose=COMPOSE_PATH)
 
 
-def _warnings_from(action: Callable[[], Path]) -> list[str]:
+def _warnings_from[T](action: Callable[[], T]) -> list[str]:
     messages: list[str] = []
     sink_id = logger.add(messages.append, level="WARNING")
     try:
@@ -59,6 +67,24 @@ def _warnings_from(action: Callable[[], Path]) -> list[str]:
     finally:
         logger.remove(sink_id)
     return messages
+
+
+def _compose_config(
+    environments: dict[str, dict[str, str | None]],
+) -> subprocess.CompletedProcess[str]:
+    """What `docker compose config --format json` prints for these services."""
+    services = {service: {"environment": env} for service, env in environments.items()}
+    return subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=json.dumps({"services": services}), stderr=""
+    )
+
+
+def _verify_with(
+    mgr: StackManager, result: subprocess.CompletedProcess[str]
+) -> MagicMock:
+    with patch("codebase_rag.stack.manager.subprocess.run", return_value=result) as run:
+        mgr._verify_resolved_auth()
+    return run
 
 
 def test_compose_file_passes_auth_variables_through_without_values() -> None:
@@ -125,20 +151,125 @@ def test_memgraph_credentials_are_stripped_like_the_ingestor_does(
 
 
 @pytest.mark.usefixtures("credentials")
-def test_up_runs_compose_with_the_credentials(tmp_path: Path) -> None:
+def test_up_verifies_then_starts_compose_with_the_credentials(
+    tmp_path: Path,
+) -> None:
     mgr = _manager(tmp_path)
     with (
         patch.object(mgr, "check_docker"),
         patch(
             "codebase_rag.stack.manager.subprocess.run",
-            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+            side_effect=[
+                _compose_config(MATCHING_ENV),
+                subprocess.CompletedProcess(args=[], returncode=0),
+            ],
         ) as run,
     ):
         mgr.up()
 
-    env = run.call_args.kwargs["env"]
-    assert env[cs.ENV_MEMGRAPH_USER] == "cgr"
-    assert env[cs.ENV_QDRANT_API_KEY] == "qdrant-key"
+    config_call, up_call = run.call_args_list
+    assert "config" in config_call.args[0]
+    assert up_call.args[0][-2:] == ["up", "-d"]
+    for call in (config_call, up_call):
+        assert call.kwargs["env"][cs.ENV_MEMGRAPH_USER] == "cgr"
+        assert call.kwargs["env"][cs.ENV_QDRANT_API_KEY] == "qdrant-key"
+
+
+@pytest.mark.usefixtures("credentials")
+def test_up_does_not_start_when_compose_resolves_other_credentials(
+    tmp_path: Path,
+) -> None:
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            return_value=_compose_config(UNRESOLVED_ENV),
+        ) as run,
+    ):
+        with pytest.raises(StackError):
+            mgr.up()
+
+    assert run.call_count == 1
+
+
+@pytest.mark.usefixtures("credentials")
+def test_verify_accepts_compose_resolving_the_settings(tmp_path: Path) -> None:
+    _verify_with(_manager(tmp_path), _compose_config(MATCHING_ENV))
+
+
+@pytest.mark.usefixtures("no_credentials")
+def test_verify_accepts_unresolved_variables_without_credentials(
+    tmp_path: Path,
+) -> None:
+    _verify_with(_manager(tmp_path), _compose_config(UNRESOLVED_ENV))
+
+
+@pytest.mark.usefixtures("credentials")
+def test_verify_refuses_a_compose_file_that_drops_the_credentials(
+    tmp_path: Path,
+) -> None:
+    # A file rendered before credential support declares no `environment`.
+    stale = _compose_config({cs.SERVICE_MEMGRAPH: {}, cs.SERVICE_QDRANT: {}})
+
+    with pytest.raises(StackError) as exc:
+        _verify_with(_manager(tmp_path), stale)
+
+    for name in cs.STACK_AUTH_ENV_VARS:
+        assert name in str(exc.value)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_verify_refuses_a_value_written_into_the_compose_file(
+    tmp_path: Path,
+) -> None:
+    # An empty key written into the file wins over the settings, and Qdrant
+    # treats an empty key as none at all.
+    hardcoded = _compose_config(
+        {
+            cs.SERVICE_MEMGRAPH: MATCHING_ENV[cs.SERVICE_MEMGRAPH],
+            cs.SERVICE_QDRANT: {cs.ENV_QDRANT_API_KEY: ""},
+        }
+    )
+
+    with pytest.raises(StackError) as exc:
+        _verify_with(_manager(tmp_path), hardcoded)
+
+    assert f"{cs.SERVICE_QDRANT}: {cs.ENV_QDRANT_API_KEY}" in str(exc.value)
+    assert f"{cs.SERVICE_MEMGRAPH}: {cs.ENV_MEMGRAPH_USER}" not in str(exc.value)
+
+
+@pytest.mark.usefixtures("no_credentials")
+def test_verify_refuses_a_key_from_an_env_file_beside_the_compose_file(
+    tmp_path: Path,
+) -> None:
+    # Compose reads that .env for a variable missing from its environment.
+    from_env_file = _compose_config(
+        {
+            cs.SERVICE_MEMGRAPH: UNRESOLVED_ENV[cs.SERVICE_MEMGRAPH],
+            cs.SERVICE_QDRANT: {cs.ENV_QDRANT_API_KEY: "key-from-env-file"},
+        }
+    )
+
+    with pytest.raises(StackError) as exc:
+        _verify_with(_manager(tmp_path), from_env_file)
+
+    assert cs.ENV_QDRANT_API_KEY in str(exc.value)
+    assert "key-from-env-file" not in str(exc.value)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_verify_warns_and_continues_when_compose_config_fails(
+    tmp_path: Path,
+) -> None:
+    failed = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="unknown flag: --format"
+    )
+    mgr = _manager(tmp_path)
+
+    messages = _warnings_from(lambda: _verify_with(mgr, failed))
+
+    assert any("unknown flag: --format" in m for m in messages)
 
 
 @pytest.mark.usefixtures("credentials")
@@ -173,58 +304,83 @@ def test_bolt_probe_without_a_login_connects_anonymously() -> None:
     connect.assert_called_once_with(host="localhost", port=7687)
 
 
+def test_memgraph_anonymous_probe_sends_no_login() -> None:
+    with patch.object(health.mgclient, "connect") as connect:
+        assert health.memgraph_accepts_anonymous("localhost", 7687)
+
+    connect.assert_called_once_with(host="localhost", port=7687)
+
+
+def test_qdrant_anonymous_probe_reads_a_data_endpoint() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.status = 200
+    with patch.object(
+        health.urllib.request, "urlopen", return_value=response
+    ) as urlopen:
+        assert health.qdrant_accepts_anonymous(6333)
+
+    assert urlopen.call_args.args[0].endswith(cs.QDRANT_ANONYMOUS_PROBE_PATH)
+
+
+def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
+    unauthorized = urllib.error.HTTPError(
+        "http://127.0.0.1:6333/collections", 401, "Unauthorized", Message(), None
+    )
+    with patch.object(health.urllib.request, "urlopen", side_effect=unauthorized):
+        assert not health.qdrant_accepts_anonymous(6333)
+
+
+def _ensure_running_on_a_healthy_stack(
+    mgr: StackManager, memgraph_open: bool, qdrant_open: bool
+) -> tuple[list[str], MagicMock, MagicMock]:
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous",
+            return_value=memgraph_open,
+        ) as memgraph_probe,
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous",
+            return_value=qdrant_open,
+        ) as qdrant_probe,
+    ):
+        messages = _warnings_from(mgr.ensure_running)
+    return messages, memgraph_probe, qdrant_probe
+
+
 @pytest.mark.usefixtures("credentials")
-def test_stale_compose_file_warns_that_auth_is_not_wired(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    mgr.ensure_home()
-    mgr.compose_file.write_text(STALE_COMPOSE, encoding="utf-8")
-
-    messages = _warnings_from(mgr.ensure_compose_file)
-
-    warning = next(m for m in messages if "WITHOUT authentication" in m)
-    for name in cs.STACK_AUTH_ENV_VARS:
-        assert name in warning
-
-
-@pytest.mark.usefixtures("credentials")
-def test_current_compose_file_does_not_warn(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    mgr.ensure_compose_file()
-
-    messages = _warnings_from(mgr.ensure_compose_file)
-
-    assert not any("WITHOUT authentication" in m for m in messages)
-
-
-@pytest.mark.usefixtures("credentials")
-def test_map_form_environment_counts_as_wired(tmp_path: Path) -> None:
-    mgr = _manager(tmp_path)
-    mgr.ensure_home()
-    mgr.compose_file.write_text(
-        "services:\n"
-        "  memgraph:\n"
-        "    environment:\n"
-        "      MEMGRAPH_USER: cgr\n"
-        "      MEMGRAPH_PASSWORD: s3cret\n"
-        "  qdrant:\n"
-        "    environment:\n"
-        "      QDRANT__SERVICE__API_KEY: qdrant-key\n",
-        encoding="utf-8",
+def test_running_stack_that_accepts_anonymous_access_is_flagged(
+    tmp_path: Path,
+) -> None:
+    # A stack created before the credentials were set stays open, and its
+    # health checks pass either way.
+    messages, _, _ = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path), memgraph_open=True, qdrant_open=True
     )
 
-    messages = _warnings_from(mgr.ensure_compose_file)
+    warning = next(m for m in messages if "still accept" in m)
+    assert cs.SERVICE_MEMGRAPH in warning
+    assert cs.SERVICE_QDRANT in warning
 
-    assert not any("WITHOUT authentication" in m for m in messages)
+
+@pytest.mark.usefixtures("credentials")
+def test_running_stack_that_requires_the_credentials_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    messages, _, _ = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path), memgraph_open=False, qdrant_open=False
+    )
+
+    assert not any("still accept" in m for m in messages)
 
 
 @pytest.mark.usefixtures("no_credentials")
-def test_stale_compose_file_without_credentials_does_not_warn(
-    tmp_path: Path,
-) -> None:
-    mgr = _manager(tmp_path)
-    mgr.ensure_home()
-    mgr.compose_file.write_text(STALE_COMPOSE, encoding="utf-8")
+def test_running_stack_without_credentials_is_not_probed(tmp_path: Path) -> None:
+    messages, memgraph_probe, qdrant_probe = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path), memgraph_open=True, qdrant_open=True
+    )
 
-    messages = _warnings_from(mgr.ensure_compose_file)
-
-    assert not any("WITHOUT authentication" in m for m in messages)
+    memgraph_probe.assert_not_called()
+    qdrant_probe.assert_not_called()
+    assert not any("still accept" in m for m in messages)

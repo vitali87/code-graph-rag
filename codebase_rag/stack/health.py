@@ -54,6 +54,19 @@ def wait_for_memgraph(
     return False
 
 
+def memgraph_accepts_anonymous(host: str, port: int) -> bool:
+    return _bolt_reachable(host, port)
+
+
+def qdrant_accepts_anonymous(port: int, timeout: float = 1.5) -> bool:
+    url = f"http://127.0.0.1:{port}{cs.QDRANT_ANONYMOUS_PROBE_PATH}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+            return resp.status == 200
+    except OSError:
+        return False
+
+
 def wait_for_qdrant(
     port: int,
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,

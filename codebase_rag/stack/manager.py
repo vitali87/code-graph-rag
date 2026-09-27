@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -13,7 +14,12 @@ from .. import constants as root_cs
 from ..config import settings
 from ..types_defs import JsonValue
 from . import constants as cs
-from .health import wait_for_memgraph, wait_for_qdrant
+from .health import (
+    memgraph_accepts_anonymous,
+    qdrant_accepts_anonymous,
+    wait_for_memgraph,
+    wait_for_qdrant,
+)
 
 
 def _publishes_on_all_interfaces(mapping: object) -> bool:
@@ -59,16 +65,18 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
-def _declared_environment(spec: JsonValue) -> set[str]:
-    """Variable names a compose service's `environment` declares, either form."""
+def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValue]:
+    """One service's environment in `docker compose config` output.
+
+    Compose renders `environment` as a mapping there, with a variable it could
+    not resolve as null.
+    """
+    services = config.get(cs.COMPOSE_SERVICES_KEY) if isinstance(config, dict) else None
+    spec = services.get(service) if isinstance(services, dict) else None
     environment = (
         spec.get(cs.COMPOSE_ENVIRONMENT_KEY) if isinstance(spec, dict) else None
     )
-    if isinstance(environment, dict):
-        return {str(name) for name in environment}
-    if isinstance(environment, list):
-        return {str(item).split("=", 1)[0].strip() for item in environment}
-    return set()
+    return environment if isinstance(environment, dict) else {}
 
 
 class StackError(RuntimeError):
@@ -125,23 +133,10 @@ class StackManager:
             shutil.copyfile(self.package_compose, target)
         else:
             self._warn_if_ports_are_public(target)
-            self._warn_if_auth_not_wired(target)
         return target
 
     @staticmethod
-    def _services(compose_file: Path) -> dict[str, JsonValue]:
-        """The `services` mapping of a user-owned compose file, or empty."""
-        try:
-            compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError):
-            return {}
-        if not isinstance(compose, dict):
-            return {}
-        services = compose.get("services")
-        return services if isinstance(services, dict) else {}
-
-    @classmethod
-    def _public_port_mappings(cls, compose_file: Path) -> list[str]:
+    def _public_port_mappings(compose_file: Path) -> list[str]:
         """Published ports a compose file leaves bound to every interface.
 
         Decided from the parsed `services.*.ports` entries, not from whether
@@ -150,8 +145,17 @@ class StackManager:
         name sitting in a comment, cannot vouch for the rest of the file
         (issue #1012).
         """
+        try:
+            compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            return []
+        if not isinstance(compose, dict):
+            return []
+        services = compose.get("services")
+        if not isinstance(services, dict):
+            return []
         public: list[str] = []
-        for service, spec in cls._services(compose_file).items():
+        for service, spec in services.items():
             if not isinstance(spec, dict):
                 continue
             # The file is user-owned, so `ports` can be any YAML value; a
@@ -198,24 +202,70 @@ class StackManager:
             wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: settings.QDRANT_API_KEY}
         return wanted
 
-    def _warn_if_auth_not_wired(self, compose_file: Path) -> None:
-        """Flag configured credentials a stale compose file would drop.
+    def _verify_resolved_auth(self) -> None:
+        """Refuse to start containers with credentials the app does not use.
 
-        A file rendered before the stack passed credentials through lacks the
-        `environment` entries, so the containers would start open while the
-        user believes they set a password.
+        Asks Compose what each service would receive rather than reading the
+        file, because a value written into it, a file rendered before
+        credential support, or an `.env` file beside it (which Compose reads
+        for a variable missing from its environment) can each diverge from
+        the settings. Values are compared, never logged.
         """
-        services = self._services(compose_file)
-        missing = [
-            f"{service}: {name}"
-            for service, variables in self._auth_variables().items()
-            for name in variables
-            if name not in _declared_environment(services.get(service))
-        ]
-        if missing:
+        result = subprocess.run(
+            self._compose_cmd("config", "--format", "json"),
+            capture_output=True,
+            text=True,
+            encoding=root_cs.ENCODING_UTF8,
+            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+            check=False,
+            env=self._compose_env(),
+        )
+        try:
+            config: JsonValue = json.loads(result.stdout or "")
+        except json.JSONDecodeError:
+            config = None
+        if result.returncode != 0 or not isinstance(config, dict):
             logger.warning(
-                cs.WARN_COMPOSE_AUTH_NOT_WIRED.format(
-                    path=compose_file, missing=", ".join(missing)
+                cs.WARN_AUTH_NOT_VERIFIED.format(detail=(result.stderr or "").strip())
+            )
+            return
+        configured = {
+            name: value
+            for variables in self._auth_variables().values()
+            for name, value in variables.items()
+        }
+        mismatched = [
+            f"{service}: {name}"
+            for service, names in cs.STACK_AUTH_VARIABLES.items()
+            for name in names
+            if _resolved_environment(config, service).get(name) != configured.get(name)
+        ]
+        if mismatched:
+            raise StackError(
+                cs.ERR_COMPOSE_AUTH_MISMATCH.format(
+                    variables=", ".join(mismatched), path=self.compose_file
+                )
+            )
+
+    def warn_if_auth_not_enforced(self) -> None:
+        """Flag a running stack that still accepts connections without a login.
+
+        Containers take their environment when they are created, so a stack
+        that was up before credentials were configured stays open, and its
+        health checks cannot tell: /readyz needs no key, and a Memgraph with
+        no users accepts any login.
+        """
+        open_services: list[str] = []
+        if self.memgraph_credentials and memgraph_accepts_anonymous(
+            self.memgraph_host, self.memgraph_port
+        ):
+            open_services.append(cs.SERVICE_MEMGRAPH)
+        if settings.QDRANT_API_KEY and qdrant_accepts_anonymous(self.qdrant_port):
+            open_services.append(cs.SERVICE_QDRANT)
+        if open_services:
+            logger.warning(
+                cs.WARN_STACK_ACCEPTS_ANONYMOUS.format(
+                    services=", ".join(open_services)
                 )
             )
 
@@ -283,6 +333,7 @@ class StackManager:
     def up(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self.check_docker()
         self.ensure_compose_file()
+        self._verify_resolved_auth()
         logger.info(cs.MSG_STARTING_STACK)
         result = subprocess.run(
             self._compose_cmd("up", "-d"),
@@ -413,6 +464,7 @@ class StackManager:
             # already up never reaches it, and its long-lived compose file is
             # exactly the profile of a pre-#1012 public binding (issue #1380).
             self.warn_if_ports_are_public()
+            self.warn_if_auth_not_enforced()
             return current
         self.up()
         self.wait_healthy()

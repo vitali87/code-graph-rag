@@ -54,17 +54,35 @@ PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 
 # Container variables the compose file passes through without values, so each
 # reaches its service only when `docker compose` runs with it set.
+COMPOSE_SERVICES_KEY = "services"
 COMPOSE_ENVIRONMENT_KEY = "environment"
 ENV_MEMGRAPH_USER = "MEMGRAPH_USER"
 ENV_MEMGRAPH_PASSWORD = "MEMGRAPH_PASSWORD"
 ENV_QDRANT_API_KEY = "QDRANT__SERVICE__API_KEY"
+STACK_AUTH_VARIABLES = {
+    SERVICE_MEMGRAPH: (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD),
+    SERVICE_QDRANT: (ENV_QDRANT_API_KEY,),
+}
 STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_KEY)
-WARN_COMPOSE_AUTH_NOT_WIRED = (
-    "Credentials are configured, but the compose file at {path} does not pass "
-    "{missing} to its services, so the stack starts WITHOUT authentication. "
-    "Run 'cgr daemon down', delete the file and run 'cgr daemon up' to "
-    "re-render it, or list each variable above under its service's "
-    "'environment' and then run 'cgr daemon down' followed by 'cgr daemon up'."
+# A data endpoint: unlike /readyz, it needs the key once one is set.
+QDRANT_ANONYMOUS_PROBE_PATH = "/collections"
+ERR_COMPOSE_AUTH_MISMATCH = (
+    "Compose would start {variables} with a value that does not come from "
+    "code-graph-rag's settings (MEMGRAPH_USERNAME and MEMGRAPH_PASSWORD, "
+    "QDRANT_API_KEY), so the stack would not use the credentials the app logs "
+    "in with. Either the compose file at {path} does not pass them through (a "
+    "file rendered before credential support: run 'cgr daemon down', delete "
+    "it and run 'cgr daemon up'), or a value written into it or an .env file "
+    "next to it overrides them; remove that value."
+)
+WARN_AUTH_NOT_VERIFIED = (
+    "Could not check which credentials Compose passes to the stack "
+    "('docker compose config' failed: {detail}); starting it anyway."
+)
+WARN_STACK_ACCEPTS_ANONYMOUS = (
+    "Credentials are configured, but these running services still accept "
+    "connections without them: {services}. Containers take credentials when "
+    "they are created: run 'cgr daemon down' and then 'cgr daemon up'."
 )
 
 # The substitution that pins published ports to a host address. Its absence
