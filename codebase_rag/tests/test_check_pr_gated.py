@@ -827,3 +827,20 @@ def test_a_bound_names_failing_status_still_blocks(
     # Without the status, the bound App's green run is enough.
     reasons, _ = _gate_a_green_pr(monkeypatch, rollup[:2], protection=protection)
     assert reasons == []
+
+
+def test_a_bound_required_contexts_green_status_is_read_through_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the bound App's check runs filtered out, a same-name commit
+    status is what remains of the required context; judged by `conclusion`
+    it never finished, and the gate refused a green PR (bot review on #2155)."""
+    monkeypatch.setattr(
+        check_pr_gated, "head_check_runs", lambda _h, _n: [_app_run(_BOUND_APP)]
+    )
+    rollup = [*_GREEN, status_context(REQUIRED_CONTEXT, "SUCCESS")]
+    reasons, _ = _gate_a_green_pr(monkeypatch, rollup, protection=_CLASSIC_BOUND)
+    assert reasons == []
+    failing = [*_GREEN, status_context(REQUIRED_CONTEXT, "FAILURE")]
+    reasons, _ = _gate_a_green_pr(monkeypatch, failing, protection=_CLASSIC_BOUND)
+    assert reasons == [f"'{REQUIRED_CONTEXT}' concluded FAILURE"]

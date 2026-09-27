@@ -1248,12 +1248,13 @@ def check(pr: str) -> tuple[list[str], list[str]]:
         for entry in judged:
             if context_name(entry) != REQUIRED_CONTEXT:
                 continue
-            if not is_concluded(entry):
+            # By shape: once a bound name's check runs are filtered out, what
+            # remains can be a same-name commit status, which has no
+            # `conclusion` and would otherwise read as never finished.
+            if not entry_finished(entry):
                 reasons.append(f"'{REQUIRED_CONTEXT}' has not concluded")
-            elif str(entry.get("conclusion", "")).upper() != "SUCCESS":
-                reasons.append(
-                    f"'{REQUIRED_CONTEXT}' concluded {entry.get('conclusion')}"
-                )
+            elif (outcome := entry_outcome(entry)) != "SUCCESS":
+                reasons.append(f"'{REQUIRED_CONTEXT}' concluded {outcome}")
 
     # Contexts the CLASSIC layer requires are enforced exactly like the
     # ruleset's, and a PR missing one is refused the same way.
