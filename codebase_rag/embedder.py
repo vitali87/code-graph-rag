@@ -231,6 +231,13 @@ if has_torch() and has_transformers():
         device = _select_device()
         if device != cs.EmbeddingDevice.CPU:
             model = model.to(device)
+        if device == cs.EmbeddingDevice.MPS:
+            # The weight upload is the first copy on the MPS stream, before
+            # any batch and so before `_sync_after_batch` ever runs. Draining
+            # it here keeps a copy that parks on the stream from surfacing
+            # later inside the first batch's transfers, and pins a wedge at
+            # load to this one point ahead of any store write (issue #2218).
+            torch.mps.synchronize()
         return model
 
     def _unixcoder_embed_code(code: str, max_length: int | None) -> list[float]:
