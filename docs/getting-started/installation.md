@@ -118,6 +118,22 @@ The `cpp` extra installs libclang. Semantic C/C++ indexing also needs a `compile
 uv tool install --compile-bytecode "code-graph-rag[treesitter-full,semantic]"
 ```
 
+## Install from git
+
+PyPI and GitHub Releases only receive every 50th version, plus any security fix, so they usually trail `main` by tens of versions. To run the newest code, install straight from the repository:
+
+```bash
+uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+```
+
+With pipx:
+
+```bash
+pipx install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
+```
+
+Replace `@main` with a tag such as `@v0.1.8` to pin an exact version. The package is built on your machine, and `uv` also builds the patched C and C++ grammars from their git forks, so a C compiler is needed on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS).
+
 ## Install from Source
 
 ```bash
@@ -150,6 +166,26 @@ make dev
 ```
 
 This installs all dependencies and sets up pre-commit hooks automatically.
+
+## Upgrade
+
+`cgr` has no self-update command; upgrade it with the tool that installed it:
+
+| Installed with | Upgrade with |
+|---|---|
+| `uv tool install` (PyPI or git) | `uv tool upgrade code-graph-rag` |
+| `pipx install` from PyPI | `pipx upgrade code-graph-rag` |
+| `pipx install` from git | `pipx reinstall code-graph-rag` |
+| `pip install` | `pip install --upgrade 'code-graph-rag[treesitter-full,semantic]'` |
+| Source checkout | `git pull`, then rerun your `uv sync` command |
+
+The `uv` and `pipx` commands keep the extras you installed with; with `pip`, repeat them. A `uv` git install moves to the newest commit on the branch it was installed from. For a git install, `pipx upgrade` skips any new commit that did not change the version number, so `pipx reinstall` is the reliable choice there. `uv tool upgrade --all` upgrades every tool `uv` manages in one go.
+
+Check the result with:
+
+```bash
+cgr --version
+```
 
 ## Verify Release Artifacts
 

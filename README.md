@@ -126,6 +126,8 @@ To run code newer than the latest release, install from git:
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
+To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
+
 You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
 > [!NOTE]

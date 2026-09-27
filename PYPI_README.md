@@ -63,6 +63,12 @@ To run code newer than the latest release, install from git:
 pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
+To upgrade, rerun the install with `--upgrade` and the extras you chose, for
+example `pip install --upgrade 'code-graph-rag[treesitter-full]'`. With uv or pipx,
+run `uv tool upgrade code-graph-rag` or `pipx upgrade code-graph-rag` instead; see the
+[installation guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#upgrade)
+for git installs and the other methods.
+
 ### Prerequisites
 
 - Python 3.12+
