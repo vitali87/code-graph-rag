@@ -254,6 +254,47 @@ class TestCypherFindByQualifiedNameIntegration:
         assert len(results) == 1
         assert results[0]["path"] == "src/own.py"
 
+    def test_falls_back_to_the_defining_module_through_nesting(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        memgraph_ingestor._execute_query(
+            "CREATE (m:Module {qualified_name: 'pkg.mod', path: 'src/mod.py'})"
+            "-[:DEFINES]->(c:Class {qualified_name: 'pkg.mod.Box', name: 'Box'})"
+            "-[:DEFINES_METHOD]->"
+            "(f:Method {qualified_name: 'pkg.mod.Box.open', name: 'open', "
+            "start_line: 5, end_line: 9})"
+        )
+
+        results = memgraph_ingestor._execute_query(
+            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "pkg.mod.Box.open"}
+        )
+
+        assert len(results) == 1
+        assert results[0]["path"] == "src/mod.py"
+
+    def test_a_module_reached_only_through_calls_supplies_no_path(
+        self, memgraph_ingestor: MemgraphIngestor
+    ) -> None:
+        # The unbounded `-[*]-` walked CALLS back to the caller's Module and
+        # reported the caller's file as the callee's (issue #2196).
+        memgraph_ingestor._execute_query(
+            "CREATE (m:Module {qualified_name: 'pkg.caller', path: 'src/caller.py'})"
+            "-[:DEFINES]->"
+            "(a:Function {qualified_name: 'pkg.caller.run', name: 'run', "
+            "path: 'src/caller.py', start_line: 1, end_line: 3})"
+            "-[:CALLS]->"
+            "(f:Function {qualified_name: 'pkg.orphan.helper', name: 'helper', "
+            "start_line: 1, end_line: 2})"
+        )
+
+        results = memgraph_ingestor._execute_query(
+            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "pkg.orphan.helper"}
+        )
+
+        assert len(results) == 1
+        assert results[0]["name"] == "helper"
+        assert results[0]["path"] is None
+
     def test_returns_empty_for_nonexistent_name(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
