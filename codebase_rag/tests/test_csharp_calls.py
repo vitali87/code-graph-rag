@@ -1289,3 +1289,42 @@ public class A {
     assert not any(".Base.Twice" in t or ".Derived.Twice" in t for t in targets), (
         targets
     )
+
+
+def test_a_suffixed_numeric_literal_is_typed_by_its_suffix(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `1.0m` is decimal and `1L` long, not double and int: typed by the
+    # default, each was refused by its only fitting overload (CodeRabbit,
+    # PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class Money { public static void M(decimal d) { } }
+public static class Text { public static void M(string s) { } }
+public static class Wide { public static void N(long v) { } }
+public static class Narrow { public static void N(short v) { } }
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.Money;
+using static Helpers.Text;
+using static Helpers.Wide;
+using static Helpers.Narrow;
+namespace App;
+public class A {
+    public void Run() { M(1.0m); N(1L); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert any(t.endswith("Money.M(decimal)") for t in targets), targets
+    assert any(t.endswith("Wide.N(long)") for t in targets), targets
+    assert not any(
+        t.endswith(("Text.M(string)", "Narrow.N(short)")) for t in targets
+    ), targets

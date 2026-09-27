@@ -360,8 +360,6 @@ TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"
 # `M(int)` and `M(string)`). Only literals are typed; any other argument is
 # compatible with every parameter.
 CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
-    "integer_literal": "int",
-    "real_literal": "double",
     "boolean_literal": "bool",
     "character_literal": "char",
     "string_literal": "string",
@@ -404,6 +402,54 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
             "Object",
         }
     ),
+    "long": frozenset(
+        {
+            "long",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Int64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "uint": frozenset(
+        {
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "UInt32",
+            "Int64",
+            "UInt64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "ulong": frozenset(
+        {
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "UInt64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "float": frozenset({"float", "double", "object", "Single", "Double", "Object"}),
+    "decimal": frozenset({"decimal", "object", "Decimal", "Object"}),
     "double": frozenset({"double", "object", "Double", "Object"}),
     "bool": frozenset({"bool", "object", "Boolean", "Object"}),
     "char": frozenset(
@@ -426,6 +472,29 @@ CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
     ),
     "string": frozenset({"string", "object", "String", "Object"}),
 }
+# A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
+# decimal), so the two numeric node types are typed from their text; an
+# unsuffixed integer too large for int is left unjudged (CodeRabbit, PR #2036).
+TS_CSHARP_INTEGER_LITERAL = "integer_literal"
+TS_CSHARP_REAL_LITERAL = "real_literal"
+CSHARP_INTEGER_SUFFIX_TYPES: dict[str, str] = {
+    "": "int",
+    "l": "long",
+    "u": "uint",
+    "ul": "ulong",
+    "lu": "ulong",
+}
+CSHARP_INTEGER_SUFFIX_CHARS = "ul"
+CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
+    "": "double",
+    "d": "double",
+    "f": "float",
+    "m": "decimal",
+}
+CSHARP_DIGIT_SEPARATOR = "_"
+CSHARP_HEX_PREFIX = "0x"
+CSHARP_BINARY_PREFIX = "0b"
+CSHARP_INT_MAX = 2**31 - 1
 CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
     *CSHARP_LITERAL_ACCEPTS.values()
 )

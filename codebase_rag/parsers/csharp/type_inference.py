@@ -115,6 +115,31 @@ def _plain_type_name(type_name: str) -> str:
     return name.removeprefix(cs.CSHARP_SYSTEM_PREFIX)
 
 
+def _numeric_literal_type(node_type: str, text: str) -> str | None:
+    """The C# type of a numeric literal, from its suffix and value, or None
+    when it cannot be told (an unsuffixed integer too large for int)."""
+    body = text.lower().replace(cs.CSHARP_DIGIT_SEPARATOR, "")
+    if node_type == cs.TS_CSHARP_REAL_LITERAL:
+        suffix = body[-1:] if body[-1:] in cs.CSHARP_REAL_SUFFIX_TYPES else ""
+        return cs.CSHARP_REAL_SUFFIX_TYPES[suffix]
+    digits = body.rstrip(cs.CSHARP_INTEGER_SUFFIX_CHARS)
+    suffix_type = cs.CSHARP_INTEGER_SUFFIX_TYPES.get(body[len(digits) :])
+    if suffix_type != cs.CSHARP_INTEGER_SUFFIX_TYPES[""]:
+        return suffix_type
+    base = (
+        16
+        if digits.startswith(cs.CSHARP_HEX_PREFIX)
+        else 2
+        if digits.startswith(cs.CSHARP_BINARY_PREFIX)
+        else 10
+    )
+    try:
+        value = int(digits[2:] if base != 10 else digits, base)
+    except ValueError:
+        return None
+    return suffix_type if value <= cs.CSHARP_INT_MAX else None
+
+
 def _literals_fit(leaf: str, literal_types: list[str | None]) -> bool:
     # Could each literal argument bind its parameter? A parameter whose type
     # the literal tables do not list, and a non-literal argument, are not
@@ -916,11 +941,17 @@ class CSharpTypeInferenceEngine:
             if arg.type != cs.TS_CSHARP_ARGUMENT:
                 continue
             value = arg.named_children[-1] if arg.named_children else None
-            out.append(
-                cs.CSHARP_LITERAL_ARG_TYPES.get(value.type)
-                if value is not None
-                else None
-            )
+            if value is None:
+                out.append(None)
+            elif value.type in (
+                cs.TS_CSHARP_INTEGER_LITERAL,
+                cs.TS_CSHARP_REAL_LITERAL,
+            ):
+                out.append(
+                    _numeric_literal_type(value.type, safe_decode_text(value) or "")
+                )
+            else:
+                out.append(cs.CSHARP_LITERAL_ARG_TYPES.get(value.type))
         return out
 
     def _static_import_scope(
