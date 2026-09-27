@@ -72,7 +72,10 @@ def test_runs_are_queued_not_cancelled() -> None:
 CHECK_STUBS = r"""
 git() {
   case "$1" in
-    ls-remote) printf '%s\trefs/heads/main\n' "$TIP" ;;
+    ls-remote)
+      [ "$LS_REMOTE_FAILS" = true ] && return 128
+      printf '%s\trefs/heads/main\n' "$TIP"
+      ;;
     show) printf 'version = "0.0.5"\n' ;;
   esac
 }
@@ -174,7 +177,10 @@ gh() {
       [ "$COMPARE_FAILS" = true ] && return 1
       printf '%b' "$RANGE"
       ;;
-    */pulls) cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true ;;
+    */pulls)
+      [ "$PULLS_FAIL" = true ] && return 1
+      cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true
+      ;;
     *) return 1 ;;
   esac
 }
@@ -182,7 +188,7 @@ git() {
   case "$1" in
     log)
       case "${@: -1}" in -*) touch pwned ;; esac
-      cat "messages/${@: -1}" 2> /dev/null || true
+      cat "messages/${@: -1}" 2> /dev/null
       ;;
     ls-remote)
       if [ "$2" = --exit-code ]; then
@@ -216,6 +222,7 @@ def _decide_run(
             "RELEASE_EVERY": "50",
             "LS_REMOTE_EXIT": "0",
             "COMPARE_FAILS": "false",
+            "PULLS_FAIL": "false",
             **env,
         },
     )
@@ -301,3 +308,45 @@ def test_non_sha_range_entries_never_reach_git(tmp_path: Path) -> None:
     out = _decide(tmp_path, f"--output=pwned\\n{SHA}\\n")
     assert not (tmp_path / "pwned").exists()
     assert out["security"] == "false"
+
+
+@pytest.mark.parametrize("tip", ["", "not-a-sha"])
+def test_unreadable_tip_fails_instead_of_standing_down(
+    tmp_path: Path, tip: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('version = "0.0.5"\n', encoding="utf-8")
+    result, out = _run(
+        "Check if version was manually changed", CHECK_STUBS, tmp_path, {"TIP": tip}
+    )
+    assert result.returncode != 0
+    assert "refusing to decide whether to bump" in result.stdout
+    assert "skip" not in out
+
+
+def test_failed_tip_lookup_fails_instead_of_standing_down(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('version = "0.0.5"\n', encoding="utf-8")
+    result, out = _run(
+        "Check if version was manually changed",
+        CHECK_STUBS,
+        tmp_path,
+        {"TIP": SHA, "LS_REMOTE_FAILS": "true"},
+    )
+    assert result.returncode != 0
+    assert "could not read the tip of main" in result.stdout
+    assert "skip" not in out
+
+
+def test_unreadable_commit_message_fails_the_run(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, f"{OLDER}\\n{SHA}\\n")
+    assert result.returncode != 0
+    assert f"could not read the message of {OLDER}" in result.stdout
+    assert "release" not in out
+
+
+def test_unreadable_pull_request_labels_fail_the_run(tmp_path: Path) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", PULLS_FAIL="true")
+    assert result.returncode != 0
+    assert "could not read the pull request labels" in result.stdout
+    assert "release" not in out

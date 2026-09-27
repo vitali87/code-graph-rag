@@ -54,7 +54,17 @@ jobs:
           # Only the run for the newest commit on main bumps. An older run
           # stands down: the newer commit contains this one, and its own run
           # bumps once for both, so no version is computed from stale state.
-          TIP=$(git ls-remote origin refs/heads/main | cut -f1)
+          # A failed lookup must fail the run, not read as "main moved on":
+          # an empty TIP would otherwise skip the bump without a word.
+          if ! TIP=$(git ls-remote --exit-code origin refs/heads/main); then
+            echo "::error::could not read the tip of main; refusing to decide whether to bump"
+            exit 1
+          fi
+          TIP=$(printf '%s\n' "$TIP" | cut -f1)
+          if [[ ! "$TIP" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected tip of main '${TIP}'; refusing to decide whether to bump"
+            exit 1
+          fi
           if [ "$TIP" != "$GITHUB_SHA" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice::main has moved on from ${GITHUB_SHA} to ${TIP}; its run bumps for both, standing down"
@@ -194,11 +204,17 @@ jobs:
           else
             echo "::notice::no tag v${CURRENT} (manual version change); scanning only ${GITHUB_SHA}"
           fi
+          # Every lookup below fails the run rather than reading as "no
+          # marker": a scan that silently skipped a commit could ship a
+          # security fix without its release.
           MESSAGE=""
           for SHA in $COMMITS; do
-            MESSAGE+="$(git log -1 --pretty=%B "$SHA" 2>/dev/null \
-              || gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" --jq .commit.message \
-              || true)"$'\n'
+            if ! BODY=$(git log -1 --pretty=%B "$SHA" 2>/dev/null) \
+                && ! BODY=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" --jq .commit.message); then
+              echo "::error::could not read the message of ${SHA}; refusing to decide the release"
+              exit 1
+            fi
+            MESSAGE+="${BODY}"$'\n'
           done
           GHSA=$(printf '%s' "$MESSAGE" | grep -oiE 'GHSA(-[0-9a-z]{4}){3}' | head -1 || true)
           SECURITY=false
@@ -210,8 +226,12 @@ jobs:
           fi
           for SHA in $COMMITS; do
             [ "$SECURITY" = "true" ] && break
-            if gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
-                --jq '.[].labels[].name' 2>/dev/null | grep -qx security; then
+            if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+                --jq '.[].labels[].name'); then
+              echo "::error::could not read the pull request labels of ${SHA}; refusing to decide the release"
+              exit 1
+            fi
+            if printf '%s\n' "$LABELS" | grep -qx security; then
               SECURITY=true
             fi
           done
