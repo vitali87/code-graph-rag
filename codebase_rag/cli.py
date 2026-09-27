@@ -116,7 +116,25 @@ def _version_callback(value: bool) -> None:
             ),
             highlight=False,
         )
+        for line in credits_lines():
+            app_context.console.print(line, highlight=False)
         raise typer.Exit()
+
+
+def credits_lines(
+    frozen: bool | None = None, executable: str | None = None
+) -> list[str]:
+    """Where the third-party credits are: the docs page, and for a release
+    binary the notices file shipped beside it (issue #2175)."""
+    lines = [cs.CLI_MSG_CREDITS.format(url=cs.CREDITS_URL)]
+    if frozen if frozen is not None else getattr(sys, "frozen", False):
+        stem = Path(executable or sys.executable).stem
+        lines.append(
+            cs.CLI_MSG_CREDITS_NOTICES.format(
+                name=f"{stem}{cs.THIRD_PARTY_NOTICES_SUFFIX}"
+            )
+        )
+    return lines
 
 
 def validate_models_early() -> None:
