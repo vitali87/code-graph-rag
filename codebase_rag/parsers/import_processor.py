@@ -1,4 +1,3 @@
-import json
 import os
 import posixpath
 import re
@@ -345,7 +344,7 @@ def _load_jsonc(path: Path) -> dict | None:
             source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
         try:
             parsed = loads_json(source)
-        except (json.JSONDecodeError, ValueError):
+        except ValueError:
             continue
         return parsed if isinstance(parsed, dict) else None
     return None
