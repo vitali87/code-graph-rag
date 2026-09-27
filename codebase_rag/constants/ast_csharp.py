@@ -492,8 +492,8 @@ CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
     "m": "decimal",
 }
 CSHARP_DIGIT_SEPARATOR = "_"
-CSHARP_HEX_PREFIX = "0x"
-CSHARP_BINARY_PREFIX = "0b"
+CSHARP_INTEGER_BASE_PREFIXES: dict[str, int] = {"0x": 16, "0b": 2}
+CSHARP_DECIMAL_BASE = 10
 CSHARP_INT_MAX = 2**31 - 1
 CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
     *CSHARP_LITERAL_ACCEPTS.values()

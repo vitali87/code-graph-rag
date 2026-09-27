@@ -126,15 +126,16 @@ def _numeric_literal_type(node_type: str, text: str) -> str | None:
     suffix_type = cs.CSHARP_INTEGER_SUFFIX_TYPES.get(body[len(digits) :])
     if suffix_type != cs.CSHARP_INTEGER_SUFFIX_TYPES[""]:
         return suffix_type
-    base = (
-        16
-        if digits.startswith(cs.CSHARP_HEX_PREFIX)
-        else 2
-        if digits.startswith(cs.CSHARP_BINARY_PREFIX)
-        else 10
+    prefix, base = next(
+        (
+            (prefix, base)
+            for prefix, base in cs.CSHARP_INTEGER_BASE_PREFIXES.items()
+            if digits.startswith(prefix)
+        ),
+        ("", cs.CSHARP_DECIMAL_BASE),
     )
     try:
-        value = int(digits[2:] if base != 10 else digits, base)
+        value = int(digits.removeprefix(prefix), base)
     except ValueError:
         return None
     return suffix_type if value <= cs.CSHARP_INT_MAX else None
