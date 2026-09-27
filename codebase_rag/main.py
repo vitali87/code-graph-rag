@@ -605,7 +605,7 @@ def _price_current_run(
     if model_config is None:
         try:
             model_config = settings.active_orchestrator_config
-        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+        except Exception:  # noqa: BLE001  # pricing is display-only, never fatal
             return None
     from .services.usage_cost import price_run
 
@@ -915,7 +915,7 @@ def _git_state() -> tuple[str, bool] | None:
     header = lines[0][3:].split("...", 1)[0].split(" ", 1)[0]
     if header in ("HEAD", "No"):
         return None
-    is_dirty = any(line for line in lines[1:])
+    is_dirty = any(lines[1:])
     return header, is_dirty
 
 
