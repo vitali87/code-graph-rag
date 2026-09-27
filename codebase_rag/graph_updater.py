@@ -5155,13 +5155,22 @@ class GraphUpdater:
             # rebuilds those files with tree-sitter, and the error is raised
             # before the cache commit so the next run retries, as a failed
             # file is (CodeRabbit, PR #2247).
+            #
+            # Each frontend separately: one that completed keeps its coverage,
+            # so a later emitter's failure does not send the C++ files it has
+            # already re-emitted through tree-sitter as well (CodeRabbit, PR
+            # #2247). A failed C++ run leaves nothing it can vouch for.
             try:
                 self._run_cpp_frontend()
-                self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
             except Exception as exc:
                 logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
                 self._cpp_frontend_covered = frozenset()
                 first_failure = exc
+            try:
+                self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
+            except Exception as exc:
+                logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
+                first_failure = first_failure or exc
 
         with Progress(
             SpinnerColumn(),

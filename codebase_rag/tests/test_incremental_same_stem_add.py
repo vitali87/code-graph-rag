@@ -487,3 +487,36 @@ def test_a_failed_rerun_still_rebuilds_the_deleted_files_and_raises(
         if label == cs.NodeLabel.MODULE
     }
     assert {"shape.h", "use.cpp"} <= paths, paths
+
+
+@pytest.mark.skipif(not cpp_frontend_available(), reason="libclang not available")
+def test_a_later_emitter_failure_keeps_the_cpp_rerun_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The C++ re-run succeeded and emitted its files; a later emitter's
+    # failure must not uncover them, or the file pass rebuilds them with
+    # tree-sitter on top of that emission (CodeRabbit, PR #2247).
+    monkeypatch.setattr(settings, "CPP_FRONTEND", cs.CppFrontend.LIBCLANG)
+    root = tmp_path / "proj"
+    _write(root, _CPP)
+    _compile_commands(root, ["use.cpp"])
+    updater = _make_updater(root, InMemoryGraph())
+    updater.run(force=True)
+    (root / _CPP_ADDED[0]).write_text(_CPP_ADDED[1])
+    _compile_commands(root, ["use.cpp", _CPP_ADDED[0]])
+
+    real_emit = GraphUpdater._run_emitting_frontends
+    calls: list[int] = []
+
+    def fail_on_rerun(self: GraphUpdater, phase: FrontendPhase) -> None:
+        if phase == FrontendPhase.BEFORE_DEFINITIONS:
+            calls.append(1)
+            if len(calls) > 1:
+                raise RuntimeError("emitter re-run failed")
+        real_emit(self, phase)
+
+    monkeypatch.setattr(GraphUpdater, "_run_emitting_frontends", fail_on_rerun)
+    with pytest.raises(RuntimeError, match="emitter re-run failed"):
+        updater.run(force=False)
+
+    assert "shape.h" in updater._cpp_frontend_covered
