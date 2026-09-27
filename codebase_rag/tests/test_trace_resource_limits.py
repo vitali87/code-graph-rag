@@ -54,8 +54,10 @@ def test_a_gzip_that_expands_past_the_cap_is_refused(small_cap: int) -> None:
 def test_the_default_cap_refuses_a_real_bomb() -> None:
     # 320 MiB of zeros is about 320 KB compressed, well under the download
     # cap, and must fail without ever being held whole.
+    bomb = _bomb(cs.TRACE_MAX_DECOMPRESSED_BYTES + 64 * 1024 * 1024)
+
     with pytest.raises(TraceFormatError, match="decompresses to more than"):
-        _decompress(_bomb(cs.TRACE_MAX_DECOMPRESSED_BYTES + 64 * 1024 * 1024), _PATH)
+        _decompress(bomb, _PATH)
 
 
 def test_output_exactly_at_the_cap_is_kept(small_cap: int) -> None:

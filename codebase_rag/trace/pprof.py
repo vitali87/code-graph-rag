@@ -212,7 +212,6 @@ def _decompress(raw: bytes, profile_path: Path) -> bytes:
     """
     if raw[:2] != cs.TRACE_GZIP_MAGIC:
         return raw
-    limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
     bad = TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
     view = memoryview(raw)
     out = bytearray()
@@ -229,28 +228,41 @@ def _decompress(raw: bytes, profile_path: Path) -> bytes:
             members += 1
             if members > cs.TRACE_MAX_GZIP_MEMBERS:
                 raise bad
-            inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
-            while not inflater.eof:
-                if position >= len(raw):
-                    raise bad
-                chunk = view[position : position + cs.TRACE_GZIP_INPUT_CHUNK_BYTES]
-                out += inflater.decompress(chunk, limit + 1 - len(out))
-                if len(out) > limit:
-                    raise TraceFormatError(
-                        cs.TRACE_ERR_PPROF_TOO_LARGE.format(
-                            path=profile_path, limit=limit
-                        )
-                    )
-                # Below the cap the output limit never bound, so the slice was
-                # consumed up to the member's end; what follows it is unused.
-                position += (
-                    len(chunk)
-                    - len(inflater.unconsumed_tail)
-                    - len(inflater.unused_data)
-                )
+            position = _inflate_member(view, position, out, profile_path, bad)
     except zlib.error as e:
         raise bad from e
     return bytes(out)
+
+
+def _inflate_member(
+    view: memoryview,
+    position: int,
+    out: bytearray,
+    profile_path: Path,
+    bad: TraceFormatError,
+) -> int:
+    """Inflate the gzip member at `position` into `out`; return where it ends.
+
+    Input goes in bounded slices, so each member costs the slices it spans
+    rather than a copy of everything after it.
+    """
+    limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
+    inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
+    while not inflater.eof:
+        if position >= len(view):
+            raise bad
+        chunk = view[position : position + cs.TRACE_GZIP_INPUT_CHUNK_BYTES]
+        out += inflater.decompress(chunk, limit + 1 - len(out))
+        if len(out) > limit:
+            raise TraceFormatError(
+                cs.TRACE_ERR_PPROF_TOO_LARGE.format(path=profile_path, limit=limit)
+            )
+        # Below the cap the output limit never bound, so the slice was
+        # consumed up to the member's end; what follows it is unused.
+        position += (
+            len(chunk) - len(inflater.unconsumed_tail) - len(inflater.unused_data)
+        )
+    return position
 
 
 def _decode_profile(

@@ -222,12 +222,12 @@ def _download_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes
 
     # Any exception the fetch raises is re-raised here, so an error is never
     # mistaken for a timeout or lost on the worker thread.
-    outcome: list[bytes | BaseException] = []
+    outcome: list[bytes | Exception] = []
 
     def fetch() -> None:
         try:
             outcome.append(_fetch_pprof(url, headers, timeout))
-        except BaseException as e:  # noqa: BLE001 - re-raised on the caller
+        except Exception as e:  # noqa: BLE001  # re-raised on the caller
             outcome.append(e)
 
     worker = threading.Thread(target=fetch, daemon=True)
@@ -238,7 +238,7 @@ def _download_pprof(url: str, headers: tuple[str, ...], timeout: float) -> bytes
             ch.ERR_TRACE_PULL_TIMED_OUT.format(url=_redact_url(url), timeout=timeout)
         )
     result = outcome[0]
-    if isinstance(result, BaseException):
+    if isinstance(result, Exception):
         raise result
     return result
 
