@@ -65,7 +65,8 @@ STACK_AUTH_VARIABLES = {
 }
 STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_KEY)
 # A data endpoint: unlike /readyz, it needs the key once one is set.
-QDRANT_ANONYMOUS_PROBE_PATH = "/collections"
+QDRANT_DATA_PROBE_PATH = "/collections"
+QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
     "code-graph-rag's settings (MEMGRAPH_USERNAME and MEMGRAPH_PASSWORD, "
@@ -75,9 +76,20 @@ ERR_COMPOSE_AUTH_MISMATCH = (
     "it and run 'cgr daemon up'), or a value written into it or an .env file "
     "next to it overrides them; remove that value."
 )
+ERR_AUTH_NOT_VERIFIED = (
+    "Credentials are configured, but 'docker compose config' failed, so it "
+    "cannot be checked that the stack would use them: {detail}. Not starting "
+    "the stack."
+)
 WARN_AUTH_NOT_VERIFIED = (
     "Could not check which credentials Compose passes to the stack "
-    "('docker compose config' failed: {detail}); starting it anyway."
+    "('docker compose config' failed: {detail}); starting it anyway, since "
+    "none are configured."
+)
+WARN_QDRANT_REJECTS_KEY = (
+    "The running Qdrant rejects the configured QDRANT_API_KEY, so it was "
+    "started with a different key. Qdrant reads its key when the container is "
+    "created: run 'cgr daemon down' and then 'cgr daemon up'."
 )
 WARN_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "

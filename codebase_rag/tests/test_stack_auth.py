@@ -258,18 +258,37 @@ def test_verify_refuses_a_key_from_an_env_file_beside_the_compose_file(
     assert "key-from-env-file" not in str(exc.value)
 
 
+FAILED_CONFIG = subprocess.CompletedProcess(
+    args=[], returncode=1, stdout="", stderr="unknown flag: --format"
+)
+
+
 @pytest.mark.usefixtures("credentials")
-def test_verify_warns_and_continues_when_compose_config_fails(
-    tmp_path: Path,
-) -> None:
-    failed = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout="", stderr="unknown flag: --format"
-    )
+def test_verify_refuses_to_start_when_compose_config_fails(tmp_path: Path) -> None:
+    # Unchecked credentials could mean an open stack.
+    with pytest.raises(StackError) as exc:
+        _verify_with(_manager(tmp_path), FAILED_CONFIG)
+
+    assert "unknown flag: --format" in str(exc.value)
+
+
+@pytest.mark.usefixtures("no_credentials")
+def test_verify_warns_and_continues_without_credentials(tmp_path: Path) -> None:
     mgr = _manager(tmp_path)
 
-    messages = _warnings_from(lambda: _verify_with(mgr, failed))
+    messages = _warnings_from(lambda: _verify_with(mgr, FAILED_CONFIG))
 
     assert any("unknown flag: --format" in m for m in messages)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_verify_reads_yaml_printed_despite_the_json_flag(tmp_path: Path) -> None:
+    services = {service: {"environment": env} for service, env in MATCHING_ENV.items()}
+    as_yaml = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=yaml.safe_dump({"services": services}), stderr=""
+    )
+
+    _verify_with(_manager(tmp_path), as_yaml)
 
 
 @pytest.mark.usefixtures("credentials")
@@ -311,15 +330,31 @@ def test_memgraph_anonymous_probe_sends_no_login() -> None:
     connect.assert_called_once_with(host="localhost", port=7687)
 
 
-def test_qdrant_anonymous_probe_reads_a_data_endpoint() -> None:
+def _ok_response() -> MagicMock:
     response = MagicMock()
     response.__enter__.return_value.status = 200
+    return response
+
+
+def test_qdrant_anonymous_probe_reads_a_data_endpoint() -> None:
     with patch.object(
-        health.urllib.request, "urlopen", return_value=response
+        health.urllib.request, "urlopen", return_value=_ok_response()
     ) as urlopen:
         assert health.qdrant_accepts_anonymous(6333)
 
-    assert urlopen.call_args.args[0].endswith(cs.QDRANT_ANONYMOUS_PROBE_PATH)
+    request = urlopen.call_args.args[0]
+    assert request.full_url.endswith(cs.QDRANT_DATA_PROBE_PATH)
+    assert not request.has_header(cs.QDRANT_API_KEY_HEADER.capitalize())
+
+
+def test_qdrant_key_probe_sends_the_configured_key() -> None:
+    with patch.object(
+        health.urllib.request, "urlopen", return_value=_ok_response()
+    ) as urlopen:
+        assert health.qdrant_accepts_key(6333, "qdrant-key")
+
+    request = urlopen.call_args.args[0]
+    assert request.get_header(cs.QDRANT_API_KEY_HEADER.capitalize()) == "qdrant-key"
 
 
 def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
@@ -331,7 +366,10 @@ def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
 
 
 def _ensure_running_on_a_healthy_stack(
-    mgr: StackManager, memgraph_open: bool, qdrant_open: bool
+    mgr: StackManager,
+    memgraph_open: bool,
+    qdrant_open: bool,
+    qdrant_key_accepted: bool = True,
 ) -> tuple[list[str], MagicMock, MagicMock]:
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
@@ -344,6 +382,10 @@ def _ensure_running_on_a_healthy_stack(
             "codebase_rag.stack.manager.qdrant_accepts_anonymous",
             return_value=qdrant_open,
         ) as qdrant_probe,
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_key",
+            return_value=qdrant_key_accepted,
+        ),
     ):
         messages = _warnings_from(mgr.ensure_running)
     return messages, memgraph_probe, qdrant_probe
@@ -383,4 +425,19 @@ def test_running_stack_without_credentials_is_not_probed(tmp_path: Path) -> None
 
     memgraph_probe.assert_not_called()
     qdrant_probe.assert_not_called()
+    assert not any("still accept" in m for m in messages)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_running_qdrant_with_an_earlier_key_is_flagged(tmp_path: Path) -> None:
+    # Anonymous requests are rejected, so only trying the configured key shows
+    # that the app's requests would be rejected too.
+    messages, _, _ = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path),
+        memgraph_open=False,
+        qdrant_open=False,
+        qdrant_key_accepted=False,
+    )
+
+    assert any("rejects the configured QDRANT_API_KEY" in m for m in messages)
     assert not any("still accept" in m for m in messages)

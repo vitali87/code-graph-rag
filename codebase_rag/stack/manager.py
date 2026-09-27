@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -17,6 +16,7 @@ from . import constants as cs
 from .health import (
     memgraph_accepts_anonymous,
     qdrant_accepts_anonymous,
+    qdrant_accepts_key,
     wait_for_memgraph,
     wait_for_qdrant,
 )
@@ -221,13 +221,18 @@ class StackManager:
             env=self._compose_env(),
         )
         try:
-            config: JsonValue = json.loads(result.stdout or "")
-        except json.JSONDecodeError:
+            # YAML is a superset of JSON, so a Compose release that prints
+            # YAML despite `--format json` is still read correctly.
+            config: JsonValue = yaml.safe_load(result.stdout or "")
+        except yaml.YAMLError:
             config = None
         if result.returncode != 0 or not isinstance(config, dict):
-            logger.warning(
-                cs.WARN_AUTH_NOT_VERIFIED.format(detail=(result.stderr or "").strip())
-            )
+            detail = (result.stderr or "").strip()
+            # Unverified credentials could mean an open stack, so starting is
+            # refused; with none configured there is nothing to protect.
+            if self._auth_variables():
+                raise StackError(cs.ERR_AUTH_NOT_VERIFIED.format(detail=detail))
+            logger.warning(cs.WARN_AUTH_NOT_VERIFIED.format(detail=detail))
             return
         configured = {
             name: value
@@ -248,20 +253,24 @@ class StackManager:
             )
 
     def warn_if_auth_not_enforced(self) -> None:
-        """Flag a running stack that still accepts connections without a login.
+        """Flag a running stack whose authentication differs from the settings.
 
         Containers take their environment when they are created, so a stack
-        that was up before credentials were configured stays open, and its
-        health checks cannot tell: /readyz needs no key, and a Memgraph with
-        no users accepts any login.
+        that was up before credentials were configured stays open, and one
+        started with an earlier Qdrant key keeps it. The health checks cannot
+        tell: /readyz needs no key, and a Memgraph with no users accepts any
+        login. A Memgraph that rejects the login already fails its probe.
         """
         open_services: list[str] = []
         if self.memgraph_credentials and memgraph_accepts_anonymous(
             self.memgraph_host, self.memgraph_port
         ):
             open_services.append(cs.SERVICE_MEMGRAPH)
-        if settings.QDRANT_API_KEY and qdrant_accepts_anonymous(self.qdrant_port):
-            open_services.append(cs.SERVICE_QDRANT)
+        if api_key := settings.QDRANT_API_KEY:
+            if qdrant_accepts_anonymous(self.qdrant_port):
+                open_services.append(cs.SERVICE_QDRANT)
+            elif not qdrant_accepts_key(self.qdrant_port, api_key):
+                logger.warning(cs.WARN_QDRANT_REJECTS_KEY)
         if open_services:
             logger.warning(
                 cs.WARN_STACK_ACCEPTS_ANONYMOUS.format(

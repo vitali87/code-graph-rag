@@ -59,9 +59,19 @@ def memgraph_accepts_anonymous(host: str, port: int) -> bool:
 
 
 def qdrant_accepts_anonymous(port: int, timeout: float = 1.5) -> bool:
-    url = f"http://127.0.0.1:{port}{cs.QDRANT_ANONYMOUS_PROBE_PATH}"
+    return _qdrant_data_reachable(port, {}, timeout)
+
+
+def qdrant_accepts_key(port: int, api_key: str, timeout: float = 1.5) -> bool:
+    return _qdrant_data_reachable(port, {cs.QDRANT_API_KEY_HEADER: api_key}, timeout)
+
+
+def _qdrant_data_reachable(port: int, headers: dict[str, str], timeout: float) -> bool:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}{cs.QDRANT_DATA_PROBE_PATH}", headers=headers
+    )
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
             return resp.status == 200
     except OSError:
         return False
