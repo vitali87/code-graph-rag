@@ -130,7 +130,9 @@ treesitter-full = [
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
-    "tree-sitter-dart>=0.1.0",
+    # Exact pin: PyPI's tree-sitter-dart is a single-maintainer repackaging of
+    # a fork, so a new release is a new publisher decision, not a grammar fix.
+    "tree-sitter-dart==0.1.0",
     "tree-sitter-sql>=0.3.11",
     "tree-sitter-markdown>=0.5.1",
 ]
@@ -242,7 +244,6 @@ dev = [
     "pylint>=4.0.4",
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
-    "radon>=6.0.1",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
     "ty>=0.0.7",

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from build_binary import (
     _build_package_args,
     _get_treesitter_packages,
@@ -75,6 +77,20 @@ class TestGetTreesitterPackages:
             packages = _get_treesitter_packages()
 
         assert packages == ["tree_sitter_python", "tree_sitter_rust"]
+
+    def test_real_pyproject_yields_bare_module_names(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Negative test against the real file, not a mock: an exact pin such as
+        # `tree-sitter-dart==0.1.0` must not leak its specifier into the name
+        # PyInstaller is told to collect, or the grammar silently drops out of
+        # the binary.
+        monkeypatch.chdir(Path(__file__).parents[2])
+
+        packages = _get_treesitter_packages()
+
+        assert packages
+        assert all(name.isidentifier() for name in packages), packages
 
     def test_returns_empty_list_when_no_treesitter_extra(self) -> None:
         mock_pyproject = {"project": {"optional-dependencies": {}}}
