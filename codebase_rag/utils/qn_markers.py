@@ -23,15 +23,21 @@ import re
 
 from ..constants import core as cs
 
-# The grammar `function_registry` produces: `@<line>`, optionally `_<col>`,
-# anchored to the END because that is where a registration appends it. Built
-# from the same constants as the producer so the two cannot drift.
-_MARKER_RE = re.compile(
+# The grammar `function_registry` produces: `@<line>`, optionally `_<col>`.
+# Built from the same constants as the producer so the readers cannot
+# drift from it; every reader goes through one of the functions below
+# (issue #2114).
+_MARKER = (
     re.escape(cs.DUP_QN_MARKER)
-    + r"\d+(?:"
+    + r"(\d+)(?:"
     + re.escape(cs.DUP_QN_COLUMN_MARKER)
-    + r"\d+)?$"
+    + r"\d+)?"
 )
+# Anchored to the END, because that is where a registration appends it.
+_MARKER_RE = re.compile(_MARKER + "$")
+# Anywhere: a duplicate-suffixed OUTER type carries its marker on an inner
+# segment of a nested type's qn (`proj.Lib@7.Helper`).
+_ANY_MARKER_RE = re.compile(_MARKER)
 
 
 def strip_dup_marker(qualified_name: str) -> str:
@@ -51,3 +57,21 @@ def natural_qn(qualified_name: str) -> str:
     """
     head, sep, last = qualified_name.rpartition(cs.SEPARATOR_DOT)
     return f"{head}{sep}{strip_dup_marker(last)}"
+
+
+def strip_all_markers(qualified_name: str) -> str:
+    """Strip every marker in a dotted path: `proj.Lib@7.Helper@12` ->
+    `proj.Lib.Helper`.
+
+    For matching a candidate by its WHOLE path, where an inner segment can
+    carry a marker. A reader handed a leaf, or a tail relative to a module,
+    wants `strip_dup_marker`, which leaves an inner segment alone.
+    """
+    return _ANY_MARKER_RE.sub("", qualified_name)
+
+
+def marker_line(name: str) -> int | None:
+    """The line a trailing marker names: `Box@12` and `Box@12_5` -> 12,
+    `@event@12` -> 12, and None when the name carries no marker."""
+    match = _MARKER_RE.search(name)
+    return int(match.group(1)) if match else None
