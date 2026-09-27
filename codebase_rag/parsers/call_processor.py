@@ -193,6 +193,36 @@ _DART_NON_READ_PARENT_TYPES = (
 )
 
 
+# Nodes walked down a call's left spine before giving up on counting calls:
+# a long operator chain (`(a + b + ... ).m()`) is not a receiver chain.
+_CHAIN_SPINE_WALK_LIMIT = cs.MAX_RECEIVER_CHAIN_HOPS * 8
+
+
+def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
+    """Whether `call_node` ends a receiver chain of too many calls (#2262).
+
+    Every call in an n-hop chain (`a.m().m()...`) is resolved on its own
+    text, which holds the whole receiver, so each pass over it made one long
+    chain O(n^2). Walking the leftmost spine and counting nodes of the
+    call's own type measures the chain in O(cap) without reading its text.
+    """
+    call_type = call_node.type
+    calls = 0
+    node = call_node
+    for _ in range(_CHAIN_SPINE_WALK_LIMIT):
+        # `child(0)` raises on a leaf rather than returning None.
+        if node.child_count == 0:
+            return False
+        node = node.child(0)
+        if node is None:
+            return False
+        if node.type == call_type:
+            calls += 1
+            if calls >= cs.MAX_RECEIVER_CHAIN_HOPS:
+                return True
+    return False
+
+
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
     # The byte span a declaration shadows: its nearest enclosing scope, with
     # statement scopes (for/try) starting at the declaration END because the
@@ -3533,6 +3563,9 @@ class CallProcessor:
         cpp_local_aliases: dict[str, list[tuple[str, int, int]]] | None = None
 
         for call_node in call_nodes:
+            if _exceeds_receiver_chain_cap(call_node):
+                # Left unresolved: resolving it would re-read the whole chain.
+                continue
             self._site_node = call_node
             self._resolution = cs.EdgeResolution.EXACT
             # A callee bound by a language frontend (Jedi, the Java and C#
@@ -4974,7 +5007,10 @@ class CallProcessor:
             stack.extend(node.children)
 
     def _expand_py_first_class_values(
-        self, value: Node, language: cs.SupportedLanguage | None = None
+        self,
+        value: Node,
+        language: cs.SupportedLanguage | None = None,
+        opened: set[Node] | None = None,
     ) -> list[Node]:
         # Peel Python container literals and result-position conditional
         # operands so a function stored in a tuple/list/set, a dict VALUE,
@@ -4982,7 +5018,9 @@ class CallProcessor:
         # branch is treated like a bare first-class value; nesting expands
         # recursively. A ternary's condition is only truthiness-tested, never
         # bound, so it stays excluded. Any other node comes back unchanged, so
-        # non-Python shapes are unaffected.
+        # non-Python shapes are unaffected. `opened`, when given, collects
+        # every container peeled, so a walk that meets one again later knows
+        # its values are already out.
         is_dart = language == cs.SupportedLanguage.DART
         is_js_ts = language in cs.JS_TS_LANGUAGES
         out: list[Node] = []
@@ -4993,6 +5031,8 @@ class CallProcessor:
             if children is None:
                 out.append(node)
             else:
+                if opened is not None:
+                    opened.add(node)
                 stack.extend(reversed(children))
         return out
 
@@ -5081,6 +5121,11 @@ class CallProcessor:
         # orphaned and report as dead.
         resolve_func = self._resolver.resolve_function_call
         ensure_rel = self._emit_rel
+        # Containers an enclosing literal's expansion already peeled. Each
+        # expansion covers the whole nested literal, so expanding every
+        # nested level again as the walk reached it made a deeply nested
+        # literal O(n^2) (#2262); the walk still descends into them.
+        opened: set[Node] = set()
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = self._site_node = stack.pop()
@@ -5136,8 +5181,10 @@ class CallProcessor:
                         # (django SQLCompiler's `"local_setter": (partial(...)
                         # if ... else local_setter_noop)`) hides the handler
                         # candidates one level down; expand before emitting.
+                        if node in opened:
+                            continue
                         for expanded in self._expand_py_first_class_values(
-                            value, language
+                            value, language, opened
                         ):
                             self._emit_value_function_ref(
                                 expanded,
@@ -5148,10 +5195,10 @@ class CallProcessor:
                                 resolve_func,
                                 ensure_rel,
                             )
-            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES:
+            elif node.type in _SEQUENCE_LIKE_COLLECTION_TYPES and node not in opened:
                 for element in node.named_children:
                     for expanded in self._expand_py_first_class_values(
-                        element, language
+                        element, language, opened
                     ):
                         self._emit_value_function_ref(
                             expanded,
