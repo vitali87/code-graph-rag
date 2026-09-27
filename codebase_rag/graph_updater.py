@@ -4999,7 +4999,12 @@ class GraphUpdater:
                 if is_new and file_key in self._cpp_frontend_covered:
                     self._delete_module_entities(file_key)
             self._cpp_frontend_covered = frozenset()
+            # Every frontend that adds to the covered set runs again with it,
+            # in run()'s order: clearing it dropped the others' files too, so
+            # the file pass parsed them and their output was not regenerated
+            # (CodeRabbit, PR #2247).
             self._run_cpp_frontend()
+            self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
         first_failure: Exception | None = None
 
         with Progress(
