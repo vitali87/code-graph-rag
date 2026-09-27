@@ -974,6 +974,10 @@ REINGEST_CONTAINER_KIND_UNKNOWN = (
     "Re-ingest aborted: a directory's recorded container kind could not be "
     "read, so whether it is new or has diverged from disk is unknown"
 )
+INCREMENTAL_FRONTEND_RERUN_FAILED = (
+    "Frontend re-run failed; its files are rebuilt with tree-sitter and the "
+    "error is raised after the changed files: {error}"
+)
 INCREMENTAL_FILE_FAILED = (
     "Failed to index {path}; the remaining changed files are still rebuilt "
     "before the error is raised: {error}"

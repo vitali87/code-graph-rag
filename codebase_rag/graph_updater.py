@@ -5097,6 +5097,13 @@ class GraphUpdater:
         }
 
         pre_parsed = self._pre_parse_changed_files(changed_entries)
+        # A frontend that ran before this method may still hold its emission
+        # in the ingestor's buffer, and the deletes below go to the graph
+        # directly: flushed, they see what the frontend wrote whenever the
+        # buffer happened to fill, rather than sometimes the old subtree and
+        # sometimes the new one (CodeRabbit, PR #2247).
+        if self._cpp_frontend_covered:
+            self.ingestor.flush_all()
         # Every old subtree goes BEFORE any file of this run is parsed, not
         # one by one as each file is reached: a same-stem sibling parsed
         # earlier claims the survivor's old module qn, the MERGE lands on the
@@ -5119,7 +5126,53 @@ class GraphUpdater:
         # deletion block repeats this harmlessly.
         for deleted_key in deleted_before_parse:
             self.remove_file_from_state(self.repo_path / deleted_key)
+        # LIBCLANG ran before this method and emitted the covered files'
+        # subtrees; the delete above matches by path, so it took any it had
+        # just written for a stem-flux survivor, and the loop below skips
+        # covered files, so nothing re-emits them (issue #2231). Run it again
+        # now that the stale subtrees are gone, as reingest does before its
+        # re-parse. HYBRID runs after Pass 2 and never meets this delete.
+        #
+        # An ADDED covered file goes first too. Its only subtree is what that
+        # first pass wrote, and the pass MERGEd onto the Module a survivor
+        # held under the same qn last run, rewriting its path to the added
+        # file's: the survivor's old definitions then hang off a Module the
+        # delete above, matching the survivor's path, cannot find.
         first_failure: Exception | None = None
+        # Any covered file in flux re-runs it, an added one included.
+        if settings.CPP_FRONTEND != cs.CppFrontend.HYBRID and any(
+            key in self._cpp_frontend_covered
+            for key in (*reindexed_keys, *deleted_before_parse, *added_keys)
+        ):
+            for _fp, file_key, is_new, _b in changed_entries:
+                if is_new and file_key in self._cpp_frontend_covered:
+                    self._delete_module_entities(file_key)
+            self._cpp_frontend_covered = frozenset()
+            # Every frontend that adds to the covered set runs again with it,
+            # in run()'s order: clearing it dropped the others' files too, so
+            # the file pass parsed them and their output was not regenerated
+            # (CodeRabbit, PR #2247).
+            # The stale subtrees are already gone, so a failing re-run must
+            # not end the run here: with nothing covered the file pass below
+            # rebuilds those files with tree-sitter, and the error is raised
+            # before the cache commit so the next run retries, as a failed
+            # file is (CodeRabbit, PR #2247).
+            #
+            # Each frontend separately: one that completed keeps its coverage,
+            # so a later emitter's failure does not send the C++ files it has
+            # already re-emitted through tree-sitter as well (CodeRabbit, PR
+            # #2247). A failed C++ run leaves nothing it can vouch for.
+            try:
+                self._run_cpp_frontend()
+            except Exception as exc:
+                logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
+                self._cpp_frontend_covered = frozenset()
+                first_failure = exc
+            try:
+                self._run_emitting_frontends(FrontendPhase.BEFORE_DEFINITIONS)
+            except Exception as exc:
+                logger.error(ls.INCREMENTAL_FRONTEND_RERUN_FAILED, error=exc)
+                first_failure = first_failure or exc
 
         with Progress(
             SpinnerColumn(),
