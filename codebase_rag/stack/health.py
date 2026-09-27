@@ -27,7 +27,7 @@ def _http_reachable(url: str, timeout: float = 1.5) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
             return 200 <= resp.status < 500
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except OSError:
         return False
 
 
