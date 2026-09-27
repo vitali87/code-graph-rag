@@ -49,6 +49,7 @@ from ..utils import (
     record_cpp_definition_span,
     safe_decode_text,
     sorted_captures,
+    written_simple_name,
 )
 from . import cpp_modules
 from . import identity as id_
@@ -467,6 +468,13 @@ class ClassIngestMixin:
         for entry in deferred:
             parent_qn = self._resolve_cpp_base_qn(entry)
             if parent_qn is None:
+                module_qn = module_qn_for_entity(
+                    entry.child_qn, self.module_qn_to_file_path
+                )
+                if module_qn is not None:
+                    self.import_processor.note_unresolved(
+                        module_qn, written_simple_name(entry.base_name)
+                    )
                 continue
             bases = self.class_inheritance.get(entry.child_qn)
             if bases is not None and entry.base_index < len(bases):
@@ -533,6 +541,12 @@ class ClassIngestMixin:
                 continue
             resolved = self._resolve_deferred_parent_qn(entry)
             is_dart = entry.language == cs.SupportedLanguage.DART
+            if resolved is None or resolved[1]:
+                # Resolved nowhere, or to a node outside the index: the file
+                # defining this base may be added later (issue #1568).
+                self.import_processor.note_unresolved(
+                    entry.module_qn, written_simple_name(entry.parent_qn)
+                )
             if resolved is None:
                 continue
             parent_qn, is_external = resolved

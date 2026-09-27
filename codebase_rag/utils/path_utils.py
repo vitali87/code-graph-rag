@@ -459,6 +459,51 @@ def walk_eligible_files(
                 yield dirpath, fname, rel_path_str
 
 
+def is_walked_dir(
+    dir_parts: tuple[str, ...],
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Whether `walk_eligible_files` descends into this repo-relative directory.
+
+    The walk prunes one level at a time, so a directory is reached only when
+    every ancestor passes `should_keep_dir` too.
+    """
+    prefix = ""
+    for part in dir_parts:
+        if not should_keep_dir(part, prefix, exclude_paths, unignore_paths):
+            return False
+        prefix = f"{prefix}{part}{cs.SEPARATOR_SLASH}"
+    return True
+
+
+def is_eligible_rel_file(
+    rel_path_str: str,
+    exclude_paths: frozenset[str] | None = None,
+    unignore_paths: frozenset[str] | None = None,
+) -> bool:
+    """Whether `walk_eligible_files` would yield this repo-relative file.
+
+    For consumers that see one path at a time, such as the real-time watcher.
+    Restating the rule there let the two disagree: the watcher checked
+    directory names against the built-in ignores only, so it dropped every
+    change under a directory the run had unignored, and followed changes
+    under one the user had excluded.
+    """
+    *dirs, filename = rel_path_str.split(cs.SEPARATOR_SLASH)
+    if filename in cs.CGR_STATE_FILENAMES:
+        return False
+    dir_parts = tuple(dirs)
+    if not is_walked_dir(dir_parts, exclude_paths, unignore_paths):
+        return False
+    return not should_skip_rel_file(
+        rel_path_str,
+        dir_parts,
+        exclude_paths=exclude_paths,
+        unignore_paths=unignore_paths,
+    )
+
+
 def project_roots_from_rows(
     rows: Iterable[Mapping[str, object]],
 ) -> dict[str, str | None]:
