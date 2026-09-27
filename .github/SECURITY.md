@@ -48,7 +48,10 @@ This policy applies to the `code-graph-rag` Python package and its official repo
 - **Dependency scanning**: Dependabot alerts and security updates are enabled, with version updates configured weekly for GitHub Actions, Docker and pip
 - **Secret scanning**: GitHub secret scanning is active on this repository
 - **Push protection**: Secret scanning push protection blocks commits containing supported secrets before they reach the repository
-- **Code scanning**: CodeQL default setup runs weekly across the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository
+- **Code scanning**: CodeQL default setup analyses the Actions, C/C++, C#, JavaScript/TypeScript and Python code in this repository on every pull request targeting `main`, on every push to `main` and weekly, and reports findings to the Security tab
+- **Static analysis gate**: The SonarCloud workflow analyses pull requests targeting `main` and pushes to `main`, and the `All Checks Pass` status check fails while SonarCloud reports any open issue, vulnerabilities included, on a pull request from a branch of this repository other than a Dependabot one
+- **Python security linting**: Bandit runs as a pre-commit hook, and pre-commit.ci runs it on every pull request, flagging high-severity findings
+- **Fuzzing**: [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs the harnesses in `fuzz/` against every pull request targeting `main`, and daily for longer against `main`
 - **Vulnerability scanning**: The [OSV-Scanner](https://google.github.io/osv-scanner/) workflow checks dependencies against the OSV database on pull requests targeting `main`, on pushes to `main` and weekly, and reports findings to the Security tab
 - **Supply chain scorecard**: The [OpenSSF Scorecard](https://github.com/ossf/scorecard) workflow audits the repository's supply chain posture and reports findings to the Security tab
 - **Private vulnerability reporting**: Enabled, so vulnerabilities can be reported privately through the Security tab as described above
