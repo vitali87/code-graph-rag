@@ -2121,6 +2121,8 @@ class GraphUpdater:
                 CYPHER_DELETE_HANDLER_EXPOSES, {"qns": handler_qns}
             )
         except Exception:
+            # A delete that failed is owed exactly like one that was skipped.
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
@@ -2176,6 +2178,7 @@ class GraphUpdater:
                 CYPHER_DELETE_MODULE_EXPOSES, {"module_qns": module_qns}
             )
         except Exception:
+            self._exposes_cleanup_skipped = True
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _route_source(

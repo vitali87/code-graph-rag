@@ -86,3 +86,24 @@ def test_a_scoped_pass_never_settles_an_owed_cleanup(tmp_path: Path) -> None:
     updater = _updater(root, _StatefulIngestor())
     updater._record_exposes_cleanup(cleared_by_this_run=False)
     assert marker.exists()
+
+
+class _DeletesFail(_StatefulIngestor):
+    def execute_write(self, query, params=None):  # type: ignore[override]
+        if query in (cq.CYPHER_DELETE_HANDLER_EXPOSES, cq.CYPHER_DELETE_MODULE_EXPOSES):
+            raise RuntimeError("write refused")
+        return super().execute_write(query, params)
+
+
+def test_a_failed_cleanup_delete_is_owed_like_a_skipped_one(tmp_path: Path) -> None:
+    # A delete that raises left the stale edges in place, and settling the
+    # marker anyway let the next run take the in-sync path and keep them.
+    for cleanup in ("_drop_stale_handler_exposes", "_drop_stale_module_exposes"):
+        root = tmp_path / cleanup / "proj"
+        root.mkdir(parents=True)
+        marker = root / cs.EXPOSES_CLEANUP_PENDING_FILENAME
+        marker.touch()
+        updater = _updater(root, _DeletesFail())
+        getattr(updater, cleanup)(["proj.api.items"])
+        updater._record_exposes_cleanup(cleared_by_this_run=True)
+        assert marker.exists(), cleanup
