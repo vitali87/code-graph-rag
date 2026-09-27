@@ -545,7 +545,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
-    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
+    { name = "transformers", marker = "extra == 'semantic'", specifier = ">=5.0.0" },
     { name = "tree-sitter", specifier = "==0.25.2" },
     { name = "tree-sitter-c", marker = "extra == 'treesitter-full'", git = "https://github.com/vitali87/tree-sitter-c?rev=fa327ad98f847f8173fc46926be4165c7971f960" },
     { name = "tree-sitter-c-sharp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.5" },
