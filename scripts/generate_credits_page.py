@@ -19,6 +19,8 @@ from collections.abc import Iterable
 from importlib.metadata import Distribution
 from pathlib import Path
 from types import ModuleType
+from typing import Protocol
+from urllib.parse import quote, urlsplit
 
 from packaging.utils import canonicalize_name
 
@@ -28,6 +30,11 @@ PYPI_PROJECT_URL = "https://pypi.org/project/{name}/"
 # Anything else (Changelog, Issues, Funding) is a fallback only.
 HOME_LABELS = ("homepage", "home", "source", "source code", "repository", "code")
 ENCODING = "utf-8"
+# A project URL is third-party metadata written into Markdown the docs site
+# renders: only a web URL with a host is linked, and the characters that
+# would end the link or open raw HTML are percent-encoded.
+LINK_SCHEMES = frozenset({"http", "https"})
+URL_SAFE_CHARS = ":/?#[]@!$&'*+,;=%~"
 
 PAGE_HEADER = """\
 # Credits
@@ -52,6 +59,16 @@ ENTRY = """\
 """
 
 
+class NoticeEntry(Protocol):
+    """What `render` reads from a `generate_third_party_notices.Notice`."""
+
+    name: str
+    version: str
+    texts: tuple[str, ...]
+
+    def license_line(self) -> str: ...
+
+
 def _load_notices() -> ModuleType:
     """Load the sibling notices generator by path; `scripts/` is not a package."""
     existing = sys.modules.get(NOTICES_MODULE)
@@ -67,13 +84,25 @@ def _load_notices() -> ModuleType:
     return module
 
 
+def _link_target(url: str) -> str | None:
+    """`url` made safe inside a Markdown link, or None when it is not a web URL."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in LINK_SCHEMES or not parts.netloc:
+        return None
+    return quote(url, safe=URL_SAFE_CHARS)
+
+
 def project_url(dist: Distribution) -> str:
-    """The project's page: a `Project-URL`, then `Home-page`, then PyPI."""
+    """The project's page: a `Project-URL`, then `Home-page`, then PyPI.
+
+    A candidate that is not an http(s) URL with a host is skipped, so the
+    fallback is always a link the page can carry.
+    """
     entries: list[tuple[str, str]] = []
     for value in dist.metadata.get_all("Project-URL") or []:
         label, _, url = value.partition(",")
-        if url.strip():
-            entries.append((label.strip().lower(), url.strip()))
+        if target := _link_target(url.strip()):
+            entries.append((label.strip().lower(), target))
     for wanted in HOME_LABELS:
         for label, url in entries:
             if label == wanted:
@@ -81,23 +110,27 @@ def project_url(dist: Distribution) -> str:
     if entries:
         return entries[0][1]
     home = (dist.metadata.get("Home-page") or "").strip()
-    if home and home.upper() != "UNKNOWN":
-        return home
+    if home.upper() != "UNKNOWN" and (target := _link_target(home)):
+        return target
     return PYPI_PROJECT_URL.format(name=canonicalize_name(dist.metadata["Name"]))
 
 
-def render(entries: Iterable[tuple[object, str]]) -> str:
-    """The page for `(notice, url)` pairs, sorted by name like the notices file."""
-    ordered = sorted(entries, key=lambda pair: str(getattr(pair[0], "name")).lower())
+def render(entries: Iterable[tuple[NoticeEntry, str]]) -> str:
+    """The page for `(notice, url)` pairs, sorted by name like the notices file.
+
+    Every value is third-party metadata, so each is HTML-escaped before it
+    reaches the rendered Markdown; `url` comes from `project_url`.
+    """
+    ordered = sorted(entries, key=lambda pair: pair[0].name.lower())
     parts = [PAGE_HEADER.format(count=len(ordered))]
     for notice, url in ordered:
         parts.append(
             ENTRY.format(
-                name=notice.name,  # type: ignore[attr-defined]
-                version=notice.version,  # type: ignore[attr-defined]
-                license=notice.license_line(),  # type: ignore[attr-defined]
+                name=html.escape(notice.name),
+                version=html.escape(notice.version),
+                license=html.escape(notice.license_line()),
                 url=url,
-                text=html.escape("\n\n".join(notice.texts)),  # type: ignore[attr-defined]
+                text=html.escape("\n\n".join(notice.texts)),
             )
         )
     return "\n".join(parts)

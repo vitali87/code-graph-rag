@@ -21,7 +21,8 @@ PAGE_SCRIPT = REPO_ROOT / "scripts" / "generate_credits_page.py"
 
 def _load(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -82,6 +83,23 @@ def test_licence_text_is_escaped_inside_its_block(page_module: ModuleType) -> No
     assert "<pre>&lt;b&gt;&amp;&lt;/b&gt;</pre>" in text
 
 
+def test_notice_metadata_is_escaped(page_module: ModuleType) -> None:
+    # Name, version and licence are third-party metadata too, and render
+    # outside the <pre> block (CodeRabbit, PR #2225).
+    class _Notice:
+        name, version, texts = "<i>x</i>", "1<b>", ("t",)
+
+        @staticmethod
+        def license_line() -> str:
+            return "MIT <script>"
+
+    text = page_module.render([(_Notice(), "https://x.example")])
+    assert "## &lt;i&gt;x&lt;/i&gt;" in text
+    assert "**Version:** 1&lt;b&gt;" in text
+    assert "**Licence:** MIT &lt;script&gt;" in text
+    assert "<i>" not in text
+
+
 @pytest.mark.parametrize(
     ("fields", "expected"),
     [
@@ -99,8 +117,34 @@ def test_licence_text_is_escaped_inside_its_block(page_module: ModuleType) -> No
         ({"Home_page": "https://home.example"}, "https://home.example"),
         ({"Home_page": "UNKNOWN"}, "https://pypi.org/project/some-pkg/"),
         ({}, "https://pypi.org/project/some-pkg/"),
+        # Third-party metadata the rendered page links: a non-web scheme is
+        # skipped for the next candidate, and a character that would close
+        # the Markdown link or open HTML is percent-encoded.
+        (
+            {
+                "Project_URL": [
+                    "Homepage, javascript:alert(1)",
+                    "Source, https://s.example",
+                ]
+            },
+            "https://s.example",
+        ),
+        ({"Home_page": "//no-scheme.example"}, "https://pypi.org/project/some-pkg/"),
+        (
+            {"Home_page": "https://x.example) <img src=x onerror=alert(1)>"},
+            "https://x.example%29%20%3Cimg%20src=x%20onerror=alert%281%29%3E",
+        ),
     ],
-    ids=["homepage-label", "any-project-url", "home-page", "unknown", "pypi"],
+    ids=[
+        "homepage-label",
+        "any-project-url",
+        "home-page",
+        "unknown",
+        "pypi",
+        "non-web-scheme",
+        "no-scheme",
+        "link-breakout",
+    ],
 )
 def test_the_project_link_falls_back_in_order(
     page_module: ModuleType, fields: dict[str, list[str] | str], expected: str
