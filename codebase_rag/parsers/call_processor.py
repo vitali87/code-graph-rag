@@ -223,6 +223,28 @@ def _exceeds_receiver_chain_cap(call_node: Node) -> bool:
     return False
 
 
+def _class_qn_for_calls(
+    class_node: Node,
+    module_qn: str,
+    class_name: str,
+    language: cs.SupportedLanguage,
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries],
+) -> str:
+    # A C++ class inside a namespace, or a NESTED class (Outer.Inner), is bound
+    # by the definition pass through its enclosing scope (qn `module.ns.Class`
+    # / `module.Outer.Inner`); the bare `module.class_name` join drops those
+    # ancestors, dangling every inline method's CALLS source off a phantom
+    # node. Use the SAME builders the definition pass uses so the qns agree.
+    if language == cs.SupportedLanguage.CPP:
+        return cpp_utils.build_qualified_name(class_node, module_qn, class_name)
+    return (
+        build_nested_qualified_name_for_class(
+            class_node, module_qn, class_name, queries[language][cs.QUERY_CONFIG]
+        )
+        or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
+    )
+
+
 def _dart_scope_span(decl: Node, walk_root: Node) -> tuple[int, int]:
     # The byte span a declaration shadows: its nearest enclosing scope, with
     # statement scopes (for/try) starting at the declaration END because the
@@ -2643,26 +2665,9 @@ class CallProcessor:
                 class_name = js_ts_utils.class_binding_name(class_node)
             if not class_name:
                 continue
-            # A C++ class inside a namespace, or a NESTED class (Outer.Inner),
-            # is bound by the definition pass through its enclosing scope
-            # (qn `module.ns.Class` / `module.Outer.Inner`); the bare
-            # `module.class_name` join drops those ancestors, dangling every
-            # inline method's CALLS source off a phantom node. Use the SAME
-            # builders the definition pass uses so the qns agree.
-            if language == cs.SupportedLanguage.CPP:
-                class_qn = cpp_utils.build_qualified_name(
-                    class_node, module_qn, class_name
-                )
-            else:
-                class_qn = (
-                    build_nested_qualified_name_for_class(
-                        class_node,
-                        module_qn,
-                        class_name,
-                        queries[language][cs.QUERY_CONFIG],
-                    )
-                    or f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
-                )
+            class_qn = _class_qn_for_calls(
+                class_node, module_qn, class_name, language, queries
+            )
             if body_node := class_node.child_by_field_name(cs.FIELD_BODY):
                 self._process_methods_in_class(
                     body_node,
@@ -7683,6 +7688,24 @@ class CallProcessor:
                                 )
             stack.extend(node.children)
 
+    def _ancestor_function_name(
+        self, function_node: Node, lang_config: LanguageSpec
+    ) -> str | None:
+        name_node = function_node.child_by_field_name(cs.FIELD_NAME)
+        if name_node is not None:
+            if name_node.text is None:
+                return None
+            return name_node.text.decode(cs.ENCODING_UTF8)
+        # A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has no
+        # `name` field (the name lives on the parent declarator), so it would be
+        # dropped, flattening a nested callee's qn (request.encodePair instead
+        # of request.getQueryString.encodePair). Recover the binding name the
+        # definition pass used so the qns agree; else the callee's own
+        # inline-arg/object callbacks never match and report dead.
+        if lang_config.language in _JS_TS_LANGUAGES:
+            return self._js_ts_arrow_binding_name(function_node) or None
+        return None
+
     def _build_nested_qualified_name(
         self,
         func_node: Node,
@@ -7701,20 +7724,9 @@ class CallProcessor:
 
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                name_node = current.child_by_field_name(cs.FIELD_NAME)
-                if name_node is not None:
-                    if name_node.text is not None:
-                        path_parts.append(name_node.text.decode(cs.ENCODING_UTF8))
-                # A JS/TS arrow-const ancestor (`getQueryString = () => {...}`) has
-                # no `name` field (the name lives on the parent declarator), so it
-                # would be dropped, flattening a nested callee's qn (request.encodePair
-                # instead of request.getQueryString.encodePair). Recover the binding
-                # name the definition pass used so the qns agree; else the callee's
-                # own inline-arg/object callbacks never match and report dead.
-                elif lang_config.language in _JS_TS_LANGUAGES and (
-                    binding := self._js_ts_arrow_binding_name(current)
-                ):
-                    path_parts.append(binding)
+                part = self._ancestor_function_name(current, lang_config)
+                if part is not None:
+                    path_parts.append(part)
             elif current.type in lang_config.class_node_types:
                 return None
 

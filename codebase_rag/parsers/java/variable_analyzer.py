@@ -653,9 +653,11 @@ class JavaVariableAnalyzerMixin:
             return None
 
         for field_child in body.children:
-            if field_child.type == cs.TS_FIELD_DECLARATION:
-                field_info = extract_field_info(field_child)
-                if field_info.get(cs.FIELD_NAME) == field_name:
-                    if field_type := field_info.get(cs.FIELD_TYPE):
-                        return self._resolve_java_type_name(str(field_type), module_qn)
+            if field_child.type != cs.TS_FIELD_DECLARATION:
+                continue
+            field_info = extract_field_info(field_child)
+            if field_info.get(cs.FIELD_NAME) == field_name and (
+                field_type := field_info.get(cs.FIELD_TYPE)
+            ):
+                return self._resolve_java_type_name(str(field_type), module_qn)
         return None

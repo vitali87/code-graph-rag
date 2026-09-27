@@ -316,15 +316,23 @@ def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if name := safe_decode_text(child):
                 out.append((name, name))
-        elif child.type == cs.TS_PAIR_PATTERN:
-            key = child.child_by_field_name(cs.FIELD_KEY)
-            value = child.child_by_field_name(cs.FIELD_VALUE)
-            if key is not None and value is not None and value.type == cs.TS_IDENTIFIER:
-                imported = safe_decode_text(key)
-                local = safe_decode_text(value)
-                if imported and local:
-                    out.append((local, imported))
+        elif child.type == cs.TS_PAIR_PATTERN and (pair := _js_pair_binding(child)):
+            out.append(pair)
     return out
+
+
+def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
+    # `{ x: y }` binds local `y` to imported `x`; any other value shape
+    # (a nested pattern, a default) binds nothing this reader tracks.
+    key = pair.child_by_field_name(cs.FIELD_KEY)
+    value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if key is None or value is None or value.type != cs.TS_IDENTIFIER:
+        return None
+    imported = safe_decode_text(key)
+    local = safe_decode_text(value)
+    if imported and local:
+        return local, imported
+    return None
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -4814,29 +4822,35 @@ class ImportProcessor:
                 root_node, frozenset(prefixes)
             )
 
+    def _record_lua_require(
+        self,
+        module_qn: str,
+        call_node: Node,
+        module_path: str,
+        assigned_name: str | None,
+    ) -> None:
+        local_name = assigned_name or module_path.split(cs.SEPARATOR_DOT)[-1]
+        resolved = self._resolve_lua_module_path(module_path, module_qn)
+        self.import_mapping[module_qn][local_name] = resolved
+        self._record_import_site(module_qn, local_name, call_node, module_path)
+
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
-                    local_name = (
-                        self._lua_extract_assignment_lhs(call_node)
-                        or module_path.split(cs.SEPARATOR_DOT)[-1]
-                    )
-                    resolved = self._resolve_lua_module_path(module_path, module_qn)
-                    self.import_mapping[module_qn][local_name] = resolved
-                    self._record_import_site(
-                        module_qn, local_name, call_node, module_path
+                    self._record_lua_require(
+                        module_qn,
+                        call_node,
+                        module_path,
+                        self._lua_extract_assignment_lhs(call_node),
                     )
             elif self._lua_is_pcall_require(call_node):
                 if module_path := self._lua_extract_pcall_require_arg(call_node):
-                    local_name = (
-                        self._lua_extract_pcall_assignment_lhs(call_node)
-                        or module_path.split(cs.SEPARATOR_DOT)[-1]
-                    )
-                    resolved = self._resolve_lua_module_path(module_path, module_qn)
-                    self.import_mapping[module_qn][local_name] = resolved
-                    self._record_import_site(
-                        module_qn, local_name, call_node, module_path
+                    self._record_lua_require(
+                        module_qn,
+                        call_node,
+                        module_path,
+                        self._lua_extract_pcall_assignment_lhs(call_node),
                     )
 
             elif self._lua_is_stdlib_call(call_node):
