@@ -112,6 +112,12 @@ pip install 'code-graph-rag[treesitter-full,cpp]'
 
 The `cpp` extra installs libclang. Semantic C/C++ indexing also needs a `compile_commands.json`; see [C/C++ Semantic Mode](../guide/cpp-semantic-mode.md) for frontend modes and setup commands.
 
+`uv tool install` does not precompile bytecode by default, so the first `cgr` run after an install or upgrade compiles every module it imports and takes several seconds. Pass `--compile-bytecode` to do that work at install time instead:
+
+```bash
+uv tool install --compile-bytecode "code-graph-rag[treesitter-full,semantic]"
+```
+
 ## Install from Source
 
 ```bash

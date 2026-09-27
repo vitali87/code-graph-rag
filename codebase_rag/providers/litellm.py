@@ -1,14 +1,17 @@
 # LiteLLM provider using pydantic-ai's native LiteLLMProvider.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from loguru import logger
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.litellm import LiteLLMProvider as PydanticLiteLLMProvider
 
 from codebase_rag import constants as cs
 from codebase_rag import exceptions as ex
 
 from .base import ModelProvider, strip_v1_suffix
+
+if TYPE_CHECKING:
+    from pydantic_ai.models.openai import OpenAIChatModel
 
 
 class LiteLLMProvider(ModelProvider):
@@ -40,6 +43,13 @@ class LiteLLMProvider(ModelProvider):
     def create_model(
         self, model_id: str, **kwargs: str | int | None
     ) -> OpenAIChatModel:
+        # Imported here so that loading the provider registry pulls in no SDK
+        # (issue #2253).
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.litellm import (
+            LiteLLMProvider as PydanticLiteLLMProvider,
+        )
+
         self.validate_config()
 
         logger.info(f"Creating LiteLLM proxy model: {model_id} at {self.endpoint}")

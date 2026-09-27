@@ -20,8 +20,8 @@ def _emit(payload: object) -> None:
 def _project_and_fetch(
     project: str | None, repo_path: Path
 ) -> tuple[str, graph_query.QueryFn, object]:
+    from .cli_runtime import connect_memgraph
     from .config import settings
-    from .main import connect_memgraph
     from .utils.path_utils import derive_project_name
 
     ingestor = connect_memgraph(batch_size=settings.resolve_batch_size(None))

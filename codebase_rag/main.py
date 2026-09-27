@@ -29,6 +29,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from pydantic_ai import (
     BinaryContent,
     DeferredToolRequests,
@@ -53,6 +54,7 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
+from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import ModelConfig, load_ignore_patterns, settings
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
@@ -86,7 +88,6 @@ from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
-    ORANGE_STYLE,
     AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
@@ -109,20 +110,16 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.usage import RunUsage
 
-
-def style(
-    text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
-) -> str:
-    if modifier == cs.StyleModifier.NONE:
-        return f"[{color}]{text}[/{color}]"
-    return f"[{modifier} {color}]{text}[/{modifier} {color}]"
-
-
-def dim(text: str) -> str:
-    return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
-
-
-app_context = AppContext()
+# The chat UI's prompt style. It lives here rather than in types_defs because
+# building it imports prompt_toolkit, which only the interactive loop needs
+# (issue #2253).
+ORANGE_STYLE = Style.from_dict(
+    {
+        "": "#ff8c00",
+        "bottom-toolbar": "noreverse fg:#888888",
+        "bottom-toolbar.text": "noreverse fg:#888888",
+    }
+)
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -1748,16 +1745,6 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
         json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
 
     return graph_data
-
-
-def connect_memgraph(batch_size: int) -> MemgraphIngestor:
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
 
 
 def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
