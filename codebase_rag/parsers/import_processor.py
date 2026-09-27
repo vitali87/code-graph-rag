@@ -643,9 +643,10 @@ class ImportProcessor:
         # `using static N.T;` brings T's MEMBERS into bare-call scope, which
         # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
         # bare `Member()` has no entry to resolve through. Module qn -> the set
-        # of statically imported type paths, probed as an extra bare-call scope
-        # (issue #2005).
-        self.csharp_static_imports: dict[str, set[str]] = {}
+        # of (enclosing namespace, statically imported type path), probed as an
+        # extra bare-call scope (issue #2005). The namespace is "" for a
+        # file-level directive; one inside `namespace N { ... }` scopes only N.
+        self.csharp_static_imports: dict[str, set[tuple[str, str]]] = {}
         # `global using static N.T;` is in scope in EVERY file of the
         # compilation. Keyed by the DECLARING module, so a re-parse or a
         # removal of that file drops exactly its own directives.
@@ -3707,12 +3708,31 @@ class ImportProcessor:
         is_global = cs.TS_CSHARP_GLOBAL in modifiers
         if global_only and not is_global:
             return
-        static_scope = (
-            self.csharp_global_static_imports
-            if is_global
-            else self.csharp_static_imports
-        )
-        static_scope.setdefault(module_qn, set()).add(imported_path)
+        if is_global:
+            self.csharp_global_static_imports.setdefault(module_qn, set()).add(
+                imported_path
+            )
+        else:
+            self.csharp_static_imports.setdefault(module_qn, set()).add(
+                (self._csharp_enclosing_namespace(import_node), imported_path)
+            )
+
+    @staticmethod
+    def _csharp_enclosing_namespace(node: Node) -> str:
+        # The dotted name of the `namespace N { ... }` blocks around `node`,
+        # outermost first. A file-scoped `namespace N;` covers the whole file,
+        # so a directive under it is file-level and is not counted.
+        parts: list[str] = []
+        parent = node.parent
+        while parent is not None:
+            if parent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+                name = safe_decode_with_fallback(
+                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                )
+                if name:
+                    parts.append(name)
+            parent = parent.parent
+        return cs.SEPARATOR_DOT.join(reversed(parts))
 
     def _collect_csharp_global_static_imports(self, root: Node, module_qn: str) -> None:
         # A `global using` must precede every other member of the file, so

@@ -37,7 +37,11 @@ from .endpoints import emit_endpoints, queue_endpoints
 from .go import utils as go_utils
 from .js_ts import utils as js_ts_utils
 from .lua import utils as lua_utils
-from .parameter_nodes import PendingParameterType, emit_declared_parameters
+from .parameter_nodes import (
+    PendingParameterType,
+    csharp_required_arity,
+    emit_declared_parameters,
+)
 from .rs import utils as rs_utils
 from .type_facts import extract_type_facts, queue_type_facts, type_facts_props
 from .utils import (
@@ -278,6 +282,7 @@ class FunctionIngestMixin:
     csharp_extension_methods: dict[str, list[tuple[str, str, str, int]]]
     csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]]
     csharp_generic_methods: set[str]
+    csharp_required_arity: dict[str, int]
     csharp_method_return_types: dict[str, tuple[str, int]]
 
     @abstractmethod
@@ -1827,6 +1832,7 @@ class FunctionIngestMixin:
         )
         if ingested_qn is None:
             return False
+        self.csharp_required_arity[ingested_qn] = csharp_required_arity(func_node)
         if (
             func_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
             is not None

@@ -90,15 +90,17 @@ def _param_types(leaf: str) -> list[str]:
     return types
 
 
-def _accepts_arg_count(leaf: str, arg_count: int) -> bool:
+def _accepts_arg_count(leaf: str, arg_count: int, required: int | None) -> bool:
     # Can a call with `arg_count` arguments bind this overload without an
-    # exact arity match? The signature records parameter TYPES only, so:
-    # FEWER arguments than parameters compiles only when the rest have
-    # defaults, which a compiling call site vouches for; MORE compiles only
-    # through a trailing `params T[]`, whose type is an array.
+    # exact arity match? FEWER arguments than parameters compiles only when
+    # the omitted ones have defaults: `required` counts the parameters that
+    # have none, recorded at ingest. A method this run did not parse has no
+    # record, and is judged from its signature alone (the call site vouches
+    # for the defaults). MORE arguments compile only through a trailing
+    # `params T[]`, whose type is an array.
     types = _param_types(leaf)
     if arg_count < len(types):
-        return True
+        return required is None or arg_count >= required
     return bool(types) and types[-1].endswith(cs.CSHARP_ARRAY_SUFFIX)
 
 
@@ -139,6 +141,7 @@ class CSharpTypeInferenceEngine:
         "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
+        "csharp_required_arity",
         "csharp_class_generic_arity",
         "csharp_class_namespaced",
         "csharp_namespaced_qns",
@@ -168,6 +171,7 @@ class CSharpTypeInferenceEngine:
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
+        csharp_required_arity: dict[str, int] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
         csharp_namespaced_qns: dict[str, set[str]] | None = None,
@@ -220,6 +224,9 @@ class CSharpTypeInferenceEngine:
         )
         self.csharp_generic_methods = (
             csharp_generic_methods if csharp_generic_methods is not None else set()
+        )
+        self.csharp_required_arity = (
+            csharp_required_arity if csharp_required_arity is not None else {}
         )
         self.csharp_class_generic_arity = (
             csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
@@ -764,11 +771,16 @@ class CSharpTypeInferenceEngine:
         # runs after the checks above that claim the name for the enclosing
         # type (a delegate-typed field's `Callback()` is Delegate.Invoke).
         return self._resolve_via_static_imports(
-            name, arg_count, generic_call, module_qn
+            name, arg_count, generic_call, module_qn, caller_qn
         )
 
     def _resolve_via_static_imports(
-        self, name: str, arg_count: int, generic_call: bool, module_qn: str
+        self,
+        name: str,
+        arg_count: int,
+        generic_call: bool,
+        module_qn: str,
+        caller_qn: str | None,
     ) -> tuple[str, str] | None:
         # An ambiguity across two static imports is CS0121 in C#, not a call
         # anyone compiles, so refuse rather than pick one: the values are a
@@ -776,7 +788,7 @@ class CSharpTypeInferenceEngine:
         # Same-arity overloads on ONE type are a family, not an ambiguity,
         # and are picked from as the enclosing-type tier above picks.
         matches_by_type: dict[str, list[str]] = {}
-        for static_type, context_qn in self._static_import_scope(module_qn):
+        for static_type, context_qn in self._static_import_scope(module_qn, caller_qn):
             # The directive stores the C# type path (`Helpers.MathHelpers`);
             # the registry keys types by project-qualified qn, so resolve it
             # the same way a written type reference is resolved, from the
@@ -805,14 +817,26 @@ class CSharpTypeInferenceEngine:
             return cs.NodeLabel.METHOD.value, (preferred or matches)[0]
         return None
 
-    def _static_import_scope(self, module_qn: str) -> list[tuple[str, str]]:
+    def _static_import_scope(
+        self, module_qn: str, caller_qn: str | None
+    ) -> list[tuple[str, str]]:
         # (type path, module that wrote it): the file's own `using static`
         # directives, then every `global using static` in the project, which
-        # C# puts in scope in every file of the compilation.
+        # C# puts in scope in every file of the compilation. A directive
+        # written inside `namespace N { ... }` is in scope only there, which
+        # the caller's qn shows: it embeds the namespace after the module qn
+        # (CodeRabbit, PR #2036).
         imports = self.import_processor
         scope = [
             (path, module_qn)
-            for path in imports.csharp_static_imports.get(module_qn, ())
+            for namespace, path in imports.csharp_static_imports.get(module_qn, ())
+            if not namespace
+            or (
+                caller_qn is not None
+                and caller_qn.startswith(
+                    f"{module_qn}{cs.SEPARATOR_DOT}{namespace}{cs.SEPARATOR_DOT}"
+                )
+            )
         ]
         scope.extend(
             (path, declaring_qn)
@@ -1656,7 +1680,9 @@ class CSharpTypeInferenceEngine:
             qn
             for qn in self._direct_same_name_methods(class_qn, method_name)
             if (
-                _accepts_arg_count(qn[len(prefix) :], arg_count)
+                _accepts_arg_count(
+                    qn[len(prefix) :], arg_count, self.csharp_required_arity.get(qn)
+                )
                 if compatible
                 else _arity(qn[len(prefix) :]) == arg_count
             )

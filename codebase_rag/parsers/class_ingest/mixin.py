@@ -37,7 +37,7 @@ from ..enum_variants import emit_declared_variants
 from ..field_nodes import PendingFieldType, emit_declared_fields
 from ..go import GoTypeInferenceEngine
 from ..java import utils as java_utils
-from ..parameter_nodes import PendingParameterType
+from ..parameter_nodes import PendingParameterType, csharp_required_arity
 from ..py import external_stdlib_base_method_names, resolve_class_name
 from ..rs import RustTypeInferenceEngine
 from ..rs import utils as rs_utils
@@ -177,6 +177,7 @@ class ClassIngestMixin:
     csharp_override_methods: set[str]
     csharp_partial_groups: dict[str, list[str]]
     csharp_generic_methods: set[str]
+    csharp_required_arity: dict[str, int]
     csharp_class_generic_arity: dict[str, int]
     csharp_class_owner_module: dict[str, str]
     csharp_class_namespaced: dict[str, str]
@@ -1644,13 +1645,15 @@ class ClassIngestMixin:
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
             )
-            if (
-                ingested_qn is not None
-                and language == cs.SupportedLanguage.CSHARP
-                and method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
-                is not None
-            ):
-                self.csharp_generic_methods.add(ingested_qn)
+            if ingested_qn is not None and language == cs.SupportedLanguage.CSHARP:
+                self.csharp_required_arity[ingested_qn] = csharp_required_arity(
+                    method_node
+                )
+                if (
+                    method_node.child_by_field_name(cs.TS_CSHARP_FIELD_TYPE_PARAMETERS)
+                    is not None
+                ):
+                    self.csharp_generic_methods.add(ingested_qn)
             # Record Dart return types (a constructor "returns" its class)
             # so a local bound from a static factory or named constructor
             # (`var s = Greeter.create()`) types from the RECORDED return

@@ -170,6 +170,11 @@ class DefinitionProcessor(
         # matches the callee shape (`M<TResult>(x)` vs `M(x)`) when
         # parameter arity alone cannot tell same-name twins apart.
         self.csharp_generic_methods: set[str] = set()
+        # {C# method qn: arguments a call must pass} -- parameters with no
+        # default and no `params` -- so a bare call that omits arguments binds
+        # only an overload whose omitted parameters are defaulted. A method
+        # with no entry (not parsed this run) is judged from its signature.
+        self.csharp_required_arity: dict[str, int] = {}
         # {class qn: declared type-parameter count} for C# generic types,
         # so `Builder` vs `Builder<TResult>` (same simple name) can be told
         # apart when a type reference's written arity is known.

@@ -462,6 +462,15 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     return slots.declared
 
 
+def csharp_required_arity(func_node: Node) -> int:
+    """How many arguments every call must pass: the parameters with neither
+    a default nor the `params` modifier."""
+    return sum(
+        not (param.has_default or param.is_variadic)
+        for param in csharp_declared_parameters(func_node)
+    )
+
+
 # --- Lua ---------------------------------------------------------------------
 
 

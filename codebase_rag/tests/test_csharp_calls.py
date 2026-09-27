@@ -1107,3 +1107,73 @@ public class A {
     targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
     assert any(t.endswith("A.Log(string)") for t in targets), targets
     assert not any(t.endswith("A.Log(string, int)") for t in targets), targets
+
+
+def test_a_required_parameter_is_never_omitted(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # FEWER arguments than parameters binds only when the omitted ones are
+    # defaulted: `Pair(1)` does not compile against `Pair(int a, int b)`, so
+    # no edge may claim it (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class G {
+    public static int Pair(int a, int b) => a;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+using static Helpers.G;
+namespace App;
+public class A {
+    void Log(string m, int level) { }
+    public void Run() { Pair(1); Log("x"); }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    targets = {t for s, t in _call_pairs(mock_ingestor) if s.endswith("App.A.Run")}
+    assert not any("Pair" in t or "Log" in t for t in targets), targets
+
+
+def test_a_namespace_scoped_static_import_stays_in_its_namespace(
+    csharp_project: Path, mock_ingestor: MagicMock
+) -> None:
+    # `using static` inside `namespace In1 { ... }` is in scope in In1 only;
+    # the sibling namespace's bare `Twice(2)` must not bind through it
+    # (CodeRabbit, PR #2036).
+    (csharp_project / "Helpers.cs").write_text(
+        """
+namespace Helpers;
+public static class H {
+    public static int Twice(int x) => x * 2;
+}
+""",
+        encoding="utf-8",
+    )
+    (csharp_project / "App.cs").write_text(
+        """
+namespace Outer {
+    namespace In1 {
+        using static Helpers.H;
+        public class A { public void Run() { Twice(1); } }
+    }
+    namespace In2 {
+        public class B { public void Run() { Twice(2); } }
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run_updater(csharp_project, mock_ingestor, skip_if_missing=SKIP)
+
+    pairs = _call_pairs(mock_ingestor)
+    assert any(
+        s.endswith("Outer.In1.A.Run") and t.endswith("H.Twice(int)") for s, t in pairs
+    ), pairs
+    assert not any(s.endswith("Outer.In2.B.Run") for s, _t in pairs), pairs
