@@ -623,6 +623,26 @@ class TestAUsingChoosesAmongSameNamedTypes:
         targets = {target for source, target in _calls(store) if source == run}
         assert targets == {"proj.src.Other.Widget.Widget.S"}, sorted(targets)
 
+    def test_the_callers_namespace_does_not_make_a_member_bare(
+        self, tmp_path: Path
+    ) -> None:
+        """`App.Widget` is nameable from `App`, but its `S` is callable bare
+        only through a `using static`, so `S()` under `using static
+        Other.Widget;` is `Other.Widget.S` (bot review)."""
+        files = _twin_widgets("using static Other.Widget;")
+        files["src/App/Widget.cs"] = (
+            "namespace App;\n"
+            "public class Widget { public Widget(int n) { } public static void S() { } }\n"
+        )
+        files["src/App/Plain.cs"] = (
+            "using static Other.Widget;\nnamespace App;\n"
+            "public class Plain\n{\n    public void Run() { S(); }\n}\n"
+        )
+        store = _index(tmp_path / "proj", files)
+        run = "proj.src.App.Plain.Plain.Run"
+        targets = {target for source, target in _calls(store) if source == run}
+        assert targets == {"proj.src.Other.Widget.Widget.S"}, sorted(targets)
+
 
 _ZETA_WIDGET = (
     "namespace Zeta;\npublic class Widget\n{\n"

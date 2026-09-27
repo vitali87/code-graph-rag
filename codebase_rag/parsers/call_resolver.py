@@ -2944,14 +2944,17 @@ class CallResolver:
         # (bot review).
         bare = cs.SEPARATOR_DOT not in call_name
         import_keys: dict[str, str] = {}
+        bare_members: set[str] = set()
         for qn in candidates:
             owner = qn
             while owner and owner not in declared:
                 owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
             if owner:
                 containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+                if bare and owner != qn:
+                    bare_members.add(qn)
                 import_keys[qn] = (
-                    declared[owner] if bare and owner != qn else containers[qn]
+                    declared[owner] if qn in bare_members else containers[qn]
                 )
         # The call site's namespace chain is only known when the file declares
         # ONE nested chain; with sibling namespaces (`App` and `Other` in one
@@ -2971,7 +2974,15 @@ class CallResolver:
             enclosing = {
                 cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)
             }
-        local = [qn for qn in candidates if containers.get(qn) in enclosing]
+        # A namespace holds types, not members: the caller's namespace makes
+        # `App.Widget` nameable, never `App.Widget.S` callable bare. Only a
+        # `using static` does that, which the import preference below checks
+        # (bot review).
+        local = [
+            qn
+            for qn in candidates
+            if containers.get(qn) in enclosing and qn not in bare_members
+        ]
         if local:
             innermost = max(len(containers[qn]) for qn in local)
             return [qn for qn in local if len(containers[qn]) == innermost]
