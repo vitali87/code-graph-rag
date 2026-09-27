@@ -171,7 +171,7 @@ class TestExplain:
             "args": {"Details": "n"},
             "children": [
                 {"operatorType": "Scan", "args": {"Details": "n:L"}},
-                {"operatorType": "Leaf"},
+                {"operatorType": "Leaf", "args": None, "children": None},
             ],
         }
         session = _PlanSession(plan)
@@ -194,8 +194,10 @@ class TestExplain:
             {"operatorType": "Odd", "args": "not a mapping"},
             {"operatorType": "Odd", "children": "not a list"},
             {"operatorType": "Odd", "children": ["not a node"]},
+            {"operatorType": "Odd", "args": ""},
+            {"operatorType": "Odd", "children": {}},
         ],
-        ids=["args", "children", "child"],
+        ids=["args", "children", "child", "falsy-args", "falsy-children"],
     )
     def test_a_node_that_cannot_be_walked_refuses_the_query(
         self, malformed: dict

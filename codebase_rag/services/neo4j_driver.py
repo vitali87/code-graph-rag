@@ -178,8 +178,12 @@ class Neo4jConnection:
         pending: list[dict[str, _PlanField]] = [plan] if plan else []
         while pending:
             node = pending.pop()
-            args = node.get(cs.NEO4J_PLAN_ARGS) or {}
-            children = node.get(cs.NEO4J_PLAN_CHILDREN) or []
+            # Absent (or null) means none; any other value must have the right
+            # shape, a falsy wrong one included (CodeRabbit, PR #2255).
+            args = node.get(cs.NEO4J_PLAN_ARGS)
+            args = {} if args is None else args
+            children = node.get(cs.NEO4J_PLAN_CHILDREN)
+            children = [] if children is None else children
             # The read-only guard checks every operator this returns, so a
             # node it cannot fully walk must refuse the query rather than be
             # skipped: a skipped child is an operator nobody inspected
