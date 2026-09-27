@@ -150,6 +150,11 @@ NEO4J_PLAN_OPERATOR_TYPE = "operatorType"
 NEO4J_PLAN_ARGS = "args"
 NEO4J_PLAN_DETAILS = "Details"
 NEO4J_PLAN_CHILDREN = "children"
+# The optional `neo4j` package, imported by name (issue #2191): its typed
+# surface declares every statement `LiteralString`, which a runtime-built
+# statement can never be, so `services.neo4j_driver` types what it uses
+# with its own protocols instead.
+NEO4J_MODULE = "neo4j"
 # An untrusted query is planned with EXPLAIN and runs only if every plan
 # operator is known to read. An allowlist, not a list of writes, so an
 # operator this list has never seen (a new write, or a write under a new
