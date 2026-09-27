@@ -52,8 +52,9 @@ The controls and remaining risks are described below.
 ## Trust boundaries and threat model
 
 The main data flows are repository files into parsers and stores; retrieved
-content and questions into agents and configured providers; tool requests back
-to the host; and MCP requests from clients into the server. Release automation
+content and questions into agents and configured providers; research queries
+out to the configured web-search backend (DuckDuckGo by default, or Serpdive);
+tool requests back to the host; and MCP requests from clients into the server. Release automation
 is a separate trust boundary between project changes and distributed artifacts.
 
 | Threat | Existing protection | Remaining risk and operator action |
@@ -181,6 +182,19 @@ The CLI can run commands and edit files. Default shell execution uses an
 allowlist, dangerous-pattern checks and approval checks; file tools validate
 paths against the target project root. YOLO mode relaxes approval and allowlist
 checks, while destructive-path screening remains.
+
+Graph queries written by the model are treated as untrusted and must stay
+read-only. They are screened as text first: write keywords outside string
+literals, and any `CALL` to a procedure outside the read-only allowlist, even
+one hidden behind backticks or comments. The engine's own planner then
+decides: the query is planned with `EXPLAIN` first and runs only if every
+operator in the plan is on a list of known read-only operators and every
+procedure it calls is allowed. Anything else, including an operator the list
+has never seen or a plan that cannot be read, is refused before it runs. On Neo4j the query also runs in a READ access-mode session,
+but the driver documents that mode as routing rather than access control, so
+it is not relied on. For defence in depth on a shared or networked database,
+connect with a user that has no write privileges for querying. Ingestion and
+other built-in writes use fixed queries and are not affected.
 
 Commands run with the host user's privileges and inherited environment.
 Working-directory and argument checks are not an OS sandbox. Repository text,

@@ -22,7 +22,7 @@ from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvide
 from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
-from ..config import ModelConfig, settings
+from ..config import ModelConfig, normalised_credential, settings
 
 
 class ModelProvider(ABC):
@@ -68,9 +68,24 @@ class ApiKeyProvider(ModelProvider):
 
 
 def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
-    if api_key and api_key != cs.DEFAULT_API_KEY:
-        return api_key
-    return os.environ.get(env_var)
+    return normalised_credential(api_key) or normalised_credential(
+        os.environ.get(env_var)
+    )
+
+
+def strip_v1_suffix(endpoint: str) -> str:
+    """`endpoint` without a trailing `/v1` path segment or slash.
+
+    OpenAI-compatible endpoints are configured with `/v1`, but health checks
+    live at the server root. `removesuffix`, not `rstrip`: the latter treats
+    its argument as a character set and would eat a port or hostname ending
+    in `1` or `v` (`http://host:4001/v1` -> `http://host:400`).
+    """
+    return (
+        endpoint.rstrip(cs.SEPARATOR_SLASH)
+        .removesuffix(cs.V1_PATH)
+        .rstrip(cs.SEPARATOR_SLASH)
+    )
 
 
 def _output_budget(model_id: str) -> int:
@@ -212,7 +227,7 @@ class OllamaProvider(ModelProvider):
         return cs.Provider.OLLAMA
 
     def validate_config(self) -> None:
-        base_url = self.endpoint.rstrip(cs.V1_PATH).rstrip("/")
+        base_url = strip_v1_suffix(self.endpoint)
 
         if not check_ollama_running(base_url):
             raise ValueError(ex.OLLAMA_NOT_RUNNING.format(endpoint=base_url))
@@ -506,7 +521,7 @@ def check_litellm_proxy_running(
     endpoint: str = "http://localhost:4000", api_key: str | None = None
 ) -> bool:
     try:
-        base_url = endpoint.rstrip("/v1").rstrip("/")
+        base_url = strip_v1_suffix(endpoint)
         health_url = urljoin(base_url, "/health")
         headers: dict[str, str] = {}
         if api_key:

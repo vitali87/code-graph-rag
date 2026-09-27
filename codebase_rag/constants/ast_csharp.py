@@ -129,6 +129,7 @@ TS_CSHARP_PREDEFINED_TYPE = "predefined_type"
 # (`override`) from an explicit `new` hide (which must not become OVERRIDES).
 TS_CSHARP_MODIFIER = "modifier"
 TS_CSHARP_MODIFIER_OVERRIDE = "override"
+TS_CSHARP_MODIFIER_STATIC = "static"
 # A type split across files carries `partial` on every part; parts with the
 # same namespace-qualified name are one logical type, unified for member and
 # base resolution (see csharp_partial_groups).
@@ -202,6 +203,10 @@ TS_CSHARP_NESTED_SCOPE_TYPES = (
 
 # Import form: `using System;`, `using X = Y;`, `global using System.Linq;`.
 TS_CSHARP_USING_DIRECTIVE = "using_directive"
+TS_CSHARP_STATIC = "static"
+TS_CSHARP_GLOBAL = "global"
+# A `params T[]` tail parameter is an array type in the method signature.
+CSHARP_ARRAY_SUFFIX = "[]"
 
 # The name node inside a using directive: a dotted `qualified_name` or a bare
 # `identifier` (both the imported path and, in the alias form, the alias).
@@ -349,3 +354,149 @@ TS_CSHARP_DECLARATION_PATTERN = "declaration_pattern"
 # An enum body and its members (issue #1807).
 TS_CSHARP_ENUM_MEMBER_DECLARATION_LIST = "enum_member_declaration_list"
 TS_CSHARP_ENUM_MEMBER_DECLARATION = "enum_member_declaration"
+
+# A literal argument's C# type, for telling apart same-arity overloads that
+# two `using static` types contribute to one method group (`M(1)` against
+# `M(int)` and `M(string)`). Only literals are typed; any other argument is
+# compatible with every parameter.
+CSHARP_LITERAL_ARG_TYPES: dict[str, str] = {
+    "boolean_literal": "bool",
+    "character_literal": "char",
+    "string_literal": "string",
+    "verbatim_string_literal": "string",
+    "raw_string_literal": "string",
+    "interpolated_string_expression": "string",
+}
+# The parameter types each literal type converts to implicitly. A parameter
+# type outside every set (a user type, a generic parameter) is not judged.
+CSHARP_LITERAL_ACCEPTS: dict[str, frozenset[str]] = {
+    # A constant int converts to every integral type it fits, so the
+    # narrower integral types are accepted too.
+    "int": frozenset(
+        {
+            "int",
+            "long",
+            "short",
+            "ushort",
+            "uint",
+            "ulong",
+            "byte",
+            "sbyte",
+            "nint",
+            "nuint",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Int16",
+            "Int32",
+            "Int64",
+            "UInt16",
+            "UInt32",
+            "UInt64",
+            "Byte",
+            "SByte",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "long": frozenset(
+        {
+            "long",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Int64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "uint": frozenset(
+        {
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "UInt32",
+            "Int64",
+            "UInt64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "ulong": frozenset(
+        {
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "UInt64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "float": frozenset({"float", "double", "object", "Single", "Double", "Object"}),
+    "decimal": frozenset({"decimal", "object", "Decimal", "Object"}),
+    "double": frozenset({"double", "object", "Double", "Object"}),
+    "bool": frozenset({"bool", "object", "Boolean", "Object"}),
+    "char": frozenset(
+        {
+            "char",
+            "int",
+            "long",
+            "float",
+            "double",
+            "decimal",
+            "object",
+            "Char",
+            "Int32",
+            "Int64",
+            "Single",
+            "Double",
+            "Decimal",
+            "Object",
+        }
+    ),
+    "string": frozenset({"string", "object", "String", "Object"}),
+}
+# A numeric literal's type comes from its suffix (`1L` is long, `1.0m` is
+# decimal), so the two numeric node types are typed from their text; an
+# unsuffixed integer too large for int is left unjudged (CodeRabbit, PR #2036).
+TS_CSHARP_INTEGER_LITERAL = "integer_literal"
+TS_CSHARP_REAL_LITERAL = "real_literal"
+CSHARP_INTEGER_SUFFIX_TYPES: dict[str, str] = {
+    "": "int",
+    "l": "long",
+    "u": "uint",
+    "ul": "ulong",
+    "lu": "ulong",
+}
+CSHARP_INTEGER_SUFFIX_CHARS = "ul"
+CSHARP_REAL_SUFFIX_TYPES: dict[str, str] = {
+    "": "double",
+    "d": "double",
+    "f": "float",
+    "m": "decimal",
+}
+CSHARP_DIGIT_SEPARATOR = "_"
+CSHARP_INTEGER_BASE_PREFIXES: dict[str, int] = {"0x": 16, "0b": 2}
+CSHARP_DECIMAL_BASE = 10
+CSHARP_INT_MAX = 2**31 - 1
+CSHARP_JUDGED_PARAM_TYPES: frozenset[str] = frozenset().union(
+    *CSHARP_LITERAL_ACCEPTS.values()
+)
+CSHARP_SYSTEM_PREFIX = "System."
+CSHARP_NULLABLE_SUFFIX = "?"
