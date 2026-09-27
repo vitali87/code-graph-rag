@@ -108,10 +108,13 @@ def test_members_together_past_the_cap_are_refused(small_cap: int) -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        gzip.compress(b"profile")[:-6],
+        # mtime=0: a gzip header carries the time it was written, and the
+        # parameters must be identical in every xdist worker's collection.
+        gzip.compress(b"profile", mtime=0)[:-6],
         b"\x1f\x8b" + b"not deflate at all",
-        gzip.compress(b"profile") + b"trailing junk",
+        gzip.compress(b"profile", mtime=0) + b"trailing junk",
     ],
+    ids=["truncated", "not-deflate", "trailing-junk"],
 )
 def test_malformed_gzip_is_refused(raw: bytes) -> None:
     with pytest.raises(TraceFormatError, match="is not a pprof CPU profile"):
