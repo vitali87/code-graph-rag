@@ -20,6 +20,7 @@ permissions: read-all
 
 env:
   RELEASE_EVERY: 50
+  VERSION_COMPONENT_CAP: 1000
 
 jobs:
   bump-version:
@@ -73,29 +74,42 @@ jobs:
         id: bump_version
         run: |
           CURRENT="${{ steps.get_version.outputs.current }}"
+          # Validated BEFORE any arithmetic: bash evaluates `$(( ))` operands
+          # as expressions, so a crafted component could run commands there.
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing malformed version '$CURRENT' from pyproject.toml"
+            exit 1
+          fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          MAJOR=$((10#$MAJOR)); MINOR=$((10#$MINOR)); PATCH=$((10#$PATCH))
 
           case "${{ steps.bump_type.outputs.type }}" in
             major)
-              NEW_MAJOR=$((MAJOR + 1))
-              NEW_VERSION="$NEW_MAJOR.0.0"
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
               ;;
             minor)
-              NEW_MINOR=$((MINOR + 1))
-              NEW_VERSION="$MAJOR.$NEW_MINOR.0"
+              MINOR=$((MINOR + 1)); PATCH=0
               ;;
             patch)
-              NEW_PATCH=$((PATCH + 1))
-              NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+              PATCH=$((PATCH + 1))
               ;;
           esac
 
-          # MAJOR and MINOR are carried through from pyproject.toml's version
-          # string unchanged (only PATCH passes through arithmetic), so a
-          # crafted value there reaches every downstream `sed` that
-          # interpolates this output into a shell command in this
-          # write-enabled job. Refuse anything that is not three plain
-          # numbers, once, here — rather than at each of the three use sites.
+          # PATCH and MINOR never reach VERSION_COMPONENT_CAP: hitting it (or
+          # starting above it, as 0.0.1006 did) carries into the next
+          # component and resets this one to 0, like an odometer.
+          if (( PATCH >= VERSION_COMPONENT_CAP )); then
+            MINOR=$((MINOR + 1)); PATCH=0
+          fi
+          if (( MINOR >= VERSION_COMPONENT_CAP )); then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          fi
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+          # NEW_VERSION reaches every downstream `sed` that interpolates this
+          # output into a shell command in this write-enabled job. Refuse
+          # anything that is not three plain numbers, once, here — rather
+          # than at each of the three use sites.
           # Bash pattern matching, not `grep -E`: grep anchors ^...$ per LINE,
           # so a value whose FIRST line is well-formed passes while carrying a
           # newline and a payload after it.
