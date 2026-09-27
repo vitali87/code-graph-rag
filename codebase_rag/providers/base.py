@@ -73,6 +73,21 @@ def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
     )
 
 
+def strip_v1_suffix(endpoint: str) -> str:
+    """`endpoint` without a trailing `/v1` path segment or slash.
+
+    OpenAI-compatible endpoints are configured with `/v1`, but health checks
+    live at the server root. `removesuffix`, not `rstrip`: the latter treats
+    its argument as a character set and would eat a port or hostname ending
+    in `1` or `v` (`http://host:4001/v1` -> `http://host:400`).
+    """
+    return (
+        endpoint.rstrip(cs.SEPARATOR_SLASH)
+        .removesuffix(cs.V1_PATH)
+        .rstrip(cs.SEPARATOR_SLASH)
+    )
+
+
 def _output_budget(model_id: str) -> int:
     """`MODEL_MAX_TOKENS`, lowered for models that would reject it outright.
 
@@ -212,7 +227,7 @@ class OllamaProvider(ModelProvider):
         return cs.Provider.OLLAMA
 
     def validate_config(self) -> None:
-        base_url = self.endpoint.rstrip(cs.V1_PATH).rstrip("/")
+        base_url = strip_v1_suffix(self.endpoint)
 
         if not check_ollama_running(base_url):
             raise ValueError(ex.OLLAMA_NOT_RUNNING.format(endpoint=base_url))
@@ -506,7 +521,7 @@ def check_litellm_proxy_running(
     endpoint: str = "http://localhost:4000", api_key: str | None = None
 ) -> bool:
     try:
-        base_url = endpoint.rstrip("/v1").rstrip("/")
+        base_url = strip_v1_suffix(endpoint)
         health_url = urljoin(base_url, "/health")
         headers: dict[str, str] = {}
         if api_key:

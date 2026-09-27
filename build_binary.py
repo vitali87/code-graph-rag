@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,24 @@ def _build_package_args(pkg: PyInstallerPackage) -> list[str]:
     return args
 
 
+def forbidden_bundle_entries(entries: list[str]) -> list[str]:
+    """Archive entries whose last path segment matches a forbidden pattern."""
+    patterns = [
+        re.compile(p, re.IGNORECASE) for p in cs.FORBIDDEN_BUNDLE_ENTRY_PATTERNS
+    ]
+    return sorted(
+        entry
+        for entry in entries
+        if any(p.fullmatch(re.split(r"[/\\]", entry)[-1]) for p in patterns)
+    )
+
+
+def _archive_entries(binary: Path) -> list[str]:
+    from PyInstaller.archive.readers import CArchiveReader
+
+    return list(CArchiveReader(str(binary)).toc)
+
+
 def build_binary() -> bool:
     system = platform.system().lower()
     machine = platform.machine().lower()
@@ -84,15 +103,29 @@ def build_binary() -> bool:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         logger.success(logs.BUILD_SUCCESS)
 
-        binary_path = Path(cs.DIST_DIR) / binary_name
-        if binary_path.exists():
-            size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
-            logger.info(logs.BINARY_INFO.format(path=binary_path))
-            logger.info(logs.BINARY_SIZE.format(size=size_mb))
+        binary_file = binary_name
+        if system == cs.WINDOWS_SYSTEM:
+            binary_file += cs.WINDOWS_EXECUTABLE_SUFFIX
+        binary_path = Path(cs.DIST_DIR) / binary_file
+        # A missing artifact is a failed build, not a skipped check: returning
+        # success here let an unguarded binary through when the path was wrong.
+        if not binary_path.exists():
+            logger.error(logs.BUILD_BINARY_MISSING.format(path=binary_path))
+            return False
 
-            os.chmod(binary_path, cs.BINARY_FILE_PERMISSION)
-            logger.success(logs.BUILD_READY)
+        size_mb = binary_path.stat().st_size / cs.BYTES_PER_MB_FLOAT
+        logger.info(logs.BINARY_INFO.format(path=binary_path))
+        logger.info(logs.BINARY_SIZE.format(size=size_mb))
 
+        forbidden = forbidden_bundle_entries(_archive_entries(binary_path))
+        if forbidden:
+            logger.error(
+                logs.BUILD_FORBIDDEN_ENTRIES.format(entries=", ".join(forbidden))
+            )
+            return False
+
+        os.chmod(binary_path, cs.BINARY_FILE_PERMISSION)
+        logger.success(logs.BUILD_READY)
         return True
 
     except subprocess.CalledProcessError as e:

@@ -320,6 +320,10 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_EXPANSION_FAILED = (
+    "Could not list the files a directory event covers: {error}. Re-indexing "
+    "the whole repository instead."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
@@ -333,6 +337,8 @@ BINARY_INFO = "Binary: {path}"
 BINARY_SIZE = "Size: {size:.1f} MB"
 BUILD_STDOUT = "STDOUT: {stdout}"
 BUILD_STDERR = "STDERR: {stderr}"
+BUILD_FORBIDDEN_ENTRIES = "Binary bundles entries it must not ship: {entries}"
+BUILD_BINARY_MISSING = "Build reported success but no binary exists at {path}"
 
 # Graph summary logs
 GRAPH_SUMMARY = "Graph Summary:"
