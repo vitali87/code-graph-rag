@@ -1106,6 +1106,7 @@ class GraphUpdater:
         # which cannot tell a nested project's rows from this one's.
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
 
         self.factory = ProcessorFactory(
             ingestor=self._sink,
@@ -1817,6 +1818,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
         if not force and self._single_file is None:
             self._drop_cache_if_graph_lost()
             self._reparse_all_if_parser_changed()
@@ -2010,6 +2012,10 @@ class GraphUpdater:
         # path, never re-issues them, and the orphan survives until a full
         # rebuild. Same invariant as #1615, on the writes that pass fixed.
         self.ingestor.flush_all()
+        # A complete prune settles an owed one only once its deletes are
+        # durable: cleared before this flush, a failed flush would leave the
+        # orphan AND an unmarked tree the next run skips (CodeRabbit, #2125).
+        self._settle_prune_marker()
 
         self._generate_semantic_embeddings()
 
@@ -2279,20 +2285,31 @@ class GraphUpdater:
             logger.debug("Stale EXPOSES cleanup unavailable; emission continues")
 
     def _record_prune_pending(self, pending: bool) -> None:
-        """Owe a cut-short orphan prune to the next run, or settle it.
+        """Owe a cut-short orphan prune to the next run, or mark it settled.
 
-        The prune covers the whole project every time it runs, so a
-        complete one settles whatever an earlier run left.
+        Owing is written at once. Settling only notes that this run's prune
+        was complete: the prune covers the whole project every time it runs,
+        so it settles whatever an earlier run left, but not until its deletes
+        are flushed (`_settle_prune_marker`).
         """
-        marker = self.repo_path / cs.PRUNE_PENDING_FILENAME
+        self._prune_settled = not pending
+        if not pending:
+            return
         try:
-            if pending:
-                marker.touch()
-            else:
-                marker.unlink(missing_ok=True)
+            (self.repo_path / cs.PRUNE_PENDING_FILENAME).touch()
         except OSError:
             # Best effort, like the EXPOSES marker: a read-only tree must not
             # lose the run to a marker it could not write.
+            logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
+
+    def _settle_prune_marker(self) -> None:
+        """Remove an owed-prune marker once a complete prune's deletes flush."""
+        if not self._prune_settled:
+            return
+        self._prune_settled = False
+        try:
+            (self.repo_path / cs.PRUNE_PENDING_FILENAME).unlink(missing_ok=True)
+        except OSError:
             logger.debug(ls.PRUNE_PENDING_NOT_UPDATED)
 
     def _record_exposes_cleanup(self, cleared_by_this_run: bool) -> None:
@@ -6574,6 +6591,7 @@ class GraphUpdater:
         self._registered_projects = None
         self._registry_unread = False
         self._exposes_cleanup_skipped = False
+        self._prune_settled = False
         # Per call: a caller holding this updater across many events must see
         # THIS call's answer, not the last one's.
         self.reingest_mutated = False

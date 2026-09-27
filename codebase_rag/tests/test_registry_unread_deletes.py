@@ -12,6 +12,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
 from codebase_rag.graph_updater import GraphUpdater
@@ -156,8 +158,45 @@ def test_a_complete_prune_settles_what_an_earlier_run_owed(
     updater = _updater(temp_repo, mock_ingestor)
 
     updater._prune_orphan_nodes()
+    # Not yet: the prune's deletes are durable only after run()'s flush, and
+    # clearing before it would lose the retry if that flush failed.
+    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+
+    updater._settle_prune_marker()
 
     assert not (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
+
+
+def test_a_failed_flush_after_a_complete_prune_keeps_what_was_owed(
+    temp_repo: Path,
+) -> None:
+    (temp_repo / "api.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    store = _StatefulIngestor()
+    parsers, queries = load_parsers()
+
+    def updater() -> GraphUpdater:
+        return GraphUpdater(
+            ingestor=store,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+            project_name="svc",
+        )
+
+    updater().run()
+    (temp_repo / cs.PRUNE_PENDING_FILENAME).touch()
+    owed = updater()
+    real_prune = owed._prune_orphan_nodes
+
+    def prune_then_fail_the_flush() -> None:
+        real_prune()
+        owed.ingestor.flush_all = MagicMock(side_effect=ConnectionError("down"))
+
+    owed._prune_orphan_nodes = prune_then_fail_the_flush
+    with pytest.raises(ConnectionError):
+        owed.run()
+
+    assert (temp_repo / cs.PRUNE_PENDING_FILENAME).exists()
 
 
 def test_an_owed_prune_refuses_the_in_sync_fast_path(temp_repo: Path) -> None:
