@@ -2751,13 +2751,21 @@ class GraphUpdater:
             # added sibling took the bare qn from under the unread survivor's
             # subtree (issue #2232).
             if _stem_key(path) in flux_stems:
-                survivor = self.repo_path / path
-                if not _opens_for_reading(survivor):
-                    module_map.setdefault(qn, survivor)
-                else:
-                    self._forgotten_flux_claims.setdefault(path, (qn, survivor))
+                self._seed_flux_survivor(qn, path)
                 continue
             module_map.setdefault(qn, self.repo_path / path)
+
+    def _seed_flux_survivor(self, qn: str, path: str) -> None:
+        # An unopenable survivor is not re-parsed and keeps its graph claim;
+        # one that opens re-parses unseeded, its claim recorded for
+        # `_restore_unreadable_flux_claims` should its read fail later.
+        survivor = self.repo_path / path
+        if not _opens_for_reading(survivor):
+            self.factory.definition_processor.module_qn_to_file_path.setdefault(
+                qn, survivor
+            )
+        else:
+            self._forgotten_flux_claims.setdefault(path, (qn, survivor))
 
     def _forget_flux_stem_qns(self, flux_stems: set[str]) -> None:
         """Drop the module-qn claims of every file on a stem in flux.
