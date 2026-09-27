@@ -126,13 +126,9 @@ PyPI and GitHub Releases only receive every 50th version, plus any security fix,
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
 
-With pipx:
+Replace `@main` with a tag such as `@v0.1.8` to pin an exact version.
 
-```bash
-pipx install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
-```
-
-Replace `@main` with a tag such as `@v0.1.8` to pin an exact version. The package is built on your machine, and `uv` also builds the patched C and C++ grammars from their git forks, so a C compiler is needed on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS).
+Use `uv` here: it applies the project's `[tool.uv.sources]`, which build the C and C++ grammars from forks that keep the declarations upstream drops after a `#define` whose value contains a block comment. `pip`, and `pipx` on its pip backend, ignore those sources and install the upstream grammars. Building the forks needs a C compiler on top of the [prerequisites](#prerequisites) (the Xcode Command Line Tools on macOS).
 
 ## Install from Source
 
