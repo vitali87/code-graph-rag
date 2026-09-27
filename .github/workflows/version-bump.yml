@@ -169,8 +169,16 @@ jobs:
           # fails the run rather than silently narrowing the scan. Only full
           # hex SHAs from the API are used, so no value can reach git or a
           # URL as anything but a commit id.
+          # `--exit-code` returns 2 only when the tag is absent; any other
+          # failure (network, auth) must not be mistaken for a missing tag.
           COMMITS="$GITHUB_SHA"
-          if git ls-remote --exit-code --tags origin "refs/tags/v${CURRENT}" > /dev/null; then
+          TAG_STATUS=0
+          git ls-remote --exit-code --tags origin "refs/tags/v${CURRENT}" > /dev/null || TAG_STATUS=$?
+          if [ "$TAG_STATUS" -ne 0 ] && [ "$TAG_STATUS" -ne 2 ]; then
+            echo "::error::could not look up tag v${CURRENT} (git ls-remote exit ${TAG_STATUS}); refusing to decide the release"
+            exit 1
+          fi
+          if [ "$TAG_STATUS" -eq 0 ]; then
             if ! RANGE=$(gh api --paginate \
                 "repos/${GITHUB_REPOSITORY}/compare/v${CURRENT}...${GITHUB_SHA}?per_page=100" \
                 --jq '.commits[].sha'); then

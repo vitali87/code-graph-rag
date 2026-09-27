@@ -174,16 +174,19 @@ gh() {
       [ "$COMPARE_FAILS" = true ] && return 1
       printf '%b' "$RANGE"
       ;;
-    */pulls) printf '%s\n' "${LABELS[$(basename "$(dirname "$url")")]:-}" ;;
+    */pulls) cat "labels/$(basename "$(dirname "$url")")" 2> /dev/null || true ;;
     *) return 1 ;;
   esac
 }
 git() {
   case "$1" in
-    log) printf '%s\n' "${MESSAGES[${@: -1}]:-}" ;;
+    log)
+      case "${@: -1}" in -*) touch pwned ;; esac
+      cat "messages/${@: -1}" 2> /dev/null || true
+      ;;
     ls-remote)
       if [ "$2" = --exit-code ]; then
-        [ "$TAG_EXISTS" = true ]
+        return "$LS_REMOTE_EXIT"
       fi
       ;;
   esac
@@ -191,33 +194,42 @@ git() {
 """
 
 
+def _commits(
+    tmp_path: Path, messages: dict[str, str], labels: dict[str, str] | None = None
+) -> None:
+    for folder, entries in (("messages", messages), ("labels", labels or {})):
+        (tmp_path / folder).mkdir()
+        for sha, text in entries.items():
+            (tmp_path / folder / sha).write_text(text + "\n", encoding="utf-8")
+
+
 def _decide_run(
-    tmp_path: Path, declare: str, range_: str, **env: str
+    tmp_path: Path, range_: str, **env: str
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
     return _run(
         "Decide whether this tag ships a release",
-        declare + DECIDE_STUBS,
+        DECIDE_STUBS,
         tmp_path,
         {
             "CURRENT": "0.0.1",
             "RANGE": range_,
             "RELEASE_EVERY": "50",
-            "TAG_EXISTS": "true",
+            "LS_REMOTE_EXIT": "0",
             "COMPARE_FAILS": "false",
             **env,
         },
     )
 
 
-def _decide(tmp_path: Path, declare: str, range_: str) -> dict[str, str]:
-    result, out = _decide_run(tmp_path, declare, range_)
+def _decide(tmp_path: Path, range_: str) -> dict[str, str]:
+    result, out = _decide_run(tmp_path, range_)
     assert result.returncode == 0, result.stderr
     return out
 
 
 def test_every_page_of_the_range_is_read(tmp_path: Path) -> None:
-    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
-    _decide(tmp_path, declare, f"{SHA}\\n")
+    _commits(tmp_path, {SHA: "feat: x"})
+    _decide(tmp_path, f"{SHA}\\n")
     call = (tmp_path / "compare_call").read_text(encoding="utf-8")
     assert "--paginate" in call.split()
     assert "per_page=100" in call
@@ -227,16 +239,16 @@ def test_every_page_of_the_range_is_read(tmp_path: Path) -> None:
 def test_unreadable_range_fails_instead_of_narrowing_the_scan(
     tmp_path: Path, range_: str
 ) -> None:
-    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
-    result, out = _decide_run(tmp_path, declare, range_)
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, range_)
     assert result.returncode != 0
     assert "refusing to decide the release" in result.stdout
     assert "release" not in out
 
 
 def test_failed_compare_call_fails_the_run(tmp_path: Path) -> None:
-    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
-    result, out = _decide_run(tmp_path, declare, f"{SHA}\\n", COMPARE_FAILS="true")
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", COMPARE_FAILS="true")
     assert result.returncode != 0
     assert "could not list the commits" in result.stdout
     assert "release" not in out
@@ -245,62 +257,47 @@ def test_failed_compare_call_fails_the_run(tmp_path: Path) -> None:
 def test_without_a_previous_tag_the_triggering_commit_is_scanned(
     tmp_path: Path,
 ) -> None:
-    declare = (
-        f"declare -A MESSAGES=([{SHA}]='fix: y [security]')\ndeclare -A LABELS=()\n"
-    )
-    result, out = _decide_run(tmp_path, declare, "", TAG_EXISTS="false")
+    _commits(tmp_path, {SHA: "fix: y [security]"})
+    result, out = _decide_run(tmp_path, "", LS_REMOTE_EXIT="2")
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "compare_call").exists()
     assert out["security"] == "true"
 
 
+@pytest.mark.parametrize("status", ["1", "128"])
+def test_failed_tag_lookup_fails_instead_of_narrowing_the_scan(
+    tmp_path: Path, status: str
+) -> None:
+    _commits(tmp_path, {SHA: "feat: x"})
+    result, out = _decide_run(tmp_path, f"{SHA}\\n", LS_REMOTE_EXIT=status)
+    assert result.returncode != 0
+    assert "could not look up tag" in result.stdout
+    assert not (tmp_path / "compare_call").exists()
+    assert "release" not in out
+
+
 def test_security_fix_in_an_earlier_commit_of_the_range_ships(tmp_path: Path) -> None:
-    declare = (
-        f"declare -A MESSAGES=([{OLDER}]='fix: patch [security]' [{SHA}]='feat: x')\n"
-        "declare -A LABELS=()\n"
-    )
-    out = _decide(tmp_path, declare, f"{OLDER}\\n{SHA}\\n")
+    _commits(tmp_path, {OLDER: "fix: patch [security]", SHA: "feat: x"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["security"] == "true"
     assert out["release"] == "true"
 
 
 def test_security_label_on_an_earlier_commit_of_the_range_ships(tmp_path: Path) -> None:
-    declare = (
-        f"declare -A MESSAGES=([{OLDER}]='fix: a' [{SHA}]='feat: x')\n"
-        f"declare -A LABELS=([{OLDER}]=security)\n"
-    )
-    out = _decide(tmp_path, declare, f"{OLDER}\\n{SHA}\\n")
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"}, {OLDER: "security"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["security"] == "true"
 
 
 def test_ordinary_range_does_not_ship(tmp_path: Path) -> None:
-    declare = (
-        f"declare -A MESSAGES=([{OLDER}]='fix: a' [{SHA}]='feat: x')\n"
-        "declare -A LABELS=()\n"
-    )
-    out = _decide(tmp_path, declare, f"{OLDER}\\n{SHA}\\n")
+    _commits(tmp_path, {OLDER: "fix: a", SHA: "feat: x"})
+    out = _decide(tmp_path, f"{OLDER}\\n{SHA}\\n")
     assert out["security"] == "false"
     assert out["release"] == "false"
 
 
 def test_non_sha_range_entries_never_reach_git(tmp_path: Path) -> None:
-    marker = tmp_path / "pwned"
-    declare = f"declare -A MESSAGES=([{SHA}]='feat: x')\ndeclare -A LABELS=()\n"
-    stubs = declare + DECIDE_STUBS.replace(
-        "log) printf", f'log) case "${{@: -1}}" in -*) touch {marker};; esac; printf'
-    )
-    result, out = _run(
-        "Decide whether this tag ships a release",
-        stubs,
-        tmp_path,
-        {
-            "CURRENT": "0.0.1",
-            "RANGE": f"--output={marker}\\n{SHA}\\n",
-            "RELEASE_EVERY": "50",
-            "TAG_EXISTS": "true",
-            "COMPARE_FAILS": "false",
-        },
-    )
-    assert result.returncode == 0, result.stderr
-    assert not marker.exists()
+    _commits(tmp_path, {SHA: "feat: x"})
+    out = _decide(tmp_path, f"--output=pwned\\n{SHA}\\n")
+    assert not (tmp_path / "pwned").exists()
     assert out["security"] == "false"
