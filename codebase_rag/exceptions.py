@@ -76,6 +76,13 @@ QDRANT_VECTOR_DIM_MISMATCH = (
     "or re-index with --clean to rebuild the collection with the new size."
 )
 
+QDRANT_API_KEY_OVER_HTTP = (
+    "QDRANT_API_KEY is set but QDRANT_URL uses plain http, which would send the "
+    "key unencrypted. Use an https:// QDRANT_URL, or set "
+    "QDRANT_ALLOW_INSECURE_API_KEY=true if the connection is protected another "
+    "way (for example, it never leaves the machine)."
+)
+
 EMBEDDING_DIM_MISMATCH = (
     "The embedding model produced {dim}-dimensional vectors, but the {backend} "
     "collection holds {expected}-dimensional ones. Set {setting} to the "

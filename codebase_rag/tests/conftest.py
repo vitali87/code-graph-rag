@@ -273,6 +273,7 @@ def _isolate_vector_store(
 
     monkeypatch.setattr(settings, "QDRANT_URL", None)
     monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
+    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", False)
     monkeypatch.setattr(
         settings, "QDRANT_DB_PATH", str(tmp_path_factory.mktemp("qdrant-iso"))
     )

@@ -173,6 +173,10 @@ MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
 MODULE_PYMILVUS = "pymilvus"
 
+# qdrant-client sends the `api-key` header in the clear only when the URL
+# names this scheme; a URL without a scheme switches to https once a key is set.
+QDRANT_INSECURE_URL_SCHEME = "http"
+
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,
     MODULE_QDRANT_CLIENT,
