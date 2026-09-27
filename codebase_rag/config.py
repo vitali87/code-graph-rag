@@ -370,6 +370,11 @@ class AppConfig(BaseSettings):
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_URL: str | None = None
+    # Sent as the `api-key` header, so only a server (QDRANT_URL) uses it:
+    # Qdrant Cloud always requires one, and a self-hosted server does once
+    # QDRANT__SERVICE__API_KEY is set. qdrant-client never reads it from the
+    # environment, so it must be passed explicitly.
+    QDRANT_API_KEY: str | None = None
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5

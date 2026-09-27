@@ -91,6 +91,55 @@ def test_get_qdrant_client_uses_url_when_set(reset_global_client: None) -> None:
     mock_client_cls.assert_called_once_with(url="http://localhost:6333")
 
 
+def test_get_qdrant_client_passes_api_key_to_server(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "https://qdrant.example:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(
+        url="https://qdrant.example:6333", api_key="secret-key"
+    )
+
+
+def test_get_qdrant_client_omits_blank_api_key(reset_global_client: None) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", "http://localhost:6333"),
+        patch.object(vs.settings, "QDRANT_API_KEY", ""),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(url="http://localhost:6333")
+
+
+def test_get_qdrant_client_ignores_api_key_in_local_mode(
+    reset_global_client: None,
+) -> None:
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "QDRANT_URL", None),
+        patch.object(vs.settings, "QDRANT_DB_PATH", "/tmp/qd"),
+        patch.object(vs.settings, "QDRANT_API_KEY", "secret-key"),
+        patch("codebase_rag.vector_store.QdrantClient") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.collection_exists.return_value = True
+        vs.get_qdrant_client()
+
+    mock_client_cls.assert_called_once_with(path="/tmp/qd")
+
+
 def test_get_qdrant_client_uses_path_when_url_unset(
     reset_global_client: None,
 ) -> None:

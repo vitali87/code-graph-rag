@@ -14,7 +14,17 @@ Semantic search requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store. To use Milvus Lite for semantic vectors,
+Qdrant is the default vector store. It runs in local file mode unless
+`QDRANT_URL` points at a Qdrant server. For a server that requires an API key
+(Qdrant Cloud, or a self-hosted server started with `QDRANT__SERVICE__API_KEY`),
+also set `QDRANT_API_KEY`, over an `https://` URL:
+
+```bash
+export QDRANT_URL="https://your-cluster.cloud.qdrant.io:6333"
+export QDRANT_API_KEY="your-qdrant-api-key"
+```
+
+To use Milvus Lite for semantic vectors,
 install the `milvus` extra and set:
 
 ```bash
