@@ -18,6 +18,14 @@ on:
 
 permissions: read-all
 
+# One bump at a time. Without this, two merges close together each start a
+# run from their own commit, and the second push to main is rejected.
+# A pending run replaced by a newer one loses nothing: the newer run's commit
+# contains it, and "Decide" scans every commit since the last tag.
+concurrency:
+  group: version-bump-main
+  cancel-in-progress: false
+
 env:
   RELEASE_EVERY: 50
   VERSION_COMPONENT_CAP: 1000
@@ -43,6 +51,15 @@ jobs:
       - name: Check if version was manually changed
         id: check_manual
         run: |
+          # Only the run for the newest commit on main bumps. An older run
+          # stands down: the newer commit contains this one, and its own run
+          # bumps once for both, so no version is computed from stale state.
+          TIP=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$TIP" != "$GITHUB_SHA" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::main has moved on from ${GITHUB_SHA} to ${TIP}; its run bumps for both, standing down"
+            exit 0
+          fi
           OLD_VERSION=$(git show HEAD^:pyproject.toml | grep -E '^version\s*=' | sed 's/version = "\(.*\)"/\1/')
           NEW_VERSION=$(grep -E '^version\s*=' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
@@ -137,14 +154,29 @@ jobs:
         id: decide
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT: ${{ steps.get_version.outputs.current }}
         run: |
           LATEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo "")
           # A security patch must ship immediately rather than waiting for the
-          # RELEASE_EVERY cadence (issue #1149). The triggering commit counts as
-          # a security fix when its message carries a GHSA id (advisory-fork
-          # merges do), an explicit [security] marker, or an associated pull
-          # request labelled "security".
-          MESSAGE=$(git log -1 --pretty=%B)
+          # RELEASE_EVERY cadence (issue #1149). A commit counts as a security
+          # fix when its message carries a GHSA id (advisory-fork merges do),
+          # an explicit [security] marker, or an associated pull request
+          # labelled "security". Every commit since the last bump's tag is
+          # checked, not only the triggering one: runs that stood down (or
+          # were replaced in the concurrency queue) left their commits to
+          # this run. Only full hex SHAs from the API are used, so no value
+          # can reach git or a URL as anything but a commit id.
+          COMMITS="$GITHUB_SHA"
+          if RANGE=$(gh api "repos/${GITHUB_REPOSITORY}/compare/v${CURRENT}...${GITHUB_SHA}" \
+              --jq '.commits[].sha' 2>/dev/null | grep -xE '[0-9a-f]{40}') && [ -n "$RANGE" ]; then
+            COMMITS="$RANGE"
+          fi
+          MESSAGE=""
+          for SHA in $COMMITS; do
+            MESSAGE+="$(git log -1 --pretty=%B "$SHA" 2>/dev/null \
+              || gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}" --jq .commit.message \
+              || true)"$'\n'
+          done
           GHSA=$(printf '%s' "$MESSAGE" | grep -oiE 'GHSA(-[0-9a-z]{4}){3}' | head -1 || true)
           SECURITY=false
           case "$MESSAGE" in
@@ -153,11 +185,13 @@ jobs:
           if [ -n "$GHSA" ]; then
             SECURITY=true
           fi
-          if [ "$SECURITY" != "true" ] && gh api \
-              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
-              --jq '.[].labels[].name' 2>/dev/null | grep -qx security; then
-            SECURITY=true
-          fi
+          for SHA in $COMMITS; do
+            [ "$SECURITY" = "true" ] && break
+            if gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/pulls" \
+                --jq '.[].labels[].name' 2>/dev/null | grep -qx security; then
+              SECURITY=true
+            fi
+          done
           RELEASE=false
           if [ "$SECURITY" = "true" ]; then
             RELEASE=true
@@ -456,6 +490,7 @@ jobs:
           git diff --stat uv.lock || true
 
       - name: Commit version bump
+        id: commit
         if: steps.check_manual.outputs.skip == 'false'
         env:
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
@@ -464,10 +499,25 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml server.json uv.lock NEWS.md README.md
           git commit -m "chore: bump version to ${NEW_VERSION}"
-          git push
+          if git push; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Rejected. If main merely moved on past this run's commit, the
+          # newer commit's run (queued behind this one) bumps for both, so
+          # stand down without tagging. Anything else is a real failure.
+          git fetch origin main
+          TIP=$(git rev-parse FETCH_HEAD)
+          if [ "$TIP" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$TIP"; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main moved on to ${TIP} during this run; its run bumps for both, standing down"
+            exit 0
+          fi
+          echo "::error::push of the version bump was rejected and main has not moved on"
+          exit 1
 
       - name: Require successful CI for the release source
-        if: steps.decide.outputs.release == 'true'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
         timeout-minutes: 50
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -539,7 +589,7 @@ jobs:
           exit 1
 
       - name: Create git tag
-        if: steps.check_manual.outputs.skip == 'false'
+        if: steps.commit.outputs.pushed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
@@ -553,7 +603,7 @@ jobs:
           fi
 
       - name: Create release
-        if: steps.decide.outputs.release == 'true'
+        if: steps.decide.outputs.release == 'true' && steps.commit.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_VERSION: ${{ steps.bump_version.outputs.new }}
