@@ -338,9 +338,29 @@ _DEFINITION_TIEBREAK = "ORDER BY labels(n)[0], n.path, n.start_line"
 # row carries no `end`, so one winning here made an indexed definition read as
 # not found. Matched against the definition allowlist rather than excluding
 # those two labels by name, which fails open as labels are added (issue #1925).
+#
+# The Module fallback serves a node with no `path` of its own, and walks only
+# the edges that CONTAIN a definition, towards it. An untyped `-[*]-` expanded
+# through CALLS, IMPORTS and the rest of the graph before LIMIT applied, so a
+# lookup cost grew with the whole project: a node with 814 callers exhausted
+# Memgraph's 4 GiB query memory (issue #2196). It also reached the CALLER's
+# Module and reported that file as the callee's. The bound covers the deepest
+# nesting the parsers emit (Module > Class > Method > nested Function, or six
+# levels of Markdown sections) with room to spare.
+SNIPPET_CONTAINMENT_RELATIONSHIPS: tuple[RelationshipType, ...] = (
+    RelationshipType.DEFINES,
+    RelationshipType.DEFINES_METHOD,
+    RelationshipType.CONTAINS_SECTION,
+    RelationshipType.IMPLEMENTS_PATTERN,
+    RelationshipType.HAS_SMELL,
+    RelationshipType.HAS_VULNERABILITY,
+)
+SNIPPET_MODULE_FALLBACK_MAX_DEPTH = 16
+_SNIPPET_CONTAINMENT = "|".join(rel.value for rel in SNIPPET_CONTAINMENT_RELATIONSHIPS)
+
 CYPHER_FIND_BY_QUALIFIED_NAME = f"""
 MATCH (n:{_SNIPPET_LABELS}) WHERE n.qualified_name = $qn
-OPTIONAL MATCH (m:Module)-[*]-(n)
+OPTIONAL MATCH (m:Module)-[:{_SNIPPET_CONTAINMENT}*1..{SNIPPET_MODULE_FALLBACK_MAX_DEPTH}]->(n)
 RETURN n.name AS name, n.start_line AS start, n.end_line AS end, coalesce(n.path, m.path) AS path,
        n.absolute_path AS absolute_path, n.docstring AS docstring
 ORDER BY labels(n)[0], coalesce(n.path, m.path), n.start_line

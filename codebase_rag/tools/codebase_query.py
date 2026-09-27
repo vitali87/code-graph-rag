@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 
 from loguru import logger
 from pydantic_ai import Tool
@@ -22,7 +23,6 @@ from ..constants import (
     QUERY_SUMMARY_TIMEOUT,
     QUERY_SUMMARY_TRANSLATION_FAILED,
     QUERY_SUMMARY_TRUNCATED,
-    QUERY_SUMMARY_UNSCOPEABLE,
 )
 from ..schemas import QueryGraphData
 from ..services import ReadOnlyQueryProtocol
@@ -179,10 +179,27 @@ def scope_rows_to_project(
     return kept
 
 
+@dataclass(frozen=True)
+class ProjectEvidence:
+    """What `requires_project_evidence` found: truthy when the query can be
+    scoped, otherwise the check that refused it and the variables or
+    constructs it refused."""
+
+    refusal: cs.ScopeRefusal | None = None
+    subjects: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return self.refusal is None
+
+
 def requires_project_evidence(
     cypher_query: str, project_name: str | None = None
-) -> bool:
+) -> ProjectEvidence:
     """Whether `cypher_query` returns something a project filter can judge.
+
+    The result is truthy when it does. When it does not, it names the check
+    that refused the query and the variables or constructs concerned, so the
+    refusal can say what would satisfy it (issue #2197).
 
     `scope_rows_to_project` decides per row, from the values it is given. A
     query like `RETURN n.name, n.path` hands it rows with no project
@@ -215,16 +232,18 @@ def requires_project_evidence(
     # is a candidate -- so a scoped query must have the shape the prompt
     # already mandates ("MATCH, WHERE, RETURN, LIMIT" with plain aliased
     # property reads) and anything else is refused rather than analysed.
-    if _UNANALYSABLE_RE.search(executable.upper()):
-        return False
+    if constructs := sorted(
+        {match.group(0) for match in _UNANALYSABLE_RE.finditer(executable.upper())}
+    ):
+        return ProjectEvidence(cs.ScopeRefusal.UNANALYSABLE, tuple(constructs))
     projection = _return_clause(executable)
     if not projection:
-        return False
+        return ProjectEvidence(cs.ScopeRefusal.NO_RETURN)
     # A projection term must be a bare property read or an aggregate over
     # one. `left(b.qualified_name, 3)` mentions a qualified name without
     # attributing `b`, so a transformed term cannot count as evidence.
     if not _every_term_is_plain(projection):
-        return False
+        return ProjectEvidence(cs.ScopeRefusal.TRANSFORMED_TERM)
     # EVERY AGGREGATED ENTITY MUST BE RESTRICTED, checked BEFORE the
     # attributability branch below, which returns early and would make this
     # unreachable for exactly the queries that need it.
@@ -245,12 +264,15 @@ def requires_project_evidence(
     # foreign magnitude past it. Refused wherever it appears in a scoped
     # projection, not only in an all-aggregate one (issue #1494).
     if not _every_aggregate_operand_is_bindable(projection):
-        return False
+        return ProjectEvidence(cs.ScopeRefusal.UNBOUND_AGGREGATE)
     aggregated_only = _entities_only_ever_aggregated(projection)
-    if aggregated_only and not _restricts_to_project(
+    if unrestricted := _unrestricted_aliases(
         restrictable, project_name, aggregated_only
     ):
-        return False
+        return ProjectEvidence(
+            cs.ScopeRefusal.UNRESTRICTED_AGGREGATE,
+            _as_written(executable, unrestricted),
+        )
     # A PROJECTED PROPERTY (`x.qualified_name`), not the bare token: an
     # ALIAS containing it -- `RETURN n.name AS qualified_name_of_thing` --
     # returns no qualified name at all, yet satisfied a substring match.
@@ -263,7 +285,12 @@ def requires_project_evidence(
     if _PROJECTED_QUALIFIED_NAME_RE.search(projection):
         # `aggregated_only` reaches here only when `_restricts_to_project`
         # above returned True for it, so these aliases are proven confined.
-        return _every_projected_entity_is_attributable(projection, aggregated_only)
+        if unattributed := _unattributed_entities(projection, aggregated_only):
+            return ProjectEvidence(
+                cs.ScopeRefusal.UNATTRIBUTED_ENTITY,
+                _as_written(executable, unattributed),
+            )
+        return ProjectEvidence()
     # An aggregate exposes no NAMES but does expose a MAGNITUDE: a scoped
     # caller receiving `count(n)` over every indexed project learns the
     # size of projects they did not ask about. So it counts as evidence
@@ -274,7 +301,7 @@ def requires_project_evidence(
         any(agg in term for agg in cs.CYPHER_AGGREGATE_TOKENS) for term in terms
     )
     if not all_aggregates:
-        return False
+        return ProjectEvidence(cs.ScopeRefusal.NO_QUALIFIED_NAME)
     # The restriction must constrain the alias being COUNTED, not merely
     # exist. `MATCH (a),(b) WHERE a.qualified_name STARTS WITH "alpha."
     # RETURN count(b)` restricts `a` and counts `b`, which nothing bounds.
@@ -287,8 +314,58 @@ def requires_project_evidence(
     # different shape and is unaffected: it is not all-aggregates, and its
     # count is grouped by a column the row filter can judge.
     if not counted:
-        return False
-    return _restricts_to_project(restrictable, project_name, counted)
+        return ProjectEvidence(cs.ScopeRefusal.UNBOUND_AGGREGATE)
+    if unrestricted := _unrestricted_aliases(restrictable, project_name, counted):
+        return ProjectEvidence(
+            cs.ScopeRefusal.UNRESTRICTED_AGGREGATE,
+            _as_written(executable, unrestricted),
+        )
+    return ProjectEvidence()
+
+
+def unscopeable_message(evidence: ProjectEvidence, project_name: str) -> str:
+    """The refusal a scoped caller receives: the check that fired, and what
+    would satisfy it, named for the variables it concerns (issue #2197)."""
+    reason = evidence.refusal or cs.ScopeRefusal.NO_QUALIFIED_NAME
+    subjects = cs.QUERY_SCOPE_LIST_SEPARATOR.join(
+        cs.QUERY_SCOPE_SUBJECT.format(name=name) for name in evidence.subjects
+    )
+    predicates = cs.QUERY_SCOPE_AND_SEPARATOR.join(
+        cs.QUERY_SCOPE_RESTRICTION.format(name=name, project=project_name)
+        for name in evidence.subjects
+    )
+    qualified_names = cs.QUERY_SCOPE_LIST_SEPARATOR.join(
+        cs.QUERY_SCOPE_QUALIFIED_NAME.format(name=name) for name in evidence.subjects
+    )
+    return cs.QUERY_SUMMARY_UNSCOPEABLE_PREFIX.format(
+        project=project_name
+    ) + cs.QUERY_SUMMARY_UNSCOPEABLE_REASONS[reason].format(
+        project=project_name,
+        subjects=subjects,
+        predicates=predicates,
+        qualified_names=qualified_names,
+    )
+
+
+def _unrestricted_aliases(
+    cypher_query: str, project_name: str | None, aliases: set[str]
+) -> list[str]:
+    """The `aliases` `_restricts_to_project` does not find confined to the
+    project, each judged alone so the refusal can name them."""
+    return sorted(
+        alias
+        for alias in aliases
+        if not _restricts_to_project(cypher_query, project_name, {alias})
+    )
+
+
+def _as_written(cypher_query: str, names: list[str]) -> tuple[str, ...]:
+    """`names`, found uppercased by the analysis, spelled as in the query."""
+    spelled: list[str] = []
+    for name in names:
+        match = re.search(rf"\b{re.escape(name)}\b", cypher_query, re.IGNORECASE)
+        spelled.append(match.group(0) if match else name)
+    return tuple(spelled)
 
 
 def _without_comments(cypher_query: str) -> str:
@@ -426,10 +503,10 @@ def _entities_only_ever_aggregated(projection: str) -> set[str]:
     return aggregated - plain
 
 
-def _every_projected_entity_is_attributable(
+def _unattributed_entities(
     projection: str, restricted: set[str] | None = None
-) -> bool:
-    """Whether every entity read in `projection` also projects its own qn.
+) -> list[str]:
+    """The entities read in `projection` that do not also project their qn.
 
     Cypher property reads are `<entity>.<property>`, so grouping the
     projection by entity identifier says which entities the row exposes.
@@ -482,10 +559,10 @@ def _every_projected_entity_is_attributable(
         for entity in restricted or ()
         if entity in reads and not reads[entity] and entity in measured
     }
-    return all(
-        cs.CYPHER_QUALIFIED_NAME_TOKEN in props
+    return sorted(
+        entity
         for entity, props in reads.items()
-        if entity not in vouched
+        if entity not in vouched and cs.CYPHER_QUALIFIED_NAME_TOKEN not in props
     )
 
 
@@ -711,10 +788,10 @@ def create_query_tool(
             # read against the shared graph. The rows never reached the
             # caller, but the database served them, which is the part a
             # caller can neither see nor undo.
-            if project_name is not None and not requires_project_evidence(
-                cypher_query, project_name
+            if project_name is not None and not (
+                evidence := requires_project_evidence(cypher_query, project_name)
             ):
-                message = QUERY_SUMMARY_UNSCOPEABLE.format(project=project_name)
+                message = unscopeable_message(evidence, project_name)
                 # `error` as well as `summary`: MCP callers distinguish a
                 # refusal from a genuine empty result by the error key.
                 return QueryGraphData(
