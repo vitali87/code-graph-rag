@@ -208,3 +208,16 @@ def test_a_release_binary_also_names_its_notices_file(executable: str) -> None:
     assert lines[1] == cs.CLI_MSG_CREDITS_NOTICES.format(
         name=f"{stem}{cs.THIRD_PARTY_NOTICES_SUFFIX}"
     )
+
+
+def test_the_version_flag_prints_the_credits_lines() -> None:
+    # In process, so the callback's own printing is exercised; the smoke test
+    # runs `--version` in a subprocess.
+    from typer.testing import CliRunner
+
+    from codebase_rag.cli import app
+
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0, result.output
+    assert cs.CREDITS_URL in result.output
