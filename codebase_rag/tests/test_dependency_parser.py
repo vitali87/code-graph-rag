@@ -854,6 +854,25 @@ class TestCsprojParser:
 
         assert deps == []
 
+    def test_entity_declarations_are_refused_not_expanded(
+        self, tmp_path: Path, log_messages: list[str]
+    ) -> None:
+        # Negative test. Entity declarations are where XML expansion bombs and
+        # external-entity reads start, and the stdlib parser resolves internal
+        # ones, so `&pkg;` would surface as a dependency the file never named.
+        csproj = tmp_path / "MyApp.csproj"
+        csproj.write_text(
+            '<!DOCTYPE Project [<!ENTITY pkg "Injected.Package">]>\n'
+            '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup>'
+            '<PackageReference Include="&pkg;" Version="1.0.0" />'
+            "</ItemGroup></Project>\n"
+        )
+
+        deps = CsprojParser().parse(csproj)
+
+        assert deps == []
+        assert any(str(csproj) in message for message in log_messages)
+
 
 class TestParseDependencies:
     def test_pyproject_toml(self, tmp_path: Path) -> None:
