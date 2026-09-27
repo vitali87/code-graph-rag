@@ -78,6 +78,11 @@ TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
 TRACE_MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024
 TRACE_GZIP_MAGIC = b"\x1f\x8b"
 TRACE_GZIP_WBITS = 16 + 15
+# Compressed input is fed in slices of this size, and at most this many gzip
+# members are read: a profile of thousands of empty members would otherwise
+# stay under both byte caps while each member re-read the whole remainder.
+TRACE_GZIP_INPUT_CHUNK_BYTES = 1024 * 1024
+TRACE_MAX_GZIP_MEMBERS = 64
 TRACE_ERR_PPROF_TOO_LARGE = (
     "{path} decompresses to more than {limit} bytes; refusing to load it."
 )

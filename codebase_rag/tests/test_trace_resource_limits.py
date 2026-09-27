@@ -70,6 +70,34 @@ def test_every_gzip_member_and_nul_padding_is_read(small_cap: int) -> None:
     assert _decompress(raw, _PATH) == b"first second"
 
 
+def test_many_empty_members_are_refused_quickly() -> None:
+    # Each member is ~20 bytes and inflates to nothing, so both byte caps
+    # hold; bounded work per member keeps this linear, and past the member
+    # cap the file is not a profile.
+    raw = gzip.compress(b"") * 200_000
+    started = time.monotonic()
+
+    with pytest.raises(TraceFormatError, match="is not a pprof CPU profile"):
+        _decompress(raw, _PATH)
+    assert time.monotonic() - started < 2.0
+
+
+def test_members_up_to_the_member_cap_are_read() -> None:
+    raw = gzip.compress(b"x") * cs.TRACE_MAX_GZIP_MEMBERS
+
+    assert _decompress(raw, _PATH) == b"x" * cs.TRACE_MAX_GZIP_MEMBERS
+
+
+def test_a_member_spanning_many_input_slices_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cs, "TRACE_GZIP_INPUT_CHUNK_BYTES", 7)
+    payload = bytes(range(256)) * 64
+    raw = gzip.compress(payload) + gzip.compress(b"tail")
+
+    assert _decompress(raw, _PATH) == payload + b"tail"
+
+
 def test_members_together_past_the_cap_are_refused(small_cap: int) -> None:
     half = gzip.compress(bytes(small_cap // 2 + 1))
 

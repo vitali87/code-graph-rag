@@ -213,26 +213,43 @@ def _decompress(raw: bytes, profile_path: Path) -> bytes:
     if raw[:2] != cs.TRACE_GZIP_MAGIC:
         return raw
     limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
+    bad = TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+    view = memoryview(raw)
     out = bytearray()
-    pending = raw
+    position = 0
+    members = 0
     try:
-        # Trailing NUL padding after the last member is accepted, as gzip does.
-        while pending.strip(b"\x00"):
+        while position < len(raw):
+            if raw[position] == 0:
+                # Trailing NUL padding after the last member is accepted, as
+                # gzip does; checked once, since it ends the loop either way.
+                if raw.count(0, position) != len(raw) - position:
+                    raise bad
+                break
+            members += 1
+            if members > cs.TRACE_MAX_GZIP_MEMBERS:
+                raise bad
             inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
-            while pending and not inflater.eof:
-                out += inflater.decompress(pending, limit + 1 - len(out))
+            while not inflater.eof:
+                if position >= len(raw):
+                    raise bad
+                chunk = view[position : position + cs.TRACE_GZIP_INPUT_CHUNK_BYTES]
+                out += inflater.decompress(chunk, limit + 1 - len(out))
                 if len(out) > limit:
                     raise TraceFormatError(
                         cs.TRACE_ERR_PPROF_TOO_LARGE.format(
                             path=profile_path, limit=limit
                         )
                     )
-                pending = inflater.unconsumed_tail
-            if not inflater.eof:
-                raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
-            pending = inflater.unused_data
+                # Below the cap the output limit never bound, so the slice was
+                # consumed up to the member's end; what follows it is unused.
+                position += (
+                    len(chunk)
+                    - len(inflater.unconsumed_tail)
+                    - len(inflater.unused_data)
+                )
     except zlib.error as e:
-        raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+        raise bad from e
     return bytes(out)
 
 
