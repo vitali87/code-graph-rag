@@ -203,9 +203,10 @@ class TestExplain:
         self, malformed: dict
     ) -> None:
         plan = {"operatorType": "Produce", "children": [malformed]}
+        connection = Neo4jConnection(_PlanSession(plan))
 
         with pytest.raises(ReadOnlyQueryError):
-            Neo4jConnection(_PlanSession(plan)).explain("MATCH (n) RETURN n")
+            connection.explain("MATCH (n) RETURN n")
 
     def test_a_statement_without_a_plan_has_no_operators(self) -> None:
         assert Neo4jConnection(_PlanSession(None)).explain("RETURN 1") == []
