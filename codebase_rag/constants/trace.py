@@ -72,6 +72,15 @@ TRACE_DOTNET_NESTED_MARKER = "+"
 
 # Xdebug computerized-trace markers (trace_format=1, file format 4).
 TRACE_ERR_BAD_PPROF = "{path} is not a pprof CPU profile."
+# A gzipped pprof is inflated in bounded chunks: a few MB of compressed zeros
+# would otherwise expand to gigabytes in memory (#2263). The cap matches the
+# `cgr trace pull` download cap, which counts compressed bytes only.
+TRACE_MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024
+TRACE_GZIP_MAGIC = b"\x1f\x8b"
+TRACE_GZIP_WBITS = 16 + 15
+TRACE_ERR_PPROF_TOO_LARGE = (
+    "{path} decompresses to more than {limit} bytes; refusing to load it."
+)
 TRACE_ERR_BAD_ADDRS = "{path} is not a cgr instrumented address trace."
 TRACE_ERR_NO_SYMBOLIZER = "Neither atos nor addr2line is available to symbolise."
 TRACE_ERR_ADDRS_DROPPED = (

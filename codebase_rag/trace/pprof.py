@@ -24,8 +24,8 @@ become ``<anonymous>``. Traced builds should disable inlining
 
 from __future__ import annotations
 
-import gzip
 import re
+import zlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -204,13 +204,36 @@ def _bare_name(symbol: str) -> str:
 
 
 def _decompress(raw: bytes, profile_path: Path) -> bytes:
-    """Gunzip a gzipped profile; malformed input becomes a TraceFormatError."""
-    if raw[:2] != b"\x1f\x8b":
+    """Gunzip a gzipped profile under a size cap (#2263).
+
+    Malformed input, and output past ``TRACE_MAX_DECOMPRESSED_BYTES``, become a
+    TraceFormatError. Inflating in chunks keeps a decompression bomb from ever
+    being held whole; every gzip member is read, as ``gzip.decompress`` does.
+    """
+    if raw[:2] != cs.TRACE_GZIP_MAGIC:
         return raw
+    limit = cs.TRACE_MAX_DECOMPRESSED_BYTES
+    out = bytearray()
+    pending = raw
     try:
-        return gzip.decompress(raw)
-    except (OSError, EOFError) as e:
+        # Trailing NUL padding after the last member is accepted, as gzip does.
+        while pending.strip(b"\x00"):
+            inflater = zlib.decompressobj(cs.TRACE_GZIP_WBITS)
+            while pending and not inflater.eof:
+                out += inflater.decompress(pending, limit + 1 - len(out))
+                if len(out) > limit:
+                    raise TraceFormatError(
+                        cs.TRACE_ERR_PPROF_TOO_LARGE.format(
+                            path=profile_path, limit=limit
+                        )
+                    )
+                pending = inflater.unconsumed_tail
+            if not inflater.eof:
+                raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path))
+            pending = inflater.unused_data
+    except zlib.error as e:
         raise TraceFormatError(cs.TRACE_ERR_BAD_PPROF.format(path=profile_path)) from e
+    return bytes(out)
 
 
 def _decode_profile(
