@@ -3,15 +3,35 @@ from __future__ import annotations
 import time
 import urllib.error
 import urllib.request
+from http.client import HTTPMessage
+from typing import IO
 
 import mgclient  # ty: ignore[unresolved-import]
 
 from . import constants as cs
 
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
 # The Qdrant probes can carry the API key, and urllib's default opener would
 # route even a loopback request through an HTTP_PROXY that no_proxy does not
-# exempt, handing the key to the proxy.
-_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# exempt, handing the key to the proxy. Its redirect handler would likewise
+# copy the key onto a redirect to any host; Qdrant never redirects these
+# endpoints, so a 3xx fails the probe instead of being followed.
+_DIRECT_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _RefuseRedirects()
+)
 
 
 def _bolt_reachable(

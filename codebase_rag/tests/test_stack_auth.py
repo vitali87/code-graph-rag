@@ -1085,6 +1085,52 @@ def test_qdrant_key_probe_bypasses_an_http_proxy(
     assert health.qdrant_accepts_key(local_qdrant_port, "qdrant-key")
 
 
+@contextlib.contextmanager
+def _loopback_server(
+    handler: type[http.server.BaseHTTPRequestHandler],
+) -> Iterator[int]:
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_qdrant_key_probe_does_not_follow_a_redirect_elsewhere() -> None:
+    # urllib's default redirect handler copies request headers onto the new
+    # request, so following this 302 would hand the api-key to another host.
+    received: list[str | None] = []
+
+    class Elsewhere(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            received.append(self.headers.get(cs.QDRANT_API_KEY_HEADER))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+            return
+
+    with _loopback_server(Elsewhere) as elsewhere_port:
+
+        class Redirecting(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{elsewhere_port}/")
+                self.end_headers()
+
+            def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+                return
+
+        with _loopback_server(Redirecting) as qdrant_port:
+            assert not health.qdrant_accepts_key(qdrant_port, "qdrant-key")
+
+    assert received == []
+
+
 def _ensure_running_on_a_healthy_stack(
     mgr: StackManager,
     memgraph_open: bool,
