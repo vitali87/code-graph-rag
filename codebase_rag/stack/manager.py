@@ -662,9 +662,10 @@ class StackManager:
             raise
 
     def _stop_unprotected_stack(self) -> None:
+        # Whatever stops the stop, the credential error is the one to report.
         try:
             self.stop()
-        except StackError as e:
+        except (StackError, subprocess.TimeoutExpired, OSError) as e:
             logger.warning(cs.WARN_UNPROTECTED_STACK_NOT_STOPPED.format(detail=e))
 
     def _raise_if_memgraph_rejects_credentials(self) -> None:

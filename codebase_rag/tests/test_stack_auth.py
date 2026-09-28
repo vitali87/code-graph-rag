@@ -393,8 +393,19 @@ def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
 
 
 @pytest.mark.usefixtures("credentials")
-def test_a_failed_stop_does_not_hide_the_credential_error(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "stop_failure",
+    [
+        StackError("daemon gone"),
+        subprocess.TimeoutExpired(["docker", "compose", "stop"], 120),
+        FileNotFoundError("docker"),
+    ],
+)
+def test_a_failed_stop_does_not_hide_the_credential_error(
+    tmp_path: Path, stop_failure: Exception
+) -> None:
     mgr = _manager(tmp_path)
+    refusals: list[str] = []
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
@@ -404,11 +415,14 @@ def test_a_failed_stop_does_not_hide_the_credential_error(tmp_path: Path) -> Non
         patch(
             "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
         ),
-        patch.object(mgr, "stop", side_effect=StackError("daemon gone")),
+        patch.object(mgr, "stop", side_effect=stop_failure),
     ):
-        messages = _warnings_from(lambda: _refusal_of(lambda: mgr.wait_healthy(0.1)))
+        messages = _warnings_from(
+            lambda: refusals.append(_refusal_of(lambda: mgr.wait_healthy(0.1)))
+        )
 
-    assert any("daemon gone" in m and "cgr daemon down" in m for m in messages)
+    assert "still accept" in refusals[0]
+    assert any(str(stop_failure) in m and "cgr daemon down" in m for m in messages)
 
 
 def _refusal_of(action: Callable[[], None]) -> str:
