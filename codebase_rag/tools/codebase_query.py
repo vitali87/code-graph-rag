@@ -784,6 +784,53 @@ def _plain_cell(value: str) -> Text:
     )
 
 
+def _row_cells(row: ResultRow, encoding: str) -> list[Text]:
+    cells: list[Text] = []
+    for value in row.values():
+        if value is None:
+            cells.append(Text())
+        elif isinstance(value, bool):
+            cells.append(Text(status_mark(value, encoding)))
+        else:
+            cells.append(_plain_cell(str(value)))
+    return cells
+
+
+def _print_results_table(results: list[ResultRow], console: Console) -> None:
+    table = Table(
+        show_header=True,
+        header_style="bold magenta",
+    )
+    for header in results[0].keys():
+        table.add_column(_plain_cell(str(header)))
+    for row in results:
+        table.add_row(*_row_cells(row, console.encoding))
+    console.print(
+        Panel(
+            table,
+            title=QUERY_RESULTS_PANEL_TITLE,
+            expand=False,
+        )
+    )
+
+
+def _query_summary(
+    results: list[ResultRow],
+    total_count: int,
+    tokens_used: int,
+    *,
+    was_truncated: bool,
+) -> str:
+    if was_truncated or total_count > len(results):
+        return QUERY_SUMMARY_TRUNCATED.format(
+            kept=len(results),
+            total=total_count,
+            tokens=tokens_used,
+            max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
+        )
+    return QUERY_SUMMARY_SUCCESS.format(count=len(results))
+
+
 def create_query_tool(
     ingestor: ReadOnlyQueryProtocol,
     cypher_gen: CypherGenerator,
@@ -844,44 +891,11 @@ def create_query_tool(
             )
 
             if results:
-                table = Table(
-                    show_header=True,
-                    header_style="bold magenta",
-                )
-                headers = results[0].keys()
-                for header in headers:
-                    table.add_column(_plain_cell(str(header)))
+                _print_results_table(results, console)
 
-                for row in results:
-                    renderable_values = []
-                    for value in row.values():
-                        if value is None:
-                            renderable_values.append(Text())
-                        elif isinstance(value, bool):
-                            renderable_values.append(
-                                Text(status_mark(value, console.encoding))
-                            )
-                        else:
-                            renderable_values.append(_plain_cell(str(value)))
-                    table.add_row(*renderable_values)
-
-                console.print(
-                    Panel(
-                        table,
-                        title=QUERY_RESULTS_PANEL_TITLE,
-                        expand=False,
-                    )
-                )
-
-            if was_truncated or total_count > len(results):
-                summary = QUERY_SUMMARY_TRUNCATED.format(
-                    kept=len(results),
-                    total=total_count,
-                    tokens=tokens_used,
-                    max_tokens=settings.QUERY_RESULT_MAX_TOKENS,
-                )
-            else:
-                summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
+            summary = _query_summary(
+                results, total_count, tokens_used, was_truncated=was_truncated
+            )
             return QueryGraphData(
                 query_used=cypher_query, results=results, summary=summary
             )
