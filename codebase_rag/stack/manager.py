@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -18,9 +19,11 @@ from ..types_defs import JsonValue
 from . import constants as cs
 from .health import (
     memgraph_accepts_anonymous,
+    memgraph_anonymous_access,
     memgraph_rejects_credentials,
     qdrant_accepts_anonymous,
     qdrant_accepts_key,
+    qdrant_anonymous_access,
     wait_for_memgraph,
     wait_for_qdrant,
 )
@@ -200,6 +203,12 @@ def _fixed_port(published: str) -> int | None:
     if not (published.isascii() and published.isdecimal()):
         return None
     return int(published) or None
+
+
+def _with_access(
+    access: dict[str, cs.AnonymousAccess], answer: cs.AnonymousAccess
+) -> list[str]:
+    return [service for service, given in access.items() if given is answer]
 
 
 class StackError(RuntimeError):
@@ -699,14 +708,49 @@ class StackManager:
     def _stop_if_left_open(self) -> None:
         """Stop the open services a failed or interrupted start left running.
 
-        A protected service that is merely slow to start is left running.
-        Either way, the error that ended the start is the one reported.
+        A container `up -d` started can still be initialising, so a service
+        that does not answer yet is asked again until it answers or the check
+        times out: one that turns out open is stopped, a protected one that is
+        merely slow to start is left running. Either way, the error that ended
+        the start is the one reported.
         """
-        if open_services := self._services_accepting_anonymous():
-            logger.warning(
-                cs.WARN_START_LEFT_STACK_OPEN.format(services=", ".join(open_services))
-            )
-            self._stop_open_services(open_services)
+        deadline = time.monotonic() + cs.STARTED_SERVICES_CHECK_TIMEOUT_S
+        pending = self._services_with_credentials()
+        waiting = False
+        while pending:
+            access = {service: self._anonymous_access(service) for service in pending}
+            if open_services := _with_access(access, cs.AnonymousAccess.ALLOWED):
+                logger.warning(
+                    cs.WARN_START_LEFT_STACK_OPEN.format(
+                        services=", ".join(open_services)
+                    )
+                )
+                self._stop_open_services(open_services)
+            pending = _with_access(access, cs.AnonymousAccess.NO_ANSWER)
+            if not pending or time.monotonic() >= deadline:
+                return
+            if not waiting:
+                logger.info(
+                    cs.MSG_CHECKING_STARTED_SERVICES.format(
+                        timeout=cs.STARTED_SERVICES_CHECK_TIMEOUT_S,
+                        services=", ".join(pending),
+                    )
+                )
+                waiting = True
+            time.sleep(cs.DEFAULT_HEALTH_INTERVAL_S)
+
+    def _services_with_credentials(self) -> list[str]:
+        services: list[str] = []
+        if self.memgraph_credentials:
+            services.append(cs.SERVICE_MEMGRAPH)
+        if self.qdrant_api_key:
+            services.append(cs.SERVICE_QDRANT)
+        return services
+
+    def _anonymous_access(self, service: str) -> cs.AnonymousAccess:
+        if service == cs.SERVICE_MEMGRAPH:
+            return memgraph_anonymous_access(self.memgraph_host, self.memgraph_port)
+        return qdrant_anonymous_access(self.qdrant_port, host=self.qdrant_host)
 
     def _stop_open_services(self, open_services: list[str]) -> None:
         # Whatever stops the stop, the error that led here is the one to report.

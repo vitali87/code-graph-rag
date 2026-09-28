@@ -75,10 +75,16 @@ def _nothing_running_open(monkeypatch: pytest.MonkeyPatch) -> None:
     # answer patches the probe itself.
     monkeypatch.setattr(manager_module, "memgraph_accepts_anonymous", _closed)
     monkeypatch.setattr(manager_module, "qdrant_accepts_anonymous", _closed)
+    monkeypatch.setattr(manager_module, "memgraph_anonymous_access", _refused)
+    monkeypatch.setattr(manager_module, "qdrant_anonymous_access", _refused)
 
 
 def _closed(*_: str | int, **__: str) -> bool:
     return False
+
+
+def _refused(*_: str | int, **__: str) -> cs.AnonymousAccess:
+    return cs.AnonymousAccess.REFUSED
 
 
 def _manager(tmp_path: Path) -> StackManager:
@@ -466,6 +472,9 @@ def test_a_stack_found_running_open_is_refused_but_not_stopped(
 @contextlib.contextmanager
 def _left_running(mgr: StackManager, memgraph_open: bool) -> Iterator[MagicMock]:
     """A Memgraph open or not and a protected Qdrant; yields the patched `stop`."""
+    memgraph_access = (
+        cs.AnonymousAccess.ALLOWED if memgraph_open else cs.AnonymousAccess.REFUSED
+    )
     with (
         patch(
             "codebase_rag.stack.manager.memgraph_accepts_anonymous",
@@ -473,6 +482,10 @@ def _left_running(mgr: StackManager, memgraph_open: bool) -> Iterator[MagicMock]
         ),
         patch(
             "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
+        patch(
+            "codebase_rag.stack.manager.memgraph_anonymous_access",
+            return_value=memgraph_access,
         ),
         patch.object(mgr, "stop") as stop,
     ):
@@ -562,11 +575,12 @@ def test_up_that_fails_stops_only_an_open_service_it_started(
         ),
         # Closed before `up -d`, so a Memgraph open after it is this start's.
         patch(
-            "codebase_rag.stack.manager.memgraph_accepts_anonymous",
-            side_effect=[False, memgraph_open],
-        ),
-        patch(
-            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+            "codebase_rag.stack.manager.memgraph_anonymous_access",
+            return_value=(
+                cs.AnonymousAccess.ALLOWED
+                if memgraph_open
+                else cs.AnonymousAccess.REFUSED
+            ),
         ),
         patch.object(mgr, "stop") as stop,
     ):
@@ -595,6 +609,68 @@ def test_up_refuses_a_stack_already_running_open_and_leaves_it_running(
         mgr.up()
 
     assert all(c.args[0][-2:] != ["up", "-d"] for c in run.call_args_list)
+    stop.assert_not_called()
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("qdrant_answers", "stopped"),
+    [
+        (
+            [cs.AnonymousAccess.NO_ANSWER, cs.AnonymousAccess.ALLOWED],
+            [(cs.SERVICE_QDRANT,)],
+        ),
+        ([cs.AnonymousAccess.NO_ANSWER, cs.AnonymousAccess.REFUSED], []),
+    ],
+)
+def test_a_failed_start_asks_again_a_service_that_is_still_initialising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    qdrant_answers: list[cs.AnonymousAccess],
+    stopped: list[tuple[str, ...]],
+) -> None:
+    # A container `up -d` started can answer only after the first check; it
+    # is stopped if it then turns out open, and left running if protected.
+    monkeypatch.setattr(cs, "DEFAULT_HEALTH_INTERVAL_S", 0)
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
+        patch(
+            "codebase_rag.stack.manager.qdrant_anonymous_access",
+            side_effect=qdrant_answers,
+        ) as qdrant_probe,
+        patch.object(mgr, "stop") as stop,
+    ):
+        error, _ = _failure_of(lambda: mgr.wait_healthy(0))
+
+    assert isinstance(error, StackError)
+    assert qdrant_probe.call_count == len(qdrant_answers)
+    assert [c.args for c in stop.call_args_list] == stopped
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_failed_start_stops_asking_a_silent_service_after_its_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing that does not answer is exposed; it is left running, and the
+    # failure is reported once the check times out.
+    monkeypatch.setattr(cs, "STARTED_SERVICES_CHECK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(cs, "DEFAULT_HEALTH_INTERVAL_S", 0.01)
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=False),
+        patch(
+            "codebase_rag.stack.manager.qdrant_anonymous_access",
+            return_value=cs.AnonymousAccess.NO_ANSWER,
+        ) as qdrant_probe,
+        patch.object(mgr, "stop") as stop,
+        pytest.raises(StackError, match="qdrant did not become healthy"),
+    ):
+        mgr.wait_healthy(0)
+
+    assert qdrant_probe.call_count > 1
     stop.assert_not_called()
 
 
@@ -794,6 +870,60 @@ def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
         assert not health.qdrant_accepts_anonymous(6333)
 
 
+@pytest.mark.parametrize(
+    ("failure", "access"),
+    [
+        ("Authentication failure", cs.AnonymousAccess.REFUSED),
+        (
+            "couldn't connect to host: Connection refused",
+            cs.AnonymousAccess.NO_ANSWER,
+        ),
+    ],
+)
+def test_memgraph_anonymous_access_tells_a_refusal_from_no_answer(
+    failure: str, access: cs.AnonymousAccess
+) -> None:
+    # Memgraph 3.3 refuses an anonymous login at connect with this message.
+    error = health.mgclient.OperationalError(failure)
+    with patch.object(health.mgclient, "connect", side_effect=error):
+        assert health.memgraph_anonymous_access("localhost", 7687) is access
+
+
+def test_memgraph_anonymous_access_is_allowed_when_a_query_runs() -> None:
+    with patch.object(health.mgclient, "connect") as connect:
+        access = health.memgraph_anonymous_access("localhost", 7687)
+
+    assert access is cs.AnonymousAccess.ALLOWED
+    connect.assert_called_once_with(host="localhost", port=7687)
+    connect.return_value.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("status", "access"),
+    [
+        (401, cs.AnonymousAccess.REFUSED),
+        (403, cs.AnonymousAccess.REFUSED),
+        (503, cs.AnonymousAccess.NO_ANSWER),
+    ],
+)
+def test_qdrant_anonymous_access_reads_the_status(
+    status: int, access: cs.AnonymousAccess
+) -> None:
+    answer = urllib.error.HTTPError(
+        "http://127.0.0.1:6333/collections", status, "", Message(), None
+    )
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=answer):
+        assert health.qdrant_anonymous_access(6333) is access
+
+
+def test_qdrant_anonymous_access_is_allowed_or_unanswered() -> None:
+    with patch.object(health._DIRECT_OPENER, "open", return_value=_ok_response()):
+        assert health.qdrant_anonymous_access(6333) is cs.AnonymousAccess.ALLOWED
+    refused = urllib.error.URLError(ConnectionRefusedError())
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=refused):
+        assert health.qdrant_anonymous_access(6333) is cs.AnonymousAccess.NO_ANSWER
+
+
 @pytest.fixture
 def local_qdrant_port() -> Iterator[int]:
     """A loopback HTTP server that answers 200, standing in for Qdrant."""
@@ -991,8 +1121,8 @@ def test_wait_healthy_without_credentials_does_not_try_a_login(
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
         patch("codebase_rag.stack.manager.memgraph_rejects_credentials") as probe,
-        patch("codebase_rag.stack.manager.memgraph_accepts_anonymous") as memgraph_open,
-        patch("codebase_rag.stack.manager.qdrant_accepts_anonymous") as qdrant_open,
+        patch("codebase_rag.stack.manager.memgraph_anonymous_access") as memgraph_open,
+        patch("codebase_rag.stack.manager.qdrant_anonymous_access") as qdrant_open,
     ):
         with pytest.raises(StackError, match="did not become healthy"):
             mgr.wait_healthy(timeout=0)

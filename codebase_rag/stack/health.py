@@ -27,7 +27,7 @@ def _bolt_reachable(
             conn = mgclient.connect(host=host, port=port)
         try:
             cursor = conn.cursor()
-            cursor.execute("RETURN 1")
+            cursor.execute(cs.BOLT_PROBE_QUERY)
             cursor.fetchall()
         finally:
             conn.close()
@@ -62,7 +62,29 @@ def wait_for_memgraph(
 
 
 def memgraph_accepts_anonymous(host: str, port: int) -> bool:
-    return _bolt_reachable(host, port)
+    return memgraph_anonymous_access(host, port) is cs.AnonymousAccess.ALLOWED
+
+
+def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
+    # Memgraph refuses a login at connect, with the same exception type as a
+    # refused connection, so only the message tells the two apart.
+    try:
+        conn = mgclient.connect(host=host, port=port)
+    except mgclient.Error as e:
+        if cs.MEMGRAPH_AUTH_FAILURE in str(e):
+            return cs.AnonymousAccess.REFUSED
+        return cs.AnonymousAccess.NO_ANSWER
+    except OSError:
+        return cs.AnonymousAccess.NO_ANSWER
+    try:
+        cursor = conn.cursor()
+        cursor.execute(cs.BOLT_PROBE_QUERY)
+        cursor.fetchall()
+    except (mgclient.Error, OSError):
+        return cs.AnonymousAccess.NO_ANSWER
+    finally:
+        conn.close()
+    return cs.AnonymousAccess.ALLOWED
 
 
 def memgraph_rejects_credentials(
@@ -86,6 +108,24 @@ def qdrant_accepts_anonymous(
 ) -> bool:
     request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
     return _qdrant_answers(request, timeout)
+
+
+def qdrant_anonymous_access(
+    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+) -> cs.AnonymousAccess:
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    try:
+        with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
+            status = resp.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except OSError:
+        return cs.AnonymousAccess.NO_ANSWER
+    if status == 200:
+        return cs.AnonymousAccess.ALLOWED
+    if status in cs.HTTP_AUTH_REFUSED_STATUSES:
+        return cs.AnonymousAccess.REFUSED
+    return cs.AnonymousAccess.NO_ANSWER
 
 
 def qdrant_accepts_key(

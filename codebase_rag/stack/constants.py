@@ -26,6 +26,14 @@ class StackState(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AnonymousAccess(StrEnum):
+    """How a service answers a client without credentials."""
+
+    ALLOWED = "allowed"
+    REFUSED = "refused"
+    NO_ANSWER = "no_answer"
+
+
 ERR_DOCKER_NOT_INSTALLED = (
     "docker not found on PATH. Install Docker Desktop or the docker CLI."
 )
@@ -41,6 +49,13 @@ WARN_START_LEFT_STACK_OPEN = (
     "connections without the configured credentials: {services}. Stopping "
     "them; run 'cgr daemon down' and then 'cgr daemon up', which keeps the "
     "data volumes."
+)
+# How long a start that did not finish waits for the services it started to
+# answer, so that one still initialising is checked too before it returns.
+STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0
+MSG_CHECKING_STARTED_SERVICES = (
+    "The start did not finish; waiting up to {timeout:g}s for an answer from "
+    "{services} to check for access without the configured credentials..."
 )
 WARN_OPEN_SERVICES_NOT_STOPPED = (
     "Could not stop the services that accept connections without the "
@@ -92,6 +107,8 @@ QDRANT_DATA_PROBE_PATH = "/collections"
 # 401 for any other key.
 QDRANT_WRITE_PROBE_PATH = "/collections/aliases"
 QDRANT_WRITE_PROBE_BODY = b'{"actions": []}'
+# What Qdrant answers a request its API key does not authorise.
+HTTP_AUTH_REFUSED_STATUSES = (401, 403)
 HTTP_METHOD_POST = "POST"
 HTTP_CONTENT_TYPE_HEADER = "Content-Type"
 JSON_CONTENT_TYPE = "application/json"
@@ -120,6 +137,7 @@ ERR_QDRANT_REJECTS_KEY = (
 # The message Memgraph rejects a Bolt login with. Its client raises the same
 # exception type for a refused connection, so only the text tells them apart.
 MEMGRAPH_AUTH_FAILURE = "Authentication failure"
+BOLT_PROBE_QUERY = "RETURN 1"
 ERR_QDRANT_PORT_NOT_FIXED = (
     "The qdrant port entry for container port {target} in {path} has no fixed "
     "host port (Compose resolves it to {published}). Docker picks such a port "
