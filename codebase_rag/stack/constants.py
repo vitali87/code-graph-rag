@@ -35,6 +35,11 @@ ERR_DOCKER_DAEMON_DOWN = (
 ERR_COMPOSE_NOT_AVAILABLE = "`docker compose` plugin not available. Install Docker Desktop v2+ or the compose plugin."
 ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
+COMPOSE_STOP_COMMAND = "stop"
+WARN_UNPROTECTED_STACK_NOT_STOPPED = (
+    "The stack just started does not enforce the configured credentials, and "
+    "stopping it failed: {detail}. Run 'cgr daemon down' before it is used."
+)
 ERR_STACK_NOT_HEALTHY = (
     "Stack started but {service} did not become healthy within {timeout}s."
 )

@@ -564,13 +564,20 @@ class StackManager:
             )
 
     def down(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
+        self._stop_containers("down", timeout)
+
+    def stop(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
+        """Stop the containers but keep them, with their logs and volumes."""
+        self._stop_containers(cs.COMPOSE_STOP_COMMAND, timeout)
+
+    def _stop_containers(self, command: str, timeout: float) -> None:
         if not self.compose_file.exists():
             return
         if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
         logger.info(cs.MSG_STOPPING_STACK)
         result = subprocess.run(
-            self._compose_cmd("down"),
+            self._compose_cmd(command),
             capture_output=True,
             text=True,
             encoding=root_cs.ENCODING_UTF8,
@@ -645,8 +652,20 @@ class StackManager:
             )
         # Ready is not the same as protected: prove the started containers
         # enforce the credentials rather than rely on Compose having
-        # recreated each one whose environment changed.
-        self.raise_if_auth_not_enforced()
+        # recreated each one whose environment changed. Every caller has just
+        # started the stack, so one that does not is stopped rather than left
+        # running open.
+        try:
+            self.raise_if_auth_not_enforced()
+        except StackError:
+            self._stop_unprotected_stack()
+            raise
+
+    def _stop_unprotected_stack(self) -> None:
+        try:
+            self.stop()
+        except StackError as e:
+            logger.warning(cs.WARN_UNPROTECTED_STACK_NOT_STOPPED.format(detail=e))
 
     def _raise_if_memgraph_rejects_credentials(self) -> None:
         """Name a rejected login instead of reporting Memgraph as down.

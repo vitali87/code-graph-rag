@@ -370,7 +370,8 @@ def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
     tmp_path: Path, memgraph_open: bool, qdrant_open: bool, open_services: str
 ) -> None:
     # `up` and `restart` end in wait_healthy: a ready service is checked for
-    # the credentials too, whether or not Compose recreated its container.
+    # the credentials too, whether or not Compose recreated its container,
+    # and the stack just started is stopped rather than left running open.
     mgr = _manager(tmp_path)
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
@@ -383,9 +384,72 @@ def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
             "codebase_rag.stack.manager.qdrant_accepts_anonymous",
             return_value=qdrant_open,
         ),
+        patch.object(mgr, "stop") as stop,
         pytest.raises(StackError, match=f"without them: {open_services}\\."),
     ):
         mgr.wait_healthy(timeout=0.1)
+
+    stop.assert_called_once_with()
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_failed_stop_does_not_hide_the_credential_error(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous", return_value=True
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
+        patch.object(mgr, "stop", side_effect=StackError("daemon gone")),
+    ):
+        messages = _warnings_from(lambda: _refusal_of(lambda: mgr.wait_healthy(0.1)))
+
+    assert any("daemon gone" in m and "cgr daemon down" in m for m in messages)
+
+
+def _refusal_of(action: Callable[[], None]) -> str:
+    try:
+        action()
+    except StackError as refused:
+        return str(refused)
+    raise AssertionError("no StackError")
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_stack_found_running_open_is_refused_but_not_stopped(
+    tmp_path: Path,
+) -> None:
+    # This invocation did not start it, and other clients may be using it.
+    mgr = _manager(tmp_path)
+    with patch.object(mgr, "stop") as stop:
+        error, _, _, _ = _ensure_running_on_a_healthy_stack(
+            mgr, memgraph_open=True, qdrant_open=False
+        )
+
+    assert error is not None
+    assert "still accept" in error
+    stop.assert_not_called()
+
+
+def test_stop_keeps_the_containers(tmp_path: Path) -> None:
+    mgr = _manager(tmp_path)
+    mgr.ensure_compose_file()
+    with (
+        patch(
+            "codebase_rag.stack.manager.shutil.which", return_value="/usr/bin/docker"
+        ),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as run,
+    ):
+        mgr.stop()
+
+    assert run.call_args.args[0][-1] == "stop"
 
 
 @pytest.mark.usefixtures("credentials")
@@ -396,6 +460,7 @@ def test_restart_checks_the_restarted_stack_enforces_the_credentials(
     with (
         patch.object(stack_cli, "StackManager", return_value=mgr),
         patch.object(mgr, "restart"),
+        patch.object(mgr, "stop") as stop,
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
         patch(
@@ -409,6 +474,7 @@ def test_restart_checks_the_restarted_stack_enforces_the_credentials(
 
     assert result.exit_code == 1
     assert "still accept" in result.output
+    stop.assert_called_once_with()
 
 
 def test_bolt_probe_passes_the_login_to_mgclient() -> None:
