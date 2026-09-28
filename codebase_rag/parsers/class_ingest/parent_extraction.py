@@ -198,18 +198,16 @@ def extract_parent_classes(
     # PHP `extends` (a class's superclass or an interface's superinterfaces)
     # is a base_clause listing `name` nodes; both are inheritance.
     if base_clause := find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE):
-        for child in base_clause.children:
-            if parent_name := php_base_simple_name(child):
-                parent_classes.append(resolve_to_qn(parent_name, module_qn))
+        parent_classes.extend(
+            resolve_to_qn(parent_name, module_qn)
+            for child in base_clause.children
+            if (parent_name := php_base_simple_name(child))
+        )
 
-    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
     if class_node.type == cs.TS_RS_TRAIT_ITEM:
-        if bounds := class_node.child_by_field_name(cs.FIELD_BOUNDS):
-            for child in bounds.children:
-                base = java_base_type_identifier(child)
-                if base is not None and base.text:
-                    if name := safe_decode_text(base):
-                        parent_classes.append(resolve_to_qn(name, module_qn))
+        parent_classes.extend(
+            _rust_supertrait_parents(class_node, module_qn, resolve_to_qn)
+        )
 
     if class_node.type in (
         cs.TS_DART_CLASS_DEFINITION,
@@ -225,6 +223,21 @@ def extract_parent_classes(
         )
 
     return parent_classes
+
+
+def _rust_supertrait_parents(
+    trait_node: Node, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> list[str]:
+    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
+    bounds = trait_node.child_by_field_name(cs.FIELD_BOUNDS)
+    if bounds is None:
+        return []
+    parents: list[str] = []
+    for child in bounds.children:
+        base = java_base_type_identifier(child)
+        if base is not None and base.text and (name := safe_decode_text(base)):
+            parents.append(resolve_to_qn(name, module_qn))
+    return parents
 
 
 # Only these wrappers are descended; see the constants module for why

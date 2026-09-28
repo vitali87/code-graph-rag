@@ -268,6 +268,44 @@ class JavaMethodResolverMixin:
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
 
+    def _java_this_type(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # Inside a method-body anonymous class `this` is the anon (its base
+        # type), which the lexical named-class walk misses; prefer that, then
+        # the lexical containing class (precise in multi-class files); fall
+        # back to the first class under the module otherwise.
+        if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
+            return anon_base
+        if lexical := self._lexical_class_qn(context_node, module_qn):
+            return lexical
+        return next(
+            (
+                str(qn)
+                for qn, entity_type in self.function_registry.find_with_prefix(
+                    module_qn
+                )
+                if entity_type == NodeType.CLASS
+            ),
+            None,
+        )
+
+    def _java_super_type(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # The lexical class's parent when available; otherwise the first class
+        # under the module that has a parent.
+        if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
+            parent_qn := self._find_parent_class(lexical)
+        ):
+            return parent_qn
+        for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
+            if entity_type == NodeType.CLASS and (
+                parent_qn := self._find_parent_class(qn)
+            ):
+                return parent_qn
+        return None
+
     def _resolve_java_object_type(
         self,
         object_ref: str,
@@ -283,38 +321,14 @@ class JavaMethodResolverMixin:
         # then the lexical containing class (precise in multi-class files); fall back
         # to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
-            if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
-                return anon_base
-            if lexical := self._lexical_class_qn(context_node, module_qn):
-                return lexical
-            return next(
-                (
-                    str(qn)
-                    for qn, entity_type in self.function_registry.find_with_prefix(
-                        module_qn
-                    )
-                    if entity_type == NodeType.CLASS
-                ),
-                None,
-            )
+            return self._java_this_type(context_node, module_qn)
 
-        # 'super' reference: resolve the lexical class then its parent when
-        # available; otherwise the first class under the module with a parent.
         if object_ref == cs.JAVA_KEYWORD_SUPER:
-            if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
-                parent_qn := self._find_parent_class(lexical)
-            ):
-                return parent_qn
-            for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-                if entity_type == NodeType.CLASS:
-                    if parent_qn := self._find_parent_class(qn):
-                        return parent_qn
-            return None
+            return self._java_super_type(context_node, module_qn)
 
-        if module_qn in self.import_processor.import_mapping:
-            import_map = self.import_processor.import_mapping[module_qn]
-            if object_ref in import_map:
-                return self._imported_class_qn(import_map[object_ref], object_ref)
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if import_map is not None and object_ref in import_map:
+            return self._imported_class_qn(import_map[object_ref], object_ref)
 
         simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
