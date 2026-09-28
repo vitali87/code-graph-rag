@@ -224,26 +224,23 @@ def _categorize_node_types(
     )
 
 
+def _collect_type_names(obj: dict | list, out: set[str]) -> None:
+    # Every string `type` value anywhere in a node-types.json structure.
+    children = obj.values() if isinstance(obj, dict) else obj
+    if isinstance(obj, dict) and isinstance(obj.get("type"), str):
+        out.add(obj["type"])
+    for child in children:
+        if isinstance(child, dict | list):
+            _collect_type_names(child, out)
+
+
 def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
     try:
         with open(node_types_path, encoding="utf-8") as f:
             node_types = json.load(f)
 
         all_node_names: set[str] = set()
-
-        def extract_types(obj: dict | list) -> None:
-            if isinstance(obj, dict):
-                if "type" in obj and isinstance(obj["type"], str):
-                    all_node_names.add(obj["type"])
-                for value in obj.values():
-                    if isinstance(value, dict | list):
-                        extract_types(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    if isinstance(item, dict | list):
-                        extract_types(item)
-
-        extract_types(node_types)
+        _collect_type_names(node_types, all_node_names)
 
         semantic_categories = _extract_semantic_categories(node_types)
 

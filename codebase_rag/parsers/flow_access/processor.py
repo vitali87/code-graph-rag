@@ -640,6 +640,41 @@ class _PendingCapture:
     escaped: bool = False
 
 
+def _propagate_summaries(
+    base: dict[str, frozenset[HandleBinding]], pend: dict[str, set[str]]
+) -> tuple[dict[str, frozenset[HandleBinding]], dict[str, bool]]:
+    """Worklist fixpoint: fold each pending callee's origins and taint in.
+
+    Origins and taintedness only grow, so this converges through recursion;
+    only a changed callee's callers are re-queued, keeping it O(V + E).
+    """
+    resolved = dict(base)
+    is_tainted = {qn: bool(origins) for qn, origins in base.items()}
+    callers_of: dict[str, set[str]] = defaultdict(set)
+    for qn, callees in pend.items():
+        for callee_qn in callees:
+            callers_of[callee_qn].add(qn)
+    worklist = deque(qn for qn in base if pend[qn])
+    queued = set(worklist)
+    while worklist:
+        qn = worklist.popleft()
+        queued.discard(qn)
+        new_origins = base[qn].union(
+            *(resolved.get(callee_qn, frozenset()) for callee_qn in pend[qn])
+        )
+        new_tainted = bool(base[qn]) or any(
+            is_tainted.get(callee_qn, False) for callee_qn in pend[qn]
+        )
+        if new_origins == resolved[qn] and new_tainted == is_tainted[qn]:
+            continue
+        resolved[qn] = new_origins
+        is_tainted[qn] = new_tainted
+        fresh = callers_of[qn] - queued
+        worklist.extend(fresh)
+        queued |= fresh
+    return resolved, is_tainted
+
+
 class FlowProcessor:
     """Detects intra-procedural value flow in a function body and emits FLOWS_TO
     edges: resource->resource (a read source reaches a write sink), caller->callee
@@ -1421,33 +1456,52 @@ class FlowProcessor:
             # subject can be a call (`Forward(secret) is string s`), whose own
             # argument and parameter-to-sink flows are emitted by walking it.
             self._bind_pattern_test(node, tainted, jc)
-        if node_type == d.declarator_type or node_type in (
+        self._apply_js_leaf_kind(node, node_type, tainted, handles, jc)
+
+    def _apply_js_leaf_kind(
+        self,
+        node: Node,
+        node_type: str,
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> None:
+        # The per-node-kind leaf effect: bind/kill, call, macro, stream or
+        # keyword write, or a return's contribution to the summary.
+        d = jc.descriptor
+        # A node's type is never None, so the optional descriptor slots below
+        # compare directly: an unset slot simply never matches.
+        if node_type in (
+            d.declarator_type,
             cs.TS_ASSIGNMENT_EXPRESSION,
             cs.TS_GO_ASSIGNMENT_STATEMENT,
         ):
-            if jc.type_ctors and self._decl_type_is_handle(node.parent, jc):
-                return
-            self._lean_bind(node, tainted, handles, jc)
-        elif node_type in d.extra_declarator_types:
-            if node_type == cs.TS_GO_RANGE_CLAUSE:
-                self._lean_kill(node, tainted, handles, jc)
-            else:
+            if not (jc.type_ctors and self._decl_type_is_handle(node.parent, jc)):
                 self._lean_bind(node, tainted, handles, jc)
+        elif node_type in d.extra_declarator_types:
+            bind_or_kill = (
+                self._lean_kill
+                if node_type == cs.TS_GO_RANGE_CLAUSE
+                else self._lean_bind
+            )
+            bind_or_kill(node, tainted, handles, jc)
         elif node_type == d.call_type:
             self._js_call(node, tainted, handles, jc)
-        elif d.macro_type is not None and node_type == d.macro_type:
+        elif node_type == d.macro_type:
             self._flow_macro(node, tainted, jc)
-        elif d.stream_sink_type is not None and node_type == d.stream_sink_type:
+        elif node_type == d.stream_sink_type:
             self._flow_stream(node, tainted, handles, jc)
-        elif d.keyword_stdout_write_types and node_type in d.keyword_stdout_write_types:
+        elif node_type in (d.keyword_stdout_write_types or ()):
             self._flow_keyword_write(node, tainted, jc)
         elif node_type in (cs.TS_RETURN_STATEMENT, cs.TS_RS_RETURN_EXPRESSION):
             # Rust names this node return_expression, so matching only
             # return_statement dropped every Rust return summary (issue #1365).
-            returned = self._js_return_taint(node, tainted, jc)
-            if returned is not None:
-                self._acc_returns_taint = True
-                self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
+            self._accumulate_return_taint(self._js_return_taint(node, tainted, jc))
+
+    def _accumulate_return_taint(self, returned: Taint | None) -> None:
+        if returned is not None:
+            self._acc_returns_taint = True
+            self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
     def _bind_pattern_test(self, node: Node, tainted: _TaintMap, jc: _JsCtx) -> None:
         # `o is string s` binds `s` to the SUBJECT's value, so the bound name
@@ -3677,21 +3731,7 @@ class FlowProcessor:
         if sink is not None:
             dst_identity = literal_target(node, sink.target_arg, sink.target_kw)
             for taint, _via in arg_taints:
-                # Resolved origins emit resource flows now; pending callees defer
-                # to finalize, when the (possibly forward) callee's origins resolve.
-                for source in taint.origins:
-                    self._emit_resource_flow(source, sink.kind, dst_identity)
-                if taint.pending:
-                    self._deferred_resource_flows.append(
-                        (taint.pending, sink.kind, dst_identity)
-                    )
-                # A parameter reaching this sink is a parameter-to-sink summary
-                # (issue #1142): composed at finalize against every call site
-                # that passes a tainted argument into this parameter.
-                for pname in taint.params:
-                    self._param_sinks[(ctx.caller_qn, pname)].add(
-                        (sink.kind, dst_identity)
-                    )
+                self._flow_taint_into_sink(taint, sink.kind, dst_identity, ctx)
             return
         callee = self._resolve(
             raw,
@@ -3703,33 +3743,58 @@ class FlowProcessor:
         )
         if callee is None:
             return
-        callee_type, callee_qn = callee
         for taint, via in arg_taints:
-            if taint.origins:
-                # Definitely tainted arg: emit the caller->callee arg edge now.
-                self.ingestor.ensure_relationship_batch(
-                    ctx.caller_spec,
-                    cs.RelationshipType.FLOWS_TO,
-                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-                )
-            elif taint.pending:
-                # Tainted only via a pending callee: defer, so no arg edge is
-                # emitted if that callee turns out to return nothing tainted.
-                self._deferred_arg_edges.append(
-                    (taint.pending, ctx.caller_spec, callee_type, callee_qn, via)
-                )
-            # Forward parameter-taint (issue #1142), orthogonal to the arg edge:
-            # a concrete argument records a call site to compose against the
-            # callee's parameter-sink closure; an argument that IS one of this
-            # function's parameters records a transitive hand-off so a wrapper of
-            # a wrapper still resolves. The token ties a pass-through composition
-            # to this exact call so it is not shared across calls (issue #1168).
-            if taint.origins or taint.pending:
-                token = _passthrough_result_token(ctx.caller_qn, node)
-                self._param_call_sites.append((taint, callee_qn, via, token))
-            for pname in taint.params:
-                self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
+            self._flow_arg_into_callee(taint, via, callee, node, ctx)
+
+    def _flow_taint_into_sink(
+        self, taint: Taint, kind: ResourceKind, dst_identity: str, ctx: _FlowCtx
+    ) -> None:
+        # Resolved origins emit resource flows now; pending callees defer to
+        # finalize, when the (possibly forward) callee's origins resolve.
+        for source in taint.origins:
+            self._emit_resource_flow(source, kind, dst_identity)
+        if taint.pending:
+            self._deferred_resource_flows.append((taint.pending, kind, dst_identity))
+        # A parameter reaching this sink is a parameter-to-sink summary (issue
+        # #1142): composed at finalize against every call site that passes a
+        # tainted argument into this parameter.
+        for pname in taint.params:
+            self._param_sinks[(ctx.caller_qn, pname)].add((kind, dst_identity))
+
+    def _flow_arg_into_callee(
+        self,
+        taint: Taint,
+        via: str,
+        callee: tuple[str, str],
+        node: Node,
+        ctx: _FlowCtx,
+    ) -> None:
+        callee_type, callee_qn = callee
+        if taint.origins:
+            # Definitely tainted arg: emit the caller->callee arg edge now.
+            self.ingestor.ensure_relationship_batch(
+                ctx.caller_spec,
+                cs.RelationshipType.FLOWS_TO,
+                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+            )
+        elif taint.pending:
+            # Tainted only via a pending callee: defer, so no arg edge is
+            # emitted if that callee turns out to return nothing tainted.
+            self._deferred_arg_edges.append(
+                (taint.pending, ctx.caller_spec, callee_type, callee_qn, via)
+            )
+        # Forward parameter-taint (issue #1142), orthogonal to the arg edge: a
+        # concrete argument records a call site to compose against the callee's
+        # parameter-sink closure; an argument that IS one of this function's
+        # parameters records a transitive hand-off so a wrapper of a wrapper
+        # still resolves. The token ties a pass-through composition to this
+        # exact call so it is not shared across calls (issue #1168).
+        if taint.origins or taint.pending:
+            token = _passthrough_result_token(ctx.caller_qn, node)
+            self._param_call_sites.append((taint, callee_qn, via, token))
+        for pname in taint.params:
+            self._param_flow_edges.append((ctx.caller_qn, pname, callee_qn, via))
 
     def _arg_taints(
         self, call_node: Node, tainted: _TaintMap, ctx: _FlowCtx
@@ -3989,30 +4054,7 @@ class FlowProcessor:
             own_pending = summary.pending if summary is not None else frozenset()
             base[qn] = own_origins | frozenset(extra_origins.get(qn, ()))
             pend[qn] = set(own_pending) | set(extra_pending.get(qn, ()))
-        resolved = dict(base)
-        is_tainted = {qn: bool(base[qn]) for qn in all_qns}
-        callers_of: dict[str, set[str]] = defaultdict(set)
-        for qn in all_qns:
-            for callee_qn in pend[qn]:
-                callers_of[callee_qn].add(qn)
-        worklist = deque(qn for qn in all_qns if pend[qn])
-        queued = set(worklist)
-        while worklist:
-            qn = worklist.popleft()
-            queued.discard(qn)
-            new_origins = base[qn]
-            new_tainted = bool(base[qn])
-            for callee_qn in pend[qn]:
-                new_origins = new_origins | resolved.get(callee_qn, frozenset())
-                new_tainted = new_tainted or is_tainted.get(callee_qn, False)
-            if new_origins != resolved[qn] or new_tainted != is_tainted[qn]:
-                resolved[qn] = new_origins
-                is_tainted[qn] = new_tainted
-                for caller in callers_of[qn]:
-                    if caller not in queued:
-                        worklist.append(caller)
-                        queued.add(caller)
-        return resolved, is_tainted
+        return _propagate_summaries(base, pend)
 
     def _resolve_return_params(self) -> set[tuple[str, str]]:
         # The (function, parameter) pairs whose value reaches the function's
