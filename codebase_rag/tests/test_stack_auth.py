@@ -432,6 +432,33 @@ def test_qdrant_key_probe_sends_the_configured_key() -> None:
     assert request.get_header(cs.QDRANT_API_KEY_HEADER.capitalize()) == "qdrant-key"
 
 
+def test_qdrant_key_probe_is_a_write_that_changes_nothing() -> None:
+    # Listing collections also works with a read-only key, which cannot index.
+    with patch.object(
+        health._DIRECT_OPENER, "open", return_value=_ok_response()
+    ) as open_url:
+        health.qdrant_accepts_key(6333, "qdrant-key")
+
+    request = open_url.call_args.args[0]
+    assert request.get_method() == "POST"
+    assert request.full_url == "http://127.0.0.1:6333/collections/aliases"
+    assert json.loads(request.data) == {"actions": []}
+    assert request.get_header("Content-type") == "application/json"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_qdrant_key_probe_is_false_for_an_unknown_or_read_only_key(
+    status: int,
+) -> None:
+    # Qdrant 1.19 answers the probe 401 for an unknown key and 403 for its
+    # read-only key.
+    refused = urllib.error.HTTPError(
+        "http://127.0.0.1:6333/collections/aliases", status, "", Message(), None
+    )
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=refused):
+        assert not health.qdrant_accepts_key(6333, "qdrant-key")
+
+
 def test_qdrant_anonymous_probe_is_false_when_the_key_is_required() -> None:
     unauthorized = urllib.error.HTTPError(
         "http://127.0.0.1:6333/collections", 401, "Unauthorized", Message(), None
@@ -446,6 +473,11 @@ def local_qdrant_port() -> Iterator[int]:
 
     class Ok(http.server.BaseHTTPRequestHandler):
         def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers["Content-Length"]))
             self.send_response(200)
             self.end_headers()
 

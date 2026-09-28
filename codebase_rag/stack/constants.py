@@ -73,6 +73,14 @@ STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_
 WILDCARD_BIND_HOSTS = ("0.0.0.0", "::")
 # A data endpoint: unlike /readyz, it needs the key once one is set.
 QDRANT_DATA_PROBE_PATH = "/collections"
+# An alias update with no actions: it needs write access and changes nothing.
+# Qdrant 1.19 answers it 200 for its API key, 403 for its read-only key and
+# 401 for any other key.
+QDRANT_WRITE_PROBE_PATH = "/collections/aliases"
+QDRANT_WRITE_PROBE_BODY = b'{"actions": []}'
+HTTP_METHOD_POST = "POST"
+HTTP_CONTENT_TYPE_HEADER = "Content-Type"
+JSON_CONTENT_TYPE = "application/json"
 QDRANT_READY_PATH = "/readyz"
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
@@ -90,10 +98,10 @@ ERR_AUTH_NOT_VERIFIED = (
     "credentials the stack would start with: {detail}. Not starting the stack."
 )
 ERR_QDRANT_REJECTS_KEY = (
-    "The running Qdrant rejects the configured QDRANT_API_KEY, so it was "
-    "started with a different key. Qdrant reads its key when the container is "
-    "created: run 'cgr daemon down' and then 'cgr daemon up', which keeps the "
-    "data volumes."
+    "The running Qdrant rejects the configured QDRANT_API_KEY for writes: it "
+    "was started with a different key, or knows this one only as its "
+    "read-only key. Qdrant reads its keys when the container is created: run "
+    "'cgr daemon down' and then 'cgr daemon up', which keeps the data volumes."
 )
 # The message Memgraph rejects a Bolt login with. Its client raises the same
 # exception type for a refused connection, so only the text tells them apart.

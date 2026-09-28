@@ -84,15 +84,29 @@ def memgraph_rejects_credentials(
 def qdrant_accepts_anonymous(
     port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> bool:
-    return _qdrant_data_reachable(host, port, {}, timeout)
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    return _qdrant_answers(request, timeout)
 
 
 def qdrant_accepts_key(
     port: int, api_key: str, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> bool:
-    return _qdrant_data_reachable(
-        host, port, {cs.QDRANT_API_KEY_HEADER: api_key}, timeout
+    """Whether the key lets the app write, as indexing needs.
+
+    A read-only key (QDRANT__SERVICE__READ_ONLY_API_KEY) may list collections
+    too, so the probe is an alias update with no actions: Qdrant requires
+    write access for it, and it changes nothing.
+    """
+    request = urllib.request.Request(
+        _qdrant_url(host, port, cs.QDRANT_WRITE_PROBE_PATH),
+        data=cs.QDRANT_WRITE_PROBE_BODY,
+        headers={
+            cs.QDRANT_API_KEY_HEADER: api_key,
+            cs.HTTP_CONTENT_TYPE_HEADER: cs.JSON_CONTENT_TYPE,
+        },
+        method=cs.HTTP_METHOD_POST,
     )
+    return _qdrant_answers(request, timeout)
 
 
 def _qdrant_url(host: str, port: int, path: str) -> str:
@@ -101,12 +115,7 @@ def _qdrant_url(host: str, port: int, path: str) -> str:
     return f"http://{netloc}:{port}{path}"
 
 
-def _qdrant_data_reachable(
-    host: str, port: int, headers: dict[str, str], timeout: float
-) -> bool:
-    request = urllib.request.Request(
-        _qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH), headers=headers
-    )
+def _qdrant_answers(request: urllib.request.Request, timeout: float) -> bool:
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             return resp.status == 200
