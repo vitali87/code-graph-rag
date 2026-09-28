@@ -3443,26 +3443,7 @@ class ImportProcessor:
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
-                source_module = None
-                is_aliased_scheme = False
-                for child in import_node.children:
-                    if child.type == cs.TS_STRING:
-                        source_text = safe_decode_with_fallback(child).strip("'\"")
-                        is_aliased_scheme = _has_aliased_scheme(source_text)
-                        source_module = self._resolve_js_module_path(
-                            source_text, module_qn
-                        )
-                        self._note_unresolved_js_specifier(module_qn, source_text)
-                        break
-
-                if not source_module:
-                    continue
-
-                for child in import_node.children:
-                    if child.type == cs.TS_IMPORT_CLAUSE:
-                        self._parse_js_import_clause(
-                            child, source_module, module_qn, is_aliased_scheme
-                        )
+                self._parse_js_import_statement(import_node, module_qn)
 
             elif import_node.type in (
                 cs.TS_LEXICAL_DECLARATION,
@@ -3717,17 +3698,36 @@ class ImportProcessor:
                 self._record_import_site(current_module, local, decl_node, imported)
                 logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
 
-    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
-        source_module = None
-        for child in export_node.children:
+    def _js_statement_source(
+        self, statement: Node, module_qn: str
+    ) -> tuple[str, str | None] | None:
+        # The statement's source string (`from './x'`) and its resolved
+        # module; None when the statement names no source at all.
+        for child in statement.children:
             if child.type == cs.TS_STRING:
                 source_text = safe_decode_with_fallback(child).strip("'\"")
-                source_module = self._resolve_js_module_path(
-                    source_text, current_module
-                )
-                self._note_unresolved_js_specifier(current_module, source_text)
-                break
+                source_module = self._resolve_js_module_path(source_text, module_qn)
+                self._note_unresolved_js_specifier(module_qn, source_text)
+                return source_text, source_module
+        return None
 
+    def _parse_js_import_statement(self, import_node: Node, module_qn: str) -> None:
+        source = self._js_statement_source(import_node, module_qn)
+        if source is None:
+            return
+        source_text, source_module = source
+        if not source_module:
+            return
+        is_aliased_scheme = _has_aliased_scheme(source_text)
+        for child in import_node.children:
+            if child.type == cs.TS_IMPORT_CLAUSE:
+                self._parse_js_import_clause(
+                    child, source_module, module_qn, is_aliased_scheme
+                )
+
+    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
+        source = self._js_statement_source(export_node, current_module)
+        source_module = source[1] if source is not None else None
         if not source_module:
             return
 
@@ -3742,30 +3742,40 @@ class ImportProcessor:
             elif child.type == cs.TS_EXPORT_CLAUSE:
                 for grandchild in child.children:
                     if grandchild.type == cs.TS_EXPORT_SPECIFIER:
-                        name_node = grandchild.child_by_field_name(cs.FIELD_NAME)
-                        alias_node = grandchild.child_by_field_name(cs.FIELD_ALIAS)
-                        if name_node:
-                            original_name = safe_decode_with_fallback(name_node)
-                            exported_name = (
-                                safe_decode_with_fallback(alias_node)
-                                if alias_node
-                                else original_name
-                            )
-                            self.import_mapping[current_module][exported_name] = (
-                                f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
-                            )
-                            self._record_import_site(
-                                current_module,
-                                exported_name,
-                                export_node,
-                                original_name,
-                            )
-                            logger.debug(
-                                ls.IMP_JS_REEXPORT,
-                                exported=exported_name,
-                                module=source_module,
-                                original=original_name,
-                            )
+                        self._record_js_reexport_specifier(
+                            grandchild, export_node, current_module, source_module
+                        )
+
+    def _record_js_reexport_specifier(
+        self,
+        specifier: Node,
+        export_node: Node,
+        current_module: str,
+        source_module: str,
+    ) -> None:
+        name_node = specifier.child_by_field_name(cs.FIELD_NAME)
+        if not name_node:
+            return
+        alias_node = specifier.child_by_field_name(cs.FIELD_ALIAS)
+        original_name = safe_decode_with_fallback(name_node)
+        exported_name = (
+            safe_decode_with_fallback(alias_node) if alias_node else original_name
+        )
+        self.import_mapping[current_module][exported_name] = (
+            f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
+        )
+        self._record_import_site(
+            current_module,
+            exported_name,
+            export_node,
+            original_name,
+        )
+        logger.debug(
+            ls.IMP_JS_REEXPORT,
+            exported=exported_name,
+            module=source_module,
+            original=original_name,
+        )
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):

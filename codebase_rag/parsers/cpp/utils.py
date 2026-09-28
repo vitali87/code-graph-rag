@@ -285,27 +285,6 @@ def _has_named_parameter(declarator: Node) -> bool:
     params = declarator.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is None:
         return False
-
-    def declares_identifier(node: Node) -> bool:
-        # Follow only the declarator-field spine (plus the two wrapper nodes
-        # holding their declarator as a bare child): identifiers reachable
-        # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
-        # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
-        # parameter.
-        if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
-            return True
-        inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
-        if inner is not None:
-            return declares_identifier(inner)
-        if node.type in (
-            cs.CppNodeType.REFERENCE_DECLARATOR,
-            cs.CppNodeType.PARENTHESIZED_DECLARATOR,
-        ):
-            return any(
-                declares_identifier(child) for child in node.children if child.is_named
-            )
-        return False
-
     for param in params.children:
         if param.type not in (
             cs.CppNodeType.PARAMETER_DECLARATION,
@@ -313,8 +292,31 @@ def _has_named_parameter(declarator: Node) -> bool:
         ):
             continue
         inner = param.child_by_field_name(cs.FIELD_DECLARATOR)
-        if inner is not None and declares_identifier(inner):
+        if inner is not None and _declarator_declares_identifier(inner):
             return True
+    return False
+
+
+def _declarator_declares_identifier(node: Node) -> bool:
+    # Follow only the declarator-field spine (plus the two wrapper nodes
+    # holding their declarator as a bare child): identifiers reachable
+    # ONLY off that path are array bounds (`int[MAX_SIZE]`) or an inner
+    # fn-ptr's parameter names (`void (*)(int x)`), not names of THIS
+    # parameter.
+    if node.type in (cs.CppNodeType.IDENTIFIER, cs.CppNodeType.FIELD_IDENTIFIER):
+        return True
+    inner = node.child_by_field_name(cs.FIELD_DECLARATOR)
+    if inner is not None:
+        return _declarator_declares_identifier(inner)
+    if node.type in (
+        cs.CppNodeType.REFERENCE_DECLARATOR,
+        cs.CppNodeType.PARENTHESIZED_DECLARATOR,
+    ):
+        return any(
+            _declarator_declares_identifier(child)
+            for child in node.children
+            if child.is_named
+        )
     return False
 
 

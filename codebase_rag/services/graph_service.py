@@ -710,7 +710,16 @@ class MemgraphIngestor:
             query = build_create_relationship_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
+        return self._execute_rel_pattern_query(pattern, query, params_list, conn)
 
+    def _execute_rel_pattern_query(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        query: str,
+        params_list: list[RelBatchRow],
+        conn: ConnectionProtocol | None,
+    ) -> tuple[int, int]:
+        from_label, _, rel_type, to_label, _ = pattern
         target_conn = conn or self.conn
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
