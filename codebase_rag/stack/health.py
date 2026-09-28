@@ -79,17 +79,31 @@ def memgraph_rejects_credentials(
     return False
 
 
-def qdrant_accepts_anonymous(port: int, timeout: float = 1.5) -> bool:
-    return _qdrant_data_reachable(port, {}, timeout)
+def qdrant_accepts_anonymous(
+    port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+) -> bool:
+    return _qdrant_data_reachable(host, port, {}, timeout)
 
 
-def qdrant_accepts_key(port: int, api_key: str, timeout: float = 1.5) -> bool:
-    return _qdrant_data_reachable(port, {cs.QDRANT_API_KEY_HEADER: api_key}, timeout)
+def qdrant_accepts_key(
+    port: int, api_key: str, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
+) -> bool:
+    return _qdrant_data_reachable(
+        host, port, {cs.QDRANT_API_KEY_HEADER: api_key}, timeout
+    )
 
 
-def _qdrant_data_reachable(port: int, headers: dict[str, str], timeout: float) -> bool:
+def _qdrant_url(host: str, port: int, path: str) -> str:
+    # An IPv6 address needs brackets in a URL.
+    netloc = f"[{host}]" if ":" in host else host
+    return f"http://{netloc}:{port}{path}"
+
+
+def _qdrant_data_reachable(
+    host: str, port: int, headers: dict[str, str], timeout: float
+) -> bool:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}{cs.QDRANT_DATA_PROBE_PATH}", headers=headers
+        _qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH), headers=headers
     )
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
@@ -102,10 +116,11 @@ def wait_for_qdrant(
     port: int,
     timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     interval: float = cs.DEFAULT_HEALTH_INTERVAL_S,
+    host: str = cs.LOOPBACK_HOST,
 ) -> bool:
     # Plain HTTP is deliberate: the stack manager only launches containers on
-    # this machine, so the probe is pinned to loopback.
-    url = f"http://127.0.0.1:{port}/readyz"
+    # this machine, so the probe targets an address of this machine.
+    url = _qdrant_url(host, port, cs.QDRANT_READY_PATH)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if _http_reachable(url):

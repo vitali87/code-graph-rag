@@ -71,6 +71,7 @@ QDRANT_CLIENT_DEFAULT_PORT = 6333
 WILDCARD_BIND_HOSTS = ("0.0.0.0", "::")
 # A data endpoint: unlike /readyz, it needs the key once one is set.
 QDRANT_DATA_PROBE_PATH = "/collections"
+QDRANT_READY_PATH = "/readyz"
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "

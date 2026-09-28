@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,17 +68,50 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
-def _bundled_qdrant_hosts() -> set[str]:
-    """The hosts that reach the port the bundled Qdrant publishes.
+def _bind_host() -> str:
+    """The address the compose file publishes the stack's ports on."""
+    return os.environ.get(cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
+
+
+def _bundled_qdrant_probe_host() -> str:
+    """Where this machine reaches the bundled Qdrant."""
+    bind = _bind_host()
+    return cs.LOOPBACK_HOST if bind in cs.WILDCARD_BIND_HOSTS else bind
+
+
+def _is_local_address(host: str) -> bool:
+    """Whether `host` is an address of this machine.
+
+    Binding a socket to an address succeeds only when one of this machine's
+    interfaces has it, which is where a wildcard bind publishes.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_DGRAM)
+    except OSError:
+        return False
+    for family, _, _, _, address in infos:
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as probe:
+                probe.bind((address[0], 0))
+        except OSError:
+            continue
+        return True
+    return False
+
+
+def _reaches_bundled_qdrant(host: str) -> bool:
+    """Whether `host` reaches the address the bundled Qdrant is published on.
 
     It is published on CGR_STACK_BIND_HOST only, 127.0.0.1 by default, so
-    another loopback address on the same port can be a different Qdrant.
+    another loopback address on the same port can be a different Qdrant. A
+    wildcard bind publishes on every address of this machine.
     """
-    bind = os.environ.get(cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
-    hosts = {bind}
-    if bind == cs.LOOPBACK_HOST or bind in cs.WILDCARD_BIND_HOSTS:
-        hosts |= {cs.LOCALHOST_NAME, cs.LOOPBACK_HOST}
-    return hosts
+    bind = _bind_host()
+    if bind in cs.WILDCARD_BIND_HOSTS:
+        return _is_local_address(host)
+    if bind == cs.LOOPBACK_HOST:
+        return host in (cs.LOCALHOST_NAME, cs.LOOPBACK_HOST)
+    return host == bind
 
 
 def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
@@ -89,7 +123,8 @@ def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
         url_port = parts.port or cs.QDRANT_CLIENT_DEFAULT_PORT
     except ValueError:
         return False
-    return url_port == port and parts.hostname in _bundled_qdrant_hosts()
+    host = parts.hostname
+    return url_port == port and host is not None and _reaches_bundled_qdrant(host)
 
 
 def _bundled_qdrant_api_key(port: int) -> str | None:
@@ -151,6 +186,7 @@ class StackManager:
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
+        self.qdrant_host = _bundled_qdrant_probe_host()
         self.qdrant_api_key = _bundled_qdrant_api_key(qdrant_port)
         self.project_name = project_name
 
@@ -317,12 +353,12 @@ class StackManager:
         ):
             open_services.append(cs.SERVICE_MEMGRAPH)
         if api_key := self.qdrant_api_key:
-            if qdrant_accepts_anonymous(self.qdrant_port):
+            if qdrant_accepts_anonymous(self.qdrant_port, host=self.qdrant_host):
                 open_services.append(cs.SERVICE_QDRANT)
             # The probe is plain http, so like the app it sends the key only
             # when QDRANT_ALLOW_INSECURE_API_KEY allows that.
             elif settings.QDRANT_ALLOW_INSECURE_API_KEY and not qdrant_accepts_key(
-                self.qdrant_port, api_key
+                self.qdrant_port, api_key, host=self.qdrant_host
             ):
                 logger.warning(cs.WARN_QDRANT_REJECTS_KEY)
         if open_services:
@@ -484,11 +520,11 @@ class StackManager:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
                 service=cs.SERVICE_QDRANT,
-                host=cs.LOOPBACK_HOST,
+                host=self.qdrant_host,
                 port=self.qdrant_port,
             )
         )
-        if not wait_for_qdrant(self.qdrant_port, timeout):
+        if not wait_for_qdrant(self.qdrant_port, timeout, host=self.qdrant_host):
             raise StackError(
                 cs.ERR_STACK_NOT_HEALTHY.format(
                     service=cs.SERVICE_QDRANT, timeout=timeout
@@ -515,7 +551,9 @@ class StackManager:
             interval=0.0,
             credentials=self.memgraph_credentials,
         )
-        qdrant_ok = wait_for_qdrant(self.qdrant_port, timeout=0.1, interval=0.0)
+        qdrant_ok = wait_for_qdrant(
+            self.qdrant_port, timeout=0.1, interval=0.0, host=self.qdrant_host
+        )
         match (memgraph_ok, qdrant_ok):
             case (True, True):
                 state = cs.StackState.RUNNING
@@ -529,7 +567,7 @@ class StackManager:
             qdrant_reachable=qdrant_ok,
             compose_file=self.compose_file,
             memgraph_endpoint=f"{self.memgraph_host}:{self.memgraph_port}",
-            qdrant_endpoint=f"{cs.LOOPBACK_HOST}:{self.qdrant_port}",
+            qdrant_endpoint=f"{self.qdrant_host}:{self.qdrant_port}",
         )
 
     def ensure_running(self) -> StackStatus:

@@ -712,3 +712,91 @@ def test_a_key_for_another_qdrant_is_not_copied_into_the_local_container(
     key_probe.assert_not_called()
     assert not any("still accept" in m for m in messages)
     assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)
+
+
+def test_local_address_is_one_of_this_machines_addresses() -> None:
+    assert manager_module._is_local_address("127.0.0.1")
+    # A documentation address (RFC 5737) that no interface here has.
+    assert not manager_module._is_local_address("203.0.113.1")
+
+
+@pytest.mark.parametrize(
+    ("url", "bundled"),
+    [
+        # A wildcard bind publishes on this machine's LAN address too.
+        ("http://192.168.1.5:6333", True),
+        ("http://192.168.1.6:6333", False),
+    ],
+)
+def test_qdrant_url_on_any_local_address_is_bundled_with_a_wildcard_bind(
+    monkeypatch: pytest.MonkeyPatch, url: str, bundled: bool
+) -> None:
+    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "0.0.0.0")
+    monkeypatch.setattr(
+        manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
+    )
+
+    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
+
+
+@pytest.mark.parametrize(
+    ("bind", "probe_host"),
+    [
+        (None, "127.0.0.1"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "127.0.0.1"),
+        ("192.168.1.5", "192.168.1.5"),
+    ],
+)
+def test_stack_reaches_qdrant_where_it_is_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind: str | None, probe_host: str
+) -> None:
+    if bind is None:
+        monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
+    else:
+        monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, bind)
+
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.wait_for_qdrant", return_value=True
+        ) as ready_probe,
+    ):
+        status = mgr.status()
+
+    assert ready_probe.call_args.kwargs["host"] == probe_host
+    assert status.qdrant_endpoint == f"{probe_host}:6333"
+
+
+@pytest.mark.usefixtures("credentials")
+def test_running_stack_checks_qdrant_on_the_bind_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Published on one LAN address, the bundled Qdrant is not on loopback.
+    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "192.168.1.5")
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://192.168.1.5:6333")
+
+    messages, _, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path), memgraph_open=False, qdrant_open=True
+    )
+
+    qdrant_probe.assert_called_once_with(6333, host="192.168.1.5")
+    assert any("still accept" in m for m in messages)
+
+
+def test_qdrant_probe_brackets_an_ipv6_address() -> None:
+    with patch.object(
+        health._DIRECT_OPENER, "open", return_value=_ok_response()
+    ) as open_url:
+        assert health.qdrant_accepts_anonymous(6333, host="::1")
+
+    assert open_url.call_args.args[0].full_url == "http://[::1]:6333/collections"
+
+
+def test_qdrant_readiness_probe_uses_the_given_host() -> None:
+    with patch.object(health, "_http_reachable", return_value=True) as reachable:
+        assert health.wait_for_qdrant(6333, timeout=1, host="192.168.1.5")
+
+    reachable.assert_called_once_with("http://192.168.1.5:6333/readyz")
