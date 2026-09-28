@@ -469,6 +469,18 @@ def _arm_falls_into_next(arm: Node) -> bool:
     return last is not None and last.type == cs.TS_GO_FALLTHROUGH_STATEMENT
 
 
+def _py_clause_block(clause: Node) -> Node | None:
+    # The `block` body of an except/finally clause.
+    return next((c for c in clause.children if c.type == cs.TS_PY_BLOCK), None)
+
+
+def _is_plain_identifier(name: str) -> bool:
+    return bool(name) and (
+        (name[0].isalpha() or name[0] == "_")
+        and all(c.isalnum() or c == "_" for c in name)
+    )
+
+
 def _py_case_always_matches(arm: Node) -> bool:
     # An UNGUARDED irrefutable pattern always matches; a guarded one can
     # fail its guard, so it never removes the no-match path.
@@ -2688,26 +2700,19 @@ class FlowProcessor:
         out: set[str] = set()
         i, n = 0, len(template)
         while i < n:
-            char = template[i]
-            if char == "{":
-                if i + 1 < n and template[i + 1] == "{":
-                    i += 2
-                    continue
-                close = template.find("}", i + 1)
-                if close == -1:
-                    break
-                name = template[i + 1 : close].split(":", 1)[0].strip()
-                if (
-                    name
-                    and (name[0].isalpha() or name[0] == "_")
-                    and all(c.isalnum() or c == "_" for c in name)
-                ):
-                    out.add(name)
-                i = close + 1
-            elif char == "}" and i + 1 < n and template[i + 1] == "}":
+            if template.startswith(("{{", "}}"), i):
                 i += 2
-            else:
+                continue
+            if template[i] != "{":
                 i += 1
+                continue
+            close = template.find("}", i + 1)
+            if close == -1:
+                break
+            name = template[i + 1 : close].split(":", 1)[0].strip()
+            if _is_plain_identifier(name):
+                out.add(name)
+            i = close + 1
         return out
 
     @staticmethod
@@ -3221,34 +3226,38 @@ class FlowProcessor:
         # required/optional parameter wrapper (its `pattern`), a default
         # (assignment_pattern left), a destructuring pattern's leaves, or a Go
         # expression_list / `parameter_declaration` (`os Config`).
-        node_type = node.type
-        if node_type in (
+        if node.type in (
             descriptor.identifier_type,
             cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN,
         ):
             if node.text:
                 out.add(node.text.decode(cs.ENCODING_UTF8))
-        elif node_type == cs.TS_PAIR_PATTERN:
-            if (value := node.child_by_field_name(cs.FIELD_VALUE)) is not None:
-                self._js_binding_names(value, descriptor, out)
-        elif node_type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
-            if (pattern := node.child_by_field_name(cs.TS_FIELD_PATTERN)) is not None:
-                self._js_binding_names(pattern, descriptor, out)
-        elif node_type == cs.TS_ASSIGNMENT_PATTERN:
+            return
+        for child in self._js_binding_children(node):
+            self._js_binding_names(child, descriptor, out)
+
+    def _js_binding_children(self, node: Node) -> list[Node]:
+        # The sub-targets a non-identifier binding target delegates to.
+        node_type = node.type
+        if node_type == cs.TS_PAIR_PATTERN:
+            value = node.child_by_field_name(cs.FIELD_VALUE)
+            return [value] if value is not None else []
+        if node_type in (cs.TS_REQUIRED_PARAMETER, cs.TS_OPTIONAL_PARAMETER):
+            pattern = node.child_by_field_name(cs.TS_FIELD_PATTERN)
+            return [pattern] if pattern is not None else []
+        if node_type == cs.TS_ASSIGNMENT_PATTERN:
             left = node.child_by_field_name(cs.FIELD_LEFT) or self._js_first_expr(node)
-            if left is not None:
-                self._js_binding_names(left, descriptor, out)
-        elif node_type == cs.TS_GO_PARAMETER_DECLARATION:
-            for child in node.children_by_field_name(cs.TS_FIELD_NAME):
-                self._js_binding_names(child, descriptor, out)
-        elif node_type in (
+            return [left] if left is not None else []
+        if node_type == cs.TS_GO_PARAMETER_DECLARATION:
+            return list(node.children_by_field_name(cs.TS_FIELD_NAME))
+        if node_type in (
             cs.TS_OBJECT_PATTERN,
             cs.TS_ARRAY_PATTERN,
             cs.TS_REST_PATTERN,
             cs.TS_GO_EXPRESSION_LIST,
         ):
-            for child in node.named_children:
-                self._js_binding_names(child, descriptor, out)
+            return list(node.named_children)
+        return []
 
     @staticmethod
     def _merge(states: list[_TaintMap]) -> _TaintMap:
@@ -3424,35 +3433,33 @@ class FlowProcessor:
         has_else = False
         for clause in node.children:
             if clause.type == cs.TS_PY_EXCEPT_CLAUSE:
-                block = next(
-                    (c for c in clause.children if c.type == cs.TS_PY_BLOCK), None
+                # An except handler can run after the try body partially
+                # executed, so seed it with union(pre, body_exit); taint
+                # introduced before the raise must still reach the handler.
+                self._walk_branch(
+                    _py_clause_block(clause),
+                    self._merge([state, body_exit]),
+                    ctx,
+                    branch_exits,
                 )
-                if block is not None:
-                    # An except handler can run after the try body partially
-                    # executed, so seed it with union(pre, body_exit); taint
-                    # introduced before the raise must still reach the handler.
-                    branch_exits.append(
-                        self._walk_stmt(block, self._merge([state, body_exit]), ctx)
-                    )
             elif clause.type == cs.TS_PY_ELSE_CLAUSE:
                 has_else = True
-                else_body = clause.child_by_field_name(cs.FIELD_BODY)
-                if else_body is not None:
-                    branch_exits.append(
-                        self._walk_stmt(else_body, dict(body_exit), ctx)
-                    )
+                self._walk_branch(
+                    clause.child_by_field_name(cs.FIELD_BODY),
+                    body_exit,
+                    ctx,
+                    branch_exits,
+                )
         # The try body completing normally (no else) is itself a path.
         if not has_else:
             branch_exits.append(body_exit)
         merged = self._merge(branch_exits) if branch_exits else body_exit
         for clause in node.children:
-            if clause.type == cs.TS_PY_FINALLY_CLAUSE:
-                block = next(
-                    (c for c in clause.children if c.type == cs.TS_PY_BLOCK), None
-                )
-                if block is not None:
-                    # finally runs on every path: apply it to the merged state.
-                    merged = self._walk_stmt(block, merged, ctx)
+            if clause.type != cs.TS_PY_FINALLY_CLAUSE:
+                continue
+            if (block := _py_clause_block(clause)) is not None:
+                # finally runs on every path: apply it to the merged state.
+                merged = self._walk_stmt(block, merged, ctx)
         return merged
 
     def _apply_assignment(self, node: Node, tainted: _TaintMap, ctx: _FlowCtx) -> None:

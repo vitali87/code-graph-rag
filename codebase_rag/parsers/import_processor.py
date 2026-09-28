@@ -593,6 +593,49 @@ def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
     return imported_path, parts[-1] if parts else imported_path
 
 
+def _ts_alias_candidates(
+    import_path: str, aliases: Sequence[tuple[str, str, bool]]
+) -> list[tuple[int, str]]:
+    # (prefix length, raw target) for every tsconfig alias matching the path.
+    candidates: list[tuple[int, str]] = []
+    for prefix, target_prefix, is_wildcard in aliases:
+        if is_wildcard and import_path.startswith(prefix):
+            candidates.append((len(prefix), target_prefix + import_path[len(prefix) :]))
+        elif not is_wildcard and import_path == prefix:
+            candidates.append((len(prefix), target_prefix))
+    return candidates
+
+
+def _ts_alias_target(raw_path: str) -> str | None:
+    # The alias target without its module extension, normalised; None when it
+    # is empty or escapes the project root.
+    path = raw_path
+    for ext in cs.JS_TS_MODULE_EXTENSIONS:
+        if path.endswith(ext):
+            path = path[: -len(ext)]
+            break
+    # normpath collapses `.`/`..` so the qn is clean and an escaping alias
+    # (`../x`) is rejected here.
+    normalized = posixpath.normpath(path)
+    if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
+        cs.PATH_PARENT_DIR
+    ):
+        return None
+    return normalized
+
+
+def _lua_relative_module(import_path: str, current_module: str) -> str:
+    # Resolve `./x` / `../x` against the importing module's package.
+    parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
+    for p in import_path.replace("\\", cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH):
+        if p == cs.PATH_PARENT_DIR:
+            if parts:
+                parts.pop()
+        elif p and p != cs.PATH_CURRENT_DIR:
+            parts.append(p)
+    return cs.SEPARATOR_DOT.join(parts)
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -3385,28 +3428,14 @@ class ImportProcessor:
         # disk check both disambiguates siblings and blocks a catch-all alias
         # (`"*": ["src/*"]`) from capturing bare package imports (`lodash` ->
         # `proj.src.lodash`) and rebinding them to same-named locals (#580).
-        candidates: list[tuple[int, str]] = []
-        for prefix, target_prefix, is_wildcard in self.js_path_aliases:
-            if is_wildcard:
-                if import_path.startswith(prefix):
-                    candidates.append(
-                        (len(prefix), target_prefix + import_path[len(prefix) :])
-                    )
-            elif import_path == prefix:
-                candidates.append((len(prefix), target_prefix))
-        candidates.sort(key=lambda c: c[0], reverse=True)
+        candidates = sorted(
+            _ts_alias_candidates(import_path, self.js_path_aliases),
+            key=lambda c: c[0],
+            reverse=True,
+        )
         for _prefix_len, raw_path in candidates:
-            path = raw_path
-            for ext in cs.JS_TS_MODULE_EXTENSIONS:
-                if path.endswith(ext):
-                    path = path[: -len(ext)]
-                    break
-            # normpath collapses `.`/`..` so the qn is clean and an escaping alias
-            # (`../x`) is rejected below.
-            normalized = posixpath.normpath(path)
-            if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
-                cs.PATH_PARENT_DIR
-            ):
+            normalized = _ts_alias_target(raw_path)
+            if normalized is None:
                 continue
             module_rel = self._js_module_rel_on_disk(normalized)
             if module_rel is None:
@@ -4942,19 +4971,7 @@ class ImportProcessor:
         if import_path.startswith(cs.PATH_RELATIVE_PREFIX) or import_path.startswith(
             cs.PATH_PARENT_PREFIX
         ):
-            parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
-            rel_parts = list(
-                import_path.replace("\\", cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
-            )
-            for p in rel_parts:
-                if p == cs.PATH_CURRENT_DIR:
-                    continue
-                if p == cs.PATH_PARENT_DIR:
-                    if parts:
-                        parts.pop()
-                elif p:
-                    parts.append(p)
-            return cs.SEPARATOR_DOT.join(parts)
+            return _lua_relative_module(import_path, current_module)
         dotted = import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
 
         try:
