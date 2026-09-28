@@ -1218,7 +1218,8 @@ def test_up_probes_qdrant_where_compose_publishes_it(
     ):
         mgr.wait_healthy()
 
-    assert (mgr.qdrant_host, mgr.qdrant_port) == endpoint
+    probed = (mgr.qdrant_host, mgr.qdrant_port)
+    assert probed == endpoint
     assert qdrant_probe.call_args.args[0] == endpoint[1]
     assert qdrant_probe.call_args.kwargs["host"] == endpoint[0]
 
@@ -1244,7 +1245,8 @@ def test_up_keeps_the_probe_endpoint_without_a_qdrant_port_entry(
     ):
         mgr.up()
 
-    assert (mgr.qdrant_host, mgr.qdrant_port) == ("127.0.0.1", 6333)
+    probed = (mgr.qdrant_host, mgr.qdrant_port)
+    assert probed == ("127.0.0.1", 6333)
 
 
 @pytest.mark.usefixtures("credentials")

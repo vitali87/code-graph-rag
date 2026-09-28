@@ -110,9 +110,12 @@ def qdrant_accepts_key(
 
 
 def _qdrant_url(host: str, port: int, path: str) -> str:
-    # An IPv6 address needs brackets in a URL.
+    # An IPv6 address needs brackets in a URL. Plain http because the bundled
+    # Qdrant serves nothing else: it runs on this machine with no TLS. The
+    # keyed probe sends its key over it only with QDRANT_ALLOW_INSECURE_API_KEY,
+    # the rule the app applies to an http:// QDRANT_URL (python:S5332 accepted).
     netloc = f"[{host}]" if ":" in host else host
-    return f"http://{netloc}:{port}{path}"
+    return f"http://{netloc}:{port}{path}"  # NOSONAR
 
 
 def _qdrant_answers(request: urllib.request.Request, timeout: float) -> bool:
