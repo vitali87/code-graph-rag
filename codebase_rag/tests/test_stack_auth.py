@@ -8,6 +8,7 @@ resolve something else.
 
 from __future__ import annotations
 
+import contextlib
 import http.server
 import json
 import subprocess
@@ -449,6 +450,121 @@ def test_a_stack_found_running_open_is_refused_but_not_stopped(
     stop.assert_not_called()
 
 
+@contextlib.contextmanager
+def _left_running(mgr: StackManager, memgraph_open: bool) -> Iterator[MagicMock]:
+    """A Memgraph open or not and a protected Qdrant; yields the patched `stop`."""
+    with (
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous",
+            return_value=memgraph_open,
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
+        patch.object(mgr, "stop") as stop,
+    ):
+        yield stop
+
+
+def _failure_of(action: Callable[[], None]) -> tuple[BaseException, list[str]]:
+    """The exception an action ends in, and the warnings it logs on the way."""
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, level="WARNING")
+    try:
+        action()
+    except (StackError, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
+        return failure, messages
+    finally:
+        logger.remove(sink_id)
+    raise AssertionError("the action did not fail")
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("qdrant_ready", "failure"),
+    [(False, StackError), (KeyboardInterrupt(), KeyboardInterrupt)],
+)
+@pytest.mark.parametrize("memgraph_open", [True, False])
+def test_a_start_whose_health_wait_fails_stops_only_a_stack_left_open(
+    tmp_path: Path,
+    qdrant_ready: bool | KeyboardInterrupt,
+    failure: type[BaseException],
+    memgraph_open: bool,
+) -> None:
+    # Such a start never reaches the credential check after the wait. A
+    # protected service that is merely slow to start is left running.
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", side_effect=[qdrant_ready]),
+        _left_running(mgr, memgraph_open) as stop,
+    ):
+        error, messages = _failure_of(lambda: mgr.wait_healthy(0))
+
+    assert isinstance(error, failure)
+    assert stop.called is memgraph_open
+    warned = any("did not finish" in m and cs.SERVICE_MEMGRAPH in m for m in messages)
+    assert warned is memgraph_open
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("compose_up", "failure"),
+    [
+        (
+            subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr="port is already allocated"
+            ),
+            StackError,
+        ),
+        (
+            subprocess.TimeoutExpired(["docker", "compose", "up", "-d"], 120),
+            subprocess.TimeoutExpired,
+        ),
+        (KeyboardInterrupt(), KeyboardInterrupt),
+    ],
+)
+@pytest.mark.parametrize("memgraph_open", [True, False])
+def test_up_that_fails_stops_only_a_stack_left_open(
+    tmp_path: Path,
+    compose_up: subprocess.CompletedProcess[str] | BaseException,
+    failure: type[BaseException],
+    memgraph_open: bool,
+) -> None:
+    # `up -d` can start some containers before it fails or is cut short.
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            side_effect=[_compose_config(MATCHING_ENV), compose_up],
+        ),
+        _left_running(mgr, memgraph_open) as stop,
+    ):
+        error, _ = _failure_of(mgr.up)
+
+    assert isinstance(error, failure)
+    assert stop.called is memgraph_open
+
+
+@pytest.mark.usefixtures("credentials")
+def test_up_refused_before_starting_stops_nothing(tmp_path: Path) -> None:
+    # It started nothing, so a stack already running is not its to stop.
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            return_value=_compose_config(UNRESOLVED_ENV),
+        ),
+        _left_running(mgr, memgraph_open=True) as stop,
+        pytest.raises(StackError, match="does not come from"),
+    ):
+        mgr.up()
+
+    stop.assert_not_called()
+
+
 def test_stop_keeps_the_containers(tmp_path: Path) -> None:
     mgr = _manager(tmp_path)
     mgr.ensure_compose_file()
@@ -788,6 +904,7 @@ def test_wait_healthy_says_whether_memgraph_rejected_the_login(
             "codebase_rag.stack.manager.memgraph_rejects_credentials",
             return_value=rejected,
         ),
+        _left_running(mgr, memgraph_open=False),
     ):
         with pytest.raises(StackError, match=message):
             mgr.wait_healthy(timeout=0)
@@ -801,11 +918,16 @@ def test_wait_healthy_without_credentials_does_not_try_a_login(
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
         patch("codebase_rag.stack.manager.memgraph_rejects_credentials") as probe,
+        patch("codebase_rag.stack.manager.memgraph_accepts_anonymous") as memgraph_open,
+        patch("codebase_rag.stack.manager.qdrant_accepts_anonymous") as qdrant_open,
     ):
         with pytest.raises(StackError, match="did not become healthy"):
             mgr.wait_healthy(timeout=0)
 
     probe.assert_not_called()
+    # Nothing is protected, so nothing left open is looked for either.
+    memgraph_open.assert_not_called()
+    qdrant_open.assert_not_called()
 
 
 class TestAppStartOnARunningStack:

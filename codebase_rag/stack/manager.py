@@ -454,27 +454,32 @@ class StackManager:
         Carrying on would leave the data open while the settings say it is
         protected, as the start path refuses to do.
         """
+        if open_services := self._services_accepting_anonymous():
+            raise StackError(
+                cs.ERR_STACK_ACCEPTS_ANONYMOUS.format(services=", ".join(open_services))
+            )
+        # The probe is plain http, so like the app it sends the key only when
+        # QDRANT_ALLOW_INSECURE_API_KEY allows that.
+        api_key = self.qdrant_api_key
+        if (
+            api_key
+            and settings.QDRANT_ALLOW_INSECURE_API_KEY
+            and not qdrant_accepts_key(self.qdrant_port, api_key, host=self.qdrant_host)
+        ):
+            raise StackError(cs.ERR_QDRANT_REJECTS_KEY)
+
+    def _services_accepting_anonymous(self) -> list[str]:
+        """The services that accept connections without their configured credentials."""
         open_services: list[str] = []
         if self.memgraph_credentials and memgraph_accepts_anonymous(
             self.memgraph_host, self.memgraph_port
         ):
             open_services.append(cs.SERVICE_MEMGRAPH)
-        key_rejected = False
-        if api_key := self.qdrant_api_key:
-            if qdrant_accepts_anonymous(self.qdrant_port, host=self.qdrant_host):
-                open_services.append(cs.SERVICE_QDRANT)
-            # The probe is plain http, so like the app it sends the key only
-            # when QDRANT_ALLOW_INSECURE_API_KEY allows that.
-            elif settings.QDRANT_ALLOW_INSECURE_API_KEY:
-                key_rejected = not qdrant_accepts_key(
-                    self.qdrant_port, api_key, host=self.qdrant_host
-                )
-        if open_services:
-            raise StackError(
-                cs.ERR_STACK_ACCEPTS_ANONYMOUS.format(services=", ".join(open_services))
-            )
-        if key_rejected:
-            raise StackError(cs.ERR_QDRANT_REJECTS_KEY)
+        if self.qdrant_api_key and qdrant_accepts_anonymous(
+            self.qdrant_port, host=self.qdrant_host
+        ):
+            open_services.append(cs.SERVICE_QDRANT)
+        return open_services
 
     def _compose_env(self) -> dict[str, str]:
         """The environment `docker compose up` runs in.
@@ -547,16 +552,23 @@ class StackManager:
             config = self._resolved_config()
         self._verify_resolved_auth(config)
         logger.info(cs.MSG_STARTING_STACK)
-        result = subprocess.run(
-            self._compose_cmd("up", "-d"),
-            capture_output=True,
-            text=True,
-            encoding=root_cs.ENCODING_UTF8,
-            timeout=timeout,
-            check=False,
-            env=self._compose_env(),
-        )
+        # `up -d` that fails or is cut short may already have started some
+        # containers, and the credential check in wait_healthy never runs.
+        try:
+            result = subprocess.run(
+                self._compose_cmd("up", "-d"),
+                capture_output=True,
+                text=True,
+                encoding=root_cs.ENCODING_UTF8,
+                timeout=timeout,
+                check=False,
+                env=self._compose_env(),
+            )
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            self._stop_if_left_open()
+            raise
         if result.returncode != 0:
+            self._stop_if_left_open()
             raise StackError(
                 cs.ERR_STACK_START_FAILED.format(
                     detail=result.stderr.strip() or result.stdout.strip()
@@ -618,6 +630,25 @@ class StackManager:
         self,
         timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     ) -> None:
+        # Every caller has just started the stack. One whose wait fails or is
+        # interrupted never reaches the credential check below, so an open
+        # service it started is found and stopped here instead.
+        try:
+            self._wait_for_services(timeout)
+        except (StackError, KeyboardInterrupt):
+            self._stop_if_left_open()
+            raise
+        # Ready is not the same as protected: prove the started containers
+        # enforce the credentials rather than rely on Compose having
+        # recreated each one whose environment changed. A stack that does
+        # not is stopped rather than left running open.
+        try:
+            self.raise_if_auth_not_enforced()
+        except StackError:
+            self._stop_unprotected_stack()
+            raise
+
+    def _wait_for_services(self, timeout: float) -> None:
         logger.info(
             cs.MSG_WAITING_FOR_HEALTH.format(
                 service=cs.SERVICE_MEMGRAPH,
@@ -650,19 +681,22 @@ class StackManager:
                     service=cs.SERVICE_QDRANT, timeout=timeout
                 )
             )
-        # Ready is not the same as protected: prove the started containers
-        # enforce the credentials rather than rely on Compose having
-        # recreated each one whose environment changed. Every caller has just
-        # started the stack, so one that does not is stopped rather than left
-        # running open.
-        try:
-            self.raise_if_auth_not_enforced()
-        except StackError:
+
+    def _stop_if_left_open(self) -> None:
+        """Stop a stack that a failed or interrupted start left running open.
+
+        Only an open service stops it: a protected one that is merely slow to
+        start is left running. Either way, the error that ended the start is
+        the one reported.
+        """
+        if open_services := self._services_accepting_anonymous():
+            logger.warning(
+                cs.WARN_START_LEFT_STACK_OPEN.format(services=", ".join(open_services))
+            )
             self._stop_unprotected_stack()
-            raise
 
     def _stop_unprotected_stack(self) -> None:
-        # Whatever stops the stop, the credential error is the one to report.
+        # Whatever stops the stop, the error that led here is the one to report.
         try:
             self.stop()
         except (StackError, subprocess.TimeoutExpired, OSError) as e:

@@ -36,6 +36,12 @@ ERR_COMPOSE_NOT_AVAILABLE = "`docker compose` plugin not available. Install Dock
 ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
+WARN_START_LEFT_STACK_OPEN = (
+    "The start did not finish, and these services it left running accept "
+    "connections without the configured credentials: {services}. Stopping "
+    "the stack; run 'cgr daemon down' and then 'cgr daemon up', which keeps "
+    "the data volumes."
+)
 WARN_UNPROTECTED_STACK_NOT_STOPPED = (
     "The stack just started does not enforce the configured credentials, and "
     "stopping it failed: {detail}. Run 'cgr daemon down' before it is used."
