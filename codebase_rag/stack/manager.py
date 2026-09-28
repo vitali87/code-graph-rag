@@ -279,7 +279,11 @@ class StackManager:
         if api_key := settings.QDRANT_API_KEY:
             if qdrant_accepts_anonymous(self.qdrant_port):
                 open_services.append(cs.SERVICE_QDRANT)
-            elif not qdrant_accepts_key(self.qdrant_port, api_key):
+            # The probe is plain http, so like the app it sends the key only
+            # when QDRANT_ALLOW_INSECURE_API_KEY allows that.
+            elif settings.QDRANT_ALLOW_INSECURE_API_KEY and not qdrant_accepts_key(
+                self.qdrant_port, api_key
+            ):
                 logger.warning(cs.WARN_QDRANT_REJECTS_KEY)
         if open_services:
             logger.warning(

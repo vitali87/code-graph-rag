@@ -426,7 +426,7 @@ def _ensure_running_on_a_healthy_stack(
     memgraph_open: bool,
     qdrant_open: bool,
     qdrant_key_accepted: bool = True,
-) -> tuple[list[str], MagicMock, MagicMock]:
+) -> tuple[list[str], MagicMock, MagicMock, MagicMock]:
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
@@ -441,10 +441,10 @@ def _ensure_running_on_a_healthy_stack(
         patch(
             "codebase_rag.stack.manager.qdrant_accepts_key",
             return_value=qdrant_key_accepted,
-        ),
+        ) as key_probe,
     ):
         messages = _warnings_from(mgr.ensure_running)
-    return messages, memgraph_probe, qdrant_probe
+    return messages, memgraph_probe, qdrant_probe, key_probe
 
 
 @pytest.mark.usefixtures("credentials")
@@ -453,7 +453,7 @@ def test_running_stack_that_accepts_anonymous_access_is_flagged(
 ) -> None:
     # A stack created before the credentials were set stays open, and its
     # health checks pass either way.
-    messages, _, _ = _ensure_running_on_a_healthy_stack(
+    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=True, qdrant_open=True
     )
 
@@ -466,7 +466,7 @@ def test_running_stack_that_accepts_anonymous_access_is_flagged(
 def test_running_stack_that_requires_the_credentials_is_not_flagged(
     tmp_path: Path,
 ) -> None:
-    messages, _, _ = _ensure_running_on_a_healthy_stack(
+    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=False, qdrant_open=False
     )
 
@@ -475,7 +475,7 @@ def test_running_stack_that_requires_the_credentials_is_not_flagged(
 
 @pytest.mark.usefixtures("no_credentials")
 def test_running_stack_without_credentials_is_not_probed(tmp_path: Path) -> None:
-    messages, memgraph_probe, qdrant_probe = _ensure_running_on_a_healthy_stack(
+    messages, memgraph_probe, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=True, qdrant_open=True
     )
 
@@ -485,10 +485,14 @@ def test_running_stack_without_credentials_is_not_probed(tmp_path: Path) -> None
 
 
 @pytest.mark.usefixtures("credentials")
-def test_running_qdrant_with_an_earlier_key_is_flagged(tmp_path: Path) -> None:
+def test_running_qdrant_with_an_earlier_key_is_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Anonymous requests are rejected, so only trying the configured key shows
     # that the app's requests would be rejected too.
-    messages, _, _ = _ensure_running_on_a_healthy_stack(
+    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", True)
+
+    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path),
         memgraph_open=False,
         qdrant_open=False,
@@ -497,3 +501,22 @@ def test_running_qdrant_with_an_earlier_key_is_flagged(tmp_path: Path) -> None:
 
     assert any("rejects the configured QDRANT_API_KEY" in m for m in messages)
     assert not any("still accept" in m for m in messages)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_running_qdrant_is_not_sent_the_key_without_the_plain_http_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The probe is plain http, and the app itself refuses to send the key
+    # over plain http without the opt-in.
+    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", False)
+
+    messages, _, _, key_probe = _ensure_running_on_a_healthy_stack(
+        _manager(tmp_path),
+        memgraph_open=False,
+        qdrant_open=False,
+        qdrant_key_accepted=False,
+    )
+
+    key_probe.assert_not_called()
+    assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)
