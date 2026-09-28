@@ -211,6 +211,23 @@ def _with_access(
     return [service for service, given in access.items() if given is answer]
 
 
+def _container_ids(command: list[str], env: dict[str, str]) -> str | None:
+    """What `docker compose ps --quiet` prints, or None if it fails."""
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding=root_cs.ENCODING_UTF8,
+            timeout=cs.DEFAULT_STATUS_TIMEOUT_S,
+            check=False,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 class StackError(RuntimeError):
     pass
 
@@ -247,6 +264,9 @@ class StackManager:
         self._qdrant_bind = _bind_host(self.home)
         self.qdrant_host = _bundled_qdrant_probe_host(self._qdrant_bind)
         self._qdrant_keys: dict[tuple[str, int], str | None] = {}
+        # Each service's running containers just before `up -d`, or None when
+        # that is unknown; see _started_here.
+        self._containers_before_start: dict[str, str] | None = None
         self.project_name = project_name
 
     @property
@@ -567,9 +587,11 @@ class StackManager:
             config = self._resolved_config()
         self._verify_resolved_auth(config)
         # A service already running open was not started here, so like a stack
-        # found fully up it is refused and left running. Whatever is open after
-        # `up -d` is then this start's own, and the only thing it stops.
+        # found fully up it is refused and left running. One that is running
+        # but does not answer yet is told apart later by its container, which
+        # is only this start's to stop if `up -d` created or started it.
         self._raise_if_open(self._services_accepting_anonymous())
+        self._containers_before_start = self._running_containers()
         logger.info(cs.MSG_STARTING_STACK)
         # `up -d` that fails or is cut short may already have started some
         # containers, and the credential check in wait_healthy never runs.
@@ -753,15 +775,57 @@ class StackManager:
         return qdrant_anonymous_access(self.qdrant_port, host=self.qdrant_host)
 
     def _stop_open_services(self, open_services: list[str]) -> None:
+        started, found_running = self._started_here(open_services)
+        if found_running:
+            logger.warning(
+                cs.WARN_OPEN_SERVICES_LEFT_RUNNING.format(
+                    services=", ".join(found_running)
+                )
+            )
+        if not started:
+            return
         # Whatever stops the stop, the error that led here is the one to report.
         try:
-            self.stop(*open_services)
+            self.stop(*started)
         except (StackError, subprocess.TimeoutExpired, OSError) as e:
             logger.warning(
                 cs.WARN_OPEN_SERVICES_NOT_STOPPED.format(
-                    services=", ".join(open_services), detail=e
+                    services=", ".join(started), detail=e
                 )
             )
+
+    def _started_here(self, services: list[str]) -> tuple[list[str], list[str]]:
+        """Split services into those this start started and those it found running.
+
+        A service whose container is the one that was running before `up -d`
+        was left as it was, so it is another invocation's to stop. When either
+        list of containers is unknown, every service counts as started here,
+        so an open one is stopped rather than left running.
+        """
+        before = self._containers_before_start
+        now = self._running_containers() if before else None
+        if not before or now is None:
+            return services, []
+        found_running = [
+            service
+            for service in services
+            if before.get(service) and now.get(service) == before[service]
+        ]
+        return [s for s in services if s not in found_running], found_running
+
+    def _running_containers(self) -> dict[str, str] | None:
+        """The running containers of each service with credentials, as Compose
+        lists them, or None when it cannot."""
+        containers: dict[str, str] = {}
+        for service in self._services_with_credentials():
+            ids = _container_ids(
+                self._compose_cmd(*cs.COMPOSE_PS_RUNNING_ARGS, service),
+                self._compose_env(),
+            )
+            if ids is None:
+                return None
+            containers[service] = ids
+        return containers
 
     def _raise_if_memgraph_rejects_credentials(self) -> None:
         """Name a rejected login instead of reporting Memgraph as down.

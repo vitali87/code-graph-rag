@@ -45,11 +45,18 @@ ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
 WARN_START_LEFT_STACK_OPEN = (
-    "The start did not finish, and these services it started accept "
-    "connections without the configured credentials: {services}. Stopping "
-    "them; run 'cgr daemon down' and then 'cgr daemon up', which keeps the "
-    "data volumes."
+    "The start did not finish, and these services accept connections without "
+    "the configured credentials: {services}. Run 'cgr daemon down' and then "
+    "'cgr daemon up', which keeps the data volumes."
 )
+WARN_OPEN_SERVICES_LEFT_RUNNING = (
+    "These services accept connections without the configured credentials "
+    "but were already running before this start, so they are left running: "
+    "{services}. Run 'cgr daemon down' and then 'cgr daemon up', which keeps "
+    "the data volumes."
+)
+# The running containers of one service, one ID per line.
+COMPOSE_PS_RUNNING_ARGS = ("ps", "--quiet", "--status", "running")
 # How long a start that did not finish waits for the services it started to
 # answer, so that one still initialising is checked too before it returns.
 STARTED_SERVICES_CHECK_TIMEOUT_S = 15.0

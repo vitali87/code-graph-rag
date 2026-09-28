@@ -50,6 +50,8 @@ UNRESOLVED_ENV = {
 
 
 BUNDLED_QDRANT_URL = "http://localhost:6333"
+# Kept before the fixture below stands in for it.
+REAL_CONTAINER_IDS = manager_module._container_ids
 
 
 @pytest.fixture
@@ -77,6 +79,8 @@ def _nothing_running_open(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(manager_module, "qdrant_accepts_anonymous", _closed)
     monkeypatch.setattr(manager_module, "memgraph_anonymous_access", _refused)
     monkeypatch.setattr(manager_module, "qdrant_anonymous_access", _refused)
+    # Nor a Docker engine: no service has a running container before a start.
+    monkeypatch.setattr(manager_module, "_container_ids", _no_containers)
 
 
 def _closed(*_: str | int, **__: str) -> bool:
@@ -85,6 +89,10 @@ def _closed(*_: str | int, **__: str) -> bool:
 
 def _refused(*_: str | int, **__: str) -> cs.AnonymousAccess:
     return cs.AnonymousAccess.REFUSED
+
+
+def _no_containers(*_: list[str] | dict[str, str]) -> str:
+    return ""
 
 
 def _manager(tmp_path: Path) -> StackManager:
@@ -672,6 +680,119 @@ def test_a_failed_start_stops_asking_a_silent_service_after_its_time(
 
     assert qdrant_probe.call_count > 1
     stop.assert_not_called()
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("running_after", "stopped", "left_running"),
+    [
+        # The container that was running before `up -d`, left as it was.
+        ({"memgraph": "a1b2", "qdrant": ""}, [], True),
+        # Recreated or started by this start.
+        ({"memgraph": "c3d4", "qdrant": ""}, [(cs.SERVICE_MEMGRAPH,)], False),
+        # Compose cannot tell: stopped rather than left open.
+        (None, [(cs.SERVICE_MEMGRAPH,)], False),
+    ],
+)
+def test_a_failed_start_stops_only_a_container_it_created_or_started(
+    tmp_path: Path,
+    running_after: dict[str, str] | None,
+    stopped: list[tuple[str, ...]],
+    left_running: bool,
+) -> None:
+    # A Memgraph that did not answer yet when `up` checked, found open after
+    # `up -d` failed, is this start's to stop only if its container changed.
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            side_effect=[
+                _compose_config(MATCHING_ENV),
+                subprocess.CompletedProcess(
+                    args=[], returncode=1, stdout="", stderr="port is allocated"
+                ),
+            ],
+        ),
+        patch.object(
+            mgr,
+            "_running_containers",
+            side_effect=[{"memgraph": "a1b2", "qdrant": ""}, running_after],
+        ),
+        patch(
+            "codebase_rag.stack.manager.memgraph_anonymous_access",
+            return_value=cs.AnonymousAccess.ALLOWED,
+        ),
+        patch.object(mgr, "stop") as stop,
+    ):
+        error, messages = _failure_of(mgr.up)
+
+    assert isinstance(error, StackError)
+    assert [c.args for c in stop.call_args_list] == stopped
+    warned = any("already running before this start" in m for m in messages)
+    assert warned is left_running
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_started_service_found_open_but_running_before_is_refused_not_stopped(
+    tmp_path: Path,
+) -> None:
+    # The post-start check follows the same ownership as the failed-start one.
+    mgr = _manager(tmp_path)
+    mgr._containers_before_start = {"memgraph": "a1b2", "qdrant": ""}
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch.object(
+            mgr, "_running_containers", return_value={"memgraph": "a1b2", "qdrant": ""}
+        ),
+        _left_running(mgr, memgraph_open=True) as stop,
+        pytest.raises(StackError, match="without them: memgraph\\."),
+    ):
+        mgr.wait_healthy(0)
+
+    stop.assert_not_called()
+
+
+def test_running_containers_asks_compose_for_each_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manager_module, "_container_ids", REAL_CONTAINER_IDS)
+    monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", "cgr")
+    monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", "s3cret")
+    monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
+    mgr = _manager(tmp_path)
+    with patch(
+        "codebase_rag.stack.manager.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="a1b2\n"
+        ),
+    ) as run:
+        containers = mgr._running_containers()
+
+    assert containers == {cs.SERVICE_MEMGRAPH: "a1b2"}
+    assert run.call_args.args[0][-5:] == [
+        "ps",
+        "--quiet",
+        "--status",
+        "running",
+        cs.SERVICE_MEMGRAPH,
+    ]
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="no"),
+        subprocess.TimeoutExpired(["docker"], 10),
+        FileNotFoundError("docker"),
+    ],
+)
+def test_container_ids_are_unknown_when_compose_cannot_list_them(
+    outcome: subprocess.CompletedProcess[str] | Exception,
+) -> None:
+    with patch("codebase_rag.stack.manager.subprocess.run", side_effect=[outcome]):
+        assert REAL_CONTAINER_IDS(["docker", "compose", "ps"], {}) is None
 
 
 @pytest.mark.usefixtures("credentials")
