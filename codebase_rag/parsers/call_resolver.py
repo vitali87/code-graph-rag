@@ -2272,18 +2272,9 @@ class CallResolver:
                 continue
             if cut == len(parts):
                 return (cs.NodeLabel.CLASS, class_qn), True
-            member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
-                cs.CHAR_ANGLE_OPEN, 1
-            )[0]
-            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
-            if method_qn in self.function_registry:
-                return (self.function_registry[method_qn], method_qn), True
-            if cs.SEPARATOR_DOT not in member_name:
-                if inherited := self._resolve_inherited_method(class_qn, member_name):
-                    return inherited, True
             # A namespace-qualified type owns the path even when the member is
             # missing; an unqualified value receiver may still be a field chain.
-            return None, True
+            return self._csharp_type_member(class_qn, parts[cut:]), True
         if (
             not is_global
             and cs.SEPARATOR_DOUBLE_COLON not in call_name
@@ -2291,6 +2282,21 @@ class CallResolver:
         ):
             return None, True
         return None, False
+
+    def _csharp_type_member(
+        self, class_qn: str, member_parts: list[str]
+    ) -> tuple[str, str] | None:
+        # The member a qualified path names on a resolved type: a registered
+        # method directly, else a single-segment name inherited from a base.
+        member_name = cs.SEPARATOR_DOT.join(member_parts).split(cs.CHAR_ANGLE_OPEN, 1)[
+            0
+        ]
+        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
+        if method_qn in self.function_registry:
+            return self.function_registry[method_qn], method_qn
+        if cs.SEPARATOR_DOT not in member_name:
+            return self._resolve_inherited_method(class_qn, member_name)
+        return None
 
     def _csharp_path_starts_with_imported_namespace(
         self, parts: list[str], module_qn: str

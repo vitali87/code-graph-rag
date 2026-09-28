@@ -95,6 +95,22 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _js_await_call(arguments: ASTNode) -> ASTNode | None:
+    # The call whose argument list this is, when that call is the grammar's
+    # parse of `await (X)()`: a call to an identifier spelled `await`.
+    call = arguments.parent
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if (
+        func is not None
+        and func.type == cs.TS_IDENTIFIER
+        and safe_decode_text(func) == cs.JS_AWAIT_IDENTIFIER
+    ):
+        return call
+    return None
+
+
 class JsTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -601,22 +617,12 @@ class JsTypeInferenceEngine:
                 current = current.parent
                 continue
             if current.type == cs.TS_ARGUMENTS:
-                call = current.parent
-                func = (
-                    call.child_by_field_name(cs.FIELD_FUNCTION)
-                    if call is not None and call.type == cs.TS_CALL_EXPRESSION
-                    else None
-                )
-                if (
-                    call is not None
-                    and func is not None
-                    and func.type == cs.TS_IDENTIFIER
-                    and safe_decode_text(func) == cs.JS_AWAIT_IDENTIFIER
-                ):
-                    node = call
-                    current = call.parent
-                    continue
-                return None
+                call = _js_await_call(current)
+                if call is None:
+                    return None
+                node = call
+                current = call.parent
+                continue
             if current.type == cs.TS_CALL_EXPRESSION:
                 func = current.child_by_field_name(cs.FIELD_FUNCTION)
                 if func is not None and func.id == node.id:
