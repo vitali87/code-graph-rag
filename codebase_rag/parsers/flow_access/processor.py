@@ -2772,34 +2772,47 @@ class FlowProcessor:
         parent = node.parent
         if parent is not None and self._is_stream_insertion(parent, d):
             return
-        operands: list[Node] = []
-        base = node
-        while self._is_stream_insertion(base, d):
-            right = base.child_by_field_name(cs.FIELD_RIGHT)
-            if right is not None:
-                operands.append(right)
-            left = base.child_by_field_name(cs.FIELD_LEFT)
-            if left is None:
-                return
-            base = left
-        if base.text is None:
+        chain = self._stream_chain(node, d)
+        if chain is None:
             return
-        base_text = base.text.decode(cs.ENCODING_UTF8)
-        sink = self._js_match_sink(base_text, jc.flow.stream_sinks, jc)
-        # cout/cerr write STDOUT/STDERR with no concrete resource; a bound handle
-        # base carries its file's identity (possibly several after a branch merge).
-        targets: list[tuple[ResourceKind, str]]
-        if sink is not None:
-            targets = [(sink.kind, DYNAMIC_TARGET)]
-        elif bindings := handles.get(base_text):
-            targets = [(b.kind, b.identity) for b in bindings]
-        else:
+        base_text, operands = chain
+        targets = self._stream_targets(base_text, handles, jc)
+        if not targets:
             return
         for operand in operands:
             taint = self._js_expr_taint(operand, tainted, jc)
             if taint is not None:
                 for kind, identity in targets:
                     self._emit_taint_to_sink(taint, kind, identity, jc.flow.caller_qn)
+
+    def _stream_chain(
+        self, node: Node, descriptor: LanguageDescriptor
+    ) -> tuple[str, list[Node]] | None:
+        # Walk the `<<` chain's left spine: (base operand text, the inserted
+        # operands); None when the spine breaks or the base has no text.
+        operands: list[Node] = []
+        base = node
+        while self._is_stream_insertion(base, descriptor):
+            right = base.child_by_field_name(cs.FIELD_RIGHT)
+            if right is not None:
+                operands.append(right)
+            left = base.child_by_field_name(cs.FIELD_LEFT)
+            if left is None:
+                return None
+            base = left
+        if base.text is None:
+            return None
+        return base.text.decode(cs.ENCODING_UTF8), operands
+
+    def _stream_targets(
+        self, base_text: str, handles: _HandleMap, jc: _JsCtx
+    ) -> list[tuple[ResourceKind, str]]:
+        # cout/cerr write STDOUT/STDERR with no concrete resource; a bound handle
+        # base carries its file's identity (possibly several after a branch merge).
+        sink = self._js_match_sink(base_text, jc.flow.stream_sinks, jc)
+        if sink is not None:
+            return [(sink.kind, DYNAMIC_TARGET)]
+        return [(b.kind, b.identity) for b in handles.get(base_text, ())]
 
     @staticmethod
     def _is_stream_insertion(node: Node, descriptor: LanguageDescriptor) -> bool:
@@ -3525,32 +3538,33 @@ class FlowProcessor:
             if seed := self._py_env_member_seed(node, ctx):
                 return Taint(frozenset({seed}), frozenset())
         if node.type == cs.TS_PY_CALL and (raw := call_name(node)) is not None:
-            if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
-                return Taint(frozenset({seed}), frozenset())
-            callee = self._resolve(
-                raw,
-                ctx.module_qn,
-                ctx.class_context,
-                ctx.caller_qn,
-                ctx.language,
-                ctx.local_var_types,
-            )
-            if callee is not None:
-                # Defer: mark the value pending on the callee's return and
-                # record a candidate return edge. finalize() decides
-                # whether the callee really returns taint, so a callee
-                # processed later still counts.
-                self._return_edge_candidates.append(
-                    (callee[0], callee[1], ctx.caller_spec)
-                )
-                # The result also carries a per-call-site pass-through token so a
-                # tainted argument to a return-parameter reaches THIS call's
-                # consumers only (issue #1168); it resolves to nothing when the
-                # callee is not a pass-through, so non-pass-through calls are
-                # unaffected.
-                token = _passthrough_result_token(ctx.caller_qn, node)
-                return Taint(frozenset(), frozenset({callee[1], token}))
+            return self._py_call_taint(node, raw, ctx)
         return None
+
+    def _py_call_taint(self, node: Node, raw: str, ctx: _FlowCtx) -> Taint | None:
+        # A call seeds a source, or defers on the resolved callee's return.
+        if seed := self._source_binding(node, raw, ctx.import_map, ctx.read_sinks):
+            return Taint(frozenset({seed}), frozenset())
+        callee = self._resolve(
+            raw,
+            ctx.module_qn,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            ctx.local_var_types,
+        )
+        if callee is None:
+            return None
+        # Defer: mark the value pending on the callee's return and record a
+        # candidate return edge. finalize() decides whether the callee really
+        # returns taint, so a callee processed later still counts.
+        self._return_edge_candidates.append((callee[0], callee[1], ctx.caller_spec))
+        # The result also carries a per-call-site pass-through token so a
+        # tainted argument to a return-parameter reaches THIS call's consumers
+        # only (issue #1168); it resolves to nothing when the callee is not a
+        # pass-through, so non-pass-through calls are unaffected.
+        token = _passthrough_result_token(ctx.caller_qn, node)
+        return Taint(frozenset(), frozenset({callee[1], token}))
 
     def _py_value_taint_field(
         self, node: Node, field: str, tainted: _TaintMap, ctx: _FlowCtx
