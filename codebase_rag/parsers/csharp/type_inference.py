@@ -698,25 +698,17 @@ class CSharpTypeInferenceEngine:
         # Config.Each(); }` emitted an edge to `N.Config.Each` (Copilot,
         # PR #1998). A local owns the name whatever its type, so the call is
         # external to this graph, not a static call on that class.
-        bound = self._unwrap_receiver(receiver)
-        if bound is not None and bound.type == cs.TS_CSHARP_IDENTIFIER:
-            name = safe_decode_text(bound)
-            # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
-            # type, reaches local_var_types, and resolves normally -- this
-            # branch is never reached for it. Guarding on the `var` form
-            # keeps that path working.
-            if name and name not in local_var_types and self._binds_local(bound, name):
-                return True
         unwrapped = self._unwrap_receiver(receiver)
         if unwrapped is None:
             return False
-        receiver = unwrapped
-        if receiver.type not in (
+        if self._is_untyped_local(unwrapped, local_var_types):
+            return True
+        if unwrapped.type not in (
             cs.TS_CSHARP_IDENTIFIER,
             cs.TS_CSHARP_MEMBER_ACCESS_EXPRESSION,
         ):
             return False
-        text = safe_decode_text(receiver)
+        text = safe_decode_text(unwrapped)
         if not text:
             return False
         segments = text.split(cs.SEPARATOR_DOT)
@@ -745,6 +737,18 @@ class CSharpTypeInferenceEngine:
         ):
             return False
         return True
+
+    def _is_untyped_local(self, bound: Node, local_var_types: dict[str, str]) -> bool:
+        # Only an IMPLICIT binding: `foreach (Item it in ...)` declares a
+        # type, reaches local_var_types, and resolves normally -- this
+        # branch is never reached for it. Guarding on the `var` form
+        # keeps that path working.
+        if bound.type != cs.TS_CSHARP_IDENTIFIER:
+            return False
+        name = safe_decode_text(bound)
+        return bool(
+            name and name not in local_var_types and self._binds_local(bound, name)
+        )
 
     def _enclosing_member_external(
         self,
@@ -1730,18 +1734,17 @@ class CSharpTypeInferenceEngine:
                 candidates = arity_matched
         if len(candidates) == 1:
             return candidates[0]
-        if len(candidates) > 1:
-            # Several candidates that are all parts of ONE partial class are a
-            # single logical type, not a real ambiguity; return one part (method
-            # resolution then spans the whole group).
-            if part := self._single_partial_group_member(candidates):
-                return part
-            # Prefer a candidate in the calling file's module; ambiguity across
-            # unrelated files is left unresolved rather than guessed.
-            same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
-            if len(same_module) == 1:
-                return same_module[0]
-        return None
+        if not candidates:
+            return None
+        # Several candidates that are all parts of ONE partial class are a
+        # single logical type, not a real ambiguity; return one part (method
+        # resolution then spans the whole group).
+        if part := self._single_partial_group_member(candidates):
+            return part
+        # Prefer a candidate in the calling file's module; ambiguity across
+        # unrelated files is left unresolved rather than guessed.
+        same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
+        return same_module[0] if len(same_module) == 1 else None
 
     def _single_partial_group_member(self, candidates: list[str]) -> str | None:
         # If every candidate belongs to the SAME partial-class group, they are
