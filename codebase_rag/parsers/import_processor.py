@@ -279,28 +279,38 @@ def _rs_top_level_only(stripped: str) -> str:
     in_macro = False
     for c in stripped:
         if c == "{":
-            if depth == 0:
-                in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
-                out.append(c)
-                if in_macro:
-                    out.append("\n")
-            elif in_macro:
-                out.append("\n")
+            in_macro = _rs_open_brace(out, depth, in_macro)
             depth += 1
         elif c == "}":
             depth = max(depth - 1, 0)
-            if depth == 0:
+            if depth == 0 or in_macro:
                 out.append("\n")
-                in_macro = False
-            elif in_macro:
-                out.append("\n")
-        elif depth == 0 or c == "\n":
-            out.append(c)
-        elif in_macro:
-            out.append(c)
-            if c == ";":
-                out.append("\n")
+            in_macro = in_macro and depth > 0
+        else:
+            out.extend(_rs_top_level_char(c, depth, in_macro))
     return "".join(out)
+
+
+def _rs_open_brace(out: list[str], depth: int, in_macro: bool) -> bool:
+    # A depth-0 `{` is kept and decides whether a macro body opens (its
+    # braces then become newlines); returns the new in-macro state.
+    if depth == 0:
+        in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
+        out.append("{")
+    if in_macro:
+        out.append("\n")
+    return in_macro
+
+
+def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
+    # What a non-brace character contributes: depth-0 text and newlines pass
+    # through; inside a depth-0 macro body it passes too, with each `;`
+    # followed by a newline so emitted declarations stay line-anchored.
+    if depth == 0 or c == "\n":
+        return c
+    if not in_macro:
+        return ""
+    return c + "\n" if c == ";" else c
 
 
 _JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)

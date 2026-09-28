@@ -391,34 +391,47 @@ class JsTypeInferenceEngine:
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
                 return class_qn or class_name
 
-        elif value_node.type == cs.TS_CALL_EXPRESSION:
-            func_node = value_node.child_by_field_name("function")
-            func_type = func_node.type if func_node else cs.STR_NONE
-            logger.debug(ls.JS_CALL_EXPR_FUNC_NODE, func_type=func_type)
-
-            if func_node and func_node.type == cs.TS_MEMBER_EXPRESSION:
-                method_call_text = ut.extract_method_call(func_node)
-                logger.debug(ls.JS_EXTRACTED_METHOD_CALL, method_call=method_call_text)
-                if method_call_text:
-                    if inferred_type := self._infer_js_method_return_type(
-                        method_call_text, module_qn
-                    ):
-                        logger.debug(
-                            ls.JS_TYPE_INFERRED,
-                            method_call=method_call_text,
-                            inferred_type=inferred_type,
-                        )
-                        return inferred_type
-                    logger.debug(
-                        ls.JS_RETURN_TYPE_INFER_FAILED, method_call=method_call_text
-                    )
-
-            elif func_node and func_node.type == cs.TS_IDENTIFIER:
-                func_name = func_node.text
-                if func_name:
-                    return safe_decode_text(func_node)
+        elif value_node.type == cs.TS_CALL_EXPRESSION and (
+            call_type := self._infer_js_call_value_type(value_node, module_qn)
+        ):
+            return call_type
 
         logger.debug(ls.JS_NO_PATTERN_MATCHED, node_type=value_node.type)
+        return None
+
+    def _infer_js_call_value_type(
+        self, value_node: ASTNode, module_qn: str
+    ) -> str | None:
+        # `obj.method()` takes the method's inferred return type; a bare
+        # `factory()` is typed by the callee's own name.
+        func_node = value_node.child_by_field_name("function")
+        func_type = func_node.type if func_node else cs.STR_NONE
+        logger.debug(ls.JS_CALL_EXPR_FUNC_NODE, func_type=func_type)
+        if func_node is None:
+            return None
+        if func_node.type == cs.TS_MEMBER_EXPRESSION:
+            return self._infer_js_member_call_type(func_node, module_qn)
+        if func_node.type == cs.TS_IDENTIFIER and func_node.text:
+            return safe_decode_text(func_node)
+        return None
+
+    def _infer_js_member_call_type(
+        self, func_node: ASTNode, module_qn: str
+    ) -> str | None:
+        method_call_text = ut.extract_method_call(func_node)
+        logger.debug(ls.JS_EXTRACTED_METHOD_CALL, method_call=method_call_text)
+        if not method_call_text:
+            return None
+        if inferred_type := self._infer_js_method_return_type(
+            method_call_text, module_qn
+        ):
+            logger.debug(
+                ls.JS_TYPE_INFERRED,
+                method_call=method_call_text,
+                inferred_type=inferred_type,
+            )
+            return inferred_type
+        logger.debug(ls.JS_RETURN_TYPE_INFER_FAILED, method_call=method_call_text)
         return None
 
     def _infer_js_method_return_type(
