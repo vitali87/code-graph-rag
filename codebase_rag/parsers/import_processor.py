@@ -636,6 +636,51 @@ def _lua_relative_module(import_path: str, current_module: str) -> str:
     return cs.SEPARATOR_DOT.join(parts)
 
 
+def _rust_auto_location(
+    dir_parts: list[str],
+) -> tuple[tuple[str, ...], str | None, bool] | None:
+    """Where `dir_parts` sits among cargo's auto target locations.
+
+    Returns (package dir parts, the manifest auto-discovery key governing it,
+    whether it is a multi-file target's own subdirectory), with key None for
+    a package's src/ (governed by autolib and autobins both); None when the
+    directory is not an auto location.
+    """
+    if not dir_parts:
+        return None
+    last = dir_parts[-1]
+    if last == cs.LANG_SRC_DIR:
+        return tuple(dir_parts[:-1]), None, False
+    if (
+        len(dir_parts) >= 2
+        and last == cs.RS_BIN_DIR
+        and dir_parts[-2] == cs.LANG_SRC_DIR
+    ):
+        return tuple(dir_parts[:-2]), cs.RS_MANIFEST_AUTOBINS_KEY, False
+    if last in cs.RS_AUTO_TARGET_DIRS:
+        return tuple(dir_parts[:-1]), cs.RS_AUTO_DIR_KEYS[last], False
+    if (
+        len(dir_parts) >= 3
+        and dir_parts[-2] == cs.RS_BIN_DIR
+        and dir_parts[-3] == cs.LANG_SRC_DIR
+    ):
+        return tuple(dir_parts[:-3]), cs.RS_MANIFEST_AUTOBINS_KEY, True
+    if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
+        return tuple(dir_parts[:-2]), cs.RS_AUTO_DIR_KEYS[dir_parts[-2]], True
+    return None
+
+
+def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
+    # A manifest target section's tables: `[lib]` is one table, `[[bin]]` an
+    # array of them; anything malformed contributes nothing.
+    entries = manifest.get(section)
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -2111,72 +2156,26 @@ class ImportProcessor:
         # main.rs is the kind's target — src/bin/<name>/ (autobins) and
         # <kind>/<name>/ for examples/tests/benches. Elsewhere both stay
         # enabled.
-        if not dir_parts:
+        location = _rust_auto_location(dir_parts)
+        if location is None:
             return True, True
-        if dir_parts[-1] == cs.LANG_SRC_DIR:
-            pkg_parts = tuple(dir_parts[:-1])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return (
-                    self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
-                    self._rust_auto_kind_enabled(
-                        pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                    ),
-                )
-            return True, True
-        if (
-            len(dir_parts) >= 2
-            and dir_parts[-1] == cs.RS_BIN_DIR
-            and dir_parts[-2] == cs.LANG_SRC_DIR
+        pkg_parts, key, nested = location
+        if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+            self.repo_path.joinpath(*pkg_parts)
         ):
-            # Every .rs directly in src/bin — main.rs and lib.rs alike — is
-            # a bin auto target, so both entry stems follow autobins.
-            pkg_parts = tuple(dir_parts[:-2])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                enabled = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                )
-                return enabled, enabled
             return True, True
-        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
-            # Every .rs directly in a kind dir is that kind's auto target,
-            # so both entry stems follow the kind's flag.
-            pkg_parts = tuple(dir_parts[:-1])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                enabled = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
-                )
-                return enabled, enabled
-            return True, True
-        if (
-            len(dir_parts) >= 3
-            and dir_parts[-2] == cs.RS_BIN_DIR
-            and dir_parts[-3] == cs.LANG_SRC_DIR
-        ):
-            # A multi-file target compiles <name>/main.rs; a lib.rs there is
-            # never a cargo target, so the lib flag is off in nested dirs.
-            pkg_parts = tuple(dir_parts[:-3])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return False, self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                )
-            return True, True
-        if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
-            pkg_parts = tuple(dir_parts[:-2])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return False, self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-2]]
-                )
-        return True, True
+        if key is None:
+            # A package's src/: lib.rs follows autolib, main.rs autobins.
+            return (
+                self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
+                self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY),
+            )
+        enabled = self._rust_auto_kind_enabled(pkg_parts, key)
+        # A multi-file target compiles <name>/main.rs; a lib.rs there is never
+        # a cargo target, so the lib flag is off in nested dirs. Directly in a
+        # kind dir (or src/bin) every .rs is that kind's target, so both entry
+        # stems follow the kind's flag.
+        return (False, enabled) if nested else (enabled, enabled)
 
     def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
         # Cargo's per-kind discovery opt-outs (`autobins = false` and
@@ -2213,14 +2212,7 @@ class ImportProcessor:
         paths: set[str] = set()
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
         for section in cs.RS_MANIFEST_TARGET_SECTIONS:
-            entries = manifest.get(section)
-            if isinstance(entries, dict):
-                entries = [entries]
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
+            for entry in _rust_manifest_section_tables(manifest, section):
                 if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
                     paths.add(_rust_norm_manifest_path(path))
                 elif default := self._rust_default_target_path(
@@ -2231,16 +2223,14 @@ class ImportProcessor:
                     # explicit target must survive its kind's auto-discovery
                     # opt-out (issue #1030 review).
                     paths.add(default)
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        if not isinstance(package, dict):
+            package = {}
         # `[package] build = "..."` overrides the build script location;
         # the named file is a crate root like any explicit target.
-        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
-        if isinstance(package, dict) and isinstance(
-            build := package.get(cs.RS_MANIFEST_BUILD_KEY), str
-        ):
-            paths.add(_rust_norm_manifest_path(build))
-        build_value = (
-            package.get(cs.RS_MANIFEST_BUILD_KEY) if isinstance(package, dict) else None
-        )
+        build_value = package.get(cs.RS_MANIFEST_BUILD_KEY)
+        if isinstance(build_value, str):
+            paths.add(_rust_norm_manifest_path(build_value))
         # Unset AND `build = true` both mean auto-detection
         # (cargo-verified: `build = true` compiles build.rs exactly like
         # unset); a string names the script explicitly, false disables.
@@ -2248,9 +2238,7 @@ class ImportProcessor:
             build_value is None or build_value is True
         )
         self._rust_auto_discovery_flags[pkg_parts] = {
-            key: False
-            for key in cs.RS_MANIFEST_AUTO_KEYS
-            if isinstance(package, dict) and package.get(key) is False
+            key: False for key in cs.RS_MANIFEST_AUTO_KEYS if package.get(key) is False
         }
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
@@ -4074,33 +4062,7 @@ class ImportProcessor:
                 )
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
         if scope_node is not None:
-            if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
-                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (
-                        scope_node.start_point[0] + 1,
-                        scope_node.start_point[1],
-                        resolved_imports,
-                        False,
-                    )
-                )
-            else:
-                # A const/static initializer block: no qn scope, so the
-                # entry is span-gated and answers only calls written
-                # inside the block, with nested mod/fn/item-scope spans
-                # recorded so inner scopes' own bindings keep precedence.
-                mod_holes, fn_holes, item_scopes = rs_utils.rust_block_scope_holes(
-                    scope_node
-                )
-                self.rust_block_scope_imports.setdefault(module_qn, []).append(
-                    (
-                        scope_node.start_byte,
-                        scope_node.end_byte,
-                        resolved_imports,
-                        mod_holes,
-                        fn_holes,
-                        item_scopes,
-                    )
-                )
+            self._record_rust_body_scope_use(scope_node, module_qn, resolved_imports)
             return
         if scope_parts is None:
             # No enclosing block could be attributed (defensive): no qn
@@ -4110,6 +4072,47 @@ class ImportProcessor:
         if not scope_parts:
             self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
             return
+        self._commit_rust_mod_scope_use(
+            use_node, module_qn, effective_qn, pure_chain, resolved_imports
+        )
+
+    def _record_rust_body_scope_use(
+        self, scope_node: Node, module_qn: str, resolved_imports: dict[str, str]
+    ) -> None:
+        if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
+            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                (
+                    scope_node.start_point[0] + 1,
+                    scope_node.start_point[1],
+                    resolved_imports,
+                    False,
+                )
+            )
+            return
+        # A const/static initializer block: no qn scope, so the entry is
+        # span-gated and answers only calls written inside the block, with
+        # nested mod/fn/item-scope spans recorded so inner scopes' own
+        # bindings keep precedence.
+        mod_holes, fn_holes, item_scopes = rs_utils.rust_block_scope_holes(scope_node)
+        self.rust_block_scope_imports.setdefault(module_qn, []).append(
+            (
+                scope_node.start_byte,
+                scope_node.end_byte,
+                resolved_imports,
+                mod_holes,
+                fn_holes,
+                item_scopes,
+            )
+        )
+
+    def _commit_rust_mod_scope_use(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        pure_chain: bool,
+        resolved_imports: dict[str, str],
+    ) -> None:
         # A sub-scope key may collide with a module the INDEXER registered
         # (a fn-local or cfg-twin Rust module file, or a same-named module
         # of another language, since the qn scheme is language-agnostic):
