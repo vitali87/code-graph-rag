@@ -1024,10 +1024,8 @@ class PythonAstAnalyzerMixin(_AstBase):
             name = (
                 safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
             )
-            if not name or (nested and name not in declared):
-                continue
-            if name not in local_var_types:
-                local_var_types[name] = element
+            if name and (not nested or name in declared):
+                local_var_types.setdefault(name, element)
 
     def _unpacked_elements(
         self,
