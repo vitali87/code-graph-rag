@@ -90,42 +90,69 @@ def _process_mro_shadow_overrides(
     ancestor_cache: dict[str, set[str]] = {}
     emitted: set[tuple[str, str]] = set()
     for class_qn in sorted(class_inheritance):
-        providers: dict[str, list[str]] = {}
-        for ancestor_qn in _linearized_ancestors(class_qn, class_inheritance):
-            if ancestor_qn not in method_names_cache:
-                method_names_cache[ancestor_qn] = _direct_method_names(
-                    ancestor_qn, function_registry
-                )
-            for name in method_names_cache[ancestor_qn]:
-                providers.setdefault(name, []).append(ancestor_qn)
+        providers = _mro_method_providers(
+            class_qn, class_inheritance, function_registry, method_names_cache
+        )
         for name, classes in providers.items():
-            if len(classes) < 2:
-                continue
-            # Same-branch pairs (the provider inherits the shadowed class)
-            # are the per-method walk's territory and already linked; this
-            # pass adds only cross-branch sibling shadows.
-            if classes[0] not in ancestor_cache:
-                ancestor_cache[classes[0]] = set(
-                    _linearized_ancestors(classes[0], class_inheritance)[1:]
+            if len(classes) >= 2:
+                _emit_sibling_shadows(
+                    name, classes, class_inheritance, ancestor_cache, emitted, ingestor
                 )
-            first_qn = f"{classes[0]}{cs.SEPARATOR_DOT}{name}"
-            for shadowed_class in classes[1:]:
-                if shadowed_class in ancestor_cache[classes[0]]:
-                    continue
-                pair = (first_qn, f"{shadowed_class}{cs.SEPARATOR_DOT}{name}")
-                if pair in emitted:
-                    continue
-                emitted.add(pair)
-                ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[0]),
-                    cs.RelationshipType.OVERRIDES,
-                    (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[1]),
-                )
-                logger.debug(
-                    logs.CLASS_METHOD_OVERRIDE,
-                    method_qn=pair[0],
-                    parent_method_qn=pair[1],
-                )
+
+
+def _emit_sibling_shadows(
+    name: str,
+    classes: list[str],
+    class_inheritance: dict[str, list[str]],
+    ancestor_cache: dict[str, set[str]],
+    emitted: set[tuple[str, str]],
+    ingestor: IngestorProtocol,
+) -> None:
+    # Same-branch pairs (the provider inherits the shadowed class) are the
+    # per-method walk's territory and already linked; this pass adds only
+    # cross-branch sibling shadows.
+    first = classes[0]
+    if first not in ancestor_cache:
+        ancestor_cache[first] = set(_linearized_ancestors(first, class_inheritance)[1:])
+    first_qn = f"{first}{cs.SEPARATOR_DOT}{name}"
+    for shadowed_class in classes[1:]:
+        if shadowed_class in ancestor_cache[first]:
+            continue
+        pair = (first_qn, f"{shadowed_class}{cs.SEPARATOR_DOT}{name}")
+        if pair not in emitted:
+            emitted.add(pair)
+            _emit_shadow_override(ingestor, pair)
+
+
+def _mro_method_providers(
+    class_qn: str,
+    class_inheritance: dict[str, list[str]],
+    function_registry: FunctionRegistryTrieProtocol,
+    method_names_cache: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    # Method name -> the classes defining it, in the class's MRO order.
+    providers: dict[str, list[str]] = {}
+    for ancestor_qn in _linearized_ancestors(class_qn, class_inheritance):
+        if ancestor_qn not in method_names_cache:
+            method_names_cache[ancestor_qn] = _direct_method_names(
+                ancestor_qn, function_registry
+            )
+        for name in method_names_cache[ancestor_qn]:
+            providers.setdefault(name, []).append(ancestor_qn)
+    return providers
+
+
+def _emit_shadow_override(ingestor: IngestorProtocol, pair: tuple[str, str]) -> None:
+    ingestor.ensure_relationship_batch(
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[0]),
+        cs.RelationshipType.OVERRIDES,
+        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, pair[1]),
+    )
+    logger.debug(
+        logs.CLASS_METHOD_OVERRIDE,
+        method_qn=pair[0],
+        parent_method_qn=pair[1],
+    )
 
 
 def _linearized_ancestors(
