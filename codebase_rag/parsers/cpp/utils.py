@@ -44,31 +44,29 @@ def extract_namespace_path(node: Node) -> list[str]:
     current = node.parent
 
     while current and current.type != cs.CppNodeType.TRANSLATION_UNIT:
-        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION:
-            namespace_name = None
-            name_node = current.child_by_field_name(cs.KEY_NAME)
-            if name_node and name_node.text:
-                namespace_name = safe_decode_text(name_node)
-            else:
-                for child in current.children:
-                    if (
-                        child.type
-                        in (
-                            cs.CppNodeType.NAMESPACE_IDENTIFIER,
-                            cs.CppNodeType.IDENTIFIER,
-                        )
-                        and child.text
-                    ):
-                        namespace_name = safe_decode_text(child)
-                        break
-            if namespace_name:
-                path_parts.extend(
-                    reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON))
-                )
+        if current.type == cs.CppNodeType.NAMESPACE_DEFINITION and (
+            namespace_name := _namespace_name(current)
+        ):
+            path_parts.extend(reversed(namespace_name.split(cs.SEPARATOR_DOUBLE_COLON)))
         current = current.parent
 
     path_parts.reverse()
     return path_parts
+
+
+def _namespace_name(namespace: Node) -> str | None:
+    # The `name` field, else the first identifier child (older grammars).
+    name_node = namespace.child_by_field_name(cs.KEY_NAME)
+    if name_node and name_node.text:
+        return safe_decode_text(name_node)
+    for child in namespace.children:
+        if (
+            child.type
+            in (cs.CppNodeType.NAMESPACE_IDENTIFIER, cs.CppNodeType.IDENTIFIER)
+            and child.text
+        ):
+            return safe_decode_text(child)
+    return None
 
 
 _EXPORT_CANDIDATE_TYPES = frozenset(
