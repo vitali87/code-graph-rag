@@ -2,7 +2,6 @@ import json
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
 
 import defusedxml.ElementTree as ET
 from loguru import logger
@@ -26,7 +25,7 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
     return name, spec
 
 
-def _load_toml(file_path: Path) -> dict[str, Any]:
+def _load_toml(file_path: Path) -> dict:
     with file_path.open("rb") as f:
         return tomllib.load(f)
 
