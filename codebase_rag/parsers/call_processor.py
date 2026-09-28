@@ -272,6 +272,19 @@ def _dart_is_owned_function_body(node: Node) -> bool:
     )
 
 
+def _go_literal_element_inner(element: Node) -> Node | None:
+    # {keyed_element(value=literal_element) | literal_element}: the element
+    # wraps the bare value one level down.
+    value = (
+        element.child_by_field_name(cs.FIELD_VALUE)
+        if element.type == cs.TS_GO_KEYED_ELEMENT
+        else element
+    )
+    if value is None or value.type != cs.TS_GO_LITERAL_ELEMENT:
+        return None
+    return value.named_children[0] if value.named_children else None
+
+
 def _dart_declared_names(node: Node) -> list[str]:
     # The name(s) a parameter, local declaration, loop variable, catch
     # parameter, or pattern binding binds; anything else declares nothing.
@@ -282,18 +295,10 @@ def _dart_declared_names(node: Node) -> list[str]:
             for child in node.named_children
             if child.type == cs.TS_DART_IDENTIFIER and (name := safe_decode_text(child))
         ]
-    if node_type in _DART_LOCAL_DECLARATION_TYPES:
-        declared = next(
-            (
-                child
-                for child in node.named_children
-                if child.type == cs.TS_DART_IDENTIFIER
-            ),
-            None,
-        )
-        if declared is not None and (name := safe_decode_text(declared)):
-            return [name]
-    if node_type == cs.TS_DART_FOR_LOOP_PARTS:
+    if (
+        node_type in _DART_LOCAL_DECLARATION_TYPES
+        or node_type == cs.TS_DART_FOR_LOOP_PARTS
+    ):
         # `for (final total in xs)`: the FIRST identifier is the loop
         # variable, the second the iterable expression.
         first = next(
@@ -304,8 +309,8 @@ def _dart_declared_names(node: Node) -> list[str]:
             ),
             None,
         )
-        if first is not None and (name := safe_decode_text(first)):
-            return [name]
+        name = safe_decode_text(first) if first is not None else None
+        return [name] if name else []
     if node_type == cs.TS_DART_PATTERN_VARIABLE_DECLARATION:
         return _dart_pattern_bound_names(node)
     return []
@@ -1677,41 +1682,45 @@ class CallProcessor:
             module_qn = self._module_qn(
                 file_path, cached_relative_path(file_path, self.repo_path)
             )
-            resolver = self._resolver
             self._collect_ctor_field_metadata(root_node, module_qn)
-            if (
-                func_class_captures_cache is not None
+            call_nodes = (
+                func_class_captures_cache[file_path].get(cs.CAPTURE_CALL)
+                if func_class_captures_cache is not None
                 and file_path in func_class_captures_cache
-            ):
-                call_nodes = func_class_captures_cache[file_path].get(cs.CAPTURE_CALL)
-            else:
-                call_nodes = None
+                else None
+            )
             if call_nodes is None:
                 call_nodes, _ = self._collect_all_call_nodes(
                     root_node, language, queries
                 )
-            registry = resolver.function_registry
-            callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
             for call_node in call_nodes:
-                positional, keyword = self._parse_call_arguments(call_node)
-                if not positional and not keyword:
-                    continue
-                name = self._get_call_target_name(call_node)
-                if not name:
-                    continue
-                callee = resolver.resolve_function_call(name, module_qn)
-                if not callee or callee[0] != cs.NodeLabel.CLASS:
-                    continue
-                arg_entries: list[tuple[int | str, Node]] = list(enumerate(positional))
-                arg_entries.extend(keyword.items())
-                for key, value_node in arg_entries:
-                    if not (value_text := safe_decode_text(value_node)):
-                        continue
-                    bound = resolver.resolve_function_call(value_text, module_qn)
-                    if bound and bound[0] in callable_labels and bound[1] in registry:
-                        resolver.record_pending_field_binding(callee[1], key, bound[1])
+                self._record_call_field_bindings(call_node, module_qn)
         except Exception as e:
             logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
+
+    def _record_call_field_bindings(self, call_node: Node, module_qn: str) -> None:
+        # A class construction whose arguments name functions binds each
+        # to the matching (keyword or positional) ctor field.
+        resolver = self._resolver
+        positional, keyword = self._parse_call_arguments(call_node)
+        if not positional and not keyword:
+            return
+        name = self._get_call_target_name(call_node)
+        if not name:
+            return
+        callee = resolver.resolve_function_call(name, module_qn)
+        if not callee or callee[0] != cs.NodeLabel.CLASS:
+            return
+        registry = resolver.function_registry
+        callable_labels = (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD)
+        arg_entries: list[tuple[int | str, Node]] = list(enumerate(positional))
+        arg_entries.extend(keyword.items())
+        for key, value_node in arg_entries:
+            if not (value_text := safe_decode_text(value_node)):
+                continue
+            bound = resolver.resolve_function_call(value_text, module_qn)
+            if bound and bound[0] in callable_labels and bound[1] in registry:
+                resolver.record_pending_field_binding(callee[1], key, bound[1])
 
     def finalize_callable_field_bindings(self) -> None:
         self._resolver.finalize_field_bindings()
@@ -5809,15 +5818,7 @@ class CallProcessor:
             if node.type == cs.TS_GO_LITERAL_VALUE:
                 for element in node.named_children:
                     self._site_node = element
-                    value = (
-                        element.child_by_field_name(cs.FIELD_VALUE)
-                        if element.type == cs.TS_GO_KEYED_ELEMENT
-                        else element
-                    )
-                    if value is None or value.type != cs.TS_GO_LITERAL_ELEMENT:
-                        continue
-                    inner = value.named_children[0] if value.named_children else None
-                    if inner is None:
+                    if (inner := _go_literal_element_inner(element)) is None:
                         continue
                     self._emit_value_function_ref(
                         inner,
