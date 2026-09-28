@@ -72,14 +72,10 @@ class JavaVariableAnalyzerMixin:
     # implementation and silently resolve every call to None.
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
     _declared_return_type_of: Callable[[str], str | None]
+    _resolve_java_method_return_type: Callable[[str, str], str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
-
-    @abstractmethod
-    def _resolve_java_method_return_type(
-        self, method_call: str, module_qn: str
-    ) -> str | None: ...
 
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
