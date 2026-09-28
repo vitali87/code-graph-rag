@@ -176,6 +176,38 @@ _IN_PROGRESS = _Sentinel()
 type _MemoEntry = tuple[str, str] | None | _Sentinel
 
 
+def _extension_receiver_matches(
+    receiver_type_name: str,
+    recv_type: str,
+    ext_namespace: str,
+    ambiguous_unqualified: bool,
+) -> bool:
+    # Namespace consistency between the call receiver and the stored
+    # `this` type, by qualification:
+    #  - both qualified: require the SAME fully-qualified name
+    #    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
+    #  - recv qualified, cand not: resolve the ext's unqualified
+    #    `this Widget` to `<ext-namespace>.Widget` and require equality
+    #    (`N.Widget` binds a same-namespace `this Widget`);
+    #  - recv unqualified, cand qualified: the receiver's namespace is
+    #    unknown without a semantic model, so don't guess;
+    #  - both unqualified: match by simple name unless it's ambiguous.
+    recv_qualified = cs.SEPARATOR_DOT in receiver_type_name
+    cand_qualified = cs.SEPARATOR_DOT in recv_type
+    if recv_qualified and cand_qualified:
+        return recv_type == receiver_type_name
+    if recv_qualified:
+        cand_qualified_name = (
+            f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
+            if ext_namespace
+            else recv_type
+        )
+        return cand_qualified_name == receiver_type_name
+    if cand_qualified:
+        return False
+    return not ambiguous_unqualified
+
+
 class CSharpTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -1426,24 +1458,8 @@ class CSharpTypeInferenceEngine:
         # genuinely ambiguous, since we can't tell which one it is, so an
         # unqualified-vs-unqualified match must not guess. A qualified receiver
         # or a BCL name (not registered) is not affected.
-        same_name_decls = [
-            qn
-            for qn in self.simple_name_lookup.get(recv_simple, set())
-            if self.function_registry.get(qn) in _TYPE_DECLS
-        ]
-        # Same-name declarations that all differ by GENERIC ARITY (`Builder`
-        # beside `Builder<TResult>`, Polly's dual pipeline builders) are not
-        # the namespace ambiguity this guard exists for: a compilable call
-        # binds the unique matching extension regardless of which twin the
-        # receiver is. Only same-arity twins (true `N1.Widget`/`N2.Widget`
-        # namespace splits) stay ambiguous.
-        distinct_arities = {
-            self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
-        }
-        ambiguous_unqualified = (
-            not recv_qualified
-            and len(same_name_decls) > 1
-            and len(distinct_arities) != len(same_name_decls)
+        ambiguous_unqualified = not recv_qualified and self._same_arity_type_twins(
+            recv_simple
         )
         matches: list[str] = []
         for qn, recv_type, ext_namespace, cand_recv_arity in candidates:
@@ -1458,33 +1474,10 @@ class CSharpTypeInferenceEngine:
                 continue
             if recv_type.rsplit(cs.SEPARATOR_DOT, 1)[-1] != recv_simple:
                 continue
-            cand_qualified = cs.SEPARATOR_DOT in recv_type
-            # Namespace consistency between the call receiver and the stored
-            # `this` type, by qualification:
-            #  - both qualified: require the SAME fully-qualified name
-            #    (`N1.Widget` binds `this N1.Widget`, never `this N2.Widget`);
-            #  - recv qualified, cand not: resolve the ext's unqualified
-            #    `this Widget` to `<ext-namespace>.Widget` and require equality
-            #    (`N.Widget` binds a same-namespace `this Widget`);
-            #  - recv unqualified, cand qualified: the receiver's namespace is
-            #    unknown without a semantic model, so don't guess;
-            #  - both unqualified: match by simple name unless it's ambiguous.
-            if recv_qualified and cand_qualified:
-                if recv_type != receiver_type_name:
-                    continue
-            elif recv_qualified and not cand_qualified:
-                cand_qualified_name = (
-                    f"{ext_namespace}{cs.SEPARATOR_DOT}{recv_type}"
-                    if ext_namespace
-                    else recv_type
-                )
-                if cand_qualified_name != receiver_type_name:
-                    continue
-            elif cand_qualified:  # recv unqualified, cand qualified
-                continue
-            elif ambiguous_unqualified:
-                continue
-            matches.append(qn)
+            if _extension_receiver_matches(
+                receiver_type_name, recv_type, ext_namespace, ambiguous_unqualified
+            ):
+                matches.append(qn)
         # Bind only on a unique match; an ambiguous name across static classes
         # is left unresolved rather than guessed.
         return matches[0] if len(matches) == 1 else None
@@ -1745,6 +1738,28 @@ class CSharpTypeInferenceEngine:
         # unrelated files is left unresolved rather than guessed.
         same_module = [q for q in candidates if q.startswith(f"{module_qn}.")]
         return same_module[0] if len(same_module) == 1 else None
+
+    def _same_arity_type_twins(self, simple_name: str) -> bool:
+        # An UNqualified receiver whose simple name maps to more than one
+        # registered first-party type (`N1.Widget` vs `N2.Widget`) is
+        # genuinely ambiguous, since we can't tell which one it is, so an
+        # unqualified-vs-unqualified match must not guess. Same-name
+        # declarations that all differ by GENERIC ARITY (`Builder` beside
+        # `Builder<TResult>`, Polly's dual pipeline builders) are not that
+        # namespace ambiguity: a compilable call binds the unique matching
+        # extension regardless of which twin the receiver is. Only same-arity
+        # twins (true `N1.Widget`/`N2.Widget` namespace splits) stay ambiguous.
+        same_name_decls = [
+            qn
+            for qn in self.simple_name_lookup.get(simple_name, set())
+            if self.function_registry.get(qn) in _TYPE_DECLS
+        ]
+        distinct_arities = {
+            self.csharp_class_generic_arity.get(qn, 0) for qn in same_name_decls
+        }
+        return len(same_name_decls) > 1 and len(distinct_arities) != len(
+            same_name_decls
+        )
 
     def _single_partial_group_member(self, candidates: list[str]) -> str | None:
         # If every candidate belongs to the SAME partial-class group, they are
