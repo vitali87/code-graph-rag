@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 from loguru import logger
@@ -66,6 +68,38 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
+def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
+    """Whether QDRANT_URL names the Qdrant this stack publishes on `port`."""
+    if not url:
+        return False
+    parts = urlsplit(url)
+    host = parts.hostname
+    try:
+        url_port = parts.port or cs.QDRANT_CLIENT_DEFAULT_PORT
+    except ValueError:
+        return False
+    if host is None or url_port != port:
+        return False
+    if host in (cs.LOCALHOST_NAME, os.environ.get(cs.COMPOSE_BIND_HOST_VAR)):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _bundled_qdrant_api_key(port: int) -> str | None:
+    """The configured Qdrant key, when it is meant for the bundled Qdrant.
+
+    QDRANT_API_KEY belongs to the server QDRANT_URL names, which may be
+    another one such as Qdrant Cloud. That key is not copied into the local
+    container or sent to it, and the bundled Qdrant then runs without one.
+    """
+    if settings.QDRANT_API_KEY and _targets_bundled_qdrant(settings.QDRANT_URL, port):
+        return settings.QDRANT_API_KEY
+    return None
+
+
 def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValue]:
     """One service's environment in `docker compose config` output.
 
@@ -113,6 +147,7 @@ class StackManager:
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
+        self.qdrant_api_key = _bundled_qdrant_api_key(qdrant_port)
         self.project_name = project_name
 
     @property
@@ -199,8 +234,8 @@ class StackManager:
                 cs.ENV_MEMGRAPH_USER: username,
                 cs.ENV_MEMGRAPH_PASSWORD: password,
             }
-        if settings.QDRANT_API_KEY:
-            wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: settings.QDRANT_API_KEY}
+        if self.qdrant_api_key:
+            wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: self.qdrant_api_key}
         return wanted
 
     def _verify_resolved_auth(self) -> None:
@@ -277,7 +312,7 @@ class StackManager:
             self.memgraph_host, self.memgraph_port
         ):
             open_services.append(cs.SERVICE_MEMGRAPH)
-        if api_key := settings.QDRANT_API_KEY:
+        if api_key := self.qdrant_api_key:
             if qdrant_accepts_anonymous(self.qdrant_port):
                 open_services.append(cs.SERVICE_QDRANT)
             # The probe is plain http, so like the app it sends the key only

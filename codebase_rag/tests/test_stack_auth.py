@@ -25,6 +25,7 @@ from loguru import logger
 from codebase_rag.config import settings
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
+from codebase_rag.stack import manager as manager_module
 from codebase_rag.stack.manager import StackError, StackManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -43,11 +44,16 @@ UNRESOLVED_ENV = {
 }
 
 
+BUNDLED_QDRANT_URL = "http://localhost:6333"
+
+
 @pytest.fixture
 def credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", "cgr")
     monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", "s3cret")
     monkeypatch.setattr(settings, "QDRANT_API_KEY", "qdrant-key")
+    monkeypatch.setattr(settings, "QDRANT_URL", BUNDLED_QDRANT_URL)
+    monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
 
 
 @pytest.fixture
@@ -641,3 +647,55 @@ class TestAppStartOnARunningStack:
         warning = next(m for m in messages if "still accept" in m)
         assert cs.SERVICE_MEMGRAPH in warning
         assert cs.SERVICE_QDRANT in warning
+
+
+@pytest.mark.parametrize(
+    ("url", "bundled"),
+    [
+        ("http://localhost:6333", True),
+        ("http://127.0.0.1:6333", True),
+        ("http://[::1]:6333", True),
+        # qdrant-client connects to 6333 when the URL gives no port.
+        ("http://localhost", True),
+        ("https://abc.eu-central.aws.cloud.qdrant.io:6333", False),
+        ("http://qdrant.internal:6333", False),
+        ("http://localhost:6334", False),
+        (None, False),
+    ],
+)
+def test_qdrant_url_is_recognised_as_the_bundled_qdrant(
+    monkeypatch: pytest.MonkeyPatch, url: str | None, bundled: bool
+) -> None:
+    monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
+
+    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
+
+
+def test_qdrant_url_on_the_widened_bind_address_is_the_bundled_qdrant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "192.168.1.5")
+
+    assert manager_module._targets_bundled_qdrant("http://192.168.1.5:6333", 6333)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_key_for_another_qdrant_is_not_copied_into_the_local_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A Qdrant Cloud key would otherwise sit in the local container's
+    # environment and be sent to whatever answers on the local port.
+    monkeypatch.setattr(
+        settings, "QDRANT_URL", "https://abc.eu-central.aws.cloud.qdrant.io:6333"
+    )
+    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", True)
+    mgr = _manager(tmp_path)
+
+    assert cs.ENV_QDRANT_API_KEY not in mgr._compose_env()
+    messages, _, qdrant_probe, key_probe = _ensure_running_on_a_healthy_stack(
+        mgr, memgraph_open=False, qdrant_open=True, qdrant_key_accepted=False
+    )
+    qdrant_probe.assert_not_called()
+    key_probe.assert_not_called()
+    assert not any("still accept" in m for m in messages)
+    assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)

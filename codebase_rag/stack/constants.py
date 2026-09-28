@@ -64,6 +64,10 @@ STACK_AUTH_VARIABLES = {
     SERVICE_QDRANT: (ENV_QDRANT_API_KEY,),
 }
 STACK_AUTH_ENV_VARS = (ENV_MEMGRAPH_USER, ENV_MEMGRAPH_PASSWORD, ENV_QDRANT_API_KEY)
+# How a QDRANT_URL can name the bundled Qdrant; qdrant-client connects to port
+# 6333 when the URL gives none.
+LOCALHOST_NAME = "localhost"
+QDRANT_CLIENT_DEFAULT_PORT = 6333
 # A data endpoint: unlike /readyz, it needs the key once one is set.
 QDRANT_DATA_PROBE_PATH = "/collections"
 QDRANT_API_KEY_HEADER = "api-key"
