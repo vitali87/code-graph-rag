@@ -197,6 +197,14 @@ _PATH_GONE_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.ELOOP})
 _ERROR_CANT_RESOLVE_FILENAME = 1921
 
 
+def _log_embedding_progress(embedded_count: int, total: int) -> None:
+    if (
+        embedded_count > 0
+        and embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
+    ):
+        logger.debug(ls.EMBEDDING_PROGRESS, done=embedded_count, total=total)
+
+
 def _is_gone_error(exc: OSError) -> bool:
     return (
         exc.errno in _PATH_GONE_ERRNOS
@@ -7104,6 +7112,28 @@ class GraphUpdater:
             return container_abs == repo_abs or container_abs.startswith(repo_abs + "/")
         return False
 
+    def _embedding_candidate(self, row: ResultRow) -> tuple[int, str, str] | None:
+        # (node id, qualified name, source) for one query row; None when the
+        # row does not parse or its source cannot be read back from disk.
+        parsed = self._parse_embedding_result(row)
+        if parsed is None:
+            return None
+        qualified_name = parsed[cs.KEY_QUALIFIED_NAME]
+        start_line = parsed.get(cs.KEY_START_LINE)
+        end_line = parsed.get(cs.KEY_END_LINE)
+        file_path = parsed.get(cs.KEY_PATH)
+        source_code = (
+            None
+            if start_line is None or end_line is None or file_path is None
+            else self._extract_source_code(
+                qualified_name, file_path, start_line, end_line
+            )
+        )
+        if not source_code:
+            logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
+            return None
+        return parsed[cs.KEY_NODE_ID], qualified_name, source_code
+
     def _generate_semantic_embeddings(self) -> None:
         if self.skip_embeddings:
             logger.info(ls.EMBEDDINGS_SKIPPED)
@@ -7168,37 +7198,13 @@ class GraphUpdater:
                 return stored
 
             for row in results:
-                parsed = self._parse_embedding_result(row)
-                if parsed is None:
+                candidate = self._embedding_candidate(row)
+                if candidate is None:
                     continue
-
-                node_id = parsed[cs.KEY_NODE_ID]
-                qualified_name = parsed[cs.KEY_QUALIFIED_NAME]
-                start_line = parsed.get(cs.KEY_START_LINE)
-                end_line = parsed.get(cs.KEY_END_LINE)
-                file_path = parsed.get(cs.KEY_PATH)
-
-                if start_line is None or end_line is None or file_path is None:
-                    logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
-                    continue
-
-                if source_code := self._extract_source_code(
-                    qualified_name, file_path, start_line, end_line
-                ):
-                    pending.append((node_id, qualified_name, source_code))
-                    if len(pending) >= flush_at:
-                        embedded_count += flush()
-                        if (
-                            embedded_count % settings.EMBEDDING_PROGRESS_INTERVAL == 0
-                            and embedded_count > 0
-                        ):
-                            logger.debug(
-                                ls.EMBEDDING_PROGRESS,
-                                done=embedded_count,
-                                total=len(results),
-                            )
-                else:
-                    logger.debug(ls.NO_SOURCE_FOR, name=qualified_name)
+                pending.append(candidate)
+                if len(pending) >= flush_at:
+                    embedded_count += flush()
+                    _log_embedding_progress(embedded_count, len(results))
 
             embedded_count += flush()
 
