@@ -217,24 +217,41 @@ def _process_scoped_use_list(
 
 def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
     for i in range(impl_node.child_count):
-        if impl_node.field_name_for_child(i) == field:
-            type_node = impl_node.child(i)
-            if type_node is None:
-                continue
-            match type_node.type:
-                case cs.TS_GENERIC_TYPE:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            return safe_decode_text(child)
-                case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
-                    return safe_decode_text(type_node)
-                case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            if name := safe_decode_text(child):
-                                return name
-
+        if impl_node.field_name_for_child(i) != field:
+            continue
+        type_node = impl_node.child(i)
+        if type_node is None:
+            continue
+        found, name = _impl_type_node_name(type_node)
+        if found:
+            return name
     return None
+
+
+def _impl_type_node_name(type_node: Node) -> tuple[bool, str | None]:
+    # (decided, name) for one impl target/trait type node; not decided means
+    # the node carries no name here and the caller keeps scanning.
+    match type_node.type:
+        case cs.TS_GENERIC_TYPE:
+            ident = next(
+                (c for c in type_node.children if c.type == cs.TS_TYPE_IDENTIFIER),
+                None,
+            )
+            return ident is not None, safe_decode_text(ident) if ident else None
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
+            return True, safe_decode_text(type_node)
+        case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            name = next(
+                (
+                    decoded
+                    for c in type_node.children
+                    if c.type == cs.TS_TYPE_IDENTIFIER
+                    and (decoded := safe_decode_text(c))
+                ),
+                None,
+            )
+            return name is not None, name
+    return False, None
 
 
 def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | None:
