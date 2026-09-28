@@ -512,23 +512,37 @@ def _py_pattern_irrefutable(pattern: Node) -> bool:
         )
         return inner is not None and _py_pattern_irrefutable(inner)
     if child.type == cs.TS_PY_UNION_PATTERN:
-        # `1 | _` / `1 | other`: only the LAST alternative may legally be
-        # irrefutable, and a bare `_` alternative is an ANONYMOUS node, so
-        # inspect ALL children for the final non-separator one.
-        last = next(
-            (
-                c
-                for c in reversed(child.children)
-                if c.is_named or c.type == cs.TS_PY_WILDCARD_NODE
-            ),
-            None,
-        )
-        if last is None:
-            return False
-        if last.type == cs.TS_PY_WILDCARD_NODE:
-            return True
-        return last.type == cs.TS_PY_DOTTED_NAME and last.named_child_count == 1
+        return _py_union_pattern_irrefutable(child)
     return False
+
+
+def _py_union_pattern_irrefutable(union: Node) -> bool:
+    # `1 | _` / `1 | other`: only the LAST alternative may legally be
+    # irrefutable, and a bare `_` alternative is an ANONYMOUS node, so
+    # inspect ALL children for the final non-separator one.
+    last = next(
+        (
+            c
+            for c in reversed(union.children)
+            if c.is_named or c.type == cs.TS_PY_WILDCARD_NODE
+        ),
+        None,
+    )
+    if last is None:
+        return False
+    if last.type == cs.TS_PY_WILDCARD_NODE:
+        return True
+    return last.type == cs.TS_PY_DOTTED_NAME and last.named_child_count == 1
+
+
+def _dart_formal_parameter_name(node: Node) -> str | None:
+    # A typed parameter's NAME is its last identifier (`String data`).
+    idents = [
+        c for c in node.named_children if c.type == cs.TS_DART_IDENTIFIER and c.text
+    ]
+    if not idents or idents[-1].text is None:
+        return None
+    return idents[-1].text.decode(cs.ENCODING_UTF8)
 
 
 def _merge_optional_taints(left: Taint | None, right: Taint | None) -> Taint | None:
@@ -2343,27 +2357,36 @@ class FlowProcessor:
                 ),
                 None,
             )
-            if fn is None:
-                continue
-            names = self._dart_lambda_param_names(fn)
-            inner = dict(tainted)
-            inner_handles = dict(handles)
-            added_locals = [n for n in names if n not in jc.local_names]
-            for name in names:
-                # The parameter SHADOWS every outer meaning of the name: a
-                # same-named outer handle must not receive the callback's
-                # calls, and a parameter named after a builtin sink must not
-                # match it (review on #1317).
-                inner[name] = seed
-                inner_handles.pop(name, None)
-                jc.local_names.add(name)
-            try:
-                state = _LeanState(taint=inner, handles=inner_handles)
-                for stmt in self._dart_lambda_body_statements(fn):
-                    state = self._walk_flat_stmt(stmt, state, jc)
-            finally:
-                for name in added_locals:
-                    jc.local_names.discard(name)
+            if fn is not None:
+                self._dart_walk_seeded_lambda(fn, seed, tainted, handles, jc)
+
+    def _dart_walk_seeded_lambda(
+        self,
+        fn: Node,
+        seed: Taint,
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> None:
+        names = self._dart_lambda_param_names(fn)
+        inner = dict(tainted)
+        inner_handles = dict(handles)
+        added_locals = [n for n in names if n not in jc.local_names]
+        for name in names:
+            # The parameter SHADOWS every outer meaning of the name: a
+            # same-named outer handle must not receive the callback's
+            # calls, and a parameter named after a builtin sink must not
+            # match it (review on #1317).
+            inner[name] = seed
+            inner_handles.pop(name, None)
+            jc.local_names.add(name)
+        try:
+            state = _LeanState(taint=inner, handles=inner_handles)
+            for stmt in self._dart_lambda_body_statements(fn):
+                state = self._walk_flat_stmt(stmt, state, jc)
+        finally:
+            for name in added_locals:
+                jc.local_names.discard(name)
 
     @staticmethod
     def _dart_lambda_param_names(fn: Node) -> list[str]:
@@ -2386,13 +2409,8 @@ class FlowProcessor:
         while stack:
             node = stack.pop()
             if node.type == cs.TS_DART_FORMAL_PARAMETER:
-                idents = [
-                    c
-                    for c in node.named_children
-                    if c.type == cs.TS_DART_IDENTIFIER and c.text
-                ]
-                if idents:
-                    names.append(idents[-1].text.decode(cs.ENCODING_UTF8))
+                if (name := _dart_formal_parameter_name(node)) is not None:
+                    names.append(name)
             elif node.type == cs.TS_DART_IDENTIFIER and node.text:
                 names.append(node.text.decode(cs.ENCODING_UTF8))
             else:
@@ -2589,17 +2607,12 @@ class FlowProcessor:
         out: list[tuple[str, Taint | None]] = []
         positional = 0
         for arg in arguments.named_children:
+            entry = self._dart_arg_via_chain(arg, positional)
             if arg.type == cs.TS_DART_ARGUMENT:
-                chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
-                via = VIA_ARG_FORMAT.format(index=positional)
                 positional += 1
-            elif arg.type == cs.TS_DART_NAMED_ARGUMENT:
-                name, chain = self._dart_named_arg(arg)
-                if name is None:
-                    continue
-                via = VIA_KW_FORMAT.format(name=name)
-            else:
+            if entry is None:
                 continue
+            via, chain = entry
             taint, _ = self._dart_rhs(chain, tainted, {}, jc)
             if (
                 taint is None
@@ -2609,6 +2622,19 @@ class FlowProcessor:
                 taint = self._dart_list_literal_taint(chain[0], tainted, jc)
             out.append((via, taint))
         return out
+
+    def _dart_arg_via_chain(
+        self, arg: Node, positional: int
+    ) -> tuple[str, list[Node]] | None:
+        if arg.type == cs.TS_DART_ARGUMENT:
+            chain = [c for c in arg.named_children if c.type != cs.TS_COMMENT]
+            return VIA_ARG_FORMAT.format(index=positional), chain
+        if arg.type == cs.TS_DART_NAMED_ARGUMENT:
+            name, chain = self._dart_named_arg(arg)
+            if name is None:
+                return None
+            return VIA_KW_FORMAT.format(name=name), chain
+        return None
 
     def _dart_list_literal_taint(
         self, literal: Node, tainted: _TaintMap, jc: _JsCtx

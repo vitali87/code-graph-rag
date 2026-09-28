@@ -183,6 +183,30 @@ def _extract_semantic_categories(node_types_json: list[dict]) -> dict[str, list[
     return categories
 
 
+def _subtype_bucket(
+    subtype_lower: str,
+    functions: list[str],
+    classes: list[str],
+    calls: list[str],
+    modules: list[str],
+) -> list[str] | None:
+    # First keyword family that claims the subtype, in priority order.
+    if (
+        any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
+        and cs.LANG_CALL_KEYWORD_EXCLUDE not in subtype_lower
+    ):
+        return functions
+    if any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and all(
+        kw not in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
+    ):
+        return classes
+    if any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
+        return calls
+    if any(kw in subtype_lower for kw in cs.LANG_MODULE_KEYWORDS):
+        return modules
+    return None
+
+
 def _categorize_node_types(
     semantic_categories: dict[str, list[str]], node_types: list[dict]
 ) -> NodeCategories:
@@ -193,21 +217,11 @@ def _categorize_node_types(
 
     for subtypes in semantic_categories.values():
         for subtype in subtypes:
-            subtype_lower = subtype.lower()
-
-            if (
-                any(kw in subtype_lower for kw in cs.LANG_FUNCTION_KEYWORDS)
-                and cs.LANG_CALL_KEYWORD_EXCLUDE not in subtype_lower
-            ):
-                functions.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_CLASS_KEYWORDS) and all(
-                kw not in subtype_lower for kw in cs.LANG_EXCLUSION_KEYWORDS
-            ):
-                classes.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_CALL_KEYWORDS):
-                calls.append(subtype)
-            elif any(kw in subtype_lower for kw in cs.LANG_MODULE_KEYWORDS):
-                modules.append(subtype)
+            bucket = _subtype_bucket(
+                subtype.lower(), functions, classes, calls, modules
+            )
+            if bucket is not None:
+                bucket.append(subtype)
 
     root_nodes = [
         node["type"]
