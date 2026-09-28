@@ -76,7 +76,9 @@ def test_the_docs_workflow_writes_the_credits_page_before_building() -> None:
     build = [
         i for i, command in enumerate(commands) if "zensical build --strict" in command
     ]
-    assert generate and build and generate[0] < build[0], commands
+    assert generate, commands
+    assert build, commands
+    assert generate[0] < build[0], commands
 
 
 def test_the_generated_credits_page_is_never_committed() -> None:
