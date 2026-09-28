@@ -592,28 +592,41 @@ class PythonVariableAnalyzerMixin(_VarBase):
         # deeper chains and aliases resolve next pass until a fixpoint.
         aliases = aliases or {}
         for _ in range(max_depth):
-            added = False
-            for local, alias in aliases.items():
-                if local not in local_var_types and (
-                    alias_type := self._get_alias_type(
-                        alias, local_var_types, module_qn
-                    )
-                ):
-                    local_var_types[local] = alias_type
-                    added = True
-            for ref, type_name in list(local_var_types.items()):
-                class_qn = self._class_qn_of_type(type_name, module_qn)
-                if not class_qn:
-                    continue
-                for member, member_type in self._class_member_types_by_qn(
-                    class_qn
-                ).items():
-                    key = f"{ref}{cs.SEPARATOR_DOT}{member}"
-                    if key not in local_var_types:
-                        local_var_types[key] = member_type
-                        added = True
-            if not added:
+            # Both passes run every round; stop at the fixpoint.
+            aliased = self._propagate_alias_types(aliases, local_var_types, module_qn)
+            seeded = self._seed_member_types(local_var_types, module_qn)
+            if not (aliased or seeded):
                 break
+
+    def _propagate_alias_types(
+        self,
+        aliases: dict[str, _Alias],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> bool:
+        added = False
+        for local, alias in aliases.items():
+            if local not in local_var_types and (
+                alias_type := self._get_alias_type(alias, local_var_types, module_qn)
+            ):
+                local_var_types[local] = alias_type
+                added = True
+        return added
+
+    def _seed_member_types(
+        self, local_var_types: dict[str, str], module_qn: str
+    ) -> bool:
+        added = False
+        for ref, type_name in list(local_var_types.items()):
+            class_qn = self._class_qn_of_type(type_name, module_qn)
+            if not class_qn:
+                continue
+            for member, member_type in self._class_member_types_by_qn(class_qn).items():
+                key = f"{ref}{cs.SEPARATOR_DOT}{member}"
+                if key not in local_var_types:
+                    local_var_types[key] = member_type
+                    added = True
+        return added
 
     def _get_alias_type(
         self, alias: _Alias, local_var_types: dict[str, str], module_qn: str
