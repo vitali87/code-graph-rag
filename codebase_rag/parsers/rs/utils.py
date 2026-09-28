@@ -649,6 +649,27 @@ def record_effective_module(
     )
 
 
+def _module_path_segment(
+    node: Node, include_impl_targets: bool, class_types: Sequence[str]
+) -> str | None:
+    # The qn segment an enclosing item contributes: a `mod` name, an `impl`
+    # target when requested, or a class-like item's name when requested.
+    if node.type == cs.TS_RS_MOD_ITEM:
+        return _declared_name_text(node)
+    if node.type == cs.TS_IMPL_ITEM:
+        return (extract_impl_target(node) or None) if include_impl_targets else None
+    if node.type in class_types:
+        return _declared_name_text(node)
+    return None
+
+
+def _declared_name_text(node: Node) -> str | None:
+    name_node = node.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode(cs.RS_ENCODING_UTF8)
+
+
 def build_module_path(
     node: Node,
     include_impl_targets: bool = False,
@@ -658,27 +679,11 @@ def build_module_path(
     path_parts: list[str] = []
     current = node.parent
 
+    class_types = (class_node_types or ()) if include_classes else ()
     while current and current.type != cs.TS_RS_SOURCE_FILE:
-        match current.type:
-            case cs.TS_RS_MOD_ITEM:
-                if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                    text = name_node.text
-                    if text is not None:
-                        path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
-            case cs.TS_IMPL_ITEM if include_impl_targets:
-                if impl_target := extract_impl_target(current):
-                    path_parts.append(impl_target)
-            case _ if (
-                include_classes
-                and class_node_types
-                and current.type in class_node_types
-            ):
-                if current.type != cs.TS_IMPL_ITEM:
-                    if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                        text = name_node.text
-                        if text is not None:
-                            path_parts.append(text.decode(cs.RS_ENCODING_UTF8))
-
+        segment = _module_path_segment(current, include_impl_targets, class_types)
+        if segment is not None:
+            path_parts.append(segment)
         current = current.parent
 
     path_parts.reverse()
