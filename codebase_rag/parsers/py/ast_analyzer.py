@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from abc import abstractmethod
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -612,14 +612,17 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
-    class _AstAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _AstAnalyzerDeps:
         import_processor: ImportProcessor
 
         def build_local_variable_type_map(
             self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
-        def _extract_full_method_call(self, node: Node) -> str | None: ...
+        def _extract_full_method_call(self, attr_node: Node) -> str | None: ...
 
         def _resolve_method_qualified_name(
             self,
@@ -629,11 +632,11 @@ if TYPE_CHECKING:
         ) -> str | None: ...
 
         def _analyze_comprehension(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _analyze_for_loop(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, for_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _infer_instance_variable_types_from_assignments(

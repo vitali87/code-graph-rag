@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 from collections.abc import Iterator
@@ -69,11 +70,10 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     # list makes that intent explicit (python:S8495).
     types: list[type[BaseException]] = [_MgclientError]
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        # Imported by name, as `services.neo4j_driver` does, so the check
+        # reads the same with or without the extra installed.
         try:
-            from neo4j.exceptions import (  # ty: ignore[unresolved-import]
-                AuthError,
-                DriverError,
-            )
+            neo4j_exceptions = importlib.import_module(cs.NEO4J_EXCEPTIONS_MODULE)
         except ImportError:  # pragma: no cover - depends on extras
             pass
         else:
@@ -84,7 +84,7 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
             # query failure and must NOT be reported as a connectivity
             # problem, so it deliberately falls through to the generic
             # branch.
-            types += [DriverError, AuthError]
+            types += [neo4j_exceptions.DriverError, neo4j_exceptions.AuthError]
     return tuple(types)
 
 

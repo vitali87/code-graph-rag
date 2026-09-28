@@ -8612,7 +8612,7 @@ class CallProcessor:
         registry = self._resolver.function_registry
         classes = self.js_symbol_member_types.get(sym_qn)
         if classes:
-            targets = [
+            targets: list[tuple[str, str]] = [
                 (registry[method_qn], method_qn)
                 for class_qn in sorted(classes)
                 if (method_qn := f"{class_qn}{cs.SEPARATOR_DOT}{method}") in registry
@@ -8622,7 +8622,7 @@ class CallProcessor:
         name_matches = self._resolver.type_inference.simple_name_lookup.get(
             method, set()
         )
-        fan = [
+        fan: list[tuple[str, str]] = [
             (registry[qn], qn)
             for qn in sorted(name_matches)
             if qn in registry and registry[qn] in (NodeType.FUNCTION, NodeType.METHOD)

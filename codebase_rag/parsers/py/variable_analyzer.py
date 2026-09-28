@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import QueryCursor
 
 from ... import constants as cs
 from ... import logs as lg
-from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
+from ...types_defs import (
+    ASTNode,
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+    NodeType,
+)
 from ..import_processor import ImportProcessor
 from ..utils import get_cached_query, safe_decode_text
 from .utils import resolve_class_name
@@ -39,8 +45,10 @@ class _Alias(NamedTuple):
 
 
 if TYPE_CHECKING:
-
-    class _VariableAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _VariableAnalyzerDeps:
         def _infer_type_from_expression(
             self, node: ASTNode, module_qn: str
         ) -> str | None: ...
@@ -108,7 +116,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
     __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
-    queries: dict[cs.SupportedLanguage, object]
+    queries: Mapping[cs.SupportedLanguage, LanguageQueries]
     _available_classes_cache: dict[str, list[str]]
     _class_member_type_cache: dict[str, dict[str, str]]
     class_inheritance: dict[str, list[str]]

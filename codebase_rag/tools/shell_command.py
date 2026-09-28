@@ -1643,7 +1643,7 @@ class ShellCommander:
 
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
-) -> Tool:
+) -> Tool[None]:
     """Build the `execute_shell_command` tool, recording stdout and stderr in
     `read_record` so they feed the egress taint gate (issue #1128)."""
 
@@ -1668,7 +1668,7 @@ def create_shell_command_tool(
             read_record.record(result.stderr)
         return result
 
-    return Tool(
+    return Tool[None](
         function=run_shell_command,
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,
@@ -1868,7 +1868,9 @@ def _noninteractive_denial(command: str, project_root: Path) -> str | None:
     return None
 
 
-def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+def create_noninteractive_shell_command_tool(
+    shell_commander: ShellCommander,
+) -> Tool[None]:
     # For operator-less runs (benchmarks, batch jobs): a command that would
     # need interactive approval is DENIED instead of yolo-bypassed, and the
     # allowlist stays enforced, so a model-selected command can never mutate
@@ -1885,7 +1887,7 @@ def create_noninteractive_shell_command_tool(shell_commander: ShellCommander) ->
             )
         return await shell_commander.execute(command)
 
-    return Tool(
+    return Tool[None](
         function=run_shell_command,
         name=td.AgenticToolName.EXECUTE_SHELL,
         description=td.SHELL_COMMAND,

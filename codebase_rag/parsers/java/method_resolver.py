@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -163,7 +163,7 @@ def _callable_visible_to_caller(
 
 
 def _pick_overload(
-    matches: list[tuple[str, str]],
+    matches: Sequence[tuple[str, str]],
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
 ) -> tuple[str, str] | None:

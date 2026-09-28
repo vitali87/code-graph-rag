@@ -4,7 +4,7 @@ import atexit
 import time
 from collections.abc import Callable, Iterable, Sequence
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, Required, TypedDict, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
@@ -231,8 +231,16 @@ def _validate_qdrant_collection(client: Any) -> None:
         )
 
 
-def _milvus_client_kwargs() -> dict[str, str]:
-    kwargs = {"uri": settings.MILVUS_URI}
+# Typed per key so the unpacked call is checked against the client's own
+# parameters; a plain dict[str, str] could be any of them, `timeout` included.
+class _MilvusClientKwargs(TypedDict, total=False):
+    uri: Required[str]
+    token: str
+    db_name: str
+
+
+def _milvus_client_kwargs() -> _MilvusClientKwargs:
+    kwargs = _MilvusClientKwargs(uri=settings.MILVUS_URI)
     if settings.MILVUS_TOKEN:
         kwargs["token"] = settings.MILVUS_TOKEN
     if settings.MILVUS_DB_NAME:

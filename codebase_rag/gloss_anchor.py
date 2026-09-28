@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, TypeGuard
 
 from tree_sitter import Node, Parser, Tree
 
@@ -200,7 +200,7 @@ def text_anchor(
     )
 
 
-def is_comparable_quote(value: object) -> bool:
+def is_comparable_quote(value: object) -> TypeGuard[str]:
     return isinstance(value, str) and value.startswith(cs.ANCHOR_QUOTE_VERSION)
 
 

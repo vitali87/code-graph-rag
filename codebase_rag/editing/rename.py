@@ -39,7 +39,7 @@ from .. import graph_query
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..types_defs import PropertyDict, ResultRow
+from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
@@ -53,7 +53,7 @@ from .transaction import (
     undo_transaction,
 )
 
-QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
+QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _AMBIGUOUS = frozenset(
     {
