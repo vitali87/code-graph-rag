@@ -533,23 +533,25 @@ def js_ts_parameter_names(func_node: Node) -> list[str]:
     params = func_node.child_by_field_name(cs.FIELD_PARAMETERS)
     if params is not None:
         for child in params.named_children:
-            if child.type == cs.TS_IDENTIFIER:
-                if name := safe_decode_text(child):
-                    names.append(name)
-            elif child.type in _JS_TS_TYPED_PARAMETERS:
-                pattern = child.child_by_field_name(cs.TS_FIELD_PATTERN)
-                if (
-                    pattern is not None
-                    and pattern.type == cs.TS_IDENTIFIER
-                    and (name := safe_decode_text(pattern))
-                ):
-                    names.append(name)
+            if name := _js_ts_parameter_name(child):
+                names.append(name)
         return names
     single = func_node.child_by_field_name(cs.TS_FIELD_PARAMETER)
     if single is not None and single.type == cs.TS_IDENTIFIER:
         if name := safe_decode_text(single):
             names.append(name)
     return names
+
+
+def _js_ts_parameter_name(param: Node) -> str | None:
+    # A bare identifier, or the identifier `pattern` of a TS typed parameter.
+    if param.type == cs.TS_IDENTIFIER:
+        return safe_decode_text(param)
+    if param.type in _JS_TS_TYPED_PARAMETERS:
+        pattern = param.child_by_field_name(cs.TS_FIELD_PATTERN)
+        if pattern is not None and pattern.type == cs.TS_IDENTIFIER:
+            return safe_decode_text(pattern)
+    return None
 
 
 def _scan_invoked_parameters(

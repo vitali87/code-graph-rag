@@ -707,39 +707,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
         attribute passes populate ``self.x`` types."""
-        assignments: list[Node] = []
-        comprehensions: list[Node] = []
-        for_statements: list[Node] = []
-
-        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
-        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
-        if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                assignments = captures.get("assignment", [])
-                comprehensions = captures.get("comprehension", [])
-                for_statements = captures.get("for_stmt", [])
-                if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[node] = return_stmts
-            except Exception:
-                py_lang_obj = None
-
-        if py_lang_obj is None:
-            stack: list[Node] = [node]
-            while stack:
-                current = stack.pop()
-                node_type = current.type
-
-                if node_type == cs.TS_PY_ASSIGNMENT:
-                    assignments.append(current)
-                elif node_type == cs.TS_PY_LIST_COMPREHENSION:
-                    comprehensions.append(current)
-                elif node_type == cs.TS_PY_FOR_STATEMENT:
-                    for_statements.append(current)
-
-                stack.extend(reversed(current.children))
+        assignments, comprehensions, for_statements = self._collect_traverse_nodes(node)
 
         # Only what THIS body binds. The captures above walk the whole
         # subtree, so a name bound inside a nested def or class body would
@@ -790,6 +758,49 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
+
+    def _collect_traverse_nodes(
+        self, node: Node
+    ) -> tuple[list[Node], list[Node], list[Node]]:
+        """(assignments, comprehensions, for statements) under `node`.
+
+        Uses the cached query when the Python grammar is loaded, and falls
+        back to a plain tree walk when it is not or the query fails.
+        """
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                if return_stmts := captures.get("return_stmt"):
+                    self._return_stmt_cache[node] = return_stmts
+                return (
+                    captures.get("assignment", []),
+                    captures.get("comprehension", []),
+                    captures.get("for_stmt", []),
+                )
+            except Exception:
+                pass
+
+        assignments: list[Node] = []
+        comprehensions: list[Node] = []
+        for_statements: list[Node] = []
+        stack: list[Node] = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
+
+            if node_type == cs.TS_PY_ASSIGNMENT:
+                assignments.append(current)
+            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
+                comprehensions.append(current)
+            elif node_type == cs.TS_PY_FOR_STATEMENT:
+                for_statements.append(current)
+
+            stack.extend(reversed(current.children))
+        return assignments, comprehensions, for_statements
 
     def analyze_scoped_comprehensions(
         self,

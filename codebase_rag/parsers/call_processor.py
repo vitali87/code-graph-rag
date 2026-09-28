@@ -1206,6 +1206,69 @@ class _JsFileBindingCollector:
                     self._add(member_name, fn_node, sibling)
 
 
+def _operator_dunder_target(node: Node) -> tuple[Node | None, str] | None:
+    """(receiver, dunder) that a Python operator node dispatches to, if any.
+
+    `x[k]` is `__getitem__` (or `__setitem__` as an assignment target),
+    `k in x` is `x.__contains__`, and `len(x)` is `x.__len__`.
+    """
+    match node.type:
+        case cs.TS_PY_SUBSCRIPT:
+            parent = node.parent
+            left = (
+                parent.child_by_field_name(cs.TS_FIELD_LEFT)
+                if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
+                else None
+            )
+            is_write = left is not None and left.id == node.id
+            return (
+                node.child_by_field_name(cs.FIELD_VALUE),
+                cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
+            )
+        case cs.TS_PY_COMPARISON_OPERATOR:
+            operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
+            if (
+                operators is not None
+                and (op_text := safe_decode_text(operators))
+                and cs.PY_OP_IN in op_text.split()
+                and node.named_children
+            ):
+                return node.named_children[-1], cs.PY_DUNDER_CONTAINS
+        case cs.TS_PY_CALL:
+            func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
+            args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
+            if (
+                func is not None
+                and safe_decode_text(func) == cs.PY_BUILTIN_LEN
+                and args is not None
+                and len(args.named_children) == 1
+            ):
+                return args.named_children[0], cs.PY_DUNDER_LEN
+    return None
+
+
+def _truthiness_operands(node: Node) -> list[Node | None]:
+    """The operands a Python node tests for truthiness (`__bool__`)."""
+    match node.type:
+        case cs.TS_PY_BOOLEAN_OPERATOR:
+            return [
+                node.child_by_field_name(cs.TS_FIELD_LEFT),
+                node.child_by_field_name(cs.TS_FIELD_RIGHT),
+            ]
+        case cs.TS_PY_NOT_OPERATOR:
+            return [node.child_by_field_name(cs.TS_FIELD_ARGUMENT)]
+        case (
+            cs.TS_PY_IF_STATEMENT
+            | cs.TS_PY_WHILE_STATEMENT
+            | cs.TS_PY_ELIF_CLAUSE
+            | cs.TS_PY_CONDITIONAL_EXPRESSION
+        ):
+            # A bare object as a condition is tested for truthiness; nested
+            # boolean/not operators are handled when the walk reaches them.
+            return [node.child_by_field_name(cs.TS_FIELD_CONDITION)]
+    return []
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -4458,87 +4521,12 @@ class CallProcessor:
             node = self._site_node = stack.pop()
             if node.type in boundary:
                 continue
-            match node.type:
-                case cs.TS_PY_SUBSCRIPT:
-                    parent = node.parent
-                    left = (
-                        parent.child_by_field_name(cs.TS_FIELD_LEFT)
-                        if parent is not None and parent.type == cs.TS_PY_ASSIGNMENT
-                        else None
-                    )
-                    is_write = left is not None and left.id == node.id
-                    self._emit_operator_dunder(
-                        node.child_by_field_name(cs.FIELD_VALUE),
-                        cs.PY_DUNDER_SETITEM if is_write else cs.PY_DUNDER_GETITEM,
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                    )
-                case cs.TS_PY_COMPARISON_OPERATOR:
-                    operators = node.child_by_field_name(cs.TS_FIELD_OPERATORS)
-                    if (
-                        operators is not None
-                        and (op_text := safe_decode_text(operators))
-                        and cs.PY_OP_IN in op_text.split()
-                        and node.named_children
-                    ):
-                        self._emit_operator_dunder(
-                            node.named_children[-1],
-                            cs.PY_DUNDER_CONTAINS,
-                            caller_spec,
-                            module_qn,
-                            local_var_types,
-                        )
-                case cs.TS_PY_CALL:
-                    func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-                    args = node.child_by_field_name(cs.FIELD_ARGUMENTS)
-                    if (
-                        func is not None
-                        and safe_decode_text(func) == cs.PY_BUILTIN_LEN
-                        and args is not None
-                        and len(args.named_children) == 1
-                    ):
-                        self._emit_operator_dunder(
-                            args.named_children[0],
-                            cs.PY_DUNDER_LEN,
-                            caller_spec,
-                            module_qn,
-                            local_var_types,
-                        )
-                case cs.TS_PY_BOOLEAN_OPERATOR:
-                    self._emit_truthiness(
-                        node.child_by_field_name(cs.TS_FIELD_LEFT),
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                    )
-                    self._emit_truthiness(
-                        node.child_by_field_name(cs.TS_FIELD_RIGHT),
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                    )
-                case cs.TS_PY_NOT_OPERATOR:
-                    self._emit_truthiness(
-                        node.child_by_field_name(cs.TS_FIELD_ARGUMENT),
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                    )
-                case (
-                    cs.TS_PY_IF_STATEMENT
-                    | cs.TS_PY_WHILE_STATEMENT
-                    | cs.TS_PY_ELIF_CLAUSE
-                    | cs.TS_PY_CONDITIONAL_EXPRESSION
-                ):
-                    # A bare object as a condition is tested for truthiness; nested
-                    # boolean/not operators are handled when the walk reaches them.
-                    self._emit_truthiness(
-                        node.child_by_field_name(cs.TS_FIELD_CONDITION),
-                        caller_spec,
-                        module_qn,
-                        local_var_types,
-                    )
+            if (dunder := _operator_dunder_target(node)) is not None:
+                self._emit_operator_dunder(
+                    dunder[0], dunder[1], caller_spec, module_qn, local_var_types
+                )
+            for operand in _truthiness_operands(node):
+                self._emit_truthiness(operand, caller_spec, module_qn, local_var_types)
             stack.extend(node.children)
 
     @_site_scoped
