@@ -27,6 +27,11 @@ updates:
       - "/evals/oracles/ts_oracle"
     schedule:
       interval: "monthly"
+    ignore:
+      # TypeScript 7 is the native port and no longer exports the compiler
+      # API the ts_oracle is built on; 6.x is the last line that does.
+      - dependency-name: "typescript"
+        versions: [">=7"]
 
   - package-ecosystem: "cargo"
     directory: "/evals/oracles/rs_oracle"

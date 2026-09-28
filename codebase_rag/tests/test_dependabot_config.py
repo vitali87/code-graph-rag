@@ -49,3 +49,30 @@ def test_the_uv_project_is_not_watched_as_pip() -> None:
     # uv.lock; the one Dependabot change it received was a security update,
     # which Dependabot files under uv regardless of this config.
     assert ("pip", "/") not in _watched()
+
+
+def _npm_ignores_for(directory: str) -> list[dict[str, object]]:
+    config = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
+    )
+    for update in config["updates"]:
+        directories = update.get("directories") or [update["directory"]]
+        if update["package-ecosystem"] == "npm" and directory in directories:
+            return list(update.get("ignore") or [])
+    return []
+
+
+def test_the_ts_oracle_is_held_below_typescript_7() -> None:
+    # TypeScript 7 is the native port: its package no longer exports the
+    # compiler API (`createSourceFile`, `ScriptTarget`) the oracle is built on.
+    ignores = _npm_ignores_for("/evals/oracles/ts_oracle")
+    assert {"dependency-name": "typescript", "versions": [">=7"]} in ignores
+
+
+def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
+    # Negative: the hold is on the major that broke the API, not on every
+    # TypeScript release, so 6.x patches keep arriving.
+    ignores = _npm_ignores_for("/evals/oracles/ts_oracle")
+    typescript = [i for i in ignores if i.get("dependency-name") == "typescript"]
+    assert all(i.get("versions") == [">=7"] for i in typescript)
+    assert all("update-types" not in i for i in typescript)
