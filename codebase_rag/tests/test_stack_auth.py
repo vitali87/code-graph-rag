@@ -888,7 +888,7 @@ class TestAppStartOnARunningStack:
         ("http://localhost:7333", "127.0.0.1", 6333, False),
         ("http://127.0.0.2:6333", "127.0.0.1", 6333, False),
         # A wildcard bind, or none, publishes on every address here.
-        ("http://127.0.0.2:16333", "0.0.0.0", 16333, True),
+        ("http://127.0.0.1:16333", "0.0.0.0", 16333, True),
         ("http://localhost:16333", "", 16333, True),
         # A documentation address (RFC 5737) that no interface here has.
         ("https://203.0.113.7:6333", "0.0.0.0", 6333, False),
@@ -901,6 +901,22 @@ def test_qdrant_url_naming_the_bundled_qdrant_is_recognised(
     url: str | None, bind: str, port: int, named: bool
 ) -> None:
     assert manager_module._names_published_qdrant(url, bind, port) is named
+
+
+@pytest.mark.parametrize(
+    ("url", "named"),
+    [("http://192.0.2.2:16333", True), ("http://192.0.2.3:16333", False)],
+)
+def test_a_wildcard_bind_covers_every_address_of_this_machine(
+    monkeypatch: pytest.MonkeyPatch, url: str, named: bool
+) -> None:
+    # Which addresses a machine has differs between hosts: macOS gives its
+    # loopback interface 127.0.0.1 alone, so 127.0.0.2 is local on Linux only.
+    monkeypatch.setattr(
+        manager_module, "_is_local_address", lambda host: host == "192.0.2.2"
+    )
+
+    assert manager_module._names_published_qdrant(url, "0.0.0.0", 16333) is named
 
 
 @pytest.mark.usefixtures("credentials")
