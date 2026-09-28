@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -192,19 +192,7 @@ def extract_modifiers_and_decorators(
 
     query_nodes = [target_node]
     curr_sibling = target_node.prev_named_sibling
-    while curr_sibling and (
-        curr_sibling.type == cs.TS_RS_ATTRIBUTE_ITEM
-        or (
-            target_node.type == cs.TS_METHOD_DEFINITION
-            and curr_sibling.type == cs.TS_DECORATOR
-        )
-        # Dart metadata precedes the signature as annotation siblings.
-        or (
-            target_node.type
-            in (cs.TS_DART_METHOD_SIGNATURE, cs.TS_DART_FUNCTION_SIGNATURE)
-            and curr_sibling.type == cs.TS_DART_ANNOTATION
-        )
-    ):
+    while curr_sibling and _is_leading_annotation(target_node, curr_sibling):
         query_nodes.insert(0, curr_sibling)
         curr_sibling = curr_sibling.prev_named_sibling
 
@@ -212,34 +200,49 @@ def extract_modifiers_and_decorators(
     decorators: list[str] = []
 
     for q_node in query_nodes:
-        if q_node == target_node:
-            cursor.set_byte_range(q_node.start_byte, header_end_byte)
-        else:
-            cursor.set_byte_range(q_node.start_byte, q_node.end_byte)
-
-        captures = sorted_captures(cursor, q_node)
-        for name, nodes in captures.items():
-            if (
-                name.startswith(cs.CAPTURE_KEYWORD_MODIFIER)
-                or name == cs.CAPTURE_KEYWORD
-            ):
-                for n in nodes:
-                    text = safe_decode_text(n)
-                    if (
-                        text
-                        and text not in modifiers
-                        and text not in cs.EXCLUDED_KEYWORDS
-                    ):
-                        modifiers.append(text)
-            elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
-                cs.CAPTURE_FUNCTION_DECORATOR
-            ):
-                for n in nodes:
-                    text = safe_decode_text(n)
-                    if text and text not in decorators:
-                        decorators.append(text)
+        end_byte = header_end_byte if q_node == target_node else q_node.end_byte
+        cursor.set_byte_range(q_node.start_byte, end_byte)
+        _collect_modifier_captures(
+            sorted_captures(cursor, q_node), modifiers, decorators
+        )
 
     return modifiers, decorators
+
+
+def _is_leading_annotation(target_node: ASTNode, sibling: ASTNode) -> bool:
+    # Rust attributes, TS method decorators and Dart metadata precede the
+    # definition as siblings rather than children.
+    if sibling.type == cs.TS_RS_ATTRIBUTE_ITEM:
+        return True
+    if target_node.type == cs.TS_METHOD_DEFINITION:
+        return sibling.type == cs.TS_DECORATOR
+    return (
+        target_node.type in (cs.TS_DART_METHOD_SIGNATURE, cs.TS_DART_FUNCTION_SIGNATURE)
+        and sibling.type == cs.TS_DART_ANNOTATION
+    )
+
+
+def _collect_modifier_captures(
+    captures: dict[str, list[ASTNode]],
+    modifiers: list[str],
+    decorators: list[str],
+) -> None:
+    for name, nodes in captures.items():
+        if name.startswith(cs.CAPTURE_KEYWORD_MODIFIER) or name == cs.CAPTURE_KEYWORD:
+            _append_unique_texts(nodes, modifiers, cs.EXCLUDED_KEYWORDS)
+        elif name.startswith(cs.CAPTURE_ATTRIBUTE) or name.startswith(
+            cs.CAPTURE_FUNCTION_DECORATOR
+        ):
+            _append_unique_texts(nodes, decorators, frozenset())
+
+
+def _append_unique_texts(
+    nodes: list[ASTNode], out: list[str], excluded: Collection[str]
+) -> None:
+    for n in nodes:
+        text = safe_decode_text(n)
+        if text and text not in out and text not in excluded:
+            out.append(text)
 
 
 @lru_cache(maxsize=50000)
