@@ -1,7 +1,7 @@
 """Branches the #1669 Sonar cleanup touched, pinned so a later edit keeps them.
 
 `_http_reachable` now catches only `OSError`, which must still cover every
-failure `urlopen` raises (`URLError` and `TimeoutError` both derive from
+failure the opener raises (`URLError` and `TimeoutError` both derive from
 it). The Go callee walk now unwraps a parenthesised callee with
 `next(iter(...))`, which must still reach the inner name.
 """
@@ -17,6 +17,7 @@ from tree_sitter import Node
 from codebase_rag import constants as cs
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.parsers.go.type_inference import GoTypeInferenceEngine
+from codebase_rag.stack import health
 from codebase_rag.stack.health import _http_reachable
 
 
@@ -31,7 +32,7 @@ from codebase_rag.stack.health import _http_reachable
     ids=["url-error", "timeout", "os-error", "connection-reset"],
 )
 def test_an_unreachable_endpoint_reads_as_down(error: OSError) -> None:
-    with patch("urllib.request.urlopen", side_effect=error):
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=error):
         assert _http_reachable("http://127.0.0.1:1/health") is False
 
 
