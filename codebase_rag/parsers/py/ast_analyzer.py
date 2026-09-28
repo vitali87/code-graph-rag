@@ -648,6 +648,14 @@ else:
     _AstBase = object
 
 
+def _node_name(node: Node) -> str | None:
+    # The decoded `name` field of a definition, or None when it has no text.
+    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+    if not name_node or name_node.text is None:
+        return None
+    return safe_decode_text(name_node)
+
+
 class PythonAstAnalyzerMixin(_AstBase):
     __slots__ = ()
 
@@ -1330,32 +1338,17 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
 
         for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
-            if not isinstance(class_node, Node):
+            if not isinstance(class_node, Node) or _node_name(class_node) != class_name:
                 continue
-
-            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
-            if not name_node or name_node.text is None:
-                continue
-
-            if safe_decode_text(name_node) != class_name:
-                continue
-
             body_node = class_node.child_by_field_name(cs.TS_FIELD_BODY)
             if not body_node:
                 continue
-
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-
+            method_captures = sorted_captures(QueryCursor(method_query), body_node)
             for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
-                if not isinstance(method_node, Node):
-                    continue
-
-                method_name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
-                if not method_name_node or method_name_node.text is None:
-                    continue
-
-                if safe_decode_text(method_name_node) == method_name:
+                if (
+                    isinstance(method_node, Node)
+                    and _node_name(method_node) == method_name
+                ):
                     return method_node
 
         return None

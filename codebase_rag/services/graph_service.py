@@ -710,45 +710,14 @@ class MemgraphIngestor:
         if not self._rel_count:
             return
 
-        total_attempted = 0
-        total_successful = 0
-        first_error: Exception | None = None
-
         if self._executor and len(self._rel_groups) > 1:
-            logger.info(
-                ls.MG_PARALLEL_FLUSH_RELS.format(
-                    count=len(self._rel_groups),
-                    workers=settings.FLUSH_THREAD_POOL_SIZE,
-                )
+            total_attempted, total_successful, first_error = (
+                self._flush_rel_groups_parallel(self._executor)
             )
-            futures = {
-                self._executor.submit(
-                    self._flush_rel_group_with_own_conn, pattern, params_list
-                ): pattern
-                for pattern, params_list in self._rel_groups.items()
-            }
-            for future in as_completed(futures):
-                pattern = futures[future]
-                try:
-                    attempted, successful = future.result()
-                    total_attempted += attempted
-                    total_successful += successful
-                except Exception as e:
-                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
-                    if first_error is None:
-                        first_error = e
         else:
-            for pattern, params_list in self._rel_groups.items():
-                try:
-                    attempted, successful = self._flush_rel_pattern_group(
-                        pattern, params_list
-                    )
-                    total_attempted += attempted
-                    total_successful += successful
-                except Exception as e:
-                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
-                    if first_error is None:
-                        first_error = e
+            total_attempted, total_successful, first_error = (
+                self._flush_rel_groups_serial()
+            )
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
@@ -762,6 +731,57 @@ class MemgraphIngestor:
 
         if first_error is not None:
             raise first_error
+
+    def _flush_rel_groups_parallel(
+        self, executor: ThreadPoolExecutor
+    ) -> tuple[int, int, Exception | None]:
+        # Each pattern group on its own connection; every group still runs
+        # when one fails, and the first failure is re-raised by the caller.
+        logger.info(
+            ls.MG_PARALLEL_FLUSH_RELS.format(
+                count=len(self._rel_groups),
+                workers=settings.FLUSH_THREAD_POOL_SIZE,
+            )
+        )
+        futures = {
+            executor.submit(
+                self._flush_rel_group_with_own_conn, pattern, params_list
+            ): pattern
+            for pattern, params_list in self._rel_groups.items()
+        }
+        total_attempted = 0
+        total_successful = 0
+        first_error: Exception | None = None
+        for future in as_completed(futures):
+            pattern = futures[future]
+            try:
+                attempted, successful = future.result()
+            except Exception as e:
+                logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            total_attempted += attempted
+            total_successful += successful
+        return total_attempted, total_successful, first_error
+
+    def _flush_rel_groups_serial(self) -> tuple[int, int, Exception | None]:
+        total_attempted = 0
+        total_successful = 0
+        first_error: Exception | None = None
+        for pattern, params_list in self._rel_groups.items():
+            try:
+                attempted, successful = self._flush_rel_pattern_group(
+                    pattern, params_list
+                )
+            except Exception as e:
+                logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            total_attempted += attempted
+            total_successful += successful
+        return total_attempted, total_successful, first_error
 
     def flush_all(self) -> None:
         logger.info(ls.MG_FLUSH_START)

@@ -691,6 +691,37 @@ def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
+def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
+    # (imported path, is static, is wildcard) of a Java import declaration.
+    imported_path = None
+    is_static = False
+    is_wildcard = False
+    for child in import_node.children:
+        if child.type == cs.TS_STATIC:
+            is_static = True
+        elif child.type == cs.TS_SCOPED_IDENTIFIER:
+            imported_path = safe_decode_with_fallback(child)
+        elif child.type == cs.TS_ASTERISK:
+            is_wildcard = True
+    return imported_path, is_static, is_wildcard
+
+
+def _cpp_import_module_name(template_args: Node) -> str | None:
+    # The module a C++ `import<...>` names; the last type identifier wins,
+    # reading a type_descriptor's first type identifier.
+    module_name = None
+    for child in template_args.children:
+        if child.type == cs.TS_TYPE_DESCRIPTOR:
+            inner = next(
+                (c for c in child.children if c.type == cs.TS_TYPE_IDENTIFIER), None
+            )
+            if inner is not None:
+                module_name = safe_decode_with_fallback(inner)
+        elif child.type == cs.TS_TYPE_IDENTIFIER:
+            module_name = safe_decode_with_fallback(child)
+    return module_name
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -3711,51 +3742,44 @@ class ImportProcessor:
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_IMPORT_DECLARATION:
-                is_static = False
-                imported_path = None
-                is_wildcard = False
+            if import_node.type != cs.TS_IMPORT_DECLARATION:
+                continue
+            imported_path, is_static, is_wildcard = _java_import_shape(import_node)
+            if imported_path:
+                self._record_java_import(
+                    import_node,
+                    module_qn,
+                    self._resolve_java_import_path(imported_path),
+                    is_static,
+                    is_wildcard,
+                )
 
-                for child in import_node.children:
-                    if child.type == cs.TS_STATIC:
-                        is_static = True
-                    elif child.type == cs.TS_SCOPED_IDENTIFIER:
-                        imported_path = safe_decode_with_fallback(child)
-                    elif child.type == cs.TS_ASTERISK:
-                        is_wildcard = True
-
-                if not imported_path:
-                    continue
-
-                resolved_path = self._resolve_java_import_path(imported_path)
-
-                if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
-                    self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-                    self._record_import_site(
-                        module_qn,
-                        f"*{resolved_path}",
-                        import_node,
-                        cs.IMPORTED_NAME_WILDCARD,
-                    )
-                elif parts := resolved_path.split(cs.SEPARATOR_DOT):
-                    imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = resolved_path
-                    self._record_import_site(
-                        module_qn, imported_name, import_node, imported_name
-                    )
-                    if is_static:
-                        logger.debug(
-                            ls.IMP_JAVA_STATIC,
-                            name=imported_name,
-                            path=resolved_path,
-                        )
-                    else:
-                        logger.debug(
-                            ls.IMP_JAVA_IMPORT,
-                            name=imported_name,
-                            path=resolved_path,
-                        )
+    def _record_java_import(
+        self,
+        import_node: Node,
+        module_qn: str,
+        resolved_path: str,
+        is_static: bool,
+        is_wildcard: bool,
+    ) -> None:
+        if is_wildcard:
+            logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
+            self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
+            self._record_import_site(
+                module_qn,
+                f"*{resolved_path}",
+                import_node,
+                cs.IMPORTED_NAME_WILDCARD,
+            )
+            return
+        imported_name = resolved_path.split(cs.SEPARATOR_DOT)[-1]
+        self.import_mapping[module_qn][imported_name] = resolved_path
+        self._record_import_site(module_qn, imported_name, import_node, imported_name)
+        logger.debug(
+            ls.IMP_JAVA_STATIC if is_static else ls.IMP_JAVA_IMPORT,
+            name=imported_name,
+            path=resolved_path,
+        )
 
     @staticmethod
     def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
@@ -4614,30 +4638,18 @@ class ImportProcessor:
             elif child.type == cs.TS_TEMPLATE_ARGUMENT_LIST:
                 template_args_child = child
 
-        if (
+        if not (
             identifier_child
             and safe_decode_text(identifier_child) == cs.IMPORT_IMPORT
             and template_args_child
         ):
-            module_name = None
-            for child in template_args_child.children:
-                if child.type == cs.TS_TYPE_DESCRIPTOR:
-                    for desc_child in child.children:
-                        if desc_child.type == cs.TS_TYPE_IDENTIFIER:
-                            module_name = safe_decode_with_fallback(desc_child)
-                            break
-                elif child.type == cs.TS_TYPE_IDENTIFIER:
-                    module_name = safe_decode_with_fallback(child)
-
-            if module_name:
-                local_name = module_name
-                full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
-
-                self.import_mapping[module_qn][local_name] = full_name
-                self._record_import_site(
-                    module_qn, local_name, import_node, module_name
-                )
-                logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
+            return
+        if module_name := _cpp_import_module_name(template_args_child):
+            local_name = module_name
+            full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
+            self.import_mapping[module_qn][local_name] = full_name
+            self._record_import_site(module_qn, local_name, import_node, module_name)
+            logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         decoded_text = safe_decode_text(decl_node)
