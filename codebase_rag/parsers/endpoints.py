@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ..services import IngestorProtocol, QueryProtocol
+    from ..types_defs import ResultRow, ResultValue
 
     # (label, handler qn, route decorators, module qn)
     PendingEndpoint = tuple[cs.NodeLabel, str, list[str], str | None]
@@ -378,35 +379,42 @@ def _collect_live_resources(
     dict[str, tuple[str, frozenset[str], frozenset[str]]],
     dict[str, tuple[str, str | None]],
 ]:
-    from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
-
     networks: dict[str, tuple[str, frozenset[str], frozenset[str]]] = {}
     endpoints: dict[str, tuple[str, str | None]] = {}
     for query in (CYPHER_LIVE_NETWORK_RESOURCES, CYPHER_LIVE_ENDPOINT_RESOURCES):
         for row in ingestor.fetch_all(query):
-            qn = row.get(cs.KEY_QUALIFIED_NAME)
-            name = row.get(cs.KEY_NAME)
-            if not isinstance(qn, str) or not isinstance(name, str):
-                continue
-            kind = row.get(KEY_KIND)
-            if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
-                raw_directions = row.get(_KEY_DIRECTIONS)
-                directions = (
-                    frozenset(d for d in raw_directions if isinstance(d, str))
-                    if isinstance(raw_directions, list)
-                    else frozenset()
-                )
-                raw_callers = row.get(_KEY_CALLER_PROJECTS)
-                callers = (
-                    frozenset(c for c in raw_callers if isinstance(c, str))
-                    if isinstance(raw_callers, list)
-                    else frozenset()
-                )
-                networks[qn] = (name, directions, callers)
-            elif kind == ResourceKind.ENDPOINT.value:
-                project = row.get(KEY_PROJECT)
-                endpoints[qn] = (name, project if isinstance(project, str) else None)
+            _collect_live_resource_row(row, networks, endpoints)
     return networks, endpoints
+
+
+def _collect_live_resource_row(
+    row: ResultRow,
+    networks: dict[str, tuple[str, frozenset[str], frozenset[str]]],
+    endpoints: dict[str, tuple[str, str | None]],
+) -> None:
+    from .io_access.constants import DYNAMIC_TARGET, KEY_KIND, ResourceKind
+
+    qn = row.get(cs.KEY_QUALIFIED_NAME)
+    name = row.get(cs.KEY_NAME)
+    if not isinstance(qn, str) or not isinstance(name, str):
+        return
+    kind = row.get(KEY_KIND)
+    if kind == ResourceKind.NETWORK.value and name != DYNAMIC_TARGET:
+        networks[qn] = (
+            name,
+            _str_frozenset(row.get(_KEY_DIRECTIONS)),
+            _str_frozenset(row.get(_KEY_CALLER_PROJECTS)),
+        )
+    elif kind == ResourceKind.ENDPOINT.value:
+        project = row.get(KEY_PROJECT)
+        endpoints[qn] = (name, project if isinstance(project, str) else None)
+
+
+def _str_frozenset(value: ResultValue) -> frozenset[str]:
+    # The string members of a list-valued row column; anything else is empty.
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item for item in value if isinstance(item, str))
 
 
 def _host_stem(url: str) -> str | None:
