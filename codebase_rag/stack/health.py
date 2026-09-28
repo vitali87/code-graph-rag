@@ -63,6 +63,22 @@ def memgraph_accepts_anonymous(host: str, port: int) -> bool:
     return _bolt_reachable(host, port)
 
 
+def memgraph_rejects_credentials(
+    host: str, port: int, credentials: tuple[str, str]
+) -> bool:
+    username, password = credentials
+    try:
+        conn = mgclient.connect(
+            host=host, port=port, username=username, password=password
+        )
+    except mgclient.Error as e:
+        return cs.MEMGRAPH_AUTH_FAILURE in str(e)
+    except OSError:
+        return False
+    conn.close()
+    return False
+
+
 def qdrant_accepts_anonymous(port: int, timeout: float = 1.5) -> bool:
     return _qdrant_data_reachable(port, {}, timeout)
 

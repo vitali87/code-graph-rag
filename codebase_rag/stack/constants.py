@@ -86,6 +86,16 @@ WARN_QDRANT_REJECTS_KEY = (
     "started with a different key. Qdrant reads its key when the container is "
     "created: run 'cgr daemon down' and then 'cgr daemon up'."
 )
+# The message Memgraph rejects a Bolt login with. Its client raises the same
+# exception type for a refused connection, so only the text tells them apart.
+MEMGRAPH_AUTH_FAILURE = "Authentication failure"
+ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
+    "Memgraph is running but rejects the configured MEMGRAPH_USERNAME and "
+    "MEMGRAPH_PASSWORD. Memgraph keeps the password its user was created "
+    "with, so changing MEMGRAPH_PASSWORD later does not change it: set "
+    "MEMGRAPH_PASSWORD back, or log in with it and run "
+    "SET PASSWORD FOR <user> TO '<new password>'; and then set the new one."
+)
 WARN_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "
     "connections without them: {services}. Containers take credentials when "

@@ -15,6 +15,7 @@ from ..types_defs import JsonValue
 from . import constants as cs
 from .health import (
     memgraph_accepts_anonymous,
+    memgraph_rejects_credentials,
     qdrant_accepts_anonymous,
     qdrant_accepts_key,
     wait_for_memgraph,
@@ -435,6 +436,7 @@ class StackManager:
             timeout,
             credentials=self.memgraph_credentials,
         ):
+            self._raise_if_memgraph_rejects_credentials()
             raise StackError(
                 cs.ERR_STACK_NOT_HEALTHY.format(
                     service=cs.SERVICE_MEMGRAPH, timeout=timeout
@@ -453,6 +455,18 @@ class StackManager:
                     service=cs.SERVICE_QDRANT, timeout=timeout
                 )
             )
+
+    def _raise_if_memgraph_rejects_credentials(self) -> None:
+        """Name a rejected login instead of reporting Memgraph as down.
+
+        Memgraph stores its user in the data volume and never changes an
+        existing password from MEMGRAPH_PASSWORD, so after that setting
+        changes every probe is refused by a Memgraph that is otherwise fine.
+        """
+        if self.memgraph_credentials and memgraph_rejects_credentials(
+            self.memgraph_host, self.memgraph_port, self.memgraph_credentials
+        ):
+            raise StackError(cs.ERR_MEMGRAPH_REJECTS_CREDENTIALS)
 
     def status(self) -> StackStatus:
         memgraph_ok = wait_for_memgraph(
@@ -489,6 +503,9 @@ class StackManager:
             self.warn_if_ports_are_public()
             self.warn_if_auth_not_enforced()
             return current
+        # Starting it again would not help, and waiting for health would only
+        # delay the same answer.
+        self._raise_if_memgraph_rejects_credentials()
         self.up()
         self.wait_healthy()
         final = self.status()

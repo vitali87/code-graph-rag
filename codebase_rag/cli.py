@@ -313,8 +313,10 @@ def _maybe_start_stack() -> None:
     mgr = StackManager()
     if mgr.status().state == StackState.RUNNING:
         # This early return bypasses ensure_running, so it needs its own
-        # public-port check for a stack that is already up (issue #1380).
+        # public-port (issue #1380) and authentication checks for a stack
+        # that is already up.
         mgr.warn_if_ports_are_public()
+        mgr.warn_if_auth_not_enforced()
         return
     try:
         mgr.ensure_running()

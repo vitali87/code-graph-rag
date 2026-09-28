@@ -351,6 +351,35 @@ def test_memgraph_anonymous_probe_sends_no_login() -> None:
     connect.assert_called_once_with(host="localhost", port=7687)
 
 
+@pytest.mark.parametrize(
+    ("error", "rejected"),
+    [
+        ("Authentication failure", True),
+        ("couldn't connect to host: Connection refused", False),
+    ],
+)
+def test_memgraph_rejected_login_is_told_apart_from_a_refused_connection(
+    error: str, rejected: bool
+) -> None:
+    # Memgraph 3.3's client raises OperationalError for both; only the
+    # message differs.
+    failure = health.mgclient.OperationalError(error)
+    with patch.object(health.mgclient, "connect", side_effect=failure):
+        assert (
+            health.memgraph_rejects_credentials("localhost", 7687, ("cgr", "s3cret"))
+            is rejected
+        )
+
+
+def test_memgraph_accepting_the_login_is_not_a_rejection() -> None:
+    with patch.object(health.mgclient, "connect") as connect:
+        assert not health.memgraph_rejects_credentials(
+            "localhost", 7687, ("cgr", "s3cret")
+        )
+
+    connect.return_value.close.assert_called_once()
+
+
 def _ok_response() -> MagicMock:
     response = MagicMock()
     response.__enter__.return_value.status = 200
@@ -520,3 +549,95 @@ def test_running_qdrant_is_not_sent_the_key_without_the_plain_http_opt_in(
 
     key_probe.assert_not_called()
     assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_up_names_a_running_memgraph_that_rejects_the_login(tmp_path: Path) -> None:
+    # Memgraph keeps the password its user was created with, so after
+    # MEMGRAPH_PASSWORD changes it refuses every probe while otherwise fine.
+    # Starting it again would not help.
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_rejects_credentials",
+            return_value=True,
+        ),
+        patch.object(mgr, "up") as up,
+    ):
+        with pytest.raises(StackError, match="rejects the configured"):
+            mgr.ensure_running()
+
+    up.assert_not_called()
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("rejected", "message"),
+    [(True, "rejects the configured"), (False, "did not become healthy")],
+)
+def test_wait_healthy_says_whether_memgraph_rejected_the_login(
+    tmp_path: Path, rejected: bool, message: str
+) -> None:
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+        patch(
+            "codebase_rag.stack.manager.memgraph_rejects_credentials",
+            return_value=rejected,
+        ),
+    ):
+        with pytest.raises(StackError, match=message):
+            mgr.wait_healthy(timeout=0)
+
+
+@pytest.mark.usefixtures("no_credentials")
+def test_wait_healthy_without_credentials_does_not_try_a_login(
+    tmp_path: Path,
+) -> None:
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=False),
+        patch("codebase_rag.stack.manager.memgraph_rejects_credentials") as probe,
+    ):
+        with pytest.raises(StackError, match="did not become healthy"):
+            mgr.wait_healthy(timeout=0)
+
+    probe.assert_not_called()
+
+
+class TestAppStartOnARunningStack:
+    """The app's own start path returns early for a running stack instead of
+    going through ensure_running, so it runs the authentication check too."""
+
+    @pytest.fixture
+    def _disable_stack_autostart(self) -> None:
+        # Exercise the real `_maybe_start_stack` instead of conftest's mock.
+        return
+
+    @pytest.mark.usefixtures("credentials")
+    def test_flags_a_running_stack_that_accepts_anonymous_access(
+        self, tmp_path: Path
+    ) -> None:
+        from codebase_rag.cli import _maybe_start_stack
+
+        mgr = _manager(tmp_path)
+        with (
+            patch("codebase_rag.cli.StackManager", return_value=mgr),
+            patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+            patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+            patch(
+                "codebase_rag.stack.manager.memgraph_accepts_anonymous",
+                return_value=True,
+            ),
+            patch(
+                "codebase_rag.stack.manager.qdrant_accepts_anonymous",
+                return_value=True,
+            ),
+        ):
+            messages = _warnings_from(_maybe_start_stack)
+
+        warning = next(m for m in messages if "still accept" in m)
+        assert cs.SERVICE_MEMGRAPH in warning
+        assert cs.SERVICE_QDRANT in warning
