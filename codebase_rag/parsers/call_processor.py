@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Concatenate, NamedTuple
 
 from loguru import logger
-from tree_sitter import Node, QueryCursor
+from tree_sitter import Node, Query, QueryCursor
 
 from .. import constants as cs
 from .. import logs as ls
@@ -689,6 +689,26 @@ def _iife_wrapper_inner(target: Node) -> Node | None:
     if target.type in cs.TS_CAST_WRAPPER_TYPES:
         return next(iter(target.named_children), None)
     return None
+
+
+def _body_function_nodes(
+    body_node: Node,
+    function_query: Query | None,
+    sorted_func_nodes: list[Node] | None,
+    func_node_starts: list[int] | None,
+) -> list[Node] | None:
+    # The function nodes inside a class body: sliced from the pre-sorted
+    # capture list when the caller has one, else queried directly. None when
+    # the language has no function query at all.
+    if sorted_func_nodes is not None and func_node_starts is not None:
+        body_end = body_node.end_byte
+        lo = bisect_left(func_node_starts, body_node.start_byte)
+        hi = bisect_right(func_node_starts, body_end)
+        return [n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end]
+    if not function_query:
+        return None
+    captures = sorted_captures(QueryCursor(function_query), body_node)
+    return captures.get(cs.CAPTURE_FUNCTION, [])
 
 
 def _find_call_arguments_node(call_node: Node) -> Node | None:
@@ -1793,51 +1813,57 @@ class CallProcessor:
         # resolve_function_call("Inner", module_qn) would miss it. A class
         # inside a FUNCTION is skipped (qn is caller-scoped), so
         # nested-in-method classes never reach here.
-        resolver = self._resolver
-        registry = resolver.function_registry
         stack: list[tuple[Node, str | None]] = [
             (child, None) for child in root_node.children
         ]
         while stack:
             node, enclosing_qn = stack.pop()
-            if node.type == cs.TS_PY_DECORATED_DEFINITION:
-                stack.extend((c, enclosing_qn) for c in node.children)
-                continue
             if node.type == cs.TS_PY_FUNCTION_DEFINITION:
                 continue
-            if node.type != cs.TS_PY_CLASS_DEFINITION:
+            if node.type == cs.TS_PY_CLASS_DEFINITION:
+                self._visit_ctor_class(node, enclosing_qn, module_qn, stack)
+            else:
                 stack.extend((c, enclosing_qn) for c in node.children)
-                continue
-            name_node = node.child_by_field_name(cs.FIELD_NAME)
-            class_name = safe_decode_text(name_node) if name_node else None
-            body = node.child_by_field_name(cs.FIELD_BODY)
-            if not class_name or body is None:
-                continue
-            if enclosing_qn is not None:
-                candidate_qn = f"{enclosing_qn}{cs.SEPARATOR_DOT}{class_name}"
-                class_qn = (
-                    candidate_qn
-                    if registry.get(candidate_qn) == cs.NodeLabel.CLASS
-                    else None
-                )
-            else:
-                resolved = resolver.resolve_function_call(class_name, module_qn)
-                class_qn = (
-                    resolved[1]
-                    if resolved and resolved[0] == cs.NodeLabel.CLASS
-                    else None
-                )
-            # Descend into the body with THIS class as the enclosing scope so
-            # its nested classes resolve; skip metadata when unresolved.
-            stack.extend((c, class_qn) for c in body.children)
-            if class_qn is None:
-                continue
-            if init_node := self._find_init_method(body):
-                params = self._ordered_param_names(init_node)
-                resolver.record_ctor_params(class_qn, params)
-                self._record_param_attr_renames(init_node, class_qn, set(params))
-            else:
-                resolver.record_ctor_params(class_qn, self._annotated_field_names(body))
+
+    def _visit_ctor_class(
+        self,
+        node: Node,
+        enclosing_qn: str | None,
+        module_qn: str,
+        stack: list[tuple[Node, str | None]],
+    ) -> None:
+        name_node = node.child_by_field_name(cs.FIELD_NAME)
+        class_name = safe_decode_text(name_node) if name_node else None
+        body = node.child_by_field_name(cs.FIELD_BODY)
+        if not class_name or body is None:
+            return
+        class_qn = self._ctor_class_qn(class_name, enclosing_qn, module_qn)
+        # Descend into the body with THIS class as the enclosing scope so
+        # its nested classes resolve; skip metadata when unresolved.
+        stack.extend((c, class_qn) for c in body.children)
+        if class_qn is not None:
+            self._record_class_ctor_metadata(body, class_qn)
+
+    def _ctor_class_qn(
+        self, class_name: str, enclosing_qn: str | None, module_qn: str
+    ) -> str | None:
+        resolver = self._resolver
+        if enclosing_qn is not None:
+            candidate_qn = f"{enclosing_qn}{cs.SEPARATOR_DOT}{class_name}"
+            if resolver.function_registry.get(candidate_qn) == cs.NodeLabel.CLASS:
+                return candidate_qn
+            return None
+        resolved = resolver.resolve_function_call(class_name, module_qn)
+        return resolved[1] if resolved and resolved[0] == cs.NodeLabel.CLASS else None
+
+    def _record_class_ctor_metadata(self, body: Node, class_qn: str) -> None:
+        resolver = self._resolver
+        if init_node := self._find_init_method(body):
+            params = self._ordered_param_names(init_node)
+            resolver.record_ctor_params(class_qn, params)
+            self._record_param_attr_renames(init_node, class_qn, set(params))
+        else:
+            resolver.record_ctor_params(class_qn, self._annotated_field_names(body))
 
     @staticmethod
     def _find_init_method(class_body: Node) -> Node | None:
@@ -2555,6 +2581,28 @@ class CallProcessor:
             return self._get_rust_impl_class_name(class_node)
         return self._get_node_name(class_node)
 
+    def _class_method_name(
+        self, method_node: Node, language: cs.SupportedLanguage, module_qn: str
+    ) -> str | None:
+        if language in _C_FAMILY_LANGUAGES:
+            method_name = cpp_utils.extract_function_name(method_node)
+        else:
+            method_name = self._get_node_name(method_node)
+        if method_name or language not in _JS_TS_LANGUAGES:
+            return method_name
+        if method_name := self._js_ts_arrow_binding_name(method_node):
+            return method_name
+        # A nameless function expression the definition pass registered
+        # under a name (`x: function () {}` in a method's object literal,
+        # `this.h = function () {}` in a constructor) has a real node:
+        # adopt the record's simple name, as the module pass does. Since
+        # #1903 handed every class-scoped function to this pass, skipping it
+        # here would leave that node with no outgoing edge.
+        recorded = self._recorded_caller(method_node, module_qn)
+        if recorded is not None and recorded.is_named:
+            return recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        return None
+
     def _process_methods_in_class(
         self,
         body_node: Node,
@@ -2568,21 +2616,14 @@ class CallProcessor:
         sorted_func_nodes: list[Node] | None = None,
         func_node_starts: list[int] | None = None,
     ) -> None:
-        if sorted_func_nodes is not None and func_node_starts is not None:
-            body_start = body_node.start_byte
-            body_end = body_node.end_byte
-            lo = bisect_left(func_node_starts, body_start)
-            hi = bisect_right(func_node_starts, body_end)
-            method_nodes = [
-                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
-            ]
-        else:
-            method_query = queries[language][cs.QUERY_FUNCTIONS]
-            if not method_query:
-                return
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        method_nodes = _body_function_nodes(
+            body_node,
+            queries[language][cs.QUERY_FUNCTIONS],
+            sorted_func_nodes,
+            func_node_starts,
+        )
+        if method_nodes is None:
+            return
         lang_config = queries[language][cs.QUERY_CONFIG]
         # Only functions that get their own caller node exclude their calls from
         # the enclosing scope; anonymous arrows (skipped below) must not, so
@@ -2598,26 +2639,7 @@ class CallProcessor:
             # emits as the phantom Outer.run).
             if not self._method_in_class_body(method_node, body_node, lang_config):
                 continue
-            if language in _C_FAMILY_LANGUAGES:
-                method_name = cpp_utils.extract_function_name(method_node)
-            else:
-                method_name = self._get_node_name(method_node)
-            if not method_name and language in _JS_TS_LANGUAGES:
-                method_name = self._js_ts_arrow_binding_name(method_node)
-            # A nameless function expression the definition pass registered
-            # under a name (`x: function () {}` in a method's object literal,
-            # `this.h = function () {}` in a constructor) has a real node:
-            # adopt the record's simple name, as the module pass does. Since
-            # #1903 handed every class-scoped function to this pass, a
-            # `continue` here would leave that node with no outgoing edge.
-            if (
-                not method_name
-                and language in _JS_TS_LANGUAGES
-                and (recorded := self._recorded_caller(method_node, module_qn))
-                is not None
-                and recorded.is_named
-            ):
-                method_name = recorded.qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+            method_name = self._class_method_name(method_node, language, module_qn)
             if not method_name:
                 continue
             # method_nodes includes functions nested inside methods. Build the
