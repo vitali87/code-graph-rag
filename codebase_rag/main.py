@@ -154,45 +154,41 @@ def get_session_context() -> str:
 def _autowrap_diff_blocks(text: str) -> str:
     if cs.DIFF_GIT_HEADER not in text:
         return text
-    lines = text.split("\n")
     out: list[str] = []
     in_fence = False
     in_diff = False
-
-    def is_diff_continuation(line: str) -> bool:
-        if line == "":
-            return True
-        return line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
-
-    for line in lines:
-        if line.startswith(cs.MARKDOWN_FENCE):
-            if in_diff:
-                out.append(cs.MARKDOWN_FENCE)
-                in_diff = False
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
-            out.append(line)
-            continue
-        if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
-            out.append(cs.MARKDOWN_FENCE_DIFF)
-            in_diff = True
-            out.append(line)
-            continue
-        if in_diff:
-            if is_diff_continuation(line):
-                out.append(line)
-            else:
-                out.append(cs.MARKDOWN_FENCE)
-                in_diff = False
-                out.append(line)
-            continue
-        out.append(line)
+    for line in text.split("\n"):
+        emitted, in_fence, in_diff = _autowrap_line(line, in_fence, in_diff)
+        out.extend(emitted)
 
     if in_diff:
         out.append(cs.MARKDOWN_FENCE)
     return "\n".join(out)
+
+
+def _autowrap_line(
+    line: str, in_fence: bool, in_diff: bool
+) -> tuple[list[str], bool, bool]:
+    """One line of `_autowrap_diff_blocks`: (lines to emit, in_fence, in_diff).
+
+    An existing fence toggles fencing (closing an open diff first); a
+    `diff --git` header outside any fence opens a ```diff block, which stays
+    open until a line that cannot continue a diff.
+    """
+    if line.startswith(cs.MARKDOWN_FENCE):
+        emitted = [cs.MARKDOWN_FENCE, line] if in_diff else [line]
+        return emitted, not in_fence, False
+    if in_fence:
+        return [line], in_fence, in_diff
+    if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
+        return [cs.MARKDOWN_FENCE_DIFF, line], in_fence, True
+    if in_diff and not _is_diff_continuation(line):
+        return [cs.MARKDOWN_FENCE, line], in_fence, False
+    return [line], in_fence, in_diff
+
+
+def _is_diff_continuation(line: str) -> bool:
+    return line == "" or line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:

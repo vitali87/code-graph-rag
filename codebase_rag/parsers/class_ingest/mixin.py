@@ -799,24 +799,7 @@ class ClassIngestMixin:
         fact the source declares.
         """
         if entry.parent_qn == entry.child_qn:
-            # Parse-time resolution can land on the child ITSELF. A
-            # self-edge is never real. In C# the written base can be an
-            # ARITY sibling (`class Foo : Foo<object>`, a different type
-            # sharing the simple name); recover it before falling back.
-            # Otherwise the written base must refer to a SHADOWED outer name
-            # (thrift's `pub enum Error` implementing the std `Error` trait):
-            # when the module-anchored remainder is a bare single segment it
-            # IS the written name and externalizes. A dotted remainder (a
-            # nested child like SimpleHashMap.Entry) was never written as
-            # such; derivation would be a lie, so no edge.
-            if (sibling := self._csharp_arity_sibling(entry)) is not None:
-                return sibling, False
-            self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
-            if entry.parent_qn.startswith(self_prefix):
-                raw = entry.parent_qn[len(self_prefix) :]
-                if raw and cs.SEPARATOR_DOT not in raw:
-                    return self._externalize_written_base(raw, entry.language)
-            return None
+            return self._resolve_self_edge_parent(entry)
         if self.function_registry.get(entry.parent_qn) is not None:
             return entry.parent_qn, False
         if (followed := self._rust_reexport_target(entry)) is not None:
@@ -837,50 +820,7 @@ class ClassIngestMixin:
             return external, True
         prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
         if not entry.parent_qn.startswith(prefix):
-            # Project-prefixed but not module-anchored: an import-mapped
-            # qn whose written path skips real directories (thrift's
-            # setup.py maps lib/py/src -> package `thrift`, so the import
-            # says thrift.Thrift while the class qn says
-            # thrift.src.Thrift). A UNIQUE whole-segment suffix match
-            # recovers the real node; ambiguity means no edge.
-            tail = entry.parent_qn[len(project_prefix) :]
-            simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            suffix = f"{cs.SEPARATOR_DOT}{tail}"
-            candidates = self.function_registry.find_ending_with(simple)
-            matches = {
-                qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
-            }
-            if len(matches) == 1:
-                return matches.pop(), False
-            # A base written as a PACKAGE attribute (`forms.ModelForm` via
-            # `from django import forms`) names the re-exporting package, not
-            # the defining module (django.forms.models.ModelForm behind the
-            # package __init__'s star import), so the suffix match cannot
-            # bridge the missing segment. A UNIQUE same-named class UNDER the
-            # written package path is that re-export; ambiguity means no edge.
-            package_prefix = (
-                entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
-            )
-            # The registry also holds functions/methods with the same simple
-            # name; only a TYPE declaration is a valid inheritance target, so
-            # filter before the uniqueness check (a same-named factory function
-            # under the package must not corrupt the class hierarchy). The
-            # package must also EXPOSE the name (its __init__ imports it
-            # explicitly or star-imports the defining module); a same-named
-            # internal class the package never re-exports is not the referent.
-            type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
-            package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
-            package_matches = {
-                qn
-                for qn in candidates
-                if qn.startswith(package_prefix)
-                and qn != entry.child_qn
-                and self.function_registry.get(qn) in type_decls
-                and self._package_exposes(package_qn, simple, qn)
-            }
-            if len(package_matches) == 1:
-                return package_matches.pop(), False
-            return None
+            return self._resolve_unanchored_project_parent(entry, project_prefix)
         # The module-anchored fallback shape carries the raw written name
         # as the remainder after the module qn.
         raw_name = entry.parent_qn[len(prefix) :]
@@ -894,6 +834,76 @@ class ClassIngestMixin:
         ):
             return resolved, False
         return self._externalize_written_base(raw_name, entry.language)
+
+    def _resolve_self_edge_parent(
+        self, entry: DeferredInherit
+    ) -> tuple[str, bool] | None:
+        # Parse-time resolution can land on the child ITSELF. A
+        # self-edge is never real. In C# the written base can be an
+        # ARITY sibling (`class Foo : Foo<object>`, a different type
+        # sharing the simple name); recover it before falling back.
+        # Otherwise the written base must refer to a SHADOWED outer name
+        # (thrift's `pub enum Error` implementing the std `Error` trait):
+        # when the module-anchored remainder is a bare single segment it
+        # IS the written name and externalizes. A dotted remainder (a
+        # nested child like SimpleHashMap.Entry) was never written as
+        # such; derivation would be a lie, so no edge.
+        if (sibling := self._csharp_arity_sibling(entry)) is not None:
+            return sibling, False
+        self_prefix = f"{entry.module_qn}{cs.SEPARATOR_DOT}"
+        if entry.parent_qn.startswith(self_prefix):
+            raw = entry.parent_qn[len(self_prefix) :]
+            if raw and cs.SEPARATOR_DOT not in raw:
+                return self._externalize_written_base(raw, entry.language)
+        return None
+
+    def _resolve_unanchored_project_parent(
+        self, entry: DeferredInherit, project_prefix: str
+    ) -> tuple[str, bool] | None:
+        # Project-prefixed but not module-anchored: an import-mapped
+        # qn whose written path skips real directories (thrift's
+        # setup.py maps lib/py/src -> package `thrift`, so the import
+        # says thrift.Thrift while the class qn says
+        # thrift.src.Thrift). A UNIQUE whole-segment suffix match
+        # recovers the real node; ambiguity means no edge.
+        tail = entry.parent_qn[len(project_prefix) :]
+        simple = tail.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        suffix = f"{cs.SEPARATOR_DOT}{tail}"
+        candidates = self.function_registry.find_ending_with(simple)
+        matches = {
+            qn for qn in candidates if qn.endswith(suffix) and qn != entry.child_qn
+        }
+        if len(matches) == 1:
+            return matches.pop(), False
+        # A base written as a PACKAGE attribute (`forms.ModelForm` via
+        # `from django import forms`) names the re-exporting package, not
+        # the defining module (django.forms.models.ModelForm behind the
+        # package __init__'s star import), so the suffix match cannot
+        # bridge the missing segment. A UNIQUE same-named class UNDER the
+        # written package path is that re-export; ambiguity means no edge.
+        package_prefix = (
+            entry.parent_qn.rsplit(cs.SEPARATOR_DOT, 1)[0] + cs.SEPARATOR_DOT
+        )
+        # The registry also holds functions/methods with the same simple
+        # name; only a TYPE declaration is a valid inheritance target, so
+        # filter before the uniqueness check (a same-named factory function
+        # under the package must not corrupt the class hierarchy). The
+        # package must also EXPOSE the name (its __init__ imports it
+        # explicitly or star-imports the defining module); a same-named
+        # internal class the package never re-exports is not the referent.
+        type_decls = (NodeType.CLASS, NodeType.INTERFACE, NodeType.ENUM)
+        package_qn = package_prefix[: -len(cs.SEPARATOR_DOT)]
+        package_matches = {
+            qn
+            for qn in candidates
+            if qn.startswith(package_prefix)
+            and qn != entry.child_qn
+            and self.function_registry.get(qn) in type_decls
+            and self._package_exposes(package_qn, simple, qn)
+        }
+        if len(package_matches) == 1:
+            return package_matches.pop(), False
+        return None
 
     def _csharp_arity_sibling(self, entry: DeferredInherit) -> str | None:
         # Only C# overloads type names by generic arity, so only there can a
