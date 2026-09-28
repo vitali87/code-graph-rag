@@ -47,3 +47,17 @@ updates:
     directory: "/codebase_rag/parsers/csharp_frontend/roslyn"
     schedule:
       interval: "monthly"
+    groups:
+      # Each pins Workspaces.Common to its own exact version, so one bumped
+      # alone cannot restore beside the other.
+      roslyn:
+        patterns:
+          - "Microsoft.CodeAnalysis.*"
+    ignore:
+      # From 5.9 Workspaces.MSBuild ships net10.0 only, and MSBuild 18 is the
+      # .NET 10 SDK's; the frontend targets net8.0 so it builds on the SDK
+      # most users have.
+      - dependency-name: "Microsoft.CodeAnalysis.*"
+        versions: [">=5.9"]
+      - dependency-name: "Microsoft.Build.Framework"
+        versions: [">=18"]

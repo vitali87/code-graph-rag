@@ -76,3 +76,49 @@ def test_typescript_6_updates_still_reach_the_ts_oracle() -> None:
     typescript = [i for i in ignores if i.get("dependency-name") == "typescript"]
     assert all(i.get("versions") == [">=7"] for i in typescript)
     assert all("update-types" not in i for i in typescript)
+
+
+_ROSLYN_DIR = "/codebase_rag/parsers/csharp_frontend/roslyn"
+
+
+def _nuget_update() -> dict[str, object]:
+    config = yaml.safe_load(
+        (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding=cs.ENCODING_UTF8)
+    )
+    return next(
+        u
+        for u in config["updates"]
+        if u["package-ecosystem"] == "nuget" and u.get("directory") == _ROSLYN_DIR
+    )
+
+
+def test_the_roslyn_packages_move_together() -> None:
+    # Each pins Workspaces.Common to its own exact version, so one bumped
+    # alone cannot restore beside the other (the 5.9 update alone broke it).
+    groups = _nuget_update().get("groups") or {}
+    assert any(
+        "Microsoft.CodeAnalysis.*" in group.get("patterns", [])
+        for group in groups.values()
+    )
+
+
+def test_the_roslyn_frontend_stays_on_net8_packages() -> None:
+    # From 5.9 Workspaces.MSBuild ships net10.0 only, and MSBuild 18 is the
+    # .NET 10 SDK's; the frontend targets net8.0.
+    ignores = _nuget_update().get("ignore") or []
+    assert {
+        "dependency-name": "Microsoft.CodeAnalysis.*",
+        "versions": [">=5.9"],
+    } in ignores
+    assert {
+        "dependency-name": "Microsoft.Build.Framework",
+        "versions": [">=18"],
+    } in ignores
+
+
+def test_the_msbuild_locator_is_not_held() -> None:
+    # Negative: the Locator has no framework floor, so its updates keep coming.
+    ignores = _nuget_update().get("ignore") or []
+    assert not any(
+        i.get("dependency-name") == "Microsoft.Build.Locator" for i in ignores
+    )
