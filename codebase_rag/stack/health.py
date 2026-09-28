@@ -4,9 +4,13 @@ import time
 import urllib.error
 import urllib.request
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 
 from . import constants as cs
+
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception type is bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
 
 # The Qdrant probes can carry the API key, and urllib's default opener would
 # route even a loopback request through an HTTP_PROXY that no_proxy does not
@@ -32,7 +36,7 @@ def _bolt_reachable(
         finally:
             conn.close()
         return True
-    except (mgclient.Error, OSError):
+    except (_MgclientError, OSError):
         return False
 
 
@@ -70,7 +74,7 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     # refused connection, so only the message tells the two apart.
     try:
         conn = mgclient.connect(host=host, port=port)
-    except mgclient.Error as e:
+    except _MgclientError as e:
         if cs.MEMGRAPH_AUTH_FAILURE in str(e):
             return cs.AnonymousAccess.REFUSED
         return cs.AnonymousAccess.NO_ANSWER
@@ -80,7 +84,7 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
         cursor = conn.cursor()
         cursor.execute(cs.BOLT_PROBE_QUERY)
         cursor.fetchall()
-    except (mgclient.Error, OSError):
+    except (_MgclientError, OSError):
         return cs.AnonymousAccess.NO_ANSWER
     finally:
         conn.close()
@@ -95,7 +99,7 @@ def memgraph_rejects_credentials(
         conn = mgclient.connect(
             host=host, port=port, username=username, password=password
         )
-    except mgclient.Error as e:
+    except _MgclientError as e:
         return cs.MEMGRAPH_AUTH_FAILURE in str(e)
     except OSError:
         return False

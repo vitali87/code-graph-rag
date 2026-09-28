@@ -9,7 +9,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 from loguru import logger
 
 from codebase_rag.config import settings
