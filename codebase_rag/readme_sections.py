@@ -27,6 +27,14 @@ from .types_defs import NODE_SCHEMAS, RELATIONSHIP_SCHEMAS
 PYPI_CACHE_FILE = Path(__file__).parent.parent / ".pypi_cache.json"
 PYPI_CACHE_TTL_SECONDS = 86400
 _PYPI_CACHE_LOCK = Lock()
+# The committed doc carrying the `dependencies` section. Its summaries are the
+# fallback when PyPI cannot be reached, so an offline or throttled run (a CI
+# runner, a laptop on a train) regenerates the same text instead of silently
+# dropping every summary and reporting the section as stale.
+DEPENDENCIES_DOC = Path("docs") / "getting-started" / "installation.md"
+DEPENDENCY_LINE_PATTERN = re.compile(
+    r"^- \*\*(?P<name>[^*]+)\*\*: (?P<summary>.+)$", re.MULTILINE
+)
 
 CHECK_MARK = "\u2713"
 DASH = "-"
@@ -209,7 +217,24 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
     return summary
 
 
-def format_dependencies(deps: list[str]) -> str:
+def committed_dependency_summaries(doc_path: Path) -> dict[str, str]:
+    """Package -> summary as last written into the committed doc."""
+    if not doc_path.exists():
+        return {}
+    content = doc_path.read_text(encoding=ENCODING_UTF8)
+    return {
+        m.group("name"): m.group("summary")
+        for m in DEPENDENCY_LINE_PATTERN.finditer(content)
+    }
+
+
+def format_dependencies(
+    deps: list[str], fallback_summaries: dict[str, str] | None = None
+) -> str:
+    # A failed fetch returns "" (fetch_pypi_summary logs and swallows the
+    # network error); fall back to the committed summary rather than
+    # rendering a bare name that makes the section look stale.
+    fallback = fallback_summaries or {}
     cache = _load_pypi_cache()
     try:
         with ThreadPoolExecutor() as executor:
@@ -217,7 +242,8 @@ def format_dependencies(deps: list[str]) -> str:
                 executor.map(lambda dep: fetch_pypi_summary(dep, cache), deps)
             )
         lines: list[str] = []
-        for name, summary in zip(deps, summaries):
+        for name, fetched in zip(deps, summaries):
+            summary = fetched or fallback.get(name, "")
             if summary:
                 lines.append(f"- **{name}**: {summary}")
             else:
@@ -301,6 +327,8 @@ def generate_all_sections(project_root: Path) -> dict[str, str]:
         "cli_commands": format_cli_commands_table(),
         "mcp_tools": format_mcp_tools_table(),
         "agentic_tools": format_agentic_tools_table(),
-        "dependencies": format_dependencies(deps),
+        "dependencies": format_dependencies(
+            deps, committed_dependency_summaries(project_root / DEPENDENCIES_DOC)
+        ),
         "latest_news": format_latest_news(project_root / "NEWS.md"),
     }
