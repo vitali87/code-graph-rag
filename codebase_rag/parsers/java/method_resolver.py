@@ -189,6 +189,31 @@ def _pick_overload(
     return matches[0]
 
 
+def _java_getter_return_type(method_lower: str) -> str | None:
+    # A getter's likely type from its name: getName -> String, getId -> long,
+    # getSize/getLength -> int.
+    if cs.JAVA_NAME_PATTERN in method_lower:
+        return cs.JAVA_TYPE_STRING_FQN
+    if cs.JAVA_ID_PATTERN in method_lower:
+        return cs.JAVA_TYPE_LONG
+    if cs.JAVA_SIZE_PATTERN in method_lower or cs.JAVA_LENGTH_PATTERN in method_lower:
+        return cs.JAVA_TYPE_INT
+    return None
+
+
+def _java_factory_return_type(method_call: str) -> str | None:
+    # A qualified create/new factory's likely product from its method name.
+    parts = method_call.split(cs.SEPARATOR_DOT)
+    if len(parts) < 2:
+        return None
+    method_name_lower = parts[-1].lower()
+    if cs.JAVA_USER_PATTERN in method_name_lower:
+        return cs.JAVA_HEURISTIC_USER
+    if cs.JAVA_ORDER_PATTERN in method_name_lower:
+        return cs.JAVA_HEURISTIC_ORDER
+    return None
+
+
 class JavaMethodResolverMixin:
     __slots__ = ()
     import_processor: ImportProcessor
@@ -743,28 +768,16 @@ class JavaMethodResolverMixin:
 
     def _heuristic_method_return_type(self, method_call: str) -> str | None:
         method_lower = method_call.lower()
-        if cs.JAVA_GETTER_PATTERN in method_lower:
-            if cs.JAVA_NAME_PATTERN in method_lower:
-                return cs.JAVA_TYPE_STRING_FQN
-            if cs.JAVA_ID_PATTERN in method_lower:
-                return cs.JAVA_TYPE_LONG
-            if (
-                cs.JAVA_SIZE_PATTERN in method_lower
-                or cs.JAVA_LENGTH_PATTERN in method_lower
-            ):
-                return cs.JAVA_TYPE_INT
+        if cs.JAVA_GETTER_PATTERN in method_lower and (
+            getter_type := _java_getter_return_type(method_lower)
+        ):
+            return getter_type
 
         if (
             cs.JAVA_CREATE_PATTERN in method_lower
             or cs.JAVA_NEW_PATTERN in method_lower
-        ):
-            parts = method_call.split(cs.SEPARATOR_DOT)
-            if len(parts) >= 2:
-                method_name_lower = parts[-1].lower()
-                if cs.JAVA_USER_PATTERN in method_name_lower:
-                    return cs.JAVA_HEURISTIC_USER
-                if cs.JAVA_ORDER_PATTERN in method_name_lower:
-                    return cs.JAVA_HEURISTIC_ORDER
+        ) and (factory_type := _java_factory_return_type(method_call)):
+            return factory_type
 
         if cs.JAVA_IS_PATTERN in method_lower or cs.JAVA_HAS_PATTERN in method_lower:
             return cs.JAVA_TYPE_BOOLEAN

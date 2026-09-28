@@ -551,19 +551,20 @@ def build_qualified_name(
     current = node.parent
 
     while current and current.type != cs.TS_PROGRAM:
-        if current.type in cs.JAVA_CLASS_NODE_TYPES and include_classes:
-            if name_node := current.child_by_field_name(cs.TS_FIELD_NAME):
-                if class_name := safe_decode_text(name_node):
-                    path_parts.append(class_name)
-        elif current.type in cs.JAVA_METHOD_NODE_TYPES and include_methods:
-            if name_node := current.child_by_field_name(cs.TS_FIELD_NAME):
-                if method_name := safe_decode_text(name_node):
-                    path_parts.append(method_name)
-
+        if (
+            (current.type in cs.JAVA_CLASS_NODE_TYPES and include_classes)
+            or (current.type in cs.JAVA_METHOD_NODE_TYPES and include_methods)
+        ) and (name := _declared_name(current)):
+            path_parts.append(name)
         current = current.parent
 
     path_parts.reverse()
     return path_parts
+
+
+def _declared_name(node: ASTNode) -> str | None:
+    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+    return safe_decode_text(name_node) if name_node else None
 
 
 def extract_annotation_info(annotation_node: ASTNode) -> JavaAnnotationInfo:
