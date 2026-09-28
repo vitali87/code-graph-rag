@@ -278,6 +278,39 @@ def _find_override_by_arity(
     return matches[0] if len(matches) == 1 else None
 
 
+def _csharp_override_gated(
+    method_qn: str,
+    csharp_methods: set[str] | None,
+    csharp_override_methods: set[str] | None,
+) -> bool:
+    # A C# method without the `override` modifier must not match a base CLASS
+    # member (only interface members).
+    if csharp_methods is None or method_qn not in csharp_methods:
+        return False
+    return csharp_override_methods is None or method_qn not in csharp_override_methods
+
+
+def _parent_method_qn(
+    parent_class: str, method_name: str, function_registry: FunctionRegistryTrieProtocol
+) -> str | None:
+    """The METHOD on `parent_class` an override of `method_name` would target."""
+    parent_method_qn = f"{parent_class}.{method_name}"
+    if parent_method_qn not in function_registry:
+        # Fall back to name+arity so a generic type-var rename in the override
+        # signature still matches the base method.
+        parent_method_qn = (
+            _find_override_by_arity(parent_class, method_name, function_registry)
+            or parent_method_qn
+        )
+    # The parent member must BE a method: a ctor of a nested class that
+    # inherits its encloser (node::inner_node : node) shares its name with the
+    # nested CLASS registered at parent.name, and an OVERRIDES onto that class
+    # qn is a label-mismatched phantom.
+    if function_registry.get(parent_method_qn) == NodeType.METHOD:
+        return parent_method_qn
+    return None
+
+
 def check_method_overrides(
     method_qn: str,
     method_name: str,
@@ -296,12 +329,8 @@ def check_method_overrides(
     # A C# method overrides a base CLASS member only with the explicit
     # `override` modifier; a `new`/implicit-hide member must not. Interface
     # members need no modifier, so gate only class-parent matches.
-    csharp_gated = (
-        csharp_methods is not None
-        and method_qn in csharp_methods
-        and (
-            csharp_override_methods is None or method_qn not in csharp_override_methods
-        )
+    csharp_gated = _csharp_override_gated(
+        method_qn, csharp_methods, csharp_override_methods
     )
 
     queue = deque([class_qn])
@@ -310,52 +339,41 @@ def check_method_overrides(
     while queue:
         current_class = queue.popleft()
 
-        if current_class != class_qn:
-            parent_method_qn = f"{current_class}.{method_name}"
-            if parent_method_qn not in function_registry:
-                # Fall back to name+arity so a generic type-var rename in the
-                # override signature still matches the base method.
-                parent_method_qn = (
-                    _find_override_by_arity(
-                        current_class, method_name, function_registry
-                    )
-                    or parent_method_qn
-                )
-
-            # The parent member must BE a method: a ctor of a nested class
-            # that inherits its encloser (node::inner_node : node) shares
-            # its name with the nested CLASS registered at parent.name, and
-            # an OVERRIDES onto that class qn is a label-mismatched phantom.
-            if function_registry.get(parent_method_qn) == NodeType.METHOD:
-                # Skip a gated C# member's CLASS-parent match, but keep
-                # walking: it may still implement an interface member deeper.
-                parent_is_interface = (
-                    function_registry.get(current_class) == NodeType.INTERFACE
-                )
-                if not (csharp_gated and not parent_is_interface):
-                    ingestor.ensure_relationship_batch(
-                        (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
-                        cs.RelationshipType.OVERRIDES,
-                        (
-                            cs.NodeLabel.METHOD,
-                            cs.KEY_QUALIFIED_NAME,
-                            parent_method_qn,
-                        ),
-                    )
-                    logger.debug(
-                        logs.CLASS_METHOD_OVERRIDE,
-                        method_qn=method_qn,
-                        parent_method_qn=parent_method_qn,
-                    )
-                    return
+        parent_method_qn = (
+            _parent_method_qn(current_class, method_name, function_registry)
+            if current_class != class_qn
+            else None
+        )
+        # Skip a gated C# member's CLASS-parent match, but keep walking: it
+        # may still implement an interface member deeper.
+        if parent_method_qn is not None and (
+            not csharp_gated
+            or function_registry.get(current_class) == NodeType.INTERFACE
+        ):
+            ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, method_qn),
+                cs.RelationshipType.OVERRIDES,
+                (cs.NodeLabel.METHOD, cs.KEY_QUALIFIED_NAME, parent_method_qn),
+            )
+            logger.debug(
+                logs.CLASS_METHOD_OVERRIDE,
+                method_qn=method_qn,
+                parent_method_qn=parent_method_qn,
+            )
+            return
 
         # Superclasses first: when both a base class and an interface declare
         # the method, the edge lands on the base, matching Java resolution.
         # chain() instead of list concat: this runs per BFS node per method.
-        for parent_class_qn in chain(
-            class_inheritance.get(current_class, ()),
-            implemented.get(current_class, ()),
-        ):
-            if parent_class_qn not in visited:
-                visited.add(parent_class_qn)
-                queue.append(parent_class_qn)
+        fresh = [
+            parent_class_qn
+            for parent_class_qn in dict.fromkeys(
+                chain(
+                    class_inheritance.get(current_class, ()),
+                    implemented.get(current_class, ()),
+                )
+            )
+            if parent_class_qn not in visited
+        ]
+        visited.update(fresh)
+        queue.extend(fresh)

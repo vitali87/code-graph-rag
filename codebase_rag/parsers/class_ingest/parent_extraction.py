@@ -335,26 +335,29 @@ def extract_dart_parent_classes(
     # the `with` types (a mixin contributes members like a base), and a
     # `mixin M on Base` states a required superclass as a bare type_identifier
     # child. `implements` targets are IMPLEMENTS (extract_implemented_interfaces).
-    parents: list[str] = []
+    names: list[str] = []
     if superclass := find_child_by_type(class_node, cs.TS_DART_SUPERCLASS):
         for child in superclass.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(name, module_qn))
-            elif child.type == cs.TS_DART_MIXINS:
-                for mixin in child.named_children:
-                    if mixin.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                        mixin_name := safe_decode_text(mixin)
-                    ):
-                        parents.append(resolve_to_qn(mixin_name, module_qn))
+            if child.type == cs.TS_DART_MIXINS:
+                names.extend(_dart_type_identifier_names(child))
+            else:
+                names.extend(_dart_type_identifier_names_of([child]))
     if class_node.type == cs.TS_DART_MIXIN_DECLARATION:
-        for child in class_node.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                on_name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(on_name, module_qn))
-    return parents
+        names.extend(_dart_type_identifier_names(class_node))
+    return [resolve_to_qn(name, module_qn) for name in names]
+
+
+def _dart_type_identifier_names(node: Node) -> list[str]:
+    return _dart_type_identifier_names_of(node.named_children)
+
+
+def _dart_type_identifier_names_of(nodes: list[Node]) -> list[str]:
+    # The decoded names of the plain `type_identifier` nodes among `nodes`.
+    return [
+        name
+        for node in nodes
+        if node.type == cs.TS_DART_TYPE_IDENTIFIER and (name := safe_decode_text(node))
+    ]
 
 
 def extract_dart_extends_type_args(

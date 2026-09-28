@@ -600,47 +600,11 @@ class MemgraphIngestor:
         for label, props in buffered_nodes:
             nodes_by_label[label].append(props)
 
-        flushed_total = 0
-        skipped_total = 0
-
-        first_error: Exception | None = None
-        failed_labels: set[str] = set()
-
         if self._executor and len(nodes_by_label) > 1:
-            logger.info(
-                ls.MG_PARALLEL_FLUSH_NODES.format(
-                    count=len(nodes_by_label),
-                    workers=settings.FLUSH_THREAD_POOL_SIZE,
-                )
-            )
-            futures = {
-                self._executor.submit(
-                    self._flush_node_group_with_own_conn, label, props_list
-                ): label
-                for label, props_list in nodes_by_label.items()
-            }
-            for future in as_completed(futures):
-                label = futures[future]
-                try:
-                    flushed, skipped = future.result()
-                    flushed_total += flushed
-                    skipped_total += skipped
-                except Exception as e:
-                    failed_labels.add(label)
-                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
-                    if first_error is None:
-                        first_error = e
+            outcome = self._flush_node_groups_parallel(self._executor, nodes_by_label)
         else:
-            for label, props_list in nodes_by_label.items():
-                try:
-                    flushed, skipped = self._flush_node_label_group(label, props_list)
-                    flushed_total += flushed
-                    skipped_total += skipped
-                except Exception as e:
-                    failed_labels.add(label)
-                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
-                    if first_error is None:
-                        first_error = e
+            outcome = self._flush_node_groups_serial(nodes_by_label)
+        flushed_total, skipped_total, failed_labels, first_error = outcome
 
         logger.info(
             ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
@@ -653,6 +617,63 @@ class MemgraphIngestor:
 
         if first_error is not None:
             raise first_error
+
+    def _flush_node_groups_parallel(
+        self,
+        executor: ThreadPoolExecutor,
+        nodes_by_label: dict[str, list[dict[str, PropertyValue]]],
+    ) -> tuple[int, int, set[str], Exception | None]:
+        # Each label group on its own connection; a failed label keeps its
+        # buffered nodes for a retry, and the first failure is re-raised.
+        logger.info(
+            ls.MG_PARALLEL_FLUSH_NODES.format(
+                count=len(nodes_by_label),
+                workers=settings.FLUSH_THREAD_POOL_SIZE,
+            )
+        )
+        futures = {
+            executor.submit(
+                self._flush_node_group_with_own_conn, label, props_list
+            ): label
+            for label, props_list in nodes_by_label.items()
+        }
+        flushed_total = 0
+        skipped_total = 0
+        failed_labels: set[str] = set()
+        first_error: Exception | None = None
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                flushed, skipped = future.result()
+            except Exception as e:
+                failed_labels.add(label)
+                logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            flushed_total += flushed
+            skipped_total += skipped
+        return flushed_total, skipped_total, failed_labels, first_error
+
+    def _flush_node_groups_serial(
+        self, nodes_by_label: dict[str, list[dict[str, PropertyValue]]]
+    ) -> tuple[int, int, set[str], Exception | None]:
+        flushed_total = 0
+        skipped_total = 0
+        failed_labels: set[str] = set()
+        first_error: Exception | None = None
+        for label, props_list in nodes_by_label.items():
+            try:
+                flushed, skipped = self._flush_node_label_group(label, props_list)
+            except Exception as e:
+                failed_labels.add(label)
+                logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            flushed_total += flushed
+            skipped_total += skipped
+        return flushed_total, skipped_total, failed_labels, first_error
 
     def _flush_rel_pattern_group(
         self,
