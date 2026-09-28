@@ -700,22 +700,28 @@ def _lambda_captures_by_default(lambda_node: Node, names: set[str]) -> bool:
         if child.type != cs.TS_CPP_LAMBDA_CAPTURE_SPECIFIER:
             continue
         for cap in child.children:
-            if cap.type == cs.CppNodeType.IDENTIFIER:
-                if name := safe_decode_text(cap):
-                    names.add(name)
-            elif cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
-                # `[project = expr]` binds its LEADING identifier.
-                for part in cap.children:
-                    if cap_name := (
-                        safe_decode_text(part)
-                        if part.type == cs.CppNodeType.IDENTIFIER
-                        else None
-                    ):
-                        names.add(cap_name)
-                        break
-            elif cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
+            if cap.type == cs.TS_CPP_LAMBDA_DEFAULT_CAPTURE:
                 has_default = True
+            elif name := _lambda_capture_name(cap):
+                names.add(name)
     return has_default
+
+
+def _lambda_capture_name(cap: Node) -> str | None:
+    if cap.type == cs.CppNodeType.IDENTIFIER:
+        return safe_decode_text(cap) or None
+    if cap.type == cs.TS_CPP_LAMBDA_CAPTURE_INITIALIZER:
+        # `[project = expr]` binds its LEADING identifier.
+        return next(
+            (
+                name
+                for part in cap.children
+                if part.type == cs.CppNodeType.IDENTIFIER
+                and (name := safe_decode_text(part))
+            ),
+            None,
+        )
+    return None
 
 
 def _collect_cpp_parameter_names(func_node: Node, names: set[str]) -> None:

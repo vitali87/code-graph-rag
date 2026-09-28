@@ -198,6 +198,17 @@ def url_suffix_match_lead(url: str, template: str) -> str | None:
 KEY_MOUNT_PREFIX = "mount_prefix"
 
 
+def _anchored_url_segments(url: str) -> list[str]:
+    # Path segments of an absolute or root-relative URL; a bare relative
+    # URL has no anchor to match a mount against, so it yields none.
+    parsed = urlparse(url)
+    is_absolute = bool(parsed.scheme and parsed.netloc)
+    is_rooted = not parsed.netloc and url.startswith("/")
+    if not (is_absolute or is_rooted):
+        return []
+    return [s for s in parsed.path.split("/") if s]
+
+
 def template_mount_lead(url: str, template: str) -> str | None:
     """The template's mount prefix when the URL matches its proper tail.
 
@@ -209,12 +220,7 @@ def template_mount_lead(url: str, template: str) -> str | None:
     match anything), and a matched tail that keeps at least one literal
     segment as evidence.
     """
-    parsed = urlparse(url)
-    is_absolute = bool(parsed.scheme and parsed.netloc)
-    is_rooted = not parsed.netloc and url.startswith("/")
-    if not (is_absolute or is_rooted):
-        return None
-    url_segments = [s for s in parsed.path.split("/") if s]
+    url_segments = _anchored_url_segments(url)
     template_segments = [s for s in template.split("/") if s]
     if not url_segments or (
         template_segments and template_segments[0] == UNKNOWN_LEAD_SEGMENT
@@ -225,9 +231,9 @@ def template_mount_lead(url: str, template: str) -> str | None:
         return None
     mount = template_segments[:lead]
     tail = template_segments[lead:]
-    if any(_TEMPLATE_PARAM_RE.match(segment) for segment in mount):
-        return None
-    if all(_TEMPLATE_PARAM_RE.match(segment) for segment in tail):
+    if any(_TEMPLATE_PARAM_RE.match(segment) for segment in mount) or all(
+        _TEMPLATE_PARAM_RE.match(segment) for segment in tail
+    ):
         return None
     matches = all(
         _TEMPLATE_PARAM_RE.match(expected) or expected == actual
