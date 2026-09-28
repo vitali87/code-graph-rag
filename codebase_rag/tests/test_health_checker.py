@@ -29,10 +29,12 @@ def test_check_memgraph_connection_logs_in_with_configured_credentials(
 
     monkeypatch.setattr(settings, "MEMGRAPH_USERNAME", "cgr")
     monkeypatch.setattr(settings, "MEMGRAPH_PASSWORD", "s3cret")
-    calls: list[dict[str, object]] = []
+    logins: list[tuple[str | None, str | None]] = []
 
-    def record_connect(**kwargs: object) -> _FakeConnection:
-        calls.append(kwargs)
+    def record_connect(
+        host: str, port: int, username: str | None = None, password: str | None = None
+    ) -> _FakeConnection:
+        logins.append((username, password))
         return _FakeConnection(_FakeCursor({}, []))
 
     monkeypatch.setattr(mgclient, "connect", record_connect)
@@ -40,8 +42,7 @@ def test_check_memgraph_connection_logs_in_with_configured_credentials(
     result = HealthChecker().check_memgraph_connection()
 
     assert result.passed is True
-    assert calls[0]["username"] == "cgr"
-    assert calls[0]["password"] == "s3cret"
+    assert logins == [("cgr", "s3cret")]
 
 
 class _FakeColumn:

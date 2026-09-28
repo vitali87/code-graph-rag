@@ -16,6 +16,7 @@ import urllib.error
 from collections.abc import Callable, Iterator
 from email.message import Message
 from pathlib import Path
+from typing import TypedDict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -77,12 +78,24 @@ def _warnings_from[T](action: Callable[[], T]) -> list[str]:
     return messages
 
 
+class _PortEntry(TypedDict, total=False):
+    mode: str
+    host_ip: str
+    target: int
+    published: str
+
+
+class _ResolvedService(TypedDict, total=False):
+    environment: dict[str, str | None]
+    ports: list[_PortEntry]
+
+
 def _compose_config(
     environments: dict[str, dict[str, str | None]],
-    ports: dict[str, list[dict[str, str | int]]] | None = None,
+    ports: dict[str, list[_PortEntry]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """What `docker compose config --format json` prints for these services."""
-    services: dict[str, dict[str, object]] = {
+    services: dict[str, _ResolvedService] = {
         service: {"environment": env} for service, env in environments.items()
     }
     for service, entries in (ports or {}).items():
@@ -435,7 +448,7 @@ def local_qdrant_port() -> Iterator[int]:
             self.send_response(200)
             self.end_headers()
 
-        def log_message(self, *_: object) -> None:
+        def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
             return
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Ok)
@@ -848,10 +861,10 @@ def test_probes_follow_a_bind_from_the_compose_dotenv(
     assert _manager(tmp_path).qdrant_host == "192.168.1.5"
 
 
-def _qdrant_ports(host_ip: str | None, published: str) -> list[dict[str, str | int]]:
+def _qdrant_ports(host_ip: str | None, published: str) -> list[_PortEntry]:
     """Qdrant's `ports` as `docker compose config` renders them."""
-    http = {"mode": "ingress", "target": 6333, "published": published}
-    grpc = {"mode": "ingress", "target": 6334, "published": "6334"}
+    http: _PortEntry = {"mode": "ingress", "target": 6333, "published": published}
+    grpc: _PortEntry = {"mode": "ingress", "target": 6334, "published": "6334"}
     if host_ip is not None:
         http["host_ip"] = grpc["host_ip"] = host_ip
     return [grpc, http]
@@ -906,7 +919,7 @@ def test_up_probes_qdrant_where_compose_publishes_it(
     [None, [], [{"target": 6333, "published": "not-a-port"}]],
 )
 def test_up_keeps_the_probe_endpoint_without_a_published_qdrant_port(
-    tmp_path: Path, ports: list[dict[str, str | int]] | None
+    tmp_path: Path, ports: list[_PortEntry] | None
 ) -> None:
     config = _compose_config(
         MATCHING_ENV, None if ports is None else {cs.SERVICE_QDRANT: ports}
