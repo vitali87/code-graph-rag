@@ -214,8 +214,9 @@ def test_verify_refuses_a_compose_file_that_drops_the_credentials(
     # A file rendered before credential support declares no `environment`.
     stale = _compose_config({cs.SERVICE_MEMGRAPH: {}, cs.SERVICE_QDRANT: {}})
 
+    mgr = _manager(tmp_path)
     with pytest.raises(StackError) as exc:
-        _verify_with(_manager(tmp_path), stale)
+        _verify_with(mgr, stale)
 
     for name in cs.STACK_AUTH_ENV_VARS:
         assert name in str(exc.value)
@@ -234,8 +235,9 @@ def test_verify_refuses_a_value_written_into_the_compose_file(
         }
     )
 
+    mgr = _manager(tmp_path)
     with pytest.raises(StackError) as exc:
-        _verify_with(_manager(tmp_path), hardcoded)
+        _verify_with(mgr, hardcoded)
 
     assert f"{cs.SERVICE_QDRANT}: {cs.ENV_QDRANT_API_KEY}" in str(exc.value)
     assert f"{cs.SERVICE_MEMGRAPH}: {cs.ENV_MEMGRAPH_USER}" not in str(exc.value)
@@ -253,8 +255,9 @@ def test_verify_refuses_a_key_from_an_env_file_beside_the_compose_file(
         }
     )
 
+    mgr = _manager(tmp_path)
     with pytest.raises(StackError) as exc:
-        _verify_with(_manager(tmp_path), from_env_file)
+        _verify_with(mgr, from_env_file)
 
     assert cs.ENV_QDRANT_API_KEY in str(exc.value)
     assert "key-from-env-file" not in str(exc.value)
@@ -273,8 +276,9 @@ def test_verify_refuses_to_start_when_compose_config_fails(
     # beside the compose file that the app does not have.
     request.getfixturevalue(configured)
 
+    mgr = _manager(tmp_path)
     with pytest.raises(StackError) as exc:
-        _verify_with(_manager(tmp_path), FAILED_CONFIG)
+        _verify_with(mgr, FAILED_CONFIG)
 
     assert "unknown flag: --format" in str(exc.value)
 
