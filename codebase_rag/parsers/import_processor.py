@@ -722,6 +722,22 @@ def _cpp_import_module_name(template_args: Node) -> str | None:
     return module_name
 
 
+def _kept_mod_scope_writers(
+    writers: list[tuple[str, bool, dict[str, str]]],
+    owner_path: str | None,
+    known_module_paths: Mapping[str, str],
+) -> list[tuple[str, bool, dict[str, str]]]:
+    # An owned key keeps only writers from its owning file. An unowned one
+    # lets pure module chains oust fn-/block-local forgeries, and drops the
+    # key entirely when writers from several files survive (cfg/macro twins).
+    if owner_path:
+        return [w for w in writers if known_module_paths.get(w[0]) == owner_path]
+    kept = writers
+    if any(w[1] for w in writers) and not all(w[1] for w in writers):
+        kept = [w for w in writers if w[1]]
+    return [] if len({w[0] for w in kept}) > 1 else kept
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -4229,6 +4245,21 @@ class ImportProcessor:
             else:
                 target[name] = old
 
+    def _retract_rust_inline_scope_keys(
+        self, known_module_paths: Mapping[str, str]
+    ) -> None:
+        for keys in self._rust_inline_scope_keys.values():
+            for key in keys:
+                if known_module_paths.get(key):
+                    # The key has since become an indexed file's own module
+                    # qn (a watch CREATE of the cfg twin's file form): the
+                    # map is that file's parse output now, not this
+                    # arbitration's to retract. The owner branch keeps no
+                    # inline writers for it, so the claim lapses.
+                    continue
+                self.import_mapping.pop(key, None)
+        self._rust_inline_scope_keys = {}
+
     def finalise_rust_mod_scope_uses(
         self, known_module_paths: Mapping[str, str]
     ) -> None:
@@ -4250,33 +4281,15 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses = {}
         for writer_qn, entries in pending.items():
             self._rust_mod_scope_registry[writer_qn] = entries
-        for keys in self._rust_inline_scope_keys.values():
-            for key in keys:
-                if known_module_paths.get(key):
-                    # The key has since become an indexed file's own module
-                    # qn (a watch CREATE of the cfg twin's file form): the
-                    # map is that file's parse output now, not this
-                    # arbitration's to retract. The owner branch below
-                    # keeps no inline writers for it, so the claim lapses.
-                    continue
-                self.import_mapping.pop(key, None)
-        self._rust_inline_scope_keys = {}
+        self._retract_rust_inline_scope_keys(known_module_paths)
         by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
         for writer_qn, entries in self._rust_mod_scope_registry.items():
             for key, pure, imports in entries:
                 by_key.setdefault(key, []).append((writer_qn, pure, imports))
         for key, writers in by_key.items():
-            owner_path = known_module_paths.get(key)
-            kept = writers
-            if owner_path:
-                kept = [
-                    w for w in writers if known_module_paths.get(w[0]) == owner_path
-                ]
-            else:
-                if any(w[1] for w in writers) and not all(w[1] for w in writers):
-                    kept = [w for w in writers if w[1]]
-                if len({w[0] for w in kept}) > 1:
-                    kept = []
+            kept = _kept_mod_scope_writers(
+                writers, known_module_paths.get(key), known_module_paths
+            )
             for writer_qn, _pure, imports in kept:
                 self.import_mapping.setdefault(key, {}).update(imports)
                 self._rust_inline_scope_keys.setdefault(writer_qn, set()).add(key)
