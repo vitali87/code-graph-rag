@@ -2164,6 +2164,92 @@ class FunctionIngestMixin:
         self._deferred_cpp_containment = []
         return emitted
 
+    def _enclosing_function_parent(
+        self,
+        current: Node,
+        func_qn: str,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        language: cs.SupportedLanguage | None,
+        file_path: Path | None,
+    ) -> tuple[str, str, FunctionSpanKey | None] | None:
+        # The parent a function nested in `current` (an enclosing function)
+        # binds to; None when no distinct parent qn can be derived.
+        parent_label = (
+            cs.NodeLabel.METHOD
+            if self._is_method(current, lang_config)
+            else cs.NodeLabel.FUNCTION
+        )
+        # Bind to the enclosing function's OWN qn, recomputed from its node.
+        # A function nested in an anonymous callback otherwise loses that
+        # callback: anonymous scopes contribute no segment to the child qn,
+        # so trimming would skip the callback and hoist the child to the
+        # nearest named ancestor.
+        # A Go receiver method's node lives under its receiver type
+        # (module.Type.Method); identity resolution alone gives the
+        # receiver-dropping module.Method, a phantom, so a local type
+        # declared in the method body would fall back to the module instead
+        # of its true lexical parent.
+        if (
+            language == cs.SupportedLanguage.GO
+            and go_utils.is_receiver_method(current)
+            and (name_node := current.child_by_field_name(cs.FIELD_NAME)) is not None
+            and (method_name := safe_decode_text(name_node))
+            and (receiver_type := go_utils.extract_receiver_type_name(current))
+        ):
+            container_qn = self._resolve_go_container_qn(module_qn, receiver_type)
+            return (
+                cs.NodeLabel.METHOD,
+                f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
+                None,
+            )
+        # Reuse the enclosing function's REGISTERED identity when its span is
+        # claimed: structural re-derivation produces the pre-claim qn (an
+        # anonymous name whose node no longer exists for
+        # `exports.f = function`, or the FIRST `t` for the second same-name
+        # fn expr registered as `t@line`), hoisting the child to the module
+        # or the wrong function.
+        if language in cs.JS_TS_LANGUAGES:
+            recorded = self.function_locations.get(
+                function_span_key(module_qn, current)
+            )
+            if (
+                recorded is not None
+                and recorded.qualified_name != func_qn
+                and recorded.qualified_name in self.function_registry
+            ):
+                return (
+                    cs.NodeLabel(recorded.label),
+                    recorded.qualified_name,
+                    None,
+                )
+        resolution = (
+            self._resolve_function_identity(
+                current, module_qn, language, lang_config, file_path
+            )
+            if language is not None
+            else None
+        )
+        parent_qn = (
+            resolution.qualified_name
+            if resolution
+            else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        )
+        if not parent_qn or parent_qn == func_qn:
+            return None
+        # A C# method registers signature-suffixed (`Run(int)`), a shape
+        # structural re-derivation cannot reproduce, and its parameterless
+        # overload sibling exactly SHADOWS the guess. Methods register in
+        # the class pass after this one, so the guess carries the parent
+        # NODE's span for the deferred resolver to swap in the recorded
+        # identity.
+        span = (
+            function_span_key(module_qn, current)
+            if language == cs.SupportedLanguage.CSHARP
+            else None
+        )
+        return parent_label, parent_qn, span
+
     def _determine_function_parent(
         self,
         func_node: Node,
@@ -2179,83 +2265,12 @@ class FunctionIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.function_node_types:
-                parent_label = (
-                    cs.NodeLabel.METHOD
-                    if self._is_method(current, lang_config)
-                    else cs.NodeLabel.FUNCTION
+                parent = self._enclosing_function_parent(
+                    current, func_qn, module_qn, lang_config, language, file_path
                 )
-                # Bind to the enclosing function's OWN qn, recomputed from its node.
-                # A function nested in an anonymous callback otherwise loses that
-                # callback: anonymous scopes contribute no segment to the child qn,
-                # so trimming would skip the callback and hoist the child to the
-                # nearest named ancestor.
-                # A Go receiver method's node lives under its receiver type
-                # (module.Type.Method); identity resolution alone gives the
-                # receiver-dropping module.Method, a phantom, so a local type
-                # declared in the method body would fall back to the module instead
-                # of its true lexical parent.
-                if (
-                    language == cs.SupportedLanguage.GO
-                    and go_utils.is_receiver_method(current)
-                    and (name_node := current.child_by_field_name(cs.FIELD_NAME))
-                    is not None
-                    and (method_name := safe_decode_text(name_node))
-                    and (receiver_type := go_utils.extract_receiver_type_name(current))
-                ):
-                    container_qn = self._resolve_go_container_qn(
-                        module_qn, receiver_type
-                    )
-                    return (
-                        cs.NodeLabel.METHOD,
-                        f"{container_qn}{cs.SEPARATOR_DOT}{method_name}",
-                        None,
-                    )
-                # Reuse the enclosing function's REGISTERED identity when its span is
-                # claimed: structural re-derivation produces the pre-claim qn (an
-                # anonymous name whose node no longer exists for
-                # `exports.f = function`, or the FIRST `t` for the second same-name
-                # fn expr registered as `t@line`), hoisting the child to the module
-                # or the wrong function.
-                if language in cs.JS_TS_LANGUAGES:
-                    recorded = self.function_locations.get(
-                        function_span_key(module_qn, current)
-                    )
-                    if (
-                        recorded is not None
-                        and recorded.qualified_name != func_qn
-                        and recorded.qualified_name in self.function_registry
-                    ):
-                        return (
-                            cs.NodeLabel(recorded.label),
-                            recorded.qualified_name,
-                            None,
-                        )
-                resolution = (
-                    self._resolve_function_identity(
-                        current, module_qn, language, lang_config, file_path
-                    )
-                    if language is not None
-                    else None
-                )
-                parent_qn = (
-                    resolution.qualified_name
-                    if resolution
-                    else func_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                )
-                if not parent_qn or parent_qn == func_qn:
+                if parent is None:
                     break
-                # A C# method registers signature-suffixed (`Run(int)`), a shape
-                # structural re-derivation cannot reproduce, and its parameterless
-                # overload sibling exactly SHADOWS the guess. Methods register in
-                # the class pass after this one, so the guess carries the parent
-                # NODE's span for the deferred resolver to swap in the recorded
-                # identity.
-                span = (
-                    function_span_key(module_qn, current)
-                    if language == cs.SupportedLanguage.CSHARP
-                    else None
-                )
-                return parent_label, parent_qn, span
+                return parent
 
             current = current.parent
 
