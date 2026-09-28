@@ -1269,6 +1269,30 @@ def _truthiness_operands(node: Node) -> list[Node | None]:
     return []
 
 
+def _peel_ts_getter_receiver(recv: Node | None) -> tuple[Node | None, str | None]:
+    """Peel type-transparent wrappers off a getter read's receiver.
+
+    Parens, `x!`, and `x satisfies T` keep the operand's type, so they are
+    peeled; an `as` cast ASSERTS a type, so the receiver resolves from that
+    target type directly (`(box as Base).thing` links even when box is
+    untyped). Returns (receiver, None), or (None, cast type text) for a cast,
+    with "" when the cast's type has no text.
+    """
+    while recv is not None:
+        if recv.type in (
+            cs.TS_PARENTHESIZED_EXPRESSION,
+            cs.TS_NON_NULL_EXPRESSION,
+            cs.TS_SATISFIES_EXPRESSION,
+        ):
+            recv = recv.named_child(0)
+        elif recv.type == cs.TS_AS_EXPRESSION:
+            type_node = recv.named_children[-1] if recv.named_children else None
+            return None, (safe_decode_text(type_node) or "") if type_node else ""
+        else:
+            break
+    return recv, None
+
+
 class CallProcessor:
     __slots__ = (
         "ingestor",
@@ -6193,37 +6217,54 @@ class CallProcessor:
         # that binds and invokes the returned value (x = factory(); x(cb)) can flow
         # cb into the returned closure. Only this scope's own return statements
         # count; a nested function's returns belong to it.
-        registry = self._resolver.function_registry
-        resolve_func = self._resolver.resolve_function_call
         stack: list[Node] = list(caller_node.children)
         while stack:
             node = stack.pop()
             if node.type in boundary_types:
                 continue
             if node.type == cs.TS_PY_RETURN_STATEMENT:
-                for returned in node.named_children:
-                    child = self._unwrap_ts_cast(returned)
-                    if child.type not in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
-                        continue
-                    if not (name := safe_decode_text(child)):
-                        continue
-                    nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
-                    # A duplicated name (if/else twin definitions) returns
-                    # whichever branch ran, so record EVERY twin; recording one
-                    # leaves the others unreachable and falsely dead.
-                    if nested_qn in registry:
-                        self._flow_bucket.returned_callables.setdefault(
-                            caller_qn, set()
-                        ).update(registry.variants(nested_qn))
-                    elif (
-                        resolved := resolve_func(
-                            name, module_qn, local_var_types, class_context, caller_qn
-                        )
-                    ) is not None and resolved[0] in _CALLABLE_NODE_LABELS:
-                        self._flow_bucket.returned_callables.setdefault(
-                            caller_qn, set()
-                        ).update(registry.variants(resolved[1]))
+                for name in self._returned_names(node):
+                    self._record_returned_callable(
+                        name, caller_qn, module_qn, local_var_types, class_context
+                    )
             stack.extend(node.children)
+
+    def _returned_names(self, return_node: Node) -> list[str]:
+        # The identifier / attribute names a return statement hands back.
+        names: list[str] = []
+        for returned in return_node.named_children:
+            child = self._unwrap_ts_cast(returned)
+            if child.type in (cs.TS_PY_IDENTIFIER, cs.TS_PY_ATTRIBUTE) and (
+                name := safe_decode_text(child)
+            ):
+                names.append(name)
+        return names
+
+    def _record_returned_callable(
+        self,
+        name: str,
+        caller_qn: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        class_context: str | None,
+    ) -> None:
+        registry = self._resolver.function_registry
+        nested_qn = f"{caller_qn}{cs.SEPARATOR_DOT}{name}"
+        # A duplicated name (if/else twin definitions) returns whichever
+        # branch ran, so record EVERY twin; recording one leaves the others
+        # unreachable and falsely dead.
+        if nested_qn in registry:
+            target_qn = nested_qn
+        else:
+            resolved = self._resolver.resolve_function_call(
+                name, module_qn, local_var_types, class_context, caller_qn
+            )
+            if resolved is None or resolved[0] not in _CALLABLE_NODE_LABELS:
+                return
+            target_qn = resolved[1]
+        self._flow_bucket.returned_callables.setdefault(caller_qn, set()).update(
+            registry.variants(target_qn)
+        )
 
     def _build_factory_alias_map(
         self,
@@ -7559,25 +7600,15 @@ class CallProcessor:
         # yields None so no edge is fabricated. Resolving by receiver type (not
         # the name-global trie) is what keeps a same-named getter on an
         # unrelated class from being falsely revived.
-        recv = member_node.child_by_field_name(cs.FIELD_OBJECT)
-        # Parens, `x!`, and `x satisfies T` keep the operand's type, so peel them;
-        # an `as` cast ASSERTS a type, so resolve the receiver from that target
-        # type directly (`(box as Base).thing` links even when box is untyped).
-        while recv is not None:
-            recv_type = recv.type
-            if recv_type in (
-                cs.TS_PARENTHESIZED_EXPRESSION,
-                cs.TS_NON_NULL_EXPRESSION,
-                cs.TS_SATISFIES_EXPRESSION,
-            ):
-                recv = recv.named_child(0)
-            elif recv_type == cs.TS_AS_EXPRESSION:
-                type_node = recv.named_children[-1] if recv.named_children else None
-                if type_node is None or not (tname := safe_decode_text(type_node)):
-                    return None
-                return self._resolver._resolve_class_name(tname, module_qn)
-            else:
-                break
+        recv, cast_type = _peel_ts_getter_receiver(
+            member_node.child_by_field_name(cs.FIELD_OBJECT)
+        )
+        if cast_type is not None:
+            return (
+                self._resolver._resolve_class_name(cast_type, module_qn)
+                if cast_type
+                else None
+            )
         if recv is None:
             return None
         if recv.type == cs.TS_THIS:
@@ -7591,9 +7622,11 @@ class CallProcessor:
             # it reads the BASE class's getter, and class_context is the current
             # class, so mapping it here would target the wrong (or a missing)
             # method; a conservative miss is preferred to a wrong edge.
-            if self._js_this_binds_to_enclosing_class(member_node):
-                return class_context
-            return None
+            return (
+                class_context
+                if self._js_this_binds_to_enclosing_class(member_node)
+                else None
+            )
         if recv.type == cs.TS_IDENTIFIER and (recv_name := safe_decode_text(recv)):
             # A typed local already stores its resolved class qn; a bare
             # class-name receiver (a static getter read, `Box.thing`) resolves
