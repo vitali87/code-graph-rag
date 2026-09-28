@@ -312,6 +312,7 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 def _maybe_start_stack() -> None:
     mgr = StackManager()
     try:
+        mgr.locate_published_qdrant()
         if mgr.status().state == StackState.RUNNING:
             # This early return bypasses ensure_running, so it needs its own
             # public-port (issue #1380) and authentication checks for a stack

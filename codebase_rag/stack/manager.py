@@ -5,7 +5,6 @@ import shutil
 import socket
 import subprocess
 from dataclasses import dataclass
-from functools import cached_property
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -110,23 +109,48 @@ def _is_local_address(host: str) -> bool:
     return False
 
 
-def _targets_this_machine(url: str | None) -> bool:
-    """Whether QDRANT_URL names a Qdrant on this machine."""
-    host = urlsplit(url).hostname if url else None
-    return host is not None and _is_local_address(host)
+def _addresses_of(host: str) -> set[str]:
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return set()
+    return {str(address[0]) for _, _, _, _, address in infos}
 
 
-def _bundled_qdrant_api_key() -> str | None:
-    """The configured Qdrant key, unless it belongs to another machine's Qdrant.
+def _names_published_qdrant(url: str | None, bind: str, port: int) -> bool:
+    """Whether QDRANT_URL points at the port and an address Qdrant is published on.
 
-    QDRANT_API_KEY belongs to the server QDRANT_URL names. When that is on
-    this machine, the bundled Qdrant gets the key whatever address and port
-    Compose publishes it on, so no gap in resolving those can leave it open.
-    A key for another server, such as Qdrant Cloud, is not copied into the
-    local container or sent to it, and the bundled Qdrant runs without one.
+    A wildcard bind publishes on every address of this machine; any other
+    bind publishes on that address alone. A URL without a port means 6333,
+    as in qdrant-client.
+    """
+    try:
+        parts = urlsplit(url) if url else None
+        url_port = parts.port if parts else None
+    except ValueError:
+        return False
+    host = parts.hostname if parts else None
+    if host is None or (url_port or cs.QDRANT_CLIENT_DEFAULT_PORT) != port:
+        return False
+    if not bind or bind in cs.WILDCARD_BIND_HOSTS:
+        return _is_local_address(host)
+    return bind in _addresses_of(host)
+
+
+def _bundled_qdrant_api_key(bind: str, port: int) -> str | None:
+    """The configured Qdrant key, if QDRANT_URL names the bundled Qdrant.
+
+    QDRANT_API_KEY belongs to the server QDRANT_URL names, so the bundled
+    Qdrant gets it only when that URL points where Compose publishes it. A
+    key for another Qdrant, on this machine or elsewhere such as Qdrant
+    Cloud, is never copied into the local container or sent to it.
     """
     key = settings.QDRANT_API_KEY
-    return key if key and _targets_this_machine(settings.QDRANT_URL) else None
+    return (
+        key
+        if key and _names_published_qdrant(settings.QDRANT_URL, bind, port)
+        else None
+    )
 
 
 def _resolved_service(config: JsonValue, service: str) -> dict[str, JsonValue]:
@@ -211,14 +235,19 @@ class StackManager:
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
-        self.qdrant_host = _bundled_qdrant_probe_host(_bind_host(self.home))
+        self._qdrant_bind = _bind_host(self.home)
+        self.qdrant_host = _bundled_qdrant_probe_host(self._qdrant_bind)
+        self._qdrant_keys: dict[tuple[str, int], str | None] = {}
         self.project_name = project_name
 
-    @cached_property
+    @property
     def qdrant_api_key(self) -> str | None:
-        # Lazy: resolving a QDRANT_URL host name can wait on DNS, which a
-        # plain status check should not.
-        return _bundled_qdrant_api_key()
+        # Decided once per endpoint and only when asked: resolving a
+        # QDRANT_URL host name can wait on DNS, which a status check should not.
+        endpoint = (self._qdrant_bind, self.qdrant_port)
+        if endpoint not in self._qdrant_keys:
+            self._qdrant_keys[endpoint] = _bundled_qdrant_api_key(*endpoint)
+        return self._qdrant_keys[endpoint]
 
     @property
     def compose_file(self) -> Path:
@@ -308,7 +337,7 @@ class StackManager:
             wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: self.qdrant_api_key}
         return wanted
 
-    def _verify_resolved_auth(self) -> dict[str, JsonValue]:
+    def _verify_resolved_auth(self, config: dict[str, JsonValue]) -> None:
         """Refuse to start containers with credentials the app does not use.
 
         Asks Compose what each service would receive rather than reading the
@@ -317,7 +346,6 @@ class StackManager:
         for a variable missing from its environment) can each diverge from
         the settings. Values are compared, never logged.
         """
-        config = self._resolved_config()
         configured = {
             name: value
             for variables in self._auth_variables().values()
@@ -335,9 +363,24 @@ class StackManager:
                     variables=", ".join(mismatched), path=self.compose_file
                 )
             )
-        return config
 
-    def _adopt_published_qdrant(self, config: dict[str, JsonValue]) -> None:
+    def locate_published_qdrant(self) -> None:
+        """Ask Compose where Qdrant is published before checking a running stack.
+
+        Only a configured Qdrant key needs the answer: it decides the key and
+        where the running stack's key checks go, which would otherwise probe
+        a guess and could check another service in the bundled Qdrant's
+        place. Without a compose file or Docker there is no stack of this
+        project to locate, and the guess stands.
+        """
+        if (
+            settings.QDRANT_API_KEY
+            and self.compose_file.exists()
+            and shutil.which(cs.DOCKER_BIN) is not None
+        ):
+            self._adopt_published_qdrant(self._resolved_config())
+
+    def _adopt_published_qdrant(self, config: dict[str, JsonValue]) -> bool:
         """Probe Qdrant where Compose actually publishes it.
 
         The bind address and port can come from the environment, the .env
@@ -345,12 +388,14 @@ class StackManager:
         Compose's resolved configuration is the one answer that covers them.
         A port Docker picks at start is refused before starting: the health
         check could only probe the wrong port, and QDRANT_URL cannot follow
-        one that changes whenever the container is recreated.
+        one that changes whenever the container is recreated. Returns whether
+        the endpoint changed the Qdrant key decision.
         """
         target = cs.QDRANT_CONTAINER_HTTP_PORT
         published = _published_port(config, cs.SERVICE_QDRANT, target)
         if published is None:
-            return
+            return False
+        key_before = self.qdrant_api_key
         host_ip, host_port = published
         port = _fixed_port(host_port)
         if port is None:
@@ -361,8 +406,10 @@ class StackManager:
                     path=self.compose_file,
                 )
             )
+        self._qdrant_bind = host_ip
         self.qdrant_host = _bundled_qdrant_probe_host(host_ip)
         self.qdrant_port = port
+        return self.qdrant_api_key != key_before
 
     def _resolved_config(self) -> dict[str, JsonValue]:
         """The project as `docker compose config` resolves it, or StackError.
@@ -493,7 +540,12 @@ class StackManager:
     def up(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self.check_docker()
         self.ensure_compose_file()
-        self._adopt_published_qdrant(self._verify_resolved_auth())
+        config = self._resolved_config()
+        if self._adopt_published_qdrant(config):
+            # The key follows the published endpoint, so Compose resolves the
+            # project again with the environment `up` will run in.
+            config = self._resolved_config()
+        self._verify_resolved_auth(config)
         logger.info(cs.MSG_STARTING_STACK)
         result = subprocess.run(
             self._compose_cmd("up", "-d"),
@@ -632,6 +684,7 @@ class StackManager:
         )
 
     def ensure_running(self) -> StackStatus:
+        self.locate_published_qdrant()
         current = self.status()
         if current.state == cs.StackState.RUNNING:
             logger.info(cs.MSG_STACK_ALREADY_RUNNING)

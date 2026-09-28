@@ -110,7 +110,7 @@ def _verify_with(
     mgr: StackManager, result: subprocess.CompletedProcess[str]
 ) -> MagicMock:
     with patch("codebase_rag.stack.manager.subprocess.run", return_value=result) as run:
-        mgr._verify_resolved_auth()
+        mgr._verify_resolved_auth(mgr._resolved_config())
     return run
 
 
@@ -320,7 +320,7 @@ def test_verify_falls_back_to_plain_config_without_the_format_flag(
     with patch(
         "codebase_rag.stack.manager.subprocess.run", side_effect=[FAILED_CONFIG, plain]
     ) as run:
-        mgr._verify_resolved_auth()
+        mgr._verify_resolved_auth(mgr._resolved_config())
 
     json_call, plain_call = run.call_args_list
     assert "--format" in json_call.args[0]
@@ -738,21 +738,31 @@ class TestAppStartOnARunningStack:
 
 
 @pytest.mark.parametrize(
-    ("url", "local"),
+    ("url", "bind", "port", "named"),
     [
-        ("http://localhost:6333", True),
-        ("http://127.0.0.1:6333", True),
-        # Whatever port Compose publishes on, for example QDRANT_HTTP_PORT.
-        ("http://localhost:16333", True),
-        ("http://localhost", True),
+        ("http://localhost:6333", "127.0.0.1", 6333, True),
+        ("http://127.0.0.1:6333", "127.0.0.1", 6333, True),
+        # qdrant-client connects to 6333 when the URL names no port.
+        ("http://localhost", "127.0.0.1", 6333, True),
+        ("http://localhost:16333", "127.0.0.1", 16333, True),
+        # Another Qdrant on this machine: another port, or another address
+        # than the one the bundled Qdrant is published on.
+        ("http://localhost:7333", "127.0.0.1", 6333, False),
+        ("http://127.0.0.2:6333", "127.0.0.1", 6333, False),
+        # A wildcard bind, or none, publishes on every address here.
+        ("http://127.0.0.2:16333", "0.0.0.0", 16333, True),
+        ("http://localhost:16333", "", 16333, True),
         # A documentation address (RFC 5737) that no interface here has.
-        ("https://203.0.113.7:6333", False),
-        ("not a url", False),
-        (None, False),
+        ("https://203.0.113.7:6333", "0.0.0.0", 6333, False),
+        ("http://localhost:notaport", "127.0.0.1", 6333, False),
+        ("not a url", "127.0.0.1", 6333, False),
+        (None, "127.0.0.1", 6333, False),
     ],
 )
-def test_qdrant_url_on_this_machine_is_recognised(url: str | None, local: bool) -> None:
-    assert manager_module._targets_this_machine(url) is local
+def test_qdrant_url_naming_the_bundled_qdrant_is_recognised(
+    url: str | None, bind: str, port: int, named: bool
+) -> None:
+    assert manager_module._names_published_qdrant(url, bind, port) is named
 
 
 @pytest.mark.usefixtures("credentials")
@@ -784,28 +794,31 @@ def test_local_address_is_one_of_this_machines_addresses() -> None:
 @pytest.mark.parametrize(
     ("url", "forwarded"),
     [
-        # Compose may publish on the LAN through a bind set anywhere it reads
-        # one, such as a file named in COMPOSE_ENV_FILES; the key follows the
-        # URL, not that bind, so the bundled Qdrant is never left open.
-        ("http://192.168.1.5:6333", True),
+        # Compose publishes on 0.0.0.0:16333 through settings the manager
+        # cannot see, such as a file named in COMPOSE_ENV_FILES; the key
+        # follows Compose's answer, so a URL naming that endpoint gets it.
         ("http://192.168.1.5:16333", True),
-        ("http://192.168.1.6:6333", False),
+        ("http://localhost:16333", True),
+        # Another Qdrant on this machine, on the default port.
+        ("http://localhost:6333", False),
+        ("http://192.168.1.6:16333", False),
     ],
 )
-def test_the_key_follows_a_qdrant_url_on_this_machine_whatever_the_bind(
+def test_up_gives_the_key_to_the_qdrant_the_url_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str, forwarded: bool
 ) -> None:
-    env_file = tmp_path / "stack.env"
-    env_file.write_text("CGR_STACK_BIND_HOST=0.0.0.0\n")
-    monkeypatch.setenv("COMPOSE_ENV_FILES", str(env_file))
     monkeypatch.setattr(settings, "QDRANT_URL", url)
     monkeypatch.setattr(
-        manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
+        manager_module,
+        "_is_local_address",
+        lambda host: host in ("192.168.1.5", "localhost"),
     )
+    published = {cs.SERVICE_QDRANT: _qdrant_ports("0.0.0.0", "16333")}
+    resolved_env = MATCHING_ENV if forwarded else _without_qdrant_key(MATCHING_ENV)
+    mgr = _manager(tmp_path)
+    up_env = _up_environment(mgr, _compose_config(resolved_env, published))
 
-    env = _manager(tmp_path)._compose_env()
-
-    assert (env.get(cs.ENV_QDRANT_API_KEY) == "qdrant-key") is forwarded
+    assert (up_env.get(cs.ENV_QDRANT_API_KEY) == "qdrant-key") is forwarded
 
 
 @pytest.mark.usefixtures("credentials")
@@ -940,6 +953,89 @@ def _qdrant_ports(host_ip: str | None, published: str) -> list[_PortEntry]:
     return [grpc, http]
 
 
+def _without_qdrant_key(
+    environments: dict[str, dict[str, str | None]],
+) -> dict[str, dict[str, str | None]]:
+    return {**environments, cs.SERVICE_QDRANT: {cs.ENV_QDRANT_API_KEY: None}}
+
+
+def _up_environment(
+    mgr: StackManager, config: subprocess.CompletedProcess[str]
+) -> dict[str, str]:
+    """The environment `up` starts the containers in, Compose answering `config`."""
+    started: list[dict[str, str]] = []
+
+    def run(
+        cmd: list[str], *, env: dict[str, str], **_: bool | str | float
+    ) -> subprocess.CompletedProcess[str]:
+        if cmd[-2:] == ["up", "-d"]:
+            started.append(env)
+            return subprocess.CompletedProcess(args=cmd, returncode=0)
+        return config
+
+    with (
+        patch.object(mgr, "check_docker"),
+        patch("codebase_rag.stack.manager.subprocess.run", side_effect=run),
+    ):
+        mgr.up()
+    (env,) = started
+    return env
+
+
+@pytest.mark.usefixtures("credentials")
+def test_running_stack_is_checked_where_compose_publishes_qdrant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # QDRANT_HTTP_PORT, from wherever Compose read it, moved the bundled
+    # Qdrant; another service answering on 6333 must not be checked instead.
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://localhost:16333")
+    mgr = _manager(tmp_path)
+    mgr.ensure_compose_file()
+    config = _compose_config(
+        MATCHING_ENV, {cs.SERVICE_QDRANT: _qdrant_ports("127.0.0.1", "16333")}
+    )
+    with (
+        patch(
+            "codebase_rag.stack.manager.shutil.which", return_value="/usr/bin/docker"
+        ),
+        patch("codebase_rag.stack.manager.subprocess.run", return_value=config),
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.wait_for_qdrant", return_value=True
+        ) as ready_probe,
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous", return_value=False
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=True
+        ) as qdrant_probe,
+        pytest.raises(StackError, match="still accept"),
+    ):
+        mgr.ensure_running()
+
+    assert ready_probe.call_args.args[0] == 16333
+    qdrant_probe.assert_called_once_with(16333, host="127.0.0.1")
+
+
+@pytest.mark.usefixtures("credentials")
+def test_running_stack_is_not_located_without_a_qdrant_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without a key only readiness is probed, as before: no Docker call.
+    monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
+    mgr = _manager(tmp_path)
+    mgr.ensure_compose_file()
+    with (
+        patch(
+            "codebase_rag.stack.manager.shutil.which", return_value="/usr/bin/docker"
+        ),
+        patch("codebase_rag.stack.manager.subprocess.run") as run,
+    ):
+        mgr.locate_published_qdrant()
+
+    run.assert_not_called()
+
+
 @pytest.mark.usefixtures("credentials")
 @pytest.mark.parametrize(
     ("host_ip", "published", "endpoint"),
@@ -952,14 +1048,17 @@ def _qdrant_ports(host_ip: str | None, published: str) -> list[_PortEntry]:
 )
 def test_up_probes_qdrant_where_compose_publishes_it(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     host_ip: str | None,
     published: str,
     endpoint: tuple[str, int],
 ) -> None:
     # A file named in COMPOSE_ENV_FILES, among others, can move the bind or
     # the port without the manager seeing it; Compose's answer covers them all.
+    monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
     config = _compose_config(
-        MATCHING_ENV, {cs.SERVICE_QDRANT: _qdrant_ports(host_ip, published)}
+        _without_qdrant_key(MATCHING_ENV),
+        {cs.SERVICE_QDRANT: _qdrant_ports(host_ip, published)},
     )
     mgr = _manager(tmp_path)
     with (
