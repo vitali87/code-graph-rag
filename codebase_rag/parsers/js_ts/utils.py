@@ -80,24 +80,32 @@ def find_method_in_ast(
             return find_method_in_class_body(body_node, method_name)
         return None
 
+    declaration = _class_declaration_named(root_node, class_name)
+    body_node = (
+        declaration.child_by_field_name(cs.FIELD_BODY)
+        if declaration is not None
+        else None
+    )
+    _CLASS_BODY_CACHE[cache_key] = body_node
+    if body_node:
+        return find_method_in_class_body(body_node, method_name)
+    return None
+
+
+def _class_declaration_named(root_node: Node, class_name: str) -> Node | None:
+    # The first `class_declaration` named `class_name`, in source order.
     stack: list[Node] = [root_node]
     while stack:
         current = stack.pop()
-
         if current.type == cs.TS_CLASS_DECLARATION:
             name_node = current.child_by_field_name(cs.FIELD_NAME)
-            if name_node and name_node.text:
-                found_class_name = safe_decode_text(name_node)
-                if found_class_name == class_name:
-                    body_node = current.child_by_field_name(cs.FIELD_BODY)
-                    _CLASS_BODY_CACHE[cache_key] = body_node
-                    if body_node:
-                        return find_method_in_class_body(body_node, method_name)
-                    return None
-
+            if (
+                name_node
+                and name_node.text
+                and safe_decode_text(name_node) == class_name
+            ):
+                return current
         stack.extend(reversed(current.children))
-
-    _CLASS_BODY_CACHE[cache_key] = None
     return None
 
 
