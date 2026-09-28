@@ -493,6 +493,30 @@ def _py_case_always_matches(arm: Node) -> bool:
     return pattern is not None and _py_pattern_irrefutable(pattern)
 
 
+def _taint_transparent_receiver(call: Node, d: LanguageDescriptor) -> Node | None:
+    # A method chain: the receiver passes through ONLY a taint-transparent
+    # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
+    # value-preserving conversion (`s.as_bytes()`). A terminal method that
+    # returns an unrelated value (`s.as_bytes().len()`, `.count()`) must not
+    # propagate the receiver's taint (issue #1204). Languages with no such
+    # methods (empty set) never recurse a chain here.
+    if not d.taint_transparent_methods:
+        return None
+    func = call.child_by_field_name(cs.TS_FIELD_FUNCTION)
+    if func is None or func.type != d.member_expression_type:
+        return None
+    method = func.child_by_field_name(d.property_field)
+    receiver = func.child_by_field_name(d.object_field)
+    if (
+        receiver is None
+        or method is None
+        or method.text is None
+        or method.text.decode(cs.ENCODING_UTF8) not in d.taint_transparent_methods
+    ):
+        return None
+    return receiver
+
+
 def _py_pattern_irrefutable(pattern: Node) -> bool:
     # Irrefutable case patterns: `_` (empty case_pattern), a bare CAPTURE
     # name (dotted_name with exactly one identifier; multi-part dotted
@@ -904,33 +928,9 @@ class FlowProcessor:
             arg_handle_sinks=IO_ARG_HANDLE_SINKS.get(ctx.language, {}),
             type_ctors=IO_TYPE_HANDLE_CONSTRUCTORS.get(ctx.language, {}),
         )
-        if ctx.language == cs.SupportedLanguage.DART:
-            # Dart's body is a SIBLING `function_body` of the captured signature,
-            # not a `body` field (issue #1173).
-            statements = self._dart_body_statements(caller_node)
-        else:
-            body = caller_node.child_by_field_name(cs.FIELD_BODY)
-            if body is None:
-                statements = list(caller_node.named_children)
-            elif body.type == descriptor.block_scope_type:
-                statements = list(body.named_children)
-            else:
-                statements = [body]
+        statements = self._lean_body_statements(caller_node, ctx, descriptor)
         state = _LeanState(taint={}, handles={})
-        # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
-        # reaches becomes a parameter-taint summary composed at finalize, exactly
-        # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
-        # walk). The composition machinery in finalize is language-agnostic; only
-        # languages with a parameter-name extractor (Go/JS/TS/C++/Java/C#/Rust/C)
-        # get names, so the rest are seeded with nothing and are unaffected.
-        lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
-        for pname in lean_names:
-            if pname is not None:
-                state.taint[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
-        if lean_names:
-            self._positional_params[ctx.caller_qn] = lean_names
-            if lean_variadic is not None:
-                self._variadic_params[ctx.caller_qn] = lean_variadic
+        self._seed_lean_parameters(caller_node, ctx, state)
         if ctx.language in _HOISTED_DECL_LANGS:
             # Path-sensitive MAY walk (issue #714 follow-up): each JS/TS if/else,
             # loop, and try branch is evaluated against a COPY of the incoming
@@ -951,24 +951,61 @@ class FlowProcessor:
             for node in statements:
                 state = self._walk_flat_stmt(node, state, jc)
         if ctx.language in (cs.SupportedLanguage.RUST, cs.SupportedLanguage.SCALA):
-            tail = (
-                _rust_tail_expression(caller_node)
-                if ctx.language == cs.SupportedLanguage.RUST
-                else _scala_body_value(caller_node)
-            )
-            if tail is not None:
-                # A keyword-less return is still a return: the chain hand-off
-                # has to be recorded here as well, or Scala and Rust wrappers
-                # stop one hop in (issue #1363).
-                self._record_lean_return_handoff(tail, state.taint, jc)
-                returned = self._js_expr_taint(tail, state.taint, jc)
-                if returned is not None:
-                    self._acc_returns_taint = True
-                    self._acc_return_taint = _merge_taint(
-                        self._acc_return_taint, returned
-                    )
+            self._accumulate_lean_tail_return(caller_node, ctx, state, jc)
         if self._acc_returns_taint:
             self._summaries[ctx.caller_qn] = self._acc_return_taint
+
+    def _lean_body_statements(
+        self, caller_node: Node, ctx: _FlowCtx, descriptor: LanguageDescriptor
+    ) -> list[Node]:
+        if ctx.language == cs.SupportedLanguage.DART:
+            # Dart's body is a SIBLING `function_body` of the captured signature,
+            # not a `body` field (issue #1173).
+            return self._dart_body_statements(caller_node)
+        body = caller_node.child_by_field_name(cs.FIELD_BODY)
+        if body is None:
+            return list(caller_node.named_children)
+        if body.type == descriptor.block_scope_type:
+            return list(body.named_children)
+        return [body]
+
+    def _seed_lean_parameters(
+        self, caller_node: Node, ctx: _FlowCtx, state: _LeanState
+    ) -> None:
+        # Seed each parameter as a pseudo-origin so a sink or callee hand-off it
+        # reaches becomes a parameter-taint summary composed at finalize, exactly
+        # as the Python walk does (issue #1169 extends #1142/#1168 to the lean
+        # walk). The composition machinery in finalize is language-agnostic; only
+        # languages with a parameter-name extractor (Go/JS/TS/C++/Java/C#/Rust/C)
+        # get names, so the rest are seeded with nothing and are unaffected.
+        lean_names, lean_variadic = _lean_parameter_slots(caller_node, ctx.language)
+        for pname in lean_names:
+            if pname is not None:
+                state.taint[pname] = Taint(frozenset(), frozenset(), frozenset({pname}))
+        if not lean_names:
+            return
+        self._positional_params[ctx.caller_qn] = lean_names
+        if lean_variadic is not None:
+            self._variadic_params[ctx.caller_qn] = lean_variadic
+
+    def _accumulate_lean_tail_return(
+        self, caller_node: Node, ctx: _FlowCtx, state: _LeanState, jc: _JsCtx
+    ) -> None:
+        tail = (
+            _rust_tail_expression(caller_node)
+            if ctx.language == cs.SupportedLanguage.RUST
+            else _scala_body_value(caller_node)
+        )
+        if tail is None:
+            return
+        # A keyword-less return is still a return: the chain hand-off has to be
+        # recorded here as well, or Scala and Rust wrappers stop one hop in
+        # (issue #1363).
+        self._record_lean_return_handoff(tail, state.taint, jc)
+        returned = self._js_expr_taint(tail, state.taint, jc)
+        if returned is not None:
+            self._acc_returns_taint = True
+            self._acc_return_taint = _merge_taint(self._acc_return_taint, returned)
 
     def _walk_flat_stmt(self, node: Node, state: _LeanState, jc: _JsCtx) -> _LeanState:
         # Structured walk for the non-hoisted flat languages (Go, Java, Rust,
@@ -1703,53 +1740,40 @@ class FlowProcessor:
                 return Taint(frozenset({binding}), frozenset())
             return None
         if node_type == d.call_type:
-            raw = call_name(node)
-            if raw is None:
-                return None
-            if (binding := self._js_read_source(node, raw, jc)) is not None:
-                return Taint(frozenset({binding}), frozenset())
-            callee = self._resolve(
-                raw,
-                jc.flow.module_qn,
-                jc.flow.class_context,
-                jc.flow.caller_qn,
-                jc.flow.language,
-                jc.flow.local_var_types,
-            )
-            if callee is not None:
-                self._return_edge_candidates.append(
-                    (callee[0], callee[1], jc.flow.caller_spec)
-                )
-                # The result also carries a per-call-site pass-through token so a
-                # tainted argument to a return-parameter reaches THIS call's
-                # consumers only (issue #1363, mirroring the Python path from
-                # #1168); it resolves to nothing when the callee is not a
-                # pass-through, so non-pass-through calls are unaffected.
-                token = _passthrough_result_token(jc.flow.caller_qn, node)
-                return Taint(frozenset(), frozenset({callee[1], token}))
-            # A method chain: recurse the receiver ONLY through a taint-transparent
-            # method -- Rust Result unwrapping (`std::env::var("X").unwrap()`) or a
-            # value-preserving conversion (`s.as_bytes()`). A terminal method that
-            # returns an unrelated value (`s.as_bytes().len()`, `.count()`) must not
-            # propagate the receiver's taint (issue #1204). Languages with no such
-            # methods (empty set) never recurse a chain here.
-            func = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
-            if (
-                func is not None
-                and func.type == d.member_expression_type
-                and d.taint_transparent_methods
-            ):
-                method = func.child_by_field_name(d.property_field)
-                receiver = func.child_by_field_name(d.object_field)
-                if (
-                    receiver is not None
-                    and method is not None
-                    and method.text is not None
-                    and method.text.decode(cs.ENCODING_UTF8)
-                    in d.taint_transparent_methods
-                ):
-                    return self._js_expr_taint(receiver, tainted, jc)
+            return self._js_call_expr_taint(node, tainted, jc)
         return None
+
+    def _js_call_expr_taint(
+        self, node: Node, tainted: _TaintMap, jc: _JsCtx
+    ) -> Taint | None:
+        raw = call_name(node)
+        if raw is None:
+            return None
+        if (binding := self._js_read_source(node, raw, jc)) is not None:
+            return Taint(frozenset({binding}), frozenset())
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is not None:
+            self._return_edge_candidates.append(
+                (callee[0], callee[1], jc.flow.caller_spec)
+            )
+            # The result also carries a per-call-site pass-through token so a
+            # tainted argument to a return-parameter reaches THIS call's
+            # consumers only (issue #1363, mirroring the Python path from
+            # #1168); it resolves to nothing when the callee is not a
+            # pass-through, so non-pass-through calls are unaffected.
+            token = _passthrough_result_token(jc.flow.caller_qn, node)
+            return Taint(frozenset(), frozenset({callee[1], token}))
+        receiver = _taint_transparent_receiver(node, jc.descriptor)
+        return (
+            self._js_expr_taint(receiver, tainted, jc) if receiver is not None else None
+        )
 
     def _js_call(
         self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx

@@ -156,6 +156,34 @@ class _DeferredForwardDecl(NamedTuple):
     func_node_starts: list[int] | None
 
 
+class RustImplScope(NamedTuple):
+    class_qn: str
+    module_qn: str
+    owner_module_qn: str
+    impl_target: str
+
+
+def _impl_body_method_nodes(
+    body_node: Node,
+    lang_queries: LanguageQueries,
+    sorted_func_nodes: list[Node] | None,
+    func_node_starts: list[int] | None,
+) -> list[Node] | None:
+    # The function nodes inside an impl body: sliced from the pre-sorted
+    # capture list when the caller has one, else queried directly. None when
+    # the language has no function query at all.
+    if sorted_func_nodes is not None and func_node_starts is not None:
+        body_end = body_node.end_byte
+        lo = bisect_left(func_node_starts, body_node.start_byte)
+        hi = bisect_right(func_node_starts, body_end)
+        return [n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end]
+    method_query = lang_queries[cs.QUERY_FUNCTIONS]
+    if not method_query:
+        return None
+    method_captures = sorted_captures(QueryCursor(method_query), body_node)
+    return method_captures.get(cs.CAPTURE_FUNCTION, [])
+
+
 class ClassIngestMixin:
     # No __slots__: this mixin lazily creates _deferred_* registries on the
     # host instance, which requires the host to provide a __dict__.
@@ -551,57 +579,9 @@ class ClassIngestMixin:
                 )
             if resolved is None:
                 continue
-            parent_qn, is_external = resolved
-            if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
-                # A resolved first-party base pins the C# namespace import to
-                # the module defining it (issue #1347).
-                target_module = module_qn_for_entity(
-                    parent_qn, self.module_qn_to_file_path
-                )
-                if target_module is not None and target_module != entry.module_qn:
-                    self.import_processor.record_resolved_cross_module_use(
-                        entry.module_qn, target_module
-                    )
-            external_label: str | None = None
-            if is_external:
-                # The import pass mints the same node for IMPORTS edges, so
-                # this MERGEs idempotently when the base was imported.
-                self.import_processor.ensure_external_module_node(parent_qn)
-                external_label = cs.NodeLabel.EXTERNAL_MODULE.value
-            if entry.rel_type == cs.RelationshipType.IMPLEMENTS:
-                # Dart has no `interface` keyword: `implements X` targets a
-                # concrete class, so a hardcoded Interface label would dangle.
-                # Resolve the target's real registered label (Interface for a
-                # true interface, Class/Enum for a Dart type); external stays
-                # EXTERNAL_MODULE.
-                interface_label = external_label or rel.get_node_type_for_inheritance(
-                    parent_qn, self.function_registry
-                )
-                rel.create_implements_relationship(
-                    str(child_type),
-                    entry.child_qn,
-                    parent_qn,
-                    self.ingestor,
-                    interface_label=interface_label,
-                )
-                self.interface_implementers.setdefault(parent_qn, set()).add(
-                    entry.child_qn
-                )
-                if is_dart and not is_external:
-                    dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
-            else:
-                bases = self.class_inheritance.get(entry.child_qn)
-                if bases is not None and entry.base_index < len(bases):
-                    bases[entry.base_index] = parent_qn
-                rel.create_inheritance_relationship(
-                    str(child_type),
-                    entry.child_qn,
-                    parent_qn,
-                    self.function_registry,
-                    self.ingestor,
-                    entry.base_index,
-                    parent_label=external_label,
-                )
+            self._emit_resolved_inherit(
+                entry, str(child_type), resolved, is_dart, dart_implements
+            )
             emitted += 1
         self._flag_dart_external_overrides(dart_implements)
         self._flag_rust_external_trait_overrides()
@@ -1374,6 +1354,65 @@ class ClassIngestMixin:
             module_qn=module_qn,
         )
 
+    def _emit_resolved_inherit(
+        self,
+        entry: DeferredInherit,
+        child_type: str,
+        resolved: tuple[str, bool],
+        is_dart: bool,
+        dart_implements: dict[str, list[str]],
+    ) -> None:
+        parent_qn, is_external = resolved
+        if not is_external and entry.language == cs.SupportedLanguage.CSHARP:
+            self._pin_csharp_base_module(entry, parent_qn)
+        external_label: str | None = None
+        if is_external:
+            # The import pass mints the same node for IMPORTS edges, so
+            # this MERGEs idempotently when the base was imported.
+            self.import_processor.ensure_external_module_node(parent_qn)
+            external_label = cs.NodeLabel.EXTERNAL_MODULE.value
+        if entry.rel_type != cs.RelationshipType.IMPLEMENTS:
+            bases = self.class_inheritance.get(entry.child_qn)
+            if bases is not None and entry.base_index < len(bases):
+                bases[entry.base_index] = parent_qn
+            rel.create_inheritance_relationship(
+                child_type,
+                entry.child_qn,
+                parent_qn,
+                self.function_registry,
+                self.ingestor,
+                entry.base_index,
+                parent_label=external_label,
+            )
+            return
+        # Dart has no `interface` keyword: `implements X` targets a
+        # concrete class, so a hardcoded Interface label would dangle.
+        # Resolve the target's real registered label (Interface for a
+        # true interface, Class/Enum for a Dart type); external stays
+        # EXTERNAL_MODULE.
+        interface_label = external_label or rel.get_node_type_for_inheritance(
+            parent_qn, self.function_registry
+        )
+        rel.create_implements_relationship(
+            child_type,
+            entry.child_qn,
+            parent_qn,
+            self.ingestor,
+            interface_label=interface_label,
+        )
+        self.interface_implementers.setdefault(parent_qn, set()).add(entry.child_qn)
+        if is_dart and not is_external:
+            dart_implements.setdefault(entry.child_qn, []).append(parent_qn)
+
+    def _pin_csharp_base_module(self, entry: DeferredInherit, parent_qn: str) -> None:
+        # A resolved first-party base pins the C# namespace import to the
+        # module defining it (issue #1347).
+        target_module = module_qn_for_entity(parent_qn, self.module_qn_to_file_path)
+        if target_module is not None and target_module != entry.module_qn:
+            self.import_processor.record_resolved_cross_module_use(
+                entry.module_qn, target_module
+            )
+
     def _ingest_rust_impl_methods(
         self,
         class_node: Node,
@@ -1405,57 +1444,11 @@ class ClassIngestMixin:
         # which the override pass has to be TOLD, or it reads their absence
         # from the trait map as no information and guesses (issue #1078).
         impl_method_qns: list[str] = []
-        trait_impl_method_qns: list[str] | None = None
         trait_unrepresentable = False
         if trait_name := rs_utils.extract_impl_trait(class_node):
-            trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
-                rs_utils.extract_impl_trait_path(class_node) or trait_name,
-                trait_name,
-                owner_module_qn,
+            trait_unrepresentable = not self._defer_rust_impl_trait(
+                class_node, trait_name, class_qn, owner_module_qn, impl_method_qns
             )
-            if trait_qn != cs.RUST_UNRESOLVABLE_QN:
-                # The trait (or the impl target) may live in a file not yet
-                # parsed; hold the IMPLEMENTS edge back for
-                # resolve_deferred_inherits so an unresolvable trait
-                # (std::fmt::Display) emits no phantom edge. A trait path
-                # through an unrepresentable #[path] module has no referent at
-                # all, so it is skipped entirely rather than bound to a
-                # name-derived shadow trait (issue #1082).
-                trait_entry = DeferredInherit(
-                    rel_type=cs.RelationshipType.IMPLEMENTS,
-                    child_qn=class_qn,
-                    parent_qn=trait_qn,
-                    module_qn=owner_module_qn,
-                    base_index=0,
-                    language=cs.SupportedLanguage.RUST,
-                    alt_parent_qn=alt_trait_qn,
-                )
-                self._deferred_inherits.append(trait_entry)
-                # Collect this block's methods against the trait AS WRITTEN: if
-                # the trait belongs to another crate, its dispatch is the only
-                # caller they can ever have (issue #1048). The decision waits
-                # for resolve_deferred_inherits, when every first-party trait
-                # is registered.
-                trait_impl_method_qns = impl_method_qns
-                self._rust_trait_impls.append(
-                    RustTraitImpl(
-                        entry=trait_entry,
-                        spelling=(
-                            rs_utils.extract_impl_trait_path(class_node) or trait_name
-                        ),
-                        method_qns=trait_impl_method_qns,
-                    )
-                )
-                # Record the implementer so a Rust trait call to the sole
-                # concrete impl redirects, matching the class-declaration
-                # IMPLEMENTS path.
-                self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
-            else:
-                # The trait path has no referent, so no OVERRIDES target is
-                # knowable: classify these methods as inherent (below) so the
-                # generic override pass never matches them by name against a
-                # DIFFERENT same-named trait the type also implements (#1082).
-                trait_unrepresentable = True
 
         body_node = class_node.child_by_field_name("body")
 
@@ -1465,21 +1458,11 @@ class ClassIngestMixin:
         file_path = self.module_qn_to_file_path.get(module_qn)
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
 
-        if sorted_func_nodes is not None and func_node_starts is not None:
-            body_start = body_node.start_byte
-            body_end = body_node.end_byte
-            lo = bisect_left(func_node_starts, body_start)
-            hi = bisect_right(func_node_starts, body_end)
-            method_nodes = [
-                n for n in sorted_func_nodes[lo:hi] if n.end_byte <= body_end
-            ]
-        else:
-            method_query = lang_queries[cs.QUERY_FUNCTIONS]
-            if not method_query:
-                return
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-            method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
+        method_nodes = _impl_body_method_nodes(
+            body_node, lang_queries, sorted_func_nodes, func_node_starts
+        )
+        if method_nodes is None:
+            return
 
         for method_node in method_nodes:
             if _skip_method(method_node, class_node, body_node, lang_config):
@@ -1505,39 +1488,17 @@ class ClassIngestMixin:
                 type_fact_sink=self.pending_type_facts,
                 parameter_type_sink=self.pending_parameter_types,
             )
-            # Record where this method landed, same as the generic method
-            # path: the registered qn (a collision deduplicates it to
-            # `natural@<line>`) is recoverable afterwards only by span.
-            # First claim wins: a fn nested in a mod inside a const
-            # initializer is already claimed by the function pass under
-            # its own qn, and overwriting the record would re-attribute
-            # its calls to this pass's twin.
-            if ingested_qn is not None:
-                impl_method_qns.append(ingested_qn)
-                # An impl block is no module, so the method's `super::` counts
-                # from the impl's own enclosing module -- the file module unless
-                # the block sits in an inline `mod` (issue #1086).
-                self.rust_function_modules[ingested_qn] = owner_module_qn
-                span = function_span_key(module_qn, method_node)
-                if span not in self.function_locations:
-                    self.function_locations[span] = FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=ingested_qn,
-                        container_qn=class_qn,
-                    )
-            # Record the method's return type (Self -> impl target) so a chained
-            # call (`Ping::new(msg).into_frame()`) and a call-bound local
-            # (`let cmd = Command::from_frame(f)`) can resolve the next hop.
-            name_node = method_node.child_by_field_name(cs.FIELD_NAME)
-            method_name = safe_decode_text(name_node) if name_node else None
-            if method_name and (
-                return_type := rs_utils.extract_return_type_name(
-                    method_node, impl_target
-                )
-            ):
-                self.method_return_types[
-                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-                ] = return_type
+            self._record_rust_impl_method(
+                method_node,
+                ingested_qn,
+                RustImplScope(
+                    class_qn=class_qn,
+                    module_qn=module_qn,
+                    owner_module_qn=owner_module_qn,
+                    impl_target=impl_target,
+                ),
+                impl_method_qns,
+            )
 
         # The PATH decides, not the name: `extract_impl_trait` reads no name
         # off `impl std::ops::Add<u32> for S`, and calling that inherent would
@@ -1547,6 +1508,107 @@ class ClassIngestMixin:
             or trait_unrepresentable
         ):
             self.rust_inherent_impl_methods.update(impl_method_qns)
+
+    def _defer_rust_impl_trait(
+        self,
+        class_node: Node,
+        trait_name: str,
+        class_qn: str,
+        owner_module_qn: str,
+        impl_method_qns: list[str],
+    ) -> bool:
+        # `impl Trait for Type`: defer the IMPLEMENTS edge and register the
+        # trait impl. False when the trait path is unrepresentable.
+        trait_qn, alt_trait_qn = self._resolve_rust_trait_qn(
+            rs_utils.extract_impl_trait_path(class_node) or trait_name,
+            trait_name,
+            owner_module_qn,
+        )
+        if trait_qn != cs.RUST_UNRESOLVABLE_QN:
+            # The trait (or the impl target) may live in a file not yet
+            # parsed; hold the IMPLEMENTS edge back for
+            # resolve_deferred_inherits so an unresolvable trait
+            # (std::fmt::Display) emits no phantom edge. A trait path
+            # through an unrepresentable #[path] module has no referent at
+            # all, so it is skipped entirely rather than bound to a
+            # name-derived shadow trait (issue #1082).
+            trait_entry = DeferredInherit(
+                rel_type=cs.RelationshipType.IMPLEMENTS,
+                child_qn=class_qn,
+                parent_qn=trait_qn,
+                module_qn=owner_module_qn,
+                base_index=0,
+                language=cs.SupportedLanguage.RUST,
+                alt_parent_qn=alt_trait_qn,
+            )
+            self._deferred_inherits.append(trait_entry)
+            # Collect this block's methods against the trait AS WRITTEN: if
+            # the trait belongs to another crate, its dispatch is the only
+            # caller they can ever have (issue #1048). The decision waits
+            # for resolve_deferred_inherits, when every first-party trait
+            # is registered.
+            self._rust_trait_impls.append(
+                RustTraitImpl(
+                    entry=trait_entry,
+                    spelling=(
+                        rs_utils.extract_impl_trait_path(class_node) or trait_name
+                    ),
+                    method_qns=impl_method_qns,
+                )
+            )
+            # Record the implementer so a Rust trait call to the sole
+            # concrete impl redirects, matching the class-declaration
+            # IMPLEMENTS path.
+            self.interface_implementers.setdefault(trait_qn, set()).add(class_qn)
+            return True
+        # The trait path has no referent, so no OVERRIDES target is
+        # knowable: the caller classifies these methods as inherent so the
+        # generic override pass never matches them by name against a
+        # DIFFERENT same-named trait the type also implements (#1082).
+        return False
+
+    def _record_rust_impl_method(
+        self,
+        method_node: Node,
+        ingested_qn: str | None,
+        scope: RustImplScope,
+        impl_method_qns: list[str],
+    ) -> None:
+        class_qn = scope.class_qn
+        module_qn = scope.module_qn
+        owner_module_qn = scope.owner_module_qn
+        impl_target = scope.impl_target
+        # Record where this method landed, same as the generic method
+        # path: the registered qn (a collision deduplicates it to
+        # `natural@<line>`) is recoverable afterwards only by span.
+        # First claim wins: a fn nested in a mod inside a const
+        # initializer is already claimed by the function pass under
+        # its own qn, and overwriting the record would re-attribute
+        # its calls to this pass's twin.
+        if ingested_qn is not None:
+            impl_method_qns.append(ingested_qn)
+            # An impl block is no module, so the method's `super::` counts
+            # from the impl's own enclosing module -- the file module unless
+            # the block sits in an inline `mod` (issue #1086).
+            self.rust_function_modules[ingested_qn] = owner_module_qn
+            span = function_span_key(module_qn, method_node)
+            if span not in self.function_locations:
+                self.function_locations[span] = FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=ingested_qn,
+                    container_qn=class_qn,
+                )
+        # Record the method's return type (Self -> impl target) so a chained
+        # call (`Ping::new(msg).into_frame()`) and a call-bound local
+        # (`let cmd = Command::from_frame(f)`) can resolve the next hop.
+        name_node = method_node.child_by_field_name(cs.FIELD_NAME)
+        method_name = safe_decode_text(name_node) if name_node else None
+        if method_name and (
+            return_type := rs_utils.extract_return_type_name(method_node, impl_target)
+        ):
+            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
+                return_type
+            )
 
     def _ingest_class_methods(
         self,
