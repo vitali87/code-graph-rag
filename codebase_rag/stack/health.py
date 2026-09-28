@@ -106,14 +106,14 @@ def memgraph_rejects_credentials(
 def qdrant_accepts_anonymous(
     port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> bool:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
     return _qdrant_answers(request, timeout)
 
 
 def qdrant_anonymous_access(
     port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> cs.AnonymousAccess:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             status = resp.status
@@ -137,7 +137,7 @@ def qdrant_accepts_key(
     too, so the probe is an alias update with no actions: Qdrant requires
     write access for it, and it changes nothing.
     """
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310 - _qdrant_url fixes the http scheme
         _qdrant_url(host, port, cs.QDRANT_WRITE_PROBE_PATH),
         data=cs.QDRANT_WRITE_PROBE_BODY,
         headers={

@@ -1378,7 +1378,7 @@ def _shift_tab_listener():
         finally:
             try:
                 loop.remove_reader(fd)
-            except Exception:
+            except Exception:  # noqa: S110 - best-effort; the terminal restore below must still run
                 pass
     finally:
         try:
