@@ -336,7 +336,12 @@ def _start_active_projects(
         return _resolve_active_projects(projects, resolved_project_name)
     active_projects = workspace_config.project_names()
     if projects:
-        return _resolve_active_projects(projects, active_projects[0])
+        # A workspace with no repos has no first project to fall back on, so
+        # an explicit --projects list falls back to the resolved project.
+        default_project = (
+            active_projects[0] if active_projects else resolved_project_name
+        )
+        return _resolve_active_projects(projects, default_project)
     return active_projects
 
 
