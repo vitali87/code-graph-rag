@@ -650,42 +650,21 @@ class TestAppStartOnARunningStack:
 
 
 @pytest.mark.parametrize(
-    ("url", "bundled"),
+    ("url", "local"),
     [
         ("http://localhost:6333", True),
         ("http://127.0.0.1:6333", True),
-        # qdrant-client connects to 6333 when the URL gives no port.
+        # Whatever port Compose publishes on, for example QDRANT_HTTP_PORT.
+        ("http://localhost:16333", True),
         ("http://localhost", True),
-        # The stack publishes on 127.0.0.1 only, so these can be another Qdrant.
-        ("http://127.0.0.2:6333", False),
-        ("http://[::1]:6333", False),
-        ("https://abc.eu-central.aws.cloud.qdrant.io:6333", False),
-        ("http://qdrant.internal:6333", False),
-        ("http://localhost:6334", False),
+        # A documentation address (RFC 5737) that no interface here has.
+        ("https://203.0.113.7:6333", False),
+        ("not a url", False),
         (None, False),
     ],
 )
-def test_qdrant_url_is_recognised_as_the_bundled_qdrant(
-    url: str | None, bundled: bool
-) -> None:
-    assert manager_module._targets_bundled_qdrant(url, 6333, "127.0.0.1") is bundled
-
-
-@pytest.mark.parametrize(
-    ("bind", "url", "bundled"),
-    [
-        ("192.168.1.5", "http://192.168.1.5:6333", True),
-        # Bound to one address only, the port is not published on loopback.
-        ("192.168.1.5", "http://localhost:6333", False),
-        # A wildcard bind also publishes on loopback.
-        ("0.0.0.0", "http://localhost:6333", True),
-        ("0.0.0.0", "http://127.0.0.1:6333", True),
-    ],
-)
-def test_qdrant_url_follows_the_bind_address(
-    bind: str, url: str, bundled: bool
-) -> None:
-    assert manager_module._targets_bundled_qdrant(url, 6333, bind) is bundled
+def test_qdrant_url_on_this_machine_is_recognised(url: str | None, local: bool) -> None:
+    assert manager_module._targets_this_machine(url) is local
 
 
 @pytest.mark.usefixtures("credentials")
@@ -694,9 +673,7 @@ def test_a_key_for_another_qdrant_is_not_copied_into_the_local_container(
 ) -> None:
     # A Qdrant Cloud key would otherwise sit in the local container's
     # environment and be sent to whatever answers on the local port.
-    monkeypatch.setattr(
-        settings, "QDRANT_URL", "https://abc.eu-central.aws.cloud.qdrant.io:6333"
-    )
+    monkeypatch.setattr(settings, "QDRANT_URL", "https://203.0.113.7:6333")
     monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", True)
     mgr = _manager(tmp_path)
 
@@ -716,22 +693,46 @@ def test_local_address_is_one_of_this_machines_addresses() -> None:
     assert not manager_module._is_local_address("203.0.113.1")
 
 
+@pytest.mark.usefixtures("credentials")
 @pytest.mark.parametrize(
-    ("url", "bundled"),
+    ("url", "forwarded"),
     [
-        # A wildcard bind publishes on this machine's LAN address too.
+        # Compose may publish on the LAN through a bind set anywhere it reads
+        # one, such as a file named in COMPOSE_ENV_FILES; the key follows the
+        # URL, not that bind, so the bundled Qdrant is never left open.
         ("http://192.168.1.5:6333", True),
+        ("http://192.168.1.5:16333", True),
         ("http://192.168.1.6:6333", False),
     ],
 )
-def test_qdrant_url_on_any_local_address_is_bundled_with_a_wildcard_bind(
-    monkeypatch: pytest.MonkeyPatch, url: str, bundled: bool
+def test_the_key_follows_a_qdrant_url_on_this_machine_whatever_the_bind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str, forwarded: bool
 ) -> None:
+    env_file = tmp_path / "stack.env"
+    env_file.write_text("CGR_STACK_BIND_HOST=0.0.0.0\n")
+    monkeypatch.setenv("COMPOSE_ENV_FILES", str(env_file))
+    monkeypatch.setattr(settings, "QDRANT_URL", url)
     monkeypatch.setattr(
         manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
     )
 
-    assert manager_module._targets_bundled_qdrant(url, 6333, "0.0.0.0") is bundled
+    env = _manager(tmp_path)._compose_env()
+
+    assert (env.get(cs.ENV_QDRANT_API_KEY) == "qdrant-key") is forwarded
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_status_check_does_not_resolve_the_qdrant_url(tmp_path: Path) -> None:
+    # Resolving a host name can wait on DNS; only the key decision needs it.
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(manager_module, "_is_local_address") as resolve,
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+    ):
+        mgr.status()
+
+    resolve.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -772,6 +773,9 @@ def test_running_stack_checks_qdrant_on_the_bind_address(
     # Published on one LAN address, the bundled Qdrant is not on loopback.
     monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "192.168.1.5")
     monkeypatch.setattr(settings, "QDRANT_URL", "http://192.168.1.5:6333")
+    monkeypatch.setattr(
+        manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
+    )
 
     messages, _, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=False, qdrant_open=True
@@ -828,24 +832,15 @@ def test_bind_host_is_resolved_as_compose_resolves_it(
     assert manager_module._bind_host(tmp_path) == bind
 
 
-@pytest.mark.usefixtures("credentials")
-def test_a_wildcard_bind_in_the_compose_dotenv_still_gets_the_key(
+def test_probes_follow_a_bind_from_the_compose_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Compose publishes on every address from that file alone, so a LAN
-    # QDRANT_URL reaches the bundled Qdrant and it must get the key.
-    monkeypatch.setattr(settings, "QDRANT_URL", "http://192.168.1.5:6333")
-    monkeypatch.setattr(
-        manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
-    )
+    monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
     home = tmp_path / "cgr-home"
     home.mkdir()
-    (home / cs.COMPOSE_DOTENV_FILENAME).write_text("CGR_STACK_BIND_HOST=0.0.0.0\n")
+    (home / cs.COMPOSE_DOTENV_FILENAME).write_text("CGR_STACK_BIND_HOST=192.168.1.5\n")
 
-    mgr = _manager(tmp_path)
-
-    assert mgr._compose_env()[cs.ENV_QDRANT_API_KEY] == "qdrant-key"
-    assert mgr.qdrant_host == "127.0.0.1"
+    assert _manager(tmp_path).qdrant_host == "192.168.1.5"
 
 
 def test_qdrant_readiness_probe_bypasses_an_http_proxy(

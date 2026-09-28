@@ -5,6 +5,7 @@ import shutil
 import socket
 import subprocess
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -93,7 +94,7 @@ def _is_local_address(host: str) -> bool:
     """Whether `host` is an address of this machine.
 
     Binding a socket to an address succeeds only when one of this machine's
-    interfaces has it, which is where a wildcard bind publishes.
+    interfaces has it.
     """
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_DGRAM)
@@ -109,44 +110,23 @@ def _is_local_address(host: str) -> bool:
     return False
 
 
-def _reaches_bundled_qdrant(host: str, bind: str) -> bool:
-    """Whether `host` reaches the address the bundled Qdrant is published on.
-
-    It is published on CGR_STACK_BIND_HOST only, 127.0.0.1 by default, so
-    another loopback address on the same port can be a different Qdrant. A
-    wildcard bind publishes on every address of this machine.
-    """
-    if bind in cs.WILDCARD_BIND_HOSTS:
-        return _is_local_address(host)
-    if bind == cs.LOOPBACK_HOST:
-        return host in (cs.LOCALHOST_NAME, cs.LOOPBACK_HOST)
-    return host == bind
+def _targets_this_machine(url: str | None) -> bool:
+    """Whether QDRANT_URL names a Qdrant on this machine."""
+    host = urlsplit(url).hostname if url else None
+    return host is not None and _is_local_address(host)
 
 
-def _targets_bundled_qdrant(url: str | None, port: int, bind: str) -> bool:
-    """Whether QDRANT_URL names the Qdrant this stack publishes on `port`."""
-    if not url:
-        return False
-    parts = urlsplit(url)
-    try:
-        url_port = parts.port or cs.QDRANT_CLIENT_DEFAULT_PORT
-    except ValueError:
-        return False
-    host = parts.hostname
-    return url_port == port and host is not None and _reaches_bundled_qdrant(host, bind)
+def _bundled_qdrant_api_key() -> str | None:
+    """The configured Qdrant key, unless it belongs to another machine's Qdrant.
 
-
-def _bundled_qdrant_api_key(port: int, bind: str) -> str | None:
-    """The configured Qdrant key, when it is meant for the bundled Qdrant.
-
-    QDRANT_API_KEY belongs to the server QDRANT_URL names, which may be
-    another one such as Qdrant Cloud. That key is not copied into the local
-    container or sent to it, and the bundled Qdrant then runs without one.
+    QDRANT_API_KEY belongs to the server QDRANT_URL names. When that is on
+    this machine, the bundled Qdrant gets the key whatever address and port
+    Compose publishes it on, so no gap in resolving those can leave it open.
+    A key for another server, such as Qdrant Cloud, is not copied into the
+    local container or sent to it, and the bundled Qdrant runs without one.
     """
     key = settings.QDRANT_API_KEY
-    if key and _targets_bundled_qdrant(settings.QDRANT_URL, port, bind):
-        return key
-    return None
+    return key if key and _targets_this_machine(settings.QDRANT_URL) else None
 
 
 def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValue]:
@@ -196,10 +176,14 @@ class StackManager:
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
-        bind = _bind_host(self.home)
-        self.qdrant_host = _bundled_qdrant_probe_host(bind)
-        self.qdrant_api_key = _bundled_qdrant_api_key(qdrant_port, bind)
+        self.qdrant_host = _bundled_qdrant_probe_host(_bind_host(self.home))
         self.project_name = project_name
+
+    @cached_property
+    def qdrant_api_key(self) -> str | None:
+        # Lazy: resolving a QDRANT_URL host name can wait on DNS, which a
+        # plain status check should not.
+        return _bundled_qdrant_api_key()
 
     @property
     def compose_file(self) -> Path:
