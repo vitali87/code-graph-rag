@@ -423,7 +423,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_constraint(label, prop))
-            except Exception:  # noqa: S110 - an existing constraint must not abort ingestion
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
@@ -479,7 +479,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_index(label, prop))
-            except Exception:  # noqa: S110 - an existing index must not abort ingestion
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         # The unique-key indexes serve MERGE at write time; generated Cypher
         # reads filter on bare `name`, which needs its own label+name index
@@ -487,7 +487,7 @@ class MemgraphIngestor:
         for label in NODE_NAME_INDEXES:
             try:
                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
-            except Exception:  # noqa: S110 - an existing index must not abort ingestion
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_INDEXES_DONE)
 
