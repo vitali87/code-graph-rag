@@ -37,8 +37,10 @@ def _bolt_reachable(
 
 
 def _http_reachable(url: str, timeout: float = 1.5) -> bool:
+    # Direct, like the data probes: through a proxy, a refusal could fail a
+    # running stack, and a proxy's own error page could pass a stopped one.
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+        with _DIRECT_OPENER.open(url, timeout=timeout) as resp:
             return 200 <= resp.status < 500
     except OSError:
         return False

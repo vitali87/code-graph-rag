@@ -666,11 +666,9 @@ class TestAppStartOnARunningStack:
     ],
 )
 def test_qdrant_url_is_recognised_as_the_bundled_qdrant(
-    monkeypatch: pytest.MonkeyPatch, url: str | None, bundled: bool
+    url: str | None, bundled: bool
 ) -> None:
-    monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
-
-    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
+    assert manager_module._targets_bundled_qdrant(url, 6333, "127.0.0.1") is bundled
 
 
 @pytest.mark.parametrize(
@@ -685,11 +683,9 @@ def test_qdrant_url_is_recognised_as_the_bundled_qdrant(
     ],
 )
 def test_qdrant_url_follows_the_bind_address(
-    monkeypatch: pytest.MonkeyPatch, bind: str, url: str, bundled: bool
+    bind: str, url: str, bundled: bool
 ) -> None:
-    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, bind)
-
-    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
+    assert manager_module._targets_bundled_qdrant(url, 6333, bind) is bundled
 
 
 @pytest.mark.usefixtures("credentials")
@@ -731,12 +727,11 @@ def test_local_address_is_one_of_this_machines_addresses() -> None:
 def test_qdrant_url_on_any_local_address_is_bundled_with_a_wildcard_bind(
     monkeypatch: pytest.MonkeyPatch, url: str, bundled: bool
 ) -> None:
-    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "0.0.0.0")
     monkeypatch.setattr(
         manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
     )
 
-    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
+    assert manager_module._targets_bundled_qdrant(url, 6333, "0.0.0.0") is bundled
 
 
 @pytest.mark.parametrize(
@@ -800,3 +795,66 @@ def test_qdrant_readiness_probe_uses_the_given_host() -> None:
         assert health.wait_for_qdrant(6333, timeout=1, host="192.168.1.5")
 
     reachable.assert_called_once_with("http://192.168.1.5:6333/readyz")
+
+
+@pytest.mark.parametrize(
+    ("environment", "dotenv", "bind"),
+    [
+        (None, None, "127.0.0.1"),
+        ("192.168.1.5", None, "192.168.1.5"),
+        # Compose reads the .env beside the compose file for an unset variable.
+        (None, "CGR_STACK_BIND_HOST=0.0.0.0\n", "0.0.0.0"),
+        # Its environment wins over that file.
+        ("192.168.1.5", "CGR_STACK_BIND_HOST=0.0.0.0\n", "192.168.1.5"),
+        # `${CGR_STACK_BIND_HOST:-127.0.0.1}` treats an empty value as unset.
+        ("", "CGR_STACK_BIND_HOST=0.0.0.0\n", "127.0.0.1"),
+        (None, "CGR_STACK_BIND_HOST=\n", "127.0.0.1"),
+    ],
+)
+def test_bind_host_is_resolved_as_compose_resolves_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: str | None,
+    dotenv: str | None,
+    bind: str,
+) -> None:
+    if environment is None:
+        monkeypatch.delenv(cs.COMPOSE_BIND_HOST_VAR, raising=False)
+    else:
+        monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, environment)
+    if dotenv is not None:
+        (tmp_path / cs.COMPOSE_DOTENV_FILENAME).write_text(dotenv)
+
+    assert manager_module._bind_host(tmp_path) == bind
+
+
+@pytest.mark.usefixtures("credentials")
+def test_a_wildcard_bind_in_the_compose_dotenv_still_gets_the_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Compose publishes on every address from that file alone, so a LAN
+    # QDRANT_URL reaches the bundled Qdrant and it must get the key.
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://192.168.1.5:6333")
+    monkeypatch.setattr(
+        manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
+    )
+    home = tmp_path / "cgr-home"
+    home.mkdir()
+    (home / cs.COMPOSE_DOTENV_FILENAME).write_text("CGR_STACK_BIND_HOST=0.0.0.0\n")
+
+    mgr = _manager(tmp_path)
+
+    assert mgr._compose_env()[cs.ENV_QDRANT_API_KEY] == "qdrant-key"
+    assert mgr.qdrant_host == "127.0.0.1"
+
+
+def test_qdrant_readiness_probe_bypasses_an_http_proxy(
+    local_qdrant_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The proxy is a closed port, so the probe only succeeds directly.
+    for name in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert health.wait_for_qdrant(local_qdrant_port, timeout=2, interval=0.1)

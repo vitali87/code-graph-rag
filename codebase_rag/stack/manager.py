@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import yaml
+from dotenv import dotenv_values
 from loguru import logger
 
 from .. import constants as root_cs
@@ -68,14 +69,23 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
-def _bind_host() -> str:
-    """The address the compose file publishes the stack's ports on."""
-    return os.environ.get(cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
+def _bind_host(project_dir: Path) -> str:
+    """The address the compose file publishes the stack's ports on.
+
+    Resolved as Compose resolves `${CGR_STACK_BIND_HOST:-127.0.0.1}`: its
+    environment first, then the .env file beside the compose file, and the
+    default when the value is empty.
+    """
+    if cs.COMPOSE_BIND_HOST_VAR in os.environ:
+        value = os.environ[cs.COMPOSE_BIND_HOST_VAR]
+    else:
+        dotenv = project_dir / cs.COMPOSE_DOTENV_FILENAME
+        value = dotenv_values(dotenv).get(cs.COMPOSE_BIND_HOST_VAR)
+    return value or cs.LOOPBACK_HOST
 
 
-def _bundled_qdrant_probe_host() -> str:
+def _bundled_qdrant_probe_host(bind: str) -> str:
     """Where this machine reaches the bundled Qdrant."""
-    bind = _bind_host()
     return cs.LOOPBACK_HOST if bind in cs.WILDCARD_BIND_HOSTS else bind
 
 
@@ -99,14 +109,13 @@ def _is_local_address(host: str) -> bool:
     return False
 
 
-def _reaches_bundled_qdrant(host: str) -> bool:
+def _reaches_bundled_qdrant(host: str, bind: str) -> bool:
     """Whether `host` reaches the address the bundled Qdrant is published on.
 
     It is published on CGR_STACK_BIND_HOST only, 127.0.0.1 by default, so
     another loopback address on the same port can be a different Qdrant. A
     wildcard bind publishes on every address of this machine.
     """
-    bind = _bind_host()
     if bind in cs.WILDCARD_BIND_HOSTS:
         return _is_local_address(host)
     if bind == cs.LOOPBACK_HOST:
@@ -114,7 +123,7 @@ def _reaches_bundled_qdrant(host: str) -> bool:
     return host == bind
 
 
-def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
+def _targets_bundled_qdrant(url: str | None, port: int, bind: str) -> bool:
     """Whether QDRANT_URL names the Qdrant this stack publishes on `port`."""
     if not url:
         return False
@@ -124,18 +133,19 @@ def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
     except ValueError:
         return False
     host = parts.hostname
-    return url_port == port and host is not None and _reaches_bundled_qdrant(host)
+    return url_port == port and host is not None and _reaches_bundled_qdrant(host, bind)
 
 
-def _bundled_qdrant_api_key(port: int) -> str | None:
+def _bundled_qdrant_api_key(port: int, bind: str) -> str | None:
     """The configured Qdrant key, when it is meant for the bundled Qdrant.
 
     QDRANT_API_KEY belongs to the server QDRANT_URL names, which may be
     another one such as Qdrant Cloud. That key is not copied into the local
     container or sent to it, and the bundled Qdrant then runs without one.
     """
-    if settings.QDRANT_API_KEY and _targets_bundled_qdrant(settings.QDRANT_URL, port):
-        return settings.QDRANT_API_KEY
+    key = settings.QDRANT_API_KEY
+    if key and _targets_bundled_qdrant(settings.QDRANT_URL, port, bind):
+        return key
     return None
 
 
@@ -186,8 +196,9 @@ class StackManager:
         self.memgraph_port = memgraph_port or settings.MEMGRAPH_PORT
         self.memgraph_credentials = _memgraph_credentials()
         self.qdrant_port = qdrant_port
-        self.qdrant_host = _bundled_qdrant_probe_host()
-        self.qdrant_api_key = _bundled_qdrant_api_key(qdrant_port)
+        bind = _bind_host(self.home)
+        self.qdrant_host = _bundled_qdrant_probe_host(bind)
+        self.qdrant_api_key = _bundled_qdrant_api_key(qdrant_port, bind)
         self.project_name = project_name
 
     @property

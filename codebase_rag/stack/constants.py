@@ -111,6 +111,9 @@ WARN_STACK_ACCEPTS_ANONYMOUS = (
 # The substitution that pins published ports to a host address. Its absence
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
+# Compose reads unset interpolation variables from this file beside the
+# compose file.
+COMPOSE_DOTENV_FILENAME = ".env"
 WARN_COMPOSE_PORTS_PUBLIC = (
     "The compose file at {path} publishes these ports on ALL interfaces, so "
     "any host on your network can read the code graph from these "
