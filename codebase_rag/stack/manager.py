@@ -87,7 +87,7 @@ def _bind_host(project_dir: Path) -> str:
 
 def _bundled_qdrant_probe_host(bind: str) -> str:
     """Where this machine reaches the bundled Qdrant."""
-    return cs.LOOPBACK_HOST if bind in cs.WILDCARD_BIND_HOSTS else bind
+    return cs.LOOPBACK_HOST if not bind or bind in cs.WILDCARD_BIND_HOSTS else bind
 
 
 def _is_local_address(host: str) -> bool:
@@ -129,18 +129,44 @@ def _bundled_qdrant_api_key() -> str | None:
     return key if key and _targets_this_machine(settings.QDRANT_URL) else None
 
 
+def _resolved_service(config: JsonValue, service: str) -> dict[str, JsonValue]:
+    """One service's definition in `docker compose config` output."""
+    services = config.get(cs.COMPOSE_SERVICES_KEY) if isinstance(config, dict) else None
+    spec = services.get(service) if isinstance(services, dict) else None
+    return spec if isinstance(spec, dict) else {}
+
+
 def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValue]:
     """One service's environment in `docker compose config` output.
 
     Compose renders `environment` as a mapping there, with a variable it could
     not resolve as null.
     """
-    services = config.get(cs.COMPOSE_SERVICES_KEY) if isinstance(config, dict) else None
-    spec = services.get(service) if isinstance(services, dict) else None
-    environment = (
-        spec.get(cs.COMPOSE_ENVIRONMENT_KEY) if isinstance(spec, dict) else None
-    )
+    environment = _resolved_service(config, service).get(cs.COMPOSE_ENVIRONMENT_KEY)
     return environment if isinstance(environment, dict) else {}
+
+
+def _published_port(
+    config: JsonValue, service: str, target: int
+) -> tuple[str, int] | None:
+    """The host address and port Compose publishes one container port on.
+
+    Compose renders every `ports` entry in long form there, with the
+    interpolated host address and published port.
+    """
+    ports = _resolved_service(config, service).get(cs.COMPOSE_PORTS_KEY)
+    for entry in ports if isinstance(ports, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get(cs.COMPOSE_PORT_TARGET_KEY) != target:
+            continue
+        try:
+            published = int(str(entry.get(cs.COMPOSE_PORT_PUBLISHED_KEY)))
+        except ValueError:
+            return None
+        host_ip = entry.get(cs.COMPOSE_PORT_HOST_IP_KEY)
+        return (host_ip if isinstance(host_ip, str) else "", published)
+    return None
 
 
 class StackError(RuntimeError):
@@ -273,7 +299,7 @@ class StackManager:
             wanted[cs.SERVICE_QDRANT] = {cs.ENV_QDRANT_API_KEY: self.qdrant_api_key}
         return wanted
 
-    def _verify_resolved_auth(self) -> None:
+    def _verify_resolved_auth(self) -> dict[str, JsonValue]:
         """Refuse to start containers with credentials the app does not use.
 
         Asks Compose what each service would receive rather than reading the
@@ -300,6 +326,21 @@ class StackManager:
                     variables=", ".join(mismatched), path=self.compose_file
                 )
             )
+        return config
+
+    def _adopt_published_qdrant(self, config: dict[str, JsonValue]) -> None:
+        """Probe Qdrant where Compose actually publishes it.
+
+        The bind address and port can come from the environment, the .env
+        beside the compose file, files named in COMPOSE_ENV_FILES and more;
+        Compose's resolved configuration is the one answer that covers them.
+        """
+        published = _published_port(
+            config, cs.SERVICE_QDRANT, cs.QDRANT_CONTAINER_HTTP_PORT
+        )
+        if published:
+            host_ip, self.qdrant_port = published
+            self.qdrant_host = _bundled_qdrant_probe_host(host_ip)
 
     def _resolved_config(self) -> dict[str, JsonValue]:
         """The project as `docker compose config` resolves it, or StackError.
@@ -427,7 +468,7 @@ class StackManager:
     def up(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self.check_docker()
         self.ensure_compose_file()
-        self._verify_resolved_auth()
+        self._adopt_published_qdrant(self._verify_resolved_auth())
         logger.info(cs.MSG_STARTING_STACK)
         result = subprocess.run(
             self._compose_cmd("up", "-d"),

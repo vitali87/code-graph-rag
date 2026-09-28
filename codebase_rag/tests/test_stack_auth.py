@@ -79,9 +79,14 @@ def _warnings_from[T](action: Callable[[], T]) -> list[str]:
 
 def _compose_config(
     environments: dict[str, dict[str, str | None]],
+    ports: dict[str, list[dict[str, str | int]]] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """What `docker compose config --format json` prints for these services."""
-    services = {service: {"environment": env} for service, env in environments.items()}
+    services: dict[str, dict[str, object]] = {
+        service: {"environment": env} for service, env in environments.items()
+    }
+    for service, entries in (ports or {}).items():
+        services[service]["ports"] = entries
     return subprocess.CompletedProcess(
         args=[], returncode=0, stdout=json.dumps({"services": services}), stderr=""
     )
@@ -841,6 +846,82 @@ def test_probes_follow_a_bind_from_the_compose_dotenv(
     (home / cs.COMPOSE_DOTENV_FILENAME).write_text("CGR_STACK_BIND_HOST=192.168.1.5\n")
 
     assert _manager(tmp_path).qdrant_host == "192.168.1.5"
+
+
+def _qdrant_ports(host_ip: str | None, published: str) -> list[dict[str, str | int]]:
+    """Qdrant's `ports` as `docker compose config` renders them."""
+    http = {"mode": "ingress", "target": 6333, "published": published}
+    grpc = {"mode": "ingress", "target": 6334, "published": "6334"}
+    if host_ip is not None:
+        http["host_ip"] = grpc["host_ip"] = host_ip
+    return [grpc, http]
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("host_ip", "published", "endpoint"),
+    [
+        ("192.168.1.5", "16333", ("192.168.1.5", 16333)),
+        ("127.0.0.1", "6333", ("127.0.0.1", 6333)),
+        ("0.0.0.0", "6333", ("127.0.0.1", 6333)),
+        (None, "16333", ("127.0.0.1", 16333)),
+    ],
+)
+def test_up_probes_qdrant_where_compose_publishes_it(
+    tmp_path: Path,
+    host_ip: str | None,
+    published: str,
+    endpoint: tuple[str, int],
+) -> None:
+    # A file named in COMPOSE_ENV_FILES, among others, can move the bind or
+    # the port without the manager seeing it; Compose's answer covers them all.
+    config = _compose_config(
+        MATCHING_ENV, {cs.SERVICE_QDRANT: _qdrant_ports(host_ip, published)}
+    )
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            side_effect=[config, subprocess.CompletedProcess(args=[], returncode=0)],
+        ),
+    ):
+        mgr.up()
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.wait_for_qdrant", return_value=True
+        ) as qdrant_probe,
+    ):
+        mgr.wait_healthy()
+
+    assert (mgr.qdrant_host, mgr.qdrant_port) == endpoint
+    assert qdrant_probe.call_args.args[0] == endpoint[1]
+    assert qdrant_probe.call_args.kwargs["host"] == endpoint[0]
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    "ports",
+    [None, [], [{"target": 6333, "published": "not-a-port"}]],
+)
+def test_up_keeps_the_probe_endpoint_without_a_published_qdrant_port(
+    tmp_path: Path, ports: list[dict[str, str | int]] | None
+) -> None:
+    config = _compose_config(
+        MATCHING_ENV, None if ports is None else {cs.SERVICE_QDRANT: ports}
+    )
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            side_effect=[config, subprocess.CompletedProcess(args=[], returncode=0)],
+        ),
+    ):
+        mgr.up()
+
+    assert (mgr.qdrant_host, mgr.qdrant_port) == ("127.0.0.1", 6333)
 
 
 def test_qdrant_readiness_probe_bypasses_an_http_proxy(
