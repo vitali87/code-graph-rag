@@ -1501,31 +1501,54 @@ class FlowProcessor:
                 if spread
                 else (values[index] if index < len(values) else None)
             )
-            taint = self._js_expr_taint(rhs, tainted, jc)
-            # Roslyn proved which locals reach this initializer (issue #1187):
-            # union their taint so a value the syntactic reader cannot thread
-            # (builder chain, cast, conditional) still taints the binding.
-            for symbol in self._csharp_bind_symbols(node, name, jc):
-                taint = _merge_optional_taints(taint, tainted.get(symbol))
-            computed.append((name, taint, rhs))
+            computed.append(
+                (name, self._lean_binding_taint(node, name, rhs, tainted, jc), rhs)
+            )
         for name, taint, rhs in computed:
-            if taint is not None:
-                tainted[name] = taint
-            else:
-                tainted.pop(name, None)
-            # Track (or kill) the resource handle bound to this name, so a later
-            # tainted write through it emits a flow edge (issue #1204). A binding is
-            # a STRONG update (replaces the set), so straight-line reassignment
-            # redirects the handle; only a branch join widens a name to multiple.
-            if jc.handle_ctors or jc.new_handle_ctors:
-                bindings = self._lean_handle_binding(rhs, handles, jc)
-                if bindings:
-                    handles[name] = bindings
-                else:
-                    handles.pop(name, None)
+            self._apply_lean_binding(name, taint, rhs, tainted, handles, jc)
         # Register the bound names AFTER reading the RHS (which still saw the
         # pre-declaration scope): a Go shadow applies only from here forward.
         self._register_shadows(targets, jc)
+
+    def _lean_binding_taint(
+        self,
+        node: Node,
+        name: str,
+        rhs: Node | None,
+        tainted: _TaintMap,
+        jc: _JsCtx,
+    ) -> Taint | None:
+        taint = self._js_expr_taint(rhs, tainted, jc)
+        # Roslyn proved which locals reach this initializer (issue #1187): union
+        # their taint so a value the syntactic reader cannot thread (builder
+        # chain, cast, conditional) still taints the binding.
+        for symbol in self._csharp_bind_symbols(node, name, jc):
+            taint = _merge_optional_taints(taint, tainted.get(symbol))
+        return taint
+
+    def _apply_lean_binding(
+        self,
+        name: str,
+        taint: Taint | None,
+        rhs: Node | None,
+        tainted: _TaintMap,
+        handles: _HandleMap,
+        jc: _JsCtx,
+    ) -> None:
+        if taint is not None:
+            tainted[name] = taint
+        else:
+            tainted.pop(name, None)
+        # Track (or kill) the resource handle bound to this name, so a later
+        # tainted write through it emits a flow edge (issue #1204). A binding is
+        # a STRONG update (replaces the set), so straight-line reassignment
+        # redirects the handle; only a branch join widens a name to multiple.
+        if not (jc.handle_ctors or jc.new_handle_ctors):
+            return
+        if bindings := self._lean_handle_binding(rhs, handles, jc):
+            handles[name] = bindings
+        else:
+            handles.pop(name, None)
 
     def _lean_kill(
         self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
@@ -2414,9 +2437,8 @@ class FlowProcessor:
                 if sink.target_arg == 0
                 else DYNAMIC_TARGET
             )
-            for _via, taint in args:
-                if taint is not None:
-                    self._emit_taint_to_sink(taint, sink.kind, dst, jc.flow.caller_qn)
+            for taint in (t for _via, t in args if t is not None):
+                self._emit_taint_to_sink(taint, sink.kind, dst, jc.flow.caller_qn)
             return
         if handles and self._emit_handle_write(raw, args, handles, jc):
             return
@@ -2431,28 +2453,38 @@ class FlowProcessor:
         )
         if callee is None:
             return
-        callee_type, callee_qn = callee
         for via, taint in args:
-            if taint is None:
-                continue
-            if taint.origins:
-                self.ingestor.ensure_relationship_batch(
-                    jc.flow.caller_spec,
-                    cs.RelationshipType.FLOWS_TO,
-                    (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                    properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
-                )
-            elif taint.pending:
-                self._deferred_arg_edges.append(
-                    (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
-                )
-            if taint.origins or taint.pending:
-                token = _passthrough_result_token(jc.flow.caller_qn, selector)
-                self._param_call_sites.append((taint, callee_qn, via, token))
-            for pname in taint.params:
-                self._param_flow_edges.append(
-                    (jc.flow.caller_qn, pname, callee_qn, via)
-                )
+            if taint is not None:
+                self._dart_arg_edge(taint, via, callee, selector, jc)
+
+    def _dart_arg_edge(
+        self,
+        taint: Taint,
+        via: str,
+        callee: tuple[str, str],
+        selector: Node,
+        jc: _JsCtx,
+    ) -> None:
+        # One tainted argument into a resolved callee: a concrete edge now, a
+        # deferred edge on a pending return, plus pass-through and parameter
+        # bookkeeping.
+        callee_type, callee_qn = callee
+        if taint.origins:
+            self.ingestor.ensure_relationship_batch(
+                jc.flow.caller_spec,
+                cs.RelationshipType.FLOWS_TO,
+                (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
+            )
+        elif taint.pending:
+            self._deferred_arg_edges.append(
+                (taint.pending, jc.flow.caller_spec, callee_type, callee_qn, via)
+            )
+        if taint.origins or taint.pending:
+            token = _passthrough_result_token(jc.flow.caller_qn, selector)
+            self._param_call_sites.append((taint, callee_qn, via, token))
+        for pname in taint.params:
+            self._param_flow_edges.append((jc.flow.caller_qn, pname, callee_qn, via))
 
     @staticmethod
     def _dart_arguments(selector: Node) -> Node | None:
