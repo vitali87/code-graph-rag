@@ -148,11 +148,13 @@ def _resolved_environment(config: JsonValue, service: str) -> dict[str, JsonValu
 
 def _published_port(
     config: JsonValue, service: str, target: int
-) -> tuple[str, int] | None:
+) -> tuple[str, str] | None:
     """The host address and port Compose publishes one container port on.
 
     Compose renders every `ports` entry in long form there, with the
-    interpolated host address and published port.
+    interpolated host address and published port. Either is empty when the
+    entry leaves it out; the port can also be a range or 0, which Docker
+    resolves only when the container starts.
     """
     ports = _resolved_service(config, service).get(cs.COMPOSE_PORTS_KEY)
     for entry in ports if isinstance(ports, list) else []:
@@ -160,13 +162,20 @@ def _published_port(
             continue
         if entry.get(cs.COMPOSE_PORT_TARGET_KEY) != target:
             continue
-        try:
-            published = int(str(entry.get(cs.COMPOSE_PORT_PUBLISHED_KEY)))
-        except ValueError:
-            return None
         host_ip = entry.get(cs.COMPOSE_PORT_HOST_IP_KEY)
-        return (host_ip if isinstance(host_ip, str) else "", published)
+        published = entry.get(cs.COMPOSE_PORT_PUBLISHED_KEY)
+        return (
+            host_ip if isinstance(host_ip, str) else "",
+            "" if published is None else str(published),
+        )
     return None
+
+
+def _fixed_port(published: str) -> int | None:
+    """The port number, unless Docker would pick the port at start."""
+    if not (published.isascii() and published.isdecimal()):
+        return None
+    return int(published) or None
 
 
 class StackError(RuntimeError):
@@ -334,13 +343,26 @@ class StackManager:
         The bind address and port can come from the environment, the .env
         beside the compose file, files named in COMPOSE_ENV_FILES and more;
         Compose's resolved configuration is the one answer that covers them.
+        A port Docker picks at start is refused before starting: the health
+        check could only probe the wrong port, and QDRANT_URL cannot follow
+        one that changes whenever the container is recreated.
         """
-        published = _published_port(
-            config, cs.SERVICE_QDRANT, cs.QDRANT_CONTAINER_HTTP_PORT
-        )
-        if published:
-            host_ip, self.qdrant_port = published
-            self.qdrant_host = _bundled_qdrant_probe_host(host_ip)
+        target = cs.QDRANT_CONTAINER_HTTP_PORT
+        published = _published_port(config, cs.SERVICE_QDRANT, target)
+        if published is None:
+            return
+        host_ip, host_port = published
+        port = _fixed_port(host_port)
+        if port is None:
+            raise StackError(
+                cs.ERR_QDRANT_PORT_NOT_FIXED.format(
+                    target=target,
+                    published=repr(host_port) if host_port else cs.COMPOSE_PORT_UNSET,
+                    path=self.compose_file,
+                )
+            )
+        self.qdrant_host = _bundled_qdrant_probe_host(host_ip)
+        self.qdrant_port = port
 
     def _resolved_config(self) -> dict[str, JsonValue]:
         """The project as `docker compose config` resolves it, or StackError.

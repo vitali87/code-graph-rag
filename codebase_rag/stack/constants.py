@@ -97,6 +97,14 @@ WARN_QDRANT_REJECTS_KEY = (
 # The message Memgraph rejects a Bolt login with. Its client raises the same
 # exception type for a refused connection, so only the text tells them apart.
 MEMGRAPH_AUTH_FAILURE = "Authentication failure"
+ERR_QDRANT_PORT_NOT_FIXED = (
+    "The qdrant port entry for container port {target} in {path} has no fixed "
+    "host port (Compose resolves it to {published}). Docker picks such a port "
+    "only when the container starts, so neither code-graph-rag's health check "
+    "nor QDRANT_URL can rely on it. Set QDRANT_HTTP_PORT to a port number, or "
+    "give that entry a fixed host port."
+)
+COMPOSE_PORT_UNSET = "none"
 ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
     "Memgraph is running but rejects the configured MEMGRAPH_USERNAME and "
     "MEMGRAPH_PASSWORD. Memgraph keeps the password its user was created "

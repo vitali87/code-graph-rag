@@ -916,9 +916,9 @@ def test_up_probes_qdrant_where_compose_publishes_it(
 @pytest.mark.usefixtures("credentials")
 @pytest.mark.parametrize(
     "ports",
-    [None, [], [{"target": 6333, "published": "not-a-port"}]],
+    [None, [], [{"mode": "ingress", "target": 6334, "published": "6334"}]],
 )
-def test_up_keeps_the_probe_endpoint_without_a_published_qdrant_port(
+def test_up_keeps_the_probe_endpoint_without_a_qdrant_port_entry(
     tmp_path: Path, ports: list[_PortEntry] | None
 ) -> None:
     config = _compose_config(
@@ -935,6 +935,50 @@ def test_up_keeps_the_probe_endpoint_without_a_published_qdrant_port(
         mgr.up()
 
     assert (mgr.qdrant_host, mgr.qdrant_port) == ("127.0.0.1", 6333)
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("entry", "shown"),
+    [
+        # As Compose renders `"6333"`, `"127.0.0.1::6333"`, a range and
+        # QDRANT_HTTP_PORT=0: Docker picks each of these at start.
+        ({"mode": "ingress", "target": 6333}, "none"),
+        ({"mode": "ingress", "host_ip": "127.0.0.1", "target": 6333}, "none"),
+        (
+            {
+                "mode": "ingress",
+                "host_ip": "127.0.0.1",
+                "target": 6333,
+                "published": "16333-16340",
+            },
+            "'16333-16340'",
+        ),
+        (
+            {
+                "mode": "ingress",
+                "host_ip": "127.0.0.1",
+                "target": 6333,
+                "published": "0",
+            },
+            "'0'",
+        ),
+    ],
+)
+def test_up_refuses_a_qdrant_port_docker_picks_at_start(
+    tmp_path: Path, entry: _PortEntry, shown: str
+) -> None:
+    config = _compose_config(MATCHING_ENV, {cs.SERVICE_QDRANT: [entry]})
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch("codebase_rag.stack.manager.subprocess.run", return_value=config) as run,
+        pytest.raises(StackError, match="no fixed host port") as raised,
+    ):
+        mgr.up()
+
+    assert f"resolves it to {shown})" in str(raised.value)
+    assert run.call_count == 1
 
 
 def test_qdrant_readiness_probe_bypasses_an_http_proxy(
