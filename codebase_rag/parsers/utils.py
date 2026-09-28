@@ -622,50 +622,54 @@ def _python_collect_bound_targets(node: Node, out: set[str]) -> None:
     while stack:
         current = stack.pop()
         for child in current.children:
-            child_type = child.type
-            if child_type in _PY_SCOPE_BOUNDARIES:
+            if child.type in _PY_SCOPE_BOUNDARIES:
                 # A nested def/class NAME binds here, but its body has its own
-                # scope; record the name and do not descend. A decorated_definition
-                # has no `name` field of its own, since the name is on the inner
-                # function/class definition it wraps.
-                named = child
-                if child_type == cs.TS_PY_DECORATED_DEFINITION:
-                    named = next(
-                        (
-                            c
-                            for c in child.children
-                            if c.type
-                            in (
-                                cs.TS_PY_FUNCTION_DEFINITION,
-                                cs.TS_PY_CLASS_DEFINITION,
-                            )
-                        ),
-                        child,
-                    )
-                name_node = named.child_by_field_name(cs.FIELD_NAME)
-                if name_node is not None and (name := safe_decode_text(name_node)):
+                # scope; record the name and do not descend.
+                if name := _python_scope_boundary_name(child):
                     out.add(name)
                 continue
-            if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
-                # Both bind whatever their `left` names.
-                left = child.child_by_field_name(cs.TS_FIELD_LEFT)
-                if left is not None:
-                    _python_collect_target_identifiers(left, out)
-            elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
-                # `with ... as x` and `except ... as x` bind x here.
-                _python_collect_target_identifiers(child, out)
-            elif child_type in _PY_IMPORT_STATEMENTS:
-                _python_collect_import_bound_names(child, out)
-            elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
-                # `global x` rebinds x to module scope: it is not a capture of the
-                # enclosing function, so exclude it like a local binding.
-                for c in child.named_children:
-                    if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
-                        out.add(name)
-            elif child_type == cs.TS_PY_CASE_PATTERN:
-                # A `match` case binds only its CAPTURE names, not value patterns.
-                _python_collect_case_pattern_bindings(child, out)
+            _python_collect_direct_bindings(child, out)
             stack.append(child)
+
+
+def _python_scope_boundary_name(child: Node) -> str | None:
+    # A decorated_definition has no `name` field of its own, since the name is
+    # on the inner function/class definition it wraps.
+    named = child
+    if child.type == cs.TS_PY_DECORATED_DEFINITION:
+        named = next(
+            (
+                c
+                for c in child.children
+                if c.type in (cs.TS_PY_FUNCTION_DEFINITION, cs.TS_PY_CLASS_DEFINITION)
+            ),
+            child,
+        )
+    name_node = named.child_by_field_name(cs.FIELD_NAME)
+    return safe_decode_text(name_node) if name_node is not None else None
+
+
+def _python_collect_direct_bindings(child: Node, out: set[str]) -> None:
+    child_type = child.type
+    if child_type in (cs.TS_PY_ASSIGNMENT, cs.TS_PY_FOR_STATEMENT):
+        # Both bind whatever their `left` names.
+        left = child.child_by_field_name(cs.TS_FIELD_LEFT)
+        if left is not None:
+            _python_collect_target_identifiers(left, out)
+    elif child_type == cs.TS_PY_AS_PATTERN_TARGET:
+        # `with ... as x` and `except ... as x` bind x here.
+        _python_collect_target_identifiers(child, out)
+    elif child_type in _PY_IMPORT_STATEMENTS:
+        _python_collect_import_bound_names(child, out)
+    elif child_type == cs.TS_PY_GLOBAL_STATEMENT:
+        # `global x` rebinds x to module scope: it is not a capture of the
+        # enclosing function, so exclude it like a local binding.
+        for c in child.named_children:
+            if c.type == cs.TS_PY_IDENTIFIER and (name := safe_decode_text(c)):
+                out.add(name)
+    elif child_type == cs.TS_PY_CASE_PATTERN:
+        # A `match` case binds only its CAPTURE names, not value patterns.
+        _python_collect_case_pattern_bindings(child, out)
 
 
 def _python_collect_target_identifiers(node: Node, out: set[str]) -> None:
