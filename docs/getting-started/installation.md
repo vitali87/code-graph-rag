@@ -239,12 +239,12 @@ This checks that all required dependencies and services are available.
 <!-- SECTION:dependencies -->
 - **loguru**: Python logging made (stupidly) simple
 - **mcp**: Model Context Protocol SDK
-- **pydantic-ai**: AI Agent Framework, the Pydantic way
+- **pydantic-ai-slim**: AI Agent Framework, the Pydantic way, slim package
 - **pydantic-settings**: Settings management using Pydantic
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **tiktoken**: tiktoken is a fast BPE tokeniser for use with OpenAI's models
-- **toml**: Python Library for Tom's Obvious, Minimal Language
+- **tomli-w**: A lil' TOML writer
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
 - **watchdog**: Filesystem events monitoring

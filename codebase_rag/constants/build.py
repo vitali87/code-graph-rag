@@ -81,7 +81,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="rich", collect_all=True),
     PyInstallerPackage(name="typer", collect_all=True),
     PyInstallerPackage(name="loguru", collect_all=True),
-    PyInstallerPackage(name="toml", collect_all=True),
+    PyInstallerPackage(name="tomli_w", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
     PyInstallerPackage(name="genai_prices", collect_all=True),
 ]

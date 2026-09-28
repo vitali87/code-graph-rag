@@ -10,7 +10,6 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-import yaml
 
 from codebase_rag import constants as cs
 from codebase_rag.cli import credits_lines
@@ -166,25 +165,6 @@ def test_the_project_link_falls_back_in_order(
     page_module: ModuleType, fields: dict[str, list[str] | str], expected: str
 ) -> None:
     assert page_module.project_url(_FakeDist("Some_Pkg", **fields)) == expected
-
-
-class _MkdocsLoader(yaml.SafeLoader):
-    """mkdocs.yml names Python objects (`!!python/name:...`); they are not
-    what this test reads, so they load as None."""
-
-
-_MkdocsLoader.add_multi_constructor(
-    "tag:yaml.org,2002:python/", lambda _loader, _suffix, _node: None
-)
-
-
-def test_the_page_is_in_the_docs_nav_with_its_hook() -> None:
-    config = yaml.load(  # noqa: S506 - SafeLoader subclass; python tags load as None
-        (REPO_ROOT / "mkdocs.yml").read_text(encoding=cs.ENCODING_UTF8),
-        Loader=_MkdocsLoader,
-    )
-    assert {"Credits": "credits.md"} in config["nav"]
-    assert "scripts/mkdocs_credits_hook.py" in config["hooks"]
 
 
 def test_the_readme_links_the_page() -> None:

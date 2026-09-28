@@ -37,12 +37,14 @@ keywords = [
 dependencies = [
     "loguru>=0.7.3",
     "mcp>=1.28.1",
-    "pydantic-ai>=2.0.0",
+    # Only the providers codebase_rag/providers imports. The `pydantic-ai`
+    # meta-package also installs logfire, evals, a CLI and a web UI, none used.
+    "pydantic-ai-slim[anthropic,google,openai]>=2.0.0",
     "pydantic-settings>=2.12.0",
     "pymgclient>=1.5.1",
     "python-dotenv>=1.2.1",
     "tiktoken>=0.12.0",
-    "toml>=0.10.2",
+    "tomli-w>=1.2.0",
     "tree-sitter-python>=0.25.0",
     "tree-sitter==0.25.2",
     "watchdog>=6.0.0",
@@ -130,7 +132,9 @@ treesitter-full = [
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-php>=0.24.1",
     "tree-sitter-c-sharp>=0.23.5",
-    "tree-sitter-dart>=0.1.0",
+    # Exact pin: PyPI's tree-sitter-dart is a single-maintainer repackaging of
+    # a fork, so a new release is a new publisher decision, not a grammar fix.
+    "tree-sitter-dart==0.1.0",
     "tree-sitter-sql>=0.3.11",
     "tree-sitter-markdown>=0.5.1",
 ]
@@ -239,21 +243,16 @@ dev = [
     "coverage>=7.13.0",
     "pre-commit>=4.2.0",
     "pyinstaller>=6.14.1",
-    "pylint>=4.0.4",
     "pytest>=9.0.2",
     "pytest-xdist>=3.8.0",
-    "radon>=6.0.1",
     "ruff>=0.5.5",
     "semgrep>=1.79.0",
     "ty>=0.0.7",
     "types-protobuf>=5.0.0",
-    "types-toml>=0.10.8.20240310",
-    "vulture>=2.14",
 ]
 docs = [
-    "mkdocs>=1.6.1,<2",
-    "mkdocs-material>=9.7.3",
-    "mkdocs-minify-plugin>=0.8.0",
+    # Exact pin while Zensical is pre-1.0.
+    "zensical==0.0.65",
 ]
 fuzz = [
     "atheris>=2.3.0",
