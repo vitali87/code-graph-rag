@@ -94,6 +94,49 @@ def _apply_memory_limit(
     )
 
 
+def _group_by_merge_keys(
+    rel_type: str, params_list: list[RelBatchRow]
+) -> dict[tuple[str, ...], list[RelBatchRow]]:
+    # Bucket rows by which of the relationship's merge-key props they carry.
+    candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+    by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
+    for row in params_list:
+        props = row[KEY_PROPS] or {}
+        by_keys[tuple(p for p in candidate if p in props)].append(row)
+    return by_keys
+
+
+def _created_count(results: Sequence[ResultRow]) -> int:
+    total = 0
+    for r in results:
+        created = r.get(KEY_CREATED, 0)
+        if isinstance(created, int):
+            total += created
+    return total
+
+
+def _log_failed_calls(
+    from_label: str,
+    to_label: str,
+    params_list: list[RelBatchRow],
+    batch_successful: int,
+) -> None:
+    failed = len(params_list) - batch_successful
+    if failed <= 0:
+        return
+    logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
+    for i, sample in enumerate(params_list[:3]):
+        logger.warning(
+            ls.MG_CALLS_SAMPLE.format(
+                index=i + 1,
+                from_label=from_label,
+                from_val=sample[KEY_FROM_VAL],
+                to_label=to_label,
+                to_val=sample[KEY_TO_VAL],
+            )
+        )
+
+
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
@@ -620,11 +663,7 @@ class MemgraphIngestor:
         from_label, from_key, rel_type, to_label, to_key = pattern
         has_props = any(p[KEY_PROPS] for p in params_list)
         if self._use_merge:
-            candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
-            by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
-            for row in params_list:
-                props = row[KEY_PROPS] or {}
-                by_keys[tuple(p for p in candidate if p in props)].append(row)
+            by_keys = _group_by_merge_keys(rel_type, params_list)
             if len(by_keys) > 1:
                 # Rows for the same endpoints may carry different distinguishing
                 # props (issue #722); flush each merge-key signature on its own so
@@ -660,26 +699,10 @@ class MemgraphIngestor:
             results = self._execute_batch_with_return_on(
                 target_conn, query, params_list
             )
-        batch_successful = 0
-        for r in results:
-            created = r.get(KEY_CREATED, 0)
-            if isinstance(created, int):
-                batch_successful += created
+        batch_successful = _created_count(results)
 
         if rel_type == REL_TYPE_CALLS:
-            failed = len(params_list) - batch_successful
-            if failed > 0:
-                logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
-                for i, sample in enumerate(params_list[:3]):
-                    logger.warning(
-                        ls.MG_CALLS_SAMPLE.format(
-                            index=i + 1,
-                            from_label=from_label,
-                            from_val=sample[KEY_FROM_VAL],
-                            to_label=to_label,
-                            to_val=sample[KEY_TO_VAL],
-                        )
-                    )
+            _log_failed_calls(from_label, to_label, params_list, batch_successful)
 
         return len(params_list), batch_successful
 

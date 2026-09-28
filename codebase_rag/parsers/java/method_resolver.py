@@ -446,6 +446,45 @@ class JavaMethodResolverMixin:
         ]
         return _pick_overload(matches, arg_count, arg_types)
 
+    def _resolve_unqualified_java_call(
+        self,
+        call_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        arg_count: int,
+        arg_types: tuple[str | None, ...],
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
+        # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
+        # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
+        # so bind against the anon's base type FIRST: `_lexical_class_qn` only
+        # sees the enclosing NAMED class and would mis-bind an inherited call to
+        # a same-named method there. Then the enclosing class hierarchy; the bare
+        # module-wide scan is the last resort (it ignores lexical scope).
+        if (anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)) and (
+            result := self._resolve_instance_method(
+                anon_base_qn, method_name, module_qn, arg_count, arg_types
+            )
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+            return result
+        if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
+            result := self._resolve_instance_method(
+                enclosing_qn, method_name, module_qn, arg_count, arg_types
+            )
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+            return result
+        result = self._resolve_static_or_local_method(
+            method_name, module_qn, arg_count, arg_types, caller_qn
+        )
+        if result:
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+        else:
+            logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
+        return result
+
     def _resolve_instance_method(
         self,
         object_type: str,
@@ -848,37 +887,9 @@ class JavaMethodResolverMixin:
             return None
 
         if not object_ref:
-            logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
-            # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
-            # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
-            # so bind against the anon's base type FIRST: `_lexical_class_qn` only
-            # sees the enclosing NAMED class and would mis-bind an inherited call to
-            # a same-named method there. Then the enclosing class hierarchy; the bare
-            # module-wide scan is the last resort (it ignores lexical scope).
-            if (
-                anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)
-            ) and (
-                result := self._resolve_instance_method(
-                    anon_base_qn, str(method_name), module_qn, arg_count, arg_types
-                )
-            ):
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-                return result
-            if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
-                result := self._resolve_instance_method(
-                    enclosing_qn, str(method_name), module_qn, arg_count, arg_types
-                )
-            ):
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-                return result
-            result = self._resolve_static_or_local_method(
-                str(method_name), module_qn, arg_count, arg_types, caller_qn
+            return self._resolve_unqualified_java_call(
+                call_node, str(method_name), module_qn, arg_count, arg_types, caller_qn
             )
-            if result:
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-            else:
-                logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
-            return result
 
         logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE, object=object_ref)
         if not (

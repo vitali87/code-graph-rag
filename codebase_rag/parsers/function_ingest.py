@@ -845,21 +845,7 @@ class FunctionIngestMixin:
 
         ingested = 0
         for entry in deferred:
-            # Scope-first: the namespace-qualified name distinguishes same-leaf
-            # classes (ast::Type vs ast::analysis::Type); the raw written qualifier
-            # is the fallback for other scopes.
-            candidates = [entry.class_name]
-            if entry.namespace_path:
-                candidates.insert(
-                    0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
-                )
-            resolved = False
-            real_class_qn = entry.fallback_class_qn
-            for candidate in candidates:
-                real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
-                if resolved:
-                    break
-            class_qn = real_class_qn if resolved else entry.fallback_class_qn
+            class_qn, resolved = self._resolve_deferred_cpp_class(entry)
             method_qn = f"{class_qn}.{entry.method_name}"
             # Record the binding so Pass-3 call attribution reuses this exact
             # decision rather than re-resolve and diverge.
@@ -920,6 +906,21 @@ class FunctionIngestMixin:
 
         self._deferred_cpp_methods = []
         return ingested
+
+    def _resolve_deferred_cpp_class(self, entry: _DeferredMethod) -> tuple[str, bool]:
+        # Scope-first: the namespace-qualified name distinguishes same-leaf
+        # classes (ast::Type vs ast::analysis::Type); the raw written qualifier
+        # is the fallback for other scopes.
+        candidates = [entry.class_name]
+        if entry.namespace_path:
+            candidates.insert(
+                0, f"{entry.namespace_path}{cs.SEPARATOR_DOT}{entry.class_name}"
+            )
+        for candidate in candidates:
+            real_class_qn, resolved = self._resolve_cpp_class_qn(candidate, "")
+            if resolved:
+                return real_class_qn, True
+        return entry.fallback_class_qn, False
 
     def _defer_go_receiver_method(
         self,
