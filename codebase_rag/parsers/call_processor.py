@@ -637,6 +637,60 @@ def _conditional_result_operands(node: Node, is_dart: bool) -> list[Node]:
     return [operands[1], operands[2]] if condition_first else [operands[0], operands[2]]
 
 
+def _py_param_name(child: Node) -> str | None:
+    match child.type:
+        case cs.TS_PY_IDENTIFIER:
+            return safe_decode_text(child)
+        case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
+            name_node = child.child_by_field_name(cs.FIELD_NAME)
+            return safe_decode_text(name_node) if name_node else None
+        case cs.TS_PY_TYPED_PARAMETER:
+            inner = child.named_children[0] if child.named_children else None
+            return (
+                safe_decode_text(inner)
+                if inner is not None and inner.type == cs.TS_PY_IDENTIFIER
+                else None
+            )
+        case _:
+            # *args/**kwargs/keyword_separator never bind fields.
+            return None
+
+
+def _js_symbol_member_call_parts(call_node: Node) -> tuple[str, str] | None:
+    # `recv[kSym].method(...)` -> ("kSym", "method"); None for other shapes.
+    func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
+    if func is None or func.type != cs.TS_MEMBER_EXPRESSION:
+        return None
+    obj = func.child_by_field_name(cs.FIELD_OBJECT)
+    prop = func.child_by_field_name(cs.FIELD_PROPERTY)
+    if obj is None or prop is None or obj.type != cs.TS_SUBSCRIPT_EXPRESSION:
+        return None
+    index = obj.child_by_field_name(cs.TS_FIELD_INDEX)
+    if index is None or index.type != cs.TS_IDENTIFIER:
+        return None
+    sym_name = safe_decode_text(index)
+    method = safe_decode_text(prop)
+    if not sym_name or not method:
+        return None
+    return sym_name, method
+
+
+def _iife_wrapper_inner(target: Node) -> Node | None:
+    # One value-transparent wrapper layer: parens and casts wrap their
+    # operand, the comma operator yields its LAST operand. None stops the
+    # peel (no wrapper, or an empty one).
+    if target.type == cs.TS_PARENTHESIZED_EXPRESSION:
+        return next(
+            (child for child in target.named_children if child.type != cs.TS_COMMENT),
+            None,
+        )
+    if target.type == cs.TS_JS_SEQUENCE_EXPRESSION:
+        return target.named_children[-1] if target.named_children else None
+    if target.type in cs.TS_CAST_WRAPPER_TYPES:
+        return next(iter(target.named_children), None)
+    return None
+
+
 def _find_call_arguments_node(call_node: Node) -> Node | None:
     args_node = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
     if args_node is not None:
@@ -655,6 +709,10 @@ def _find_call_arguments_node(call_node: Node) -> Node | None:
     )
     if args_node is not None:
         return args_node
+    return _dart_call_arguments_node(call_node)
+
+
+def _dart_call_arguments_node(call_node: Node) -> Node | None:
     if call_node.type in cs.DART_CONSTRUCTION_NODE_TYPES:
         # `new X(...)`, `const X(...)`, `X<T>.named(...)` hold their
         # `arguments` node directly.
@@ -1805,22 +1863,7 @@ class CallProcessor:
             return ()
         names: list[str] = []
         for child in params_node.named_children:
-            match child.type:
-                case cs.TS_PY_IDENTIFIER:
-                    name = safe_decode_text(child)
-                case cs.TS_PY_DEFAULT_PARAMETER | cs.TS_PY_TYPED_DEFAULT_PARAMETER:
-                    name_node = child.child_by_field_name(cs.FIELD_NAME)
-                    name = safe_decode_text(name_node) if name_node else None
-                case cs.TS_PY_TYPED_PARAMETER:
-                    inner = child.named_children[0] if child.named_children else None
-                    name = (
-                        safe_decode_text(inner)
-                        if inner is not None and inner.type == cs.TS_PY_IDENTIFIER
-                        else None
-                    )
-                case _:
-                    # *args/**kwargs/keyword_separator never bind fields.
-                    name = None
+            name = _py_param_name(child)
             if name and name != cs.PY_KEYWORD_SELF:
                 names.append(name)
         return tuple(names)
@@ -3242,33 +3285,12 @@ class CallProcessor:
         target = func_child
         paren_peels = 0
         other_peels = 0
-        while True:
+        while (inner := _iife_wrapper_inner(target)) is not None:
             if target.type == cs.TS_PARENTHESIZED_EXPRESSION:
-                inner = next(
-                    (
-                        child
-                        for child in target.named_children
-                        if child.type != cs.TS_COMMENT
-                    ),
-                    None,
-                )
-                if inner is None:
-                    break
-                target = inner
                 paren_peels += 1
-            elif target.type == cs.TS_JS_SEQUENCE_EXPRESSION:
-                if not target.named_children:
-                    break
-                target = target.named_children[-1]
-                other_peels += 1
-            elif target.type in cs.TS_CAST_WRAPPER_TYPES:
-                inner = next(iter(target.named_children), None)
-                if inner is None:
-                    break
-                target = inner
-                other_peels += 1
             else:
-                break
+                other_peels += 1
+            target = inner
         return target, paren_peels, other_peels
 
     def _js_branch_callee_functions(
@@ -7959,21 +7981,24 @@ class CallProcessor:
         if key is None or value is None:
             return
         if key.type == cs.TS_PROPERTY_IDENTIFIER and self._js_is_symbol_mint(value):
-            if not self._js_inside_callable(node):
-                if name := safe_decode_text(key):
-                    self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
+            if not self._js_inside_callable(node) and (name := safe_decode_text(key)):
+                self.js_symbol_constants.add(f"{module_qn}{cs.SEPARATOR_DOT}{name}")
             return
         if key.type == cs.TS_JS_COMPUTED_PROPERTY_NAME:
-            index = next(
-                (c for c in key.named_children if c.type != cs.TS_COMMENT), None
-            )
-            if (
-                index is not None
-                and index.type == cs.TS_IDENTIFIER
-                and (sym_name := safe_decode_text(index))
-                and (class_qn := self._js_symbol_value_class_qn(value, module_qn))
-            ):
-                self._js_symbol_assignments.append((module_qn, sym_name, class_qn))
+            self._collect_computed_symbol_pair(key, value, module_qn)
+
+    def _collect_computed_symbol_pair(
+        self, key: Node, value: Node, module_qn: str
+    ) -> None:
+        # `[kSym]: new Impl()` installs a class under a symbol key.
+        index = next((c for c in key.named_children if c.type != cs.TS_COMMENT), None)
+        if (
+            index is not None
+            and index.type == cs.TS_IDENTIFIER
+            and (sym_name := safe_decode_text(index))
+            and (class_qn := self._js_symbol_value_class_qn(value, module_qn))
+        ):
+            self._js_symbol_assignments.append((module_qn, sym_name, class_qn))
 
     def _collect_symbol_subscript_assignment(self, node: Node, module_qn: str) -> None:
         left = node.child_by_field_name(cs.FIELD_LEFT)
@@ -8549,20 +8574,10 @@ class CallProcessor:
         # bare-name trie fallback is SUPPRESSED for the recognised shapes:
         # the issue #989 receiver is statically unknowable by name and the
         # trie falsely revives same-named methods on unrelated classes.
-        func = call_node.child_by_field_name(cs.FIELD_FUNCTION)
-        if func is None or func.type != cs.TS_MEMBER_EXPRESSION:
+        parts = _js_symbol_member_call_parts(call_node)
+        if parts is None:
             return None
-        obj = func.child_by_field_name(cs.FIELD_OBJECT)
-        prop = func.child_by_field_name(cs.FIELD_PROPERTY)
-        if obj is None or prop is None or obj.type != cs.TS_SUBSCRIPT_EXPRESSION:
-            return None
-        index = obj.child_by_field_name(cs.TS_FIELD_INDEX)
-        if index is None or index.type != cs.TS_IDENTIFIER:
-            return None
-        sym_name = safe_decode_text(index)
-        method = safe_decode_text(prop)
-        if not sym_name or not method:
-            return None
+        sym_name, method = parts
         sym_qn = self._js_symbol_name_qn(sym_name, module_qn)
         if sym_qn is None or sym_qn not in self.js_symbol_constants:
             return None
