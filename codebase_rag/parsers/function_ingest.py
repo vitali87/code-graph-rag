@@ -718,15 +718,9 @@ class FunctionIngestMixin:
         namespace_path = cs.SEPARATOR_DOT.join(
             cpp_utils.extract_namespace_path(func_node)
         )
-        candidates = [class_name]
-        if namespace_path:
-            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
-        resolved = False
-        class_qn = ""
-        for candidate in candidates:
-            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
-            if resolved:
-                break
+        class_qn, resolved = self._resolve_cpp_scoped_class(
+            class_name, namespace_path, module_qn
+        )
         file_path = self.module_qn_to_file_path.get(module_qn)
         # The out-of-class DEFINITION carries the return type; record it here (keyed
         # by the method qn) so a factory chain `parser(1).parse()` can type the
@@ -736,101 +730,144 @@ class FunctionIngestMixin:
         return_type = cpp_utils.extract_return_type_name(func_node)
 
         if resolved:
-            ingest_method(
-                method_node=func_node,
-                container_qn=class_qn,
-                container_type=cs.NodeLabel.CLASS,
-                ingestor=self.ingestor,
-                function_registry=self.function_registry,
-                simple_name_lookup=self.simple_name_lookup,
-                get_docstring_func=self._get_docstring,
-                language=cs.SupportedLanguage.CPP,
-                lang_queries=lang_queries,
-                file_path=file_path,
-                repo_path=self.repo_path,
+            self._ingest_resolved_cpp_out_of_class(
+                func_node, module_qn, class_qn, file_path, return_type, lang_queries
             )
-            if bound_name := cpp_utils.extract_function_name(func_node):
-                # Record the binding so Pass-3 call attribution reuses this exact
-                # decision rather than re-resolve and diverge.
-                bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
-                self.cpp_out_of_class_methods[
-                    (module_qn, func_node.start_point[0] + 1)
-                ] = (bound_qn, class_qn)
-                self.function_locations[function_span_key(module_qn, func_node)] = (
-                    FunctionLocation(
-                        label=cs.NodeLabel.METHOD.value,
-                        qualified_name=bound_qn,
-                        container_qn=class_qn,
-                    )
-                )
-                record_cpp_definition_span(
-                    self.cpp_definition_spans,
-                    cs.SupportedLanguage.CPP,
-                    file_path,
-                    self.repo_path,
-                    func_node,
-                    cs.NodeLabel.METHOD.value,
-                    bound_qn,
-                )
-            if return_type and (
-                method_name := cpp_utils.extract_function_name(func_node)
-            ):
-                self.method_return_types[
-                    f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
-                ] = return_type
         else:
-            method_name = cpp_utils.extract_function_name(func_node)
-            if not method_name:
-                return True
-            decorators = []
-            modifiers = []
-            if lang_queries:
-                modifiers, decorators = extract_modifiers_and_decorators(
-                    func_node, lang_queries
+            self._defer_cpp_out_of_class(
+                func_node,
+                module_qn,
+                class_name,
+                class_qn,
+                file_path,
+                return_type,
+                lang_queries,
+            )
+        return True
+
+    def _resolve_cpp_scoped_class(
+        self, class_name: str, namespace_path: str, module_qn: str
+    ) -> tuple[str, bool]:
+        candidates = [class_name]
+        if namespace_path:
+            candidates.insert(0, f"{namespace_path}{cs.SEPARATOR_DOT}{class_name}")
+        resolved = False
+        class_qn = ""
+        for candidate in candidates:
+            class_qn, resolved = self._resolve_cpp_class_qn(candidate, module_qn)
+            if resolved:
+                break
+        return class_qn, resolved
+
+    def _ingest_resolved_cpp_out_of_class(
+        self,
+        func_node: Node,
+        module_qn: str,
+        class_qn: str,
+        file_path: Path | None,
+        return_type: str | None,
+        lang_queries: LanguageQueries | None,
+    ) -> None:
+        ingest_method(
+            method_node=func_node,
+            container_qn=class_qn,
+            container_type=cs.NodeLabel.CLASS,
+            ingestor=self.ingestor,
+            function_registry=self.function_registry,
+            simple_name_lookup=self.simple_name_lookup,
+            get_docstring_func=self._get_docstring,
+            language=cs.SupportedLanguage.CPP,
+            lang_queries=lang_queries,
+            file_path=file_path,
+            repo_path=self.repo_path,
+        )
+        if bound_name := cpp_utils.extract_function_name(func_node):
+            # Record the binding so Pass-3 call attribution reuses this exact
+            # decision rather than re-resolve and diverge.
+            bound_qn = f"{class_qn}{cs.SEPARATOR_DOT}{bound_name}"
+            self.cpp_out_of_class_methods[(module_qn, func_node.start_point[0] + 1)] = (
+                bound_qn,
+                class_qn,
+            )
+            self.function_locations[function_span_key(module_qn, func_node)] = (
+                FunctionLocation(
+                    label=cs.NodeLabel.METHOD.value,
+                    qualified_name=bound_qn,
+                    container_qn=class_qn,
                 )
-            props: PropertyDict = {
-                cs.KEY_NAME: method_name,
-                cs.KEY_MODIFIERS: modifiers,
-                cs.KEY_DECORATORS: decorators,
-                cs.KEY_START_LINE: func_node.start_point[0] + 1,
-                cs.KEY_START_COL: func_node.start_point[1],
-                cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
-                cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
-                cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                cs.KEY_DOCSTRING: self._get_docstring(
-                    func_node, cs.SupportedLanguage.CPP
-                ),
-            }
-            if file_path is not None and self.repo_path is not None:
-                props[cs.KEY_PATH] = cached_relative_path(
-                    file_path, self.repo_path
-                ).as_posix()
-                props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
-            # Computed here, not at flush: the tree (and this node) is gone by
-            # the time deferred methods are written out.
-            props.update(fingerprint_props(func_node))
-            props.update(anchor_hash_props(func_node, decorators))
-            if not hasattr(self, "_deferred_cpp_methods"):
-                self._deferred_cpp_methods = []
-            self._deferred_cpp_methods.append(
-                _DeferredMethod(
-                    method_name=method_name,
-                    class_name=class_name,
-                    fallback_class_qn=class_qn,
-                    method_props=props,
-                    return_type=return_type,
-                    module_qn=module_qn,
-                    namespace_path=cs.SEPARATOR_DOT.join(
-                        cpp_utils.extract_namespace_path(func_node)
-                    ),
-                    start_line=func_node.start_point[0] + 1,
-                    start_col=func_node.start_point[1],
-                    end_line=func_node.end_point[0] + 1,
-                    lang_queries=lang_queries,
-                )
+            )
+            record_cpp_definition_span(
+                self.cpp_definition_spans,
+                cs.SupportedLanguage.CPP,
+                file_path,
+                self.repo_path,
+                func_node,
+                cs.NodeLabel.METHOD.value,
+                bound_qn,
+            )
+        if return_type and (method_name := cpp_utils.extract_function_name(func_node)):
+            self.method_return_types[f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"] = (
+                return_type
             )
 
-        return True
+    def _defer_cpp_out_of_class(
+        self,
+        func_node: Node,
+        module_qn: str,
+        class_name: str,
+        class_qn: str,
+        file_path: Path | None,
+        return_type: str | None,
+        lang_queries: LanguageQueries | None,
+    ) -> None:
+        method_name = cpp_utils.extract_function_name(func_node)
+        if not method_name:
+            return
+        decorators = []
+        modifiers = []
+        if lang_queries:
+            modifiers, decorators = extract_modifiers_and_decorators(
+                func_node, lang_queries
+            )
+        props: PropertyDict = {
+            cs.KEY_NAME: method_name,
+            cs.KEY_MODIFIERS: modifiers,
+            cs.KEY_DECORATORS: decorators,
+            cs.KEY_START_LINE: func_node.start_point[0] + 1,
+            cs.KEY_START_COL: func_node.start_point[1],
+            cs.KEY_NAME_START_LINE: _name_start_point(func_node)[0],
+            cs.KEY_NAME_START_COL: _name_start_point(func_node)[1],
+            cs.KEY_END_LINE: func_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(func_node, cs.SupportedLanguage.CPP),
+        }
+        if file_path is not None and self.repo_path is not None:
+            props[cs.KEY_PATH] = cached_relative_path(
+                file_path, self.repo_path
+            ).as_posix()
+            props[cs.KEY_ABSOLUTE_PATH] = cached_resolve_posix(file_path)
+        # Computed here, not at flush: the tree (and this node) is gone by
+        # the time deferred methods are written out.
+        props.update(fingerprint_props(func_node))
+        props.update(anchor_hash_props(func_node, decorators))
+        if not hasattr(self, "_deferred_cpp_methods"):
+            self._deferred_cpp_methods = []
+        self._deferred_cpp_methods.append(
+            _DeferredMethod(
+                method_name=method_name,
+                class_name=class_name,
+                fallback_class_qn=class_qn,
+                method_props=props,
+                return_type=return_type,
+                module_qn=module_qn,
+                namespace_path=cs.SEPARATOR_DOT.join(
+                    cpp_utils.extract_namespace_path(func_node)
+                ),
+                start_line=func_node.start_point[0] + 1,
+                start_col=func_node.start_point[1],
+                end_line=func_node.end_point[0] + 1,
+                lang_queries=lang_queries,
+            )
+        )
 
     def resolve_deferred_cpp_methods(self) -> int:
         """Ingest deferred out-of-class C++ methods now that all classes are known.
