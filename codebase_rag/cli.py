@@ -11,7 +11,7 @@ from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 import typer
@@ -245,6 +245,157 @@ def _global_options(
 def _info(msg: str) -> None:
     if not settings.QUIET:
         app_context.console.print(msg)
+
+
+def _pre_chat_sync(
+    workspace_config: WorkspaceConfig | None,
+    repo_sync: Callable[[], None],
+    batch_size: int,
+    exclude: list[str] | None,
+    capture: list[str] | None,
+    no_embeddings: bool,
+) -> tuple[Callable[[], None], str]:
+    # The sync to run before the chat opens: every workspace repo when a
+    # workspace is active, else just the target repo.
+    if workspace_config is None:
+        return repo_sync, cs.MSG_SYNCING_KNOWLEDGE_GRAPH
+    workspace_sync = partial(
+        _sync_workspace,
+        workspace_config,
+        batch_size,
+        exclude,
+        capture=capture,
+        skip_embeddings=no_embeddings or None,
+    )
+    return workspace_sync, cs.MSG_SYNCING_WORKSPACE.format(
+        name=workspace_config.name, count=len(workspace_config.repos)
+    )
+
+
+def _exit_with_error(message: str) -> NoReturn:
+    app_context.console.print(style(message, cs.Color.RED))
+    raise typer.Exit(1)
+
+
+def _start_update_graph(
+    repo: Path,
+    project_name: str,
+    *,
+    project_named: bool,
+    batch_size: int,
+    exclude: list[str] | None,
+    interactive_setup: bool,
+    clean: bool,
+    output: str | None,
+    capture: list[str] | None,
+    skip_embeddings: bool | None,
+    assume_yes: bool,
+) -> None:
+    # `start --update-graph`: sync the repo into the graph, then stop.
+    _info(style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo), cs.Color.GREEN))
+    if not interactive_setup:
+        _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
+    _run_graph_sync(
+        repo=repo,
+        project_name=project_name,
+        project_named=project_named,
+        batch_size=batch_size,
+        exclude=exclude,
+        interactive_setup=interactive_setup,
+        clean=clean,
+        output=output,
+        capture=capture,
+        skip_embeddings=skip_embeddings,
+        assume_yes=assume_yes,
+    )
+    _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
+
+
+def _clean_database_only(
+    repo_to_clean: Path, batch_size: int, project_name: str, assume_yes: bool
+) -> None:
+    # `--clean` without `--update-graph`: wipe the graph, the vector store and
+    # the hash cache, then stop.
+    _import_vector_store()
+    with connect_memgraph(batch_size) as ingestor:
+        _confirm_destructive_clean(ingestor, project_name, assume_yes)
+        _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
+        ingestor.clean_database()
+
+    clear_all_embeddings()
+    _delete_hash_cache(repo_to_clean)
+    _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
+
+
+def _start_active_projects(
+    workspace_config: WorkspaceConfig | None,
+    projects: str | None,
+    resolved_project_name: str,
+) -> list[str]:
+    if workspace_config is None:
+        return _resolve_active_projects(projects, resolved_project_name)
+    active_projects = workspace_config.project_names()
+    if projects:
+        return _resolve_active_projects(projects, active_projects[0])
+    return active_projects
+
+
+def _run_single_query(
+    target_repo_path: str,
+    batch_size: int,
+    question: str,
+    active_projects: list[str] | None,
+    output_format: cs.QueryFormat,
+    sync_task: Callable[[], None] | None,
+) -> None:
+    if sync_task is not None:
+        sync_task()
+    main_single_query(
+        target_repo_path,
+        batch_size,
+        question,
+        active_projects=active_projects,
+        output_format=output_format,
+    )
+
+
+def _launch_session(
+    target_repo_path: str,
+    batch_size: int,
+    ask_agent: str | None,
+    active_projects: list[str],
+    output_format: cs.QueryFormat,
+    sync_task: Callable[[], None] | None,
+    sync_message: str,
+) -> None:
+    # `-a` answers one question and exits; otherwise open the chat loop.
+    try:
+        if ask_agent:
+            _run_single_query(
+                target_repo_path,
+                batch_size,
+                ask_agent,
+                active_projects,
+                output_format,
+                sync_task,
+            )
+        else:
+            asyncio.run(
+                main_async(
+                    target_repo_path,
+                    batch_size,
+                    active_projects=active_projects,
+                    show_config_table=False,
+                    pre_chat_sync=sync_task,
+                    pre_chat_sync_message=sync_message,
+                )
+            )
+    except KeyboardInterrupt:
+        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+    except ValueError as e:
+        app_context.console.print(
+            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+        )
 
 
 def _load_workspace_or_exit(workspace: str | None) -> WorkspaceConfig | None:
@@ -698,20 +849,14 @@ def start(
     app_context.session.load_cgr_instructions = not no_instructions
 
     if output_format == cs.QueryFormat.JSON and not ask_agent:
-        app_context.console.print(
-            style(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT, cs.Color.RED)
-        )
-        raise typer.Exit(1)
+        _exit_with_error(cs.CLI_ERR_JSON_REQUIRES_ASK_AGENT)
 
     resolved_repo = _resolve_and_validate_repo(repo_path)
     target_repo_path = str(resolved_repo)
     resolved_project_name = project_name or derive_project_name(resolved_repo)
 
     if output and not update_graph:
-        app_context.console.print(
-            style(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE, cs.Color.RED)
-        )
-        raise typer.Exit(1)
+        _exit_with_error(cs.CLI_ERR_OUTPUT_REQUIRES_UPDATE)
 
     if not no_start_stack:
         _maybe_start_stack()
@@ -719,16 +864,9 @@ def start(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     if clean and not update_graph:
-        repo_to_clean = Path(target_repo_path)
-        _import_vector_store()
-        with connect_memgraph(effective_batch_size) as ingestor:
-            _confirm_destructive_clean(ingestor, resolved_project_name, yes)
-            _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-            ingestor.clean_database()
-
-        clear_all_embeddings()
-        _delete_hash_cache(repo_to_clean)
-        _info(style(cs.CLI_MSG_CLEAN_DONE, cs.Color.GREEN))
+        _clean_database_only(
+            Path(target_repo_path), effective_batch_size, resolved_project_name, yes
+        )
         return
 
     _update_and_validate_models(orchestrator, cypher)
@@ -737,14 +875,9 @@ def start(
         app_context.console.print(_create_configuration_table(target_repo_path))
 
     if update_graph:
-        _info(
-            style(cs.CLI_MSG_UPDATING_GRAPH.format(path=resolved_repo), cs.Color.GREEN)
-        )
-        if not interactive_setup:
-            _info(style(cs.CLI_MSG_AUTO_EXCLUDE, cs.Color.YELLOW))
-        _run_graph_sync(
-            repo=resolved_repo,
-            project_name=resolved_project_name,
+        _start_update_graph(
+            resolved_repo,
+            resolved_project_name,
             project_named=project_name is not None,
             batch_size=effective_batch_size,
             exclude=exclude,
@@ -755,7 +888,6 @@ def start(
             skip_embeddings=no_embeddings or None,
             assume_yes=yes,
         )
-        _info(style(cs.CLI_MSG_GRAPH_UPDATED, cs.Color.GREEN))
         return
 
     workspace_config = _load_workspace_or_exit(workspace)
@@ -763,20 +895,9 @@ def start(
     sync_task: Callable[[], None] | None = None
     sync_message = cs.MSG_SYNCING_KNOWLEDGE_GRAPH
     if not no_sync:
-        if workspace_config is not None:
-            sync_task = partial(
-                _sync_workspace,
-                workspace_config,
-                effective_batch_size,
-                exclude,
-                capture=capture,
-                skip_embeddings=no_embeddings or None,
-            )
-            sync_message = cs.MSG_SYNCING_WORKSPACE.format(
-                name=workspace_config.name, count=len(workspace_config.repos)
-            )
-        else:
-            sync_task = partial(
+        sync_task, sync_message = _pre_chat_sync(
+            workspace_config,
+            partial(
                 _run_graph_sync,
                 repo=resolved_repo,
                 project_name=resolved_project_name,
@@ -786,43 +907,26 @@ def start(
                 interactive_setup=interactive_setup,
                 capture=capture,
                 skip_embeddings=no_embeddings or None,
-            )
-
-    if workspace_config is not None:
-        active_projects = workspace_config.project_names()
-        if projects:
-            active_projects = _resolve_active_projects(projects, active_projects[0])
-    else:
-        active_projects = _resolve_active_projects(projects, resolved_project_name)
-
-    try:
-        if ask_agent:
-            if sync_task is not None:
-                sync_task()
-            main_single_query(
-                target_repo_path,
-                effective_batch_size,
-                ask_agent,
-                active_projects=active_projects,
-                output_format=output_format,
-            )
-        else:
-            asyncio.run(
-                main_async(
-                    target_repo_path,
-                    effective_batch_size,
-                    active_projects=active_projects,
-                    show_config_table=False,
-                    pre_chat_sync=sync_task,
-                    pre_chat_sync_message=sync_message,
-                )
-            )
-    except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
-    except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_STARTUP.format(error=e), cs.Color.RED)
+            ),
+            effective_batch_size,
+            exclude,
+            capture,
+            no_embeddings,
         )
+
+    active_projects = _start_active_projects(
+        workspace_config, projects, resolved_project_name
+    )
+
+    _launch_session(
+        target_repo_path,
+        effective_batch_size,
+        ask_agent,
+        active_projects,
+        output_format,
+        sync_task,
+        sync_message,
+    )
 
 
 @app.command(
