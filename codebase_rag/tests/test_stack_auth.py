@@ -22,9 +22,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import typer
 import yaml
+from click.testing import CliRunner
 from loguru import logger
 
 from codebase_rag.config import settings
+from codebase_rag.stack import cli as stack_cli
 from codebase_rag.stack import constants as cs
 from codebase_rag.stack import health
 from codebase_rag.stack import manager as manager_module
@@ -345,12 +347,68 @@ def test_health_probes_log_in_to_memgraph(tmp_path: Path) -> None:
             "codebase_rag.stack.manager.wait_for_memgraph", return_value=True
         ) as probe,
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous", return_value=False
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
     ):
         mgr.wait_healthy(timeout=0.1)
         mgr.status()
 
     for call in probe.call_args_list:
         assert call.kwargs["credentials"] == ("cgr", "s3cret")
+
+
+@pytest.mark.usefixtures("credentials")
+@pytest.mark.parametrize(
+    ("memgraph_open", "qdrant_open", "open_services"),
+    [(True, False, "memgraph"), (False, True, "qdrant")],
+)
+def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
+    tmp_path: Path, memgraph_open: bool, qdrant_open: bool, open_services: str
+) -> None:
+    # `up` and `restart` end in wait_healthy: a ready service is checked for
+    # the credentials too, whether or not Compose recreated its container.
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous",
+            return_value=memgraph_open,
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous",
+            return_value=qdrant_open,
+        ),
+        pytest.raises(StackError, match=f"without them: {open_services}\\."),
+    ):
+        mgr.wait_healthy(timeout=0.1)
+
+
+@pytest.mark.usefixtures("credentials")
+def test_restart_checks_the_restarted_stack_enforces_the_credentials(
+    tmp_path: Path,
+) -> None:
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(stack_cli, "StackManager", return_value=mgr),
+        patch.object(mgr, "restart"),
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous", return_value=True
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
+    ):
+        result = CliRunner().invoke(stack_cli.cli, ["restart"])
+
+    assert result.exit_code == 1
+    assert "still accept" in result.output
 
 
 def test_bolt_probe_passes_the_login_to_mgclient() -> None:
@@ -1074,6 +1132,9 @@ def test_up_probes_qdrant_where_compose_publishes_it(
         patch(
             "codebase_rag.stack.manager.wait_for_qdrant", return_value=True
         ) as qdrant_probe,
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous", return_value=False
+        ),
     ):
         mgr.wait_healthy()
 

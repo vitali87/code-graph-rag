@@ -643,6 +643,10 @@ class StackManager:
                     service=cs.SERVICE_QDRANT, timeout=timeout
                 )
             )
+        # Ready is not the same as protected: prove the started containers
+        # enforce the credentials rather than rely on Compose having
+        # recreated each one whose environment changed.
+        self.raise_if_auth_not_enforced()
 
     def _raise_if_memgraph_rejects_credentials(self) -> None:
         """Name a rejected login instead of reporting Memgraph as down.
