@@ -2528,33 +2528,8 @@ class ImportProcessor:
                 return "dir_file", []
             return None
         dir_parts, stem = qn_parts[:-1], qn_parts[-1]
-        if (
-            stem not in cs.RS_ENTRY_STEMS
-            and f"{stem}{cs.EXT_RS}"
-            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        ):
-            if self._rust_is_auto_target_dir(dir_parts, stem):
-                return "file", qn_parts
-            if self._rust_is_explicit_target(dir_parts, stem):
-                # An explicit manifest target is a crate root like any
-                # entry file: its `mod` declarations resolve in the
-                # CONTAINING directory (the tests/common.rs idiom,
-                # cargo-verified), so it attaches classically with
-                # itself as the definitive entry stem.
-                return "entry", qn_parts
-        if stem in cs.RS_ENTRY_STEMS and f"{stem}{cs.EXT_RS}" in self._rust_dir_entries(
-            self.repo_path.joinpath(*dir_parts)
-        ):
-            # An entry-stem FILE that is a target in its own right — by
-            # auto location (src/bin/main.rs beside src/bin/mod.rs) or by
-            # explicit manifest path — keeps its own crate: its qn carries
-            # the stem only when a sibling claimed the dir qn, and the
-            # ancestor mod.rs check below must not swallow it
-            # (issue #1031 review).
-            if self._rust_is_auto_target_dir(dir_parts, stem):
-                return "file", qn_parts
-            if self._rust_is_explicit_target(dir_parts, stem):
-                return "entry", qn_parts
+        if (own_kind := self._rust_own_target_kind(dir_parts, stem)) is not None:
+            return own_kind, qn_parts
         if self._rust_is_mod_rs_target(qn_parts):
             # Cargo compiles src/bin/mod.rs (or an explicit target whose
             # path ends in mod.rs) as a target named `mod` whose crate root
@@ -2564,6 +2539,34 @@ class ImportProcessor:
             # come from mod.rs, not a sibling `<dir>.rs` shadow
             # (issue #1031).
             return "dir_file", qn_parts
+        return self._rust_ancestor_crate_root(dir_parts)
+
+    def _rust_own_target_kind(self, dir_parts: list[str], stem: str) -> str | None:
+        """ "file"/"entry" when the file `<stem>.rs` is a target of its own.
+
+        An explicit manifest target is a crate root like any entry file:
+        its `mod` declarations resolve in the CONTAINING directory (the
+        tests/common.rs idiom, cargo-verified), so it attaches classically
+        with itself as the definitive entry stem. The same holds for an
+        entry-stem FILE that is a target in its own right — by auto
+        location (src/bin/main.rs beside src/bin/mod.rs) or by explicit
+        manifest path — it keeps its own crate: its qn carries the stem
+        only when a sibling claimed the dir qn, and the ancestor mod.rs
+        check must not swallow it (issue #1031 review).
+        """
+        if f"{stem}{cs.EXT_RS}" not in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts)
+        ):
+            return None
+        if self._rust_is_auto_target_dir(dir_parts, stem):
+            return "file"
+        if self._rust_is_explicit_target(dir_parts, stem):
+            return "entry"
+        return None
+
+    def _rust_ancestor_crate_root(
+        self, dir_parts: list[str]
+    ) -> tuple[str, list[str]] | None:
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -2661,6 +2664,13 @@ class ImportProcessor:
         for stem in ("lib", "main"):
             if stem in decls:
                 return stem, False
+        if (lone := self._rust_lone_explicit_stem(dir_parts, decls)) is not None:
+            return lone, True
+        return "lib", False
+
+    def _rust_lone_explicit_stem(
+        self, dir_parts: list[str], decls: dict[str, RustEntryDecls]
+    ) -> str | None:
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         if (
             cs.LIB_RS not in entries
@@ -2711,8 +2721,8 @@ class ImportProcessor:
                 # dangling phantom revives nothing; a definitive wrong
                 # stem suppresses the tie-break too). Multi-target
                 # no-declarer stays genuine ambiguity, likewise phantom.
-                return stem, True
-        return "lib", False
+                return stem
+        return None
 
     def _rust_entry_decls(self, dir_parts: list[str]) -> dict[str, RustEntryDecls]:
         """Per entry stem: mod declarations, item names, `#[path]` targets."""
@@ -3042,29 +3052,13 @@ class ImportProcessor:
         directory = self.repo_path.joinpath(*dir_parts)
         entries = self._rust_dir_entries(directory)
         chosen = self._rust_entry_decls(dir_parts).get(stem)
-        if rest and chosen is not None:
-            file_mods, items = chosen.mods, chosen.items
-            if redirect := chosen.redirects.get(rest[0]):
-                # The declaration names its backing file outright, and the
-                # module keys under that file, so the declared name never
-                # appears in the qn at all (issue #1035). A target the qn
-                # scheme cannot key names a file outside the indexed tree:
-                # decline rather than fall through to the name-derived
-                # sibling shadow below (issue #1082).
-                target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
-                if target is None:
-                    return cs.RUST_UNRESOLVABLE_QN
-                return self._rust_join_mods(
-                    target,
-                    rest[1:],
-                    redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
-                )
-            if rest[0] in file_mods:
-                return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
-            if rest[0] in items:
-                return cs.SEPARATOR_DOT.join(
-                    [self.project_name, *dir_parts, stem, *rest]
-                )
+        if (
+            rest
+            and chosen is not None
+            and (declared := self._rust_attach_declared(dir_parts, stem, rest, chosen))
+            is not None
+        ):
+            return declared
         if rest and (
             f"{rest[0]}{cs.EXT_RS}" in entries
             or (rest[0] in entries and (directory / rest[0]).is_dir())
@@ -3074,11 +3068,44 @@ class ImportProcessor:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
             # DECLARES the item; the chosen entry declaring it returned above.
-            for other, other_decls in self._rust_entry_decls(dir_parts).items():
-                if other != stem and rest[0] in other_decls.items:
-                    stem = other
-                    break
+            stem = next(
+                (
+                    other
+                    for other, other_decls in self._rust_entry_decls(dir_parts).items()
+                    if other != stem and rest[0] in other_decls.items
+                ),
+                stem,
+            )
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
+
+    def _rust_attach_declared(
+        self,
+        dir_parts: list[str],
+        stem: str,
+        rest: list[str],
+        chosen: RustEntryDecls,
+    ) -> str | None:
+        """Attach through the chosen entry's own declarations, if any match."""
+        if redirect := chosen.redirects.get(rest[0]):
+            # The declaration names its backing file outright, and the
+            # module keys under that file, so the declared name never
+            # appears in the qn at all (issue #1035). A target the qn
+            # scheme cannot key names a file outside the indexed tree:
+            # decline rather than fall through to the name-derived
+            # sibling shadow below (issue #1082).
+            target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+            if target is None:
+                return cs.RUST_UNRESOLVABLE_QN
+            return self._rust_join_mods(
+                target,
+                rest[1:],
+                redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
+            )
+        if rest[0] in chosen.mods:
+            return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
+        if rest[0] in chosen.items:
+            return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
+        return None
 
     def _rust_resolve_relative(
         self, base_qn: str, rest: list[str], importer_qn: str

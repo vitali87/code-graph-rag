@@ -1628,6 +1628,28 @@ def _handle_model_command(
         return current_model, current_model_string, current_config
 
 
+def _dispatch_local_command(
+    stripped_question: str,
+    command: str,
+    current: tuple[Model | None, str | None, ModelConfig | None],
+) -> tuple[Model | None, str | None, ModelConfig | None] | None:
+    """Run a slash command handled in-process; None means not a local command."""
+    if command == cs.MODEL_COMMAND_PREFIX:
+        return _handle_model_command(stripped_question, *current)
+    if command == cs.HELP_COMMAND:
+        app_context.console.print(cs.UI_HELP_COMMANDS)
+        return current
+    return None
+
+
+def _session_question_text(question: str) -> str:
+    if not app_context.session.cancelled:
+        return question
+    question_text = question + get_session_context()
+    app_context.session.reset_cancelled()
+    return question_text
+
+
 async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -1658,32 +1680,21 @@ async def _run_interactive_loop(
                 initial_question = None
                 continue
 
-            command_parts = stripped_lower.split(maxsplit=1)
-            if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
-                model_override, model_override_string, model_override_config = (
-                    _handle_model_command(
-                        stripped_question,
-                        model_override,
-                        model_override_string,
-                        model_override_config,
-                    )
-                )
-                initial_question = None
-                continue
-            if command_parts[0] == cs.HELP_COMMAND:
-                app_context.console.print(cs.UI_HELP_COMMANDS)
+            handled = _dispatch_local_command(
+                stripped_question,
+                stripped_lower.split(maxsplit=1)[0],
+                (model_override, model_override_string, model_override_config),
+            )
+            if handled is not None:
+                model_override, model_override_string, model_override_config = handled
                 initial_question = None
                 continue
 
             log_session_event(f"{cs.SESSION_PREFIX_USER}{question}")
 
-            if app_context.session.cancelled:
-                question_text = question + get_session_context()
-                app_context.session.reset_cancelled()
-            else:
-                question_text = question
-
-            user_prompt: str | list[UserContent] = _build_user_prompt(question_text)
+            user_prompt: str | list[UserContent] = _build_user_prompt(
+                _session_question_text(question)
+            )
 
             await _run_agent_response_loop(
                 rag_agent,
@@ -1897,6 +1908,36 @@ def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
     return selected
 
 
+def _parse_keep_selection(response: str) -> tuple[list[int], list[int]]:
+    """Split a keep-prompt answer into zero-based expand and plain indices."""
+    expand_requests: list[int] = []
+    regular_selections: list[int] = []
+
+    for raw_part in response.split(","):
+        part = raw_part.strip().lower()
+        if not part:
+            continue
+
+        if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
+            expand_requests.append(int(part[:-1]) - 1)
+        elif part.isdigit():
+            regular_selections.append(int(part) - 1)
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
+
+    return expand_requests, regular_selections
+
+
+def _selected_roots(indices: list[int], sorted_roots: list[str]) -> list[str]:
+    roots: list[str] = []
+    for idx in indices:
+        if 0 <= idx < len(sorted_roots):
+            roots.append(sorted_roots[idx])
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+    return roots
+
+
 def prompt_for_unignored_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
@@ -1924,36 +1965,14 @@ def prompt_for_unignored_directories(
     if response.lower() == cs.INTERACTIVE_KEEP_NONE:
         return cgrignore.unignore
 
+    expand_requests, regular_selections = _parse_keep_selection(response)
     selected: set[str] = set()
-    expand_requests: list[int] = []
-    regular_selections: list[int] = []
 
-    for part in response.split(","):
-        part = part.strip().lower()
-        if not part:
-            continue
+    for root in _selected_roots(expand_requests, sorted_roots):
+        selected.update(_prompt_nested_selection(root, groups[root]))
 
-        if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
-            expand_requests.append(int(part[:-1]) - 1)
-        elif part.isdigit():
-            regular_selections.append(int(part) - 1)
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
-
-    for idx in expand_requests:
-        if 0 <= idx < len(sorted_roots):
-            root = sorted_roots[idx]
-            nested_selected = _prompt_nested_selection(root, groups[root])
-            selected.update(nested_selected)
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
-
-    for idx in regular_selections:
-        if 0 <= idx < len(sorted_roots):
-            root = sorted_roots[idx]
-            selected.update(groups[root])
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+    for root in _selected_roots(regular_selections, sorted_roots):
+        selected.update(groups[root])
 
     return frozenset(selected) | cgrignore.unignore
 
