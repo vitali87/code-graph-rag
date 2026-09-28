@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ipaddress
 import os
 import shutil
 import subprocess
@@ -68,24 +67,29 @@ def _memgraph_credentials() -> tuple[str, str] | None:
     return (username, password) if username and password else None
 
 
+def _bundled_qdrant_hosts() -> set[str]:
+    """The hosts that reach the port the bundled Qdrant publishes.
+
+    It is published on CGR_STACK_BIND_HOST only, 127.0.0.1 by default, so
+    another loopback address on the same port can be a different Qdrant.
+    """
+    bind = os.environ.get(cs.COMPOSE_BIND_HOST_VAR) or cs.LOOPBACK_HOST
+    hosts = {bind}
+    if bind == cs.LOOPBACK_HOST or bind in cs.WILDCARD_BIND_HOSTS:
+        hosts |= {cs.LOCALHOST_NAME, cs.LOOPBACK_HOST}
+    return hosts
+
+
 def _targets_bundled_qdrant(url: str | None, port: int) -> bool:
     """Whether QDRANT_URL names the Qdrant this stack publishes on `port`."""
     if not url:
         return False
     parts = urlsplit(url)
-    host = parts.hostname
     try:
         url_port = parts.port or cs.QDRANT_CLIENT_DEFAULT_PORT
     except ValueError:
         return False
-    if host is None or url_port != port:
-        return False
-    if host in (cs.LOCALHOST_NAME, os.environ.get(cs.COMPOSE_BIND_HOST_VAR)):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    return url_port == port and parts.hostname in _bundled_qdrant_hosts()
 
 
 def _bundled_qdrant_api_key(port: int) -> str | None:

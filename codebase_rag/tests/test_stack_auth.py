@@ -654,9 +654,11 @@ class TestAppStartOnARunningStack:
     [
         ("http://localhost:6333", True),
         ("http://127.0.0.1:6333", True),
-        ("http://[::1]:6333", True),
         # qdrant-client connects to 6333 when the URL gives no port.
         ("http://localhost", True),
+        # The stack publishes on 127.0.0.1 only, so these can be another Qdrant.
+        ("http://127.0.0.2:6333", False),
+        ("http://[::1]:6333", False),
         ("https://abc.eu-central.aws.cloud.qdrant.io:6333", False),
         ("http://qdrant.internal:6333", False),
         ("http://localhost:6334", False),
@@ -671,12 +673,23 @@ def test_qdrant_url_is_recognised_as_the_bundled_qdrant(
     assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
 
 
-def test_qdrant_url_on_the_widened_bind_address_is_the_bundled_qdrant(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("bind", "url", "bundled"),
+    [
+        ("192.168.1.5", "http://192.168.1.5:6333", True),
+        # Bound to one address only, the port is not published on loopback.
+        ("192.168.1.5", "http://localhost:6333", False),
+        # A wildcard bind also publishes on loopback.
+        ("0.0.0.0", "http://localhost:6333", True),
+        ("0.0.0.0", "http://127.0.0.1:6333", True),
+    ],
+)
+def test_qdrant_url_follows_the_bind_address(
+    monkeypatch: pytest.MonkeyPatch, bind: str, url: str, bundled: bool
 ) -> None:
-    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, "192.168.1.5")
+    monkeypatch.setenv(cs.COMPOSE_BIND_HOST_VAR, bind)
 
-    assert manager_module._targets_bundled_qdrant("http://192.168.1.5:6333", 6333)
+    assert manager_module._targets_bundled_qdrant(url, 6333) is bundled
 
 
 @pytest.mark.usefixtures("credentials")
