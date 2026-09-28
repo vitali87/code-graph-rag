@@ -90,12 +90,7 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
             if name := safe_decode_text(node):
-                full_path = (
-                    f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{name}"
-                    if base_path
-                    else name
-                )
-                imports[name] = full_path
+                imports[name] = _join_use_path(base_path, name)
 
         case cs.TS_SCOPED_IDENTIFIER | cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
             # Inside a brace list the scoped path is RELATIVE to the
@@ -103,11 +98,9 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             # crate::flags::hiargs::HiArgs); stored bare it can never be
             # followed, and every consumer of the re-export silently
             # loses resolution (ripgrep's HiArgs surface, issue #1039).
-            if full_path := _extract_path_from_node(node):
-                if base_path:
-                    full_path = f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{full_path}"
-                parts = full_path.split(cs.SEPARATOR_DOUBLE_COLON)
-                imports[parts[-1]] = full_path
+            if path := _extract_path_from_node(node):
+                full_path = _join_use_path(base_path, path)
+                imports[full_path.split(cs.SEPARATOR_DOUBLE_COLON)[-1]] = full_path
 
         case cs.TS_RS_USE_AS_CLAUSE:
             _process_use_as_clause(node, base_path, imports)
@@ -124,26 +117,34 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
             _process_scoped_use_list(node, base_path, imports)
 
         case cs.KEYWORD_SELF:
-            # `use std::io::{self, Write}` imports the base path ITSELF, in
-            # scope under its own last segment (`io`), which is the name every
-            # later `io::...` spelling in the file is written against. Keyed on
-            # the keyword the binding is unreachable, the real name is absent,
-            # and those spellings resolve by trie luck instead (issue #1054).
-            if base_path:
-                name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
-                # A relative base (`use super::{self, x}`) leaves a keyword
-                # where the name would be, and rustc rejects that spelling
-                # outright ("imports need to be explicitly named"), so there is
-                # no binding to record.
-                if name not in cs.RS_PATH_KEYWORDS:
-                    # Marked weak: the name comes from the path rather than the
-                    # source, and it must not evict a name another `use` bound
-                    # in the other namespace (see the constant).
-                    imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
+            _process_use_self(base_path, imports)
 
         case _:
             for child in node.children:
                 _process_use_tree(child, base_path, imports)
+
+
+def _join_use_path(base_path: str, path: str) -> str:
+    return f"{base_path}{cs.SEPARATOR_DOUBLE_COLON}{path}" if base_path else path
+
+
+def _process_use_self(base_path: str, imports: dict[str, str]) -> None:
+    # `use std::io::{self, Write}` imports the base path ITSELF, in scope
+    # under its own last segment (`io`), which is the name every later
+    # `io::...` spelling in the file is written against. Keyed on the keyword
+    # the binding is unreachable, the real name is absent, and those
+    # spellings resolve by trie luck instead (issue #1054).
+    if not base_path:
+        return
+    name = base_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, maxsplit=1)[-1]
+    # A relative base (`use super::{self, x}`) leaves a keyword where the name
+    # would be, and rustc rejects that spelling outright ("imports need to be
+    # explicitly named"), so there is no binding to record.
+    if name not in cs.RS_PATH_KEYWORDS:
+        # Marked weak: the name comes from the path rather than the source,
+        # and it must not evict a name another `use` bound in the other
+        # namespace (see the constant).
+        imports[f"{cs.RS_SELF_MODULE_PREFIX}{name}"] = base_path
 
 
 def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) -> None:
