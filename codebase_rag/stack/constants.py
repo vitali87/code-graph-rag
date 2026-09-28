@@ -89,10 +89,11 @@ ERR_AUTH_NOT_VERIFIED = (
     "'docker compose config' failed, so it cannot be checked which "
     "credentials the stack would start with: {detail}. Not starting the stack."
 )
-WARN_QDRANT_REJECTS_KEY = (
+ERR_QDRANT_REJECTS_KEY = (
     "The running Qdrant rejects the configured QDRANT_API_KEY, so it was "
     "started with a different key. Qdrant reads its key when the container is "
-    "created: run 'cgr daemon down' and then 'cgr daemon up'."
+    "created: run 'cgr daemon down' and then 'cgr daemon up', which keeps the "
+    "data volumes."
 )
 # The message Memgraph rejects a Bolt login with. Its client raises the same
 # exception type for a refused connection, so only the text tells them apart.
@@ -112,10 +113,11 @@ ERR_MEMGRAPH_REJECTS_CREDENTIALS = (
     "MEMGRAPH_PASSWORD back, or log in with it and run "
     "SET PASSWORD FOR <user> TO '<new password>'; and then set the new one."
 )
-WARN_STACK_ACCEPTS_ANONYMOUS = (
+ERR_STACK_ACCEPTS_ANONYMOUS = (
     "Credentials are configured, but these running services still accept "
     "connections without them: {services}. Containers take credentials when "
-    "they are created: run 'cgr daemon down' and then 'cgr daemon up'."
+    "they are created: run 'cgr daemon down' and then 'cgr daemon up', which "
+    "keeps the data volumes."
 )
 
 # The substitution that pins published ports to a host address. Its absence

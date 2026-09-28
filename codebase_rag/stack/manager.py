@@ -396,35 +396,38 @@ class StackManager:
                 return config
         raise StackError(cs.ERR_AUTH_NOT_VERIFIED.format(detail=detail))
 
-    def warn_if_auth_not_enforced(self) -> None:
-        """Flag a running stack whose authentication differs from the settings.
+    def raise_if_auth_not_enforced(self) -> None:
+        """Refuse a running stack whose authentication differs from the settings.
 
         Containers take their environment when they are created, so a stack
         that was up before credentials were configured stays open, and one
         started with an earlier Qdrant key keeps it. The health checks cannot
         tell: /readyz needs no key, and a Memgraph with no users accepts any
         login. A Memgraph that rejects the login already fails its probe.
+        Carrying on would leave the data open while the settings say it is
+        protected, as the start path refuses to do.
         """
         open_services: list[str] = []
         if self.memgraph_credentials and memgraph_accepts_anonymous(
             self.memgraph_host, self.memgraph_port
         ):
             open_services.append(cs.SERVICE_MEMGRAPH)
+        key_rejected = False
         if api_key := self.qdrant_api_key:
             if qdrant_accepts_anonymous(self.qdrant_port, host=self.qdrant_host):
                 open_services.append(cs.SERVICE_QDRANT)
             # The probe is plain http, so like the app it sends the key only
             # when QDRANT_ALLOW_INSECURE_API_KEY allows that.
-            elif settings.QDRANT_ALLOW_INSECURE_API_KEY and not qdrant_accepts_key(
-                self.qdrant_port, api_key, host=self.qdrant_host
-            ):
-                logger.warning(cs.WARN_QDRANT_REJECTS_KEY)
-        if open_services:
-            logger.warning(
-                cs.WARN_STACK_ACCEPTS_ANONYMOUS.format(
-                    services=", ".join(open_services)
+            elif settings.QDRANT_ALLOW_INSECURE_API_KEY:
+                key_rejected = not qdrant_accepts_key(
+                    self.qdrant_port, api_key, host=self.qdrant_host
                 )
+        if open_services:
+            raise StackError(
+                cs.ERR_STACK_ACCEPTS_ANONYMOUS.format(services=", ".join(open_services))
             )
+        if key_rejected:
+            raise StackError(cs.ERR_QDRANT_REJECTS_KEY)
 
     def _compose_env(self) -> dict[str, str]:
         """The environment `docker compose up` runs in.
@@ -636,7 +639,7 @@ class StackManager:
             # already up never reaches it, and its long-lived compose file is
             # exactly the profile of a pre-#1012 public binding (issue #1380).
             self.warn_if_ports_are_public()
-            self.warn_if_auth_not_enforced()
+            self.raise_if_auth_not_enforced()
             return current
         # Starting it again would not help, and waiting for health would only
         # delay the same answer.

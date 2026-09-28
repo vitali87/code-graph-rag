@@ -311,14 +311,14 @@ def _resolve_active_projects(projects: str | None, default_project: str) -> list
 
 def _maybe_start_stack() -> None:
     mgr = StackManager()
-    if mgr.status().state == StackState.RUNNING:
-        # This early return bypasses ensure_running, so it needs its own
-        # public-port (issue #1380) and authentication checks for a stack
-        # that is already up.
-        mgr.warn_if_ports_are_public()
-        mgr.warn_if_auth_not_enforced()
-        return
     try:
+        if mgr.status().state == StackState.RUNNING:
+            # This early return bypasses ensure_running, so it needs its own
+            # public-port (issue #1380) and authentication checks for a stack
+            # that is already up.
+            mgr.warn_if_ports_are_public()
+            mgr.raise_if_auth_not_enforced()
+            return
         mgr.ensure_running()
     except StackError as e:
         app_context.console.print(style(str(e), cs.Color.RED))

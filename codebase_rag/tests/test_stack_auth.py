@@ -20,6 +20,7 @@ from typing import TypedDict
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 import yaml
 from loguru import logger
 
@@ -479,7 +480,9 @@ def _ensure_running_on_a_healthy_stack(
     memgraph_open: bool,
     qdrant_open: bool,
     qdrant_key_accepted: bool = True,
-) -> tuple[list[str], MagicMock, MagicMock, MagicMock]:
+) -> tuple[str | None, MagicMock, MagicMock, MagicMock]:
+    """The error `ensure_running` refuses the running stack with, if any."""
+    error: str | None = None
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
         patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
@@ -496,64 +499,68 @@ def _ensure_running_on_a_healthy_stack(
             return_value=qdrant_key_accepted,
         ) as key_probe,
     ):
-        messages = _warnings_from(mgr.ensure_running)
-    return messages, memgraph_probe, qdrant_probe, key_probe
+        try:
+            mgr.ensure_running()
+        except StackError as refused:
+            error = str(refused)
+    return error, memgraph_probe, qdrant_probe, key_probe
 
 
 @pytest.mark.usefixtures("credentials")
-def test_running_stack_that_accepts_anonymous_access_is_flagged(
+def test_running_stack_that_accepts_anonymous_access_is_refused(
     tmp_path: Path,
 ) -> None:
     # A stack created before the credentials were set stays open, and its
     # health checks pass either way.
-    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
+    error, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=True, qdrant_open=True
     )
 
-    warning = next(m for m in messages if "still accept" in m)
-    assert cs.SERVICE_MEMGRAPH in warning
-    assert cs.SERVICE_QDRANT in warning
+    assert error is not None
+    assert "still accept" in error
+    assert cs.SERVICE_MEMGRAPH in error
+    assert cs.SERVICE_QDRANT in error
 
 
 @pytest.mark.usefixtures("credentials")
-def test_running_stack_that_requires_the_credentials_is_not_flagged(
+def test_running_stack_that_requires_the_credentials_is_used(
     tmp_path: Path,
 ) -> None:
-    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
+    error, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=False, qdrant_open=False
     )
 
-    assert not any("still accept" in m for m in messages)
+    assert error is None
 
 
 @pytest.mark.usefixtures("no_credentials")
 def test_running_stack_without_credentials_is_not_probed(tmp_path: Path) -> None:
-    messages, memgraph_probe, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
+    error, memgraph_probe, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=True, qdrant_open=True
     )
 
     memgraph_probe.assert_not_called()
     qdrant_probe.assert_not_called()
-    assert not any("still accept" in m for m in messages)
+    assert error is None
 
 
 @pytest.mark.usefixtures("credentials")
-def test_running_qdrant_with_an_earlier_key_is_flagged(
+def test_running_qdrant_with_an_earlier_key_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Anonymous requests are rejected, so only trying the configured key shows
     # that the app's requests would be rejected too.
     monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", True)
 
-    messages, _, _, _ = _ensure_running_on_a_healthy_stack(
+    error, _, _, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path),
         memgraph_open=False,
         qdrant_open=False,
         qdrant_key_accepted=False,
     )
 
-    assert any("rejects the configured QDRANT_API_KEY" in m for m in messages)
-    assert not any("still accept" in m for m in messages)
+    assert error is not None
+    assert "rejects the configured QDRANT_API_KEY" in error
 
 
 @pytest.mark.usefixtures("credentials")
@@ -564,7 +571,7 @@ def test_running_qdrant_is_not_sent_the_key_without_the_plain_http_opt_in(
     # over plain http without the opt-in.
     monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", False)
 
-    messages, _, _, key_probe = _ensure_running_on_a_healthy_stack(
+    error, _, _, key_probe = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path),
         memgraph_open=False,
         qdrant_open=False,
@@ -572,7 +579,7 @@ def test_running_qdrant_is_not_sent_the_key_without_the_plain_http_opt_in(
     )
 
     key_probe.assert_not_called()
-    assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)
+    assert error is None
 
 
 @pytest.mark.usefixtures("credentials")
@@ -633,38 +640,69 @@ def test_wait_healthy_without_credentials_does_not_try_a_login(
 
 class TestAppStartOnARunningStack:
     """The app's own start path returns early for a running stack instead of
-    going through ensure_running, so it runs the authentication check too."""
+    going through ensure_running, so it runs the authentication check too,
+    and stops the app the way a failed start does."""
 
     @pytest.fixture
     def _disable_stack_autostart(self) -> None:
         # Exercise the real `_maybe_start_stack` instead of conftest's mock.
         return
 
-    @pytest.mark.usefixtures("credentials")
-    def test_flags_a_running_stack_that_accepts_anonymous_access(
-        self, tmp_path: Path
-    ) -> None:
+    @staticmethod
+    def _start_on_a_running_stack(
+        mgr: StackManager, open_access: bool
+    ) -> tuple[str, int | None, MagicMock]:
+        """What the app printed, its exit code if it stopped, and the start."""
         from codebase_rag.cli import _maybe_start_stack
+        from codebase_rag.cli_runtime import app_context
 
-        mgr = _manager(tmp_path)
+        exit_code: int | None = None
         with (
             patch("codebase_rag.cli.StackManager", return_value=mgr),
             patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
             patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
             patch(
                 "codebase_rag.stack.manager.memgraph_accepts_anonymous",
-                return_value=True,
+                return_value=open_access,
             ),
             patch(
                 "codebase_rag.stack.manager.qdrant_accepts_anonymous",
-                return_value=True,
+                return_value=open_access,
             ),
+            patch.object(app_context.console, "print") as printed,
+            patch.object(mgr, "ensure_running") as ensure_running,
         ):
-            messages = _warnings_from(_maybe_start_stack)
+            try:
+                _maybe_start_stack()
+            except typer.Exit as exited:
+                exit_code = exited.exit_code
+        shown = " ".join(str(call.args[0]) for call in printed.call_args_list)
+        return shown, exit_code, ensure_running
 
-        warning = next(m for m in messages if "still accept" in m)
-        assert cs.SERVICE_MEMGRAPH in warning
-        assert cs.SERVICE_QDRANT in warning
+    @pytest.mark.usefixtures("credentials")
+    def test_stops_on_a_running_stack_that_accepts_anonymous_access(
+        self, tmp_path: Path
+    ) -> None:
+        shown, exit_code, _ = self._start_on_a_running_stack(
+            _manager(tmp_path), open_access=True
+        )
+
+        assert exit_code == 1
+        assert "still accept" in shown
+        assert cs.SERVICE_MEMGRAPH in shown
+        assert cs.SERVICE_QDRANT in shown
+
+    @pytest.mark.usefixtures("credentials")
+    def test_carries_on_with_a_running_stack_that_requires_the_credentials(
+        self, tmp_path: Path
+    ) -> None:
+        shown, exit_code, ensure_running = self._start_on_a_running_stack(
+            _manager(tmp_path), open_access=False
+        )
+
+        assert exit_code is None
+        assert shown == ""
+        ensure_running.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -696,13 +734,12 @@ def test_a_key_for_another_qdrant_is_not_copied_into_the_local_container(
     mgr = _manager(tmp_path)
 
     assert cs.ENV_QDRANT_API_KEY not in mgr._compose_env()
-    messages, _, qdrant_probe, key_probe = _ensure_running_on_a_healthy_stack(
+    error, _, qdrant_probe, key_probe = _ensure_running_on_a_healthy_stack(
         mgr, memgraph_open=False, qdrant_open=True, qdrant_key_accepted=False
     )
     qdrant_probe.assert_not_called()
     key_probe.assert_not_called()
-    assert not any("still accept" in m for m in messages)
-    assert not any("rejects the configured QDRANT_API_KEY" in m for m in messages)
+    assert error is None
 
 
 def test_local_address_is_one_of_this_machines_addresses() -> None:
@@ -795,12 +832,13 @@ def test_running_stack_checks_qdrant_on_the_bind_address(
         manager_module, "_is_local_address", lambda host: host == "192.168.1.5"
     )
 
-    messages, _, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
+    error, _, qdrant_probe, _ = _ensure_running_on_a_healthy_stack(
         _manager(tmp_path), memgraph_open=False, qdrant_open=True
     )
 
     qdrant_probe.assert_called_once_with(6333, host="192.168.1.5")
-    assert any("still accept" in m for m in messages)
+    assert error is not None
+    assert "still accept" in error
 
 
 def test_qdrant_probe_brackets_an_ipv6_address() -> None:
