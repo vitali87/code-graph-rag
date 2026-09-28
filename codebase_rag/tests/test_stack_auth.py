@@ -68,6 +68,19 @@ def no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "QDRANT_API_KEY", None)
 
 
+@pytest.fixture(autouse=True)
+def _nothing_running_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `up` looks for a service already running open before it starts, and no
+    # unit test reaches a real Memgraph or Qdrant; a test that needs another
+    # answer patches the probe itself.
+    monkeypatch.setattr(manager_module, "memgraph_accepts_anonymous", _closed)
+    monkeypatch.setattr(manager_module, "qdrant_accepts_anonymous", _closed)
+
+
+def _closed(*_: str | int, **__: str) -> bool:
+    return False
+
+
 def _manager(tmp_path: Path) -> StackManager:
     return StackManager(home=tmp_path / "cgr-home", package_compose=COMPOSE_PATH)
 
@@ -372,7 +385,7 @@ def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
 ) -> None:
     # `up` and `restart` end in wait_healthy: a ready service is checked for
     # the credentials too, whether or not Compose recreated its container,
-    # and the stack just started is stopped rather than left running open.
+    # and an open service just started is stopped rather than left running.
     mgr = _manager(tmp_path)
     with (
         patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
@@ -390,7 +403,7 @@ def test_a_started_stack_that_does_not_enforce_the_credentials_is_refused(
     ):
         mgr.wait_healthy(timeout=0.1)
 
-    stop.assert_called_once_with()
+    stop.assert_called_once_with(open_services)
 
 
 @pytest.mark.usefixtures("credentials")
@@ -484,12 +497,16 @@ def _failure_of(action: Callable[[], None]) -> tuple[BaseException, list[str]]:
     ("qdrant_ready", "failure"),
     [(False, StackError), (KeyboardInterrupt(), KeyboardInterrupt)],
 )
-@pytest.mark.parametrize("memgraph_open", [True, False])
-def test_a_start_whose_health_wait_fails_stops_only_a_stack_left_open(
+@pytest.mark.parametrize(
+    ("memgraph_open", "stopped"),
+    [(True, [(cs.SERVICE_MEMGRAPH,)]), (False, [])],
+)
+def test_a_start_whose_health_wait_fails_stops_only_an_open_service(
     tmp_path: Path,
     qdrant_ready: bool | KeyboardInterrupt,
     failure: type[BaseException],
     memgraph_open: bool,
+    stopped: list[tuple[str, ...]],
 ) -> None:
     # Such a start never reaches the credential check after the wait. A
     # protected service that is merely slow to start is left running.
@@ -502,7 +519,7 @@ def test_a_start_whose_health_wait_fails_stops_only_a_stack_left_open(
         error, messages = _failure_of(lambda: mgr.wait_healthy(0))
 
     assert isinstance(error, failure)
-    assert stop.called is memgraph_open
+    assert [c.args for c in stop.call_args_list] == stopped
     warned = any("did not finish" in m and cs.SERVICE_MEMGRAPH in m for m in messages)
     assert warned is memgraph_open
 
@@ -524,12 +541,16 @@ def test_a_start_whose_health_wait_fails_stops_only_a_stack_left_open(
         (KeyboardInterrupt(), KeyboardInterrupt),
     ],
 )
-@pytest.mark.parametrize("memgraph_open", [True, False])
-def test_up_that_fails_stops_only_a_stack_left_open(
+@pytest.mark.parametrize(
+    ("memgraph_open", "stopped"),
+    [(True, [(cs.SERVICE_MEMGRAPH,)]), (False, [])],
+)
+def test_up_that_fails_stops_only_an_open_service_it_started(
     tmp_path: Path,
     compose_up: subprocess.CompletedProcess[str] | BaseException,
     failure: type[BaseException],
     memgraph_open: bool,
+    stopped: list[tuple[str, ...]],
 ) -> None:
     # `up -d` can start some containers before it fails or is cut short.
     mgr = _manager(tmp_path)
@@ -539,12 +560,42 @@ def test_up_that_fails_stops_only_a_stack_left_open(
             "codebase_rag.stack.manager.subprocess.run",
             side_effect=[_compose_config(MATCHING_ENV), compose_up],
         ),
-        _left_running(mgr, memgraph_open) as stop,
+        # Closed before `up -d`, so a Memgraph open after it is this start's.
+        patch(
+            "codebase_rag.stack.manager.memgraph_accepts_anonymous",
+            side_effect=[False, memgraph_open],
+        ),
+        patch(
+            "codebase_rag.stack.manager.qdrant_accepts_anonymous", return_value=False
+        ),
+        patch.object(mgr, "stop") as stop,
     ):
         error, _ = _failure_of(mgr.up)
 
     assert isinstance(error, failure)
-    assert stop.called is memgraph_open
+    assert [c.args for c in stop.call_args_list] == stopped
+
+
+@pytest.mark.usefixtures("credentials")
+def test_up_refuses_a_stack_already_running_open_and_leaves_it_running(
+    tmp_path: Path,
+) -> None:
+    # This start did not start it, and other clients may be using it. Refused
+    # here, nothing open after `up -d` can be another invocation's.
+    mgr = _manager(tmp_path)
+    with (
+        patch.object(mgr, "check_docker"),
+        patch(
+            "codebase_rag.stack.manager.subprocess.run",
+            return_value=_compose_config(MATCHING_ENV),
+        ) as run,
+        _left_running(mgr, memgraph_open=True) as stop,
+        pytest.raises(StackError, match="without them: memgraph\\."),
+    ):
+        mgr.up()
+
+    assert all(c.args[0][-2:] != ["up", "-d"] for c in run.call_args_list)
+    stop.assert_not_called()
 
 
 @pytest.mark.usefixtures("credentials")
@@ -565,6 +616,25 @@ def test_up_refused_before_starting_stops_nothing(tmp_path: Path) -> None:
     stop.assert_not_called()
 
 
+@pytest.mark.usefixtures("credentials")
+def test_a_started_qdrant_that_rejects_the_key_is_refused_but_left_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another key protects it, so there is nothing open to stop.
+    monkeypatch.setattr(settings, "QDRANT_ALLOW_INSECURE_API_KEY", True)
+    mgr = _manager(tmp_path)
+    with (
+        patch("codebase_rag.stack.manager.wait_for_memgraph", return_value=True),
+        patch("codebase_rag.stack.manager.wait_for_qdrant", return_value=True),
+        patch("codebase_rag.stack.manager.qdrant_accepts_key", return_value=False),
+        _left_running(mgr, memgraph_open=False) as stop,
+        pytest.raises(StackError, match="rejects the configured QDRANT_API_KEY"),
+    ):
+        mgr.wait_healthy(0)
+
+    stop.assert_not_called()
+
+
 def test_stop_keeps_the_containers(tmp_path: Path) -> None:
     mgr = _manager(tmp_path)
     mgr.ensure_compose_file()
@@ -578,8 +648,11 @@ def test_stop_keeps_the_containers(tmp_path: Path) -> None:
         ) as run,
     ):
         mgr.stop()
+        mgr.stop(cs.SERVICE_MEMGRAPH)
 
-    assert run.call_args.args[0][-1] == "stop"
+    everything, one_service = run.call_args_list
+    assert everything.args[0][-1] == "stop"
+    assert one_service.args[0][-2:] == ["stop", cs.SERVICE_MEMGRAPH]
 
 
 @pytest.mark.usefixtures("credentials")
@@ -604,7 +677,7 @@ def test_restart_checks_the_restarted_stack_enforces_the_credentials(
 
     assert result.exit_code == 1
     assert "still accept" in result.output
-    stop.assert_called_once_with()
+    stop.assert_called_once_with(cs.SERVICE_MEMGRAPH)
 
 
 def test_bolt_probe_passes_the_login_to_mgclient() -> None:

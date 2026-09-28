@@ -37,14 +37,15 @@ ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
 WARN_START_LEFT_STACK_OPEN = (
-    "The start did not finish, and these services it left running accept "
+    "The start did not finish, and these services it started accept "
     "connections without the configured credentials: {services}. Stopping "
-    "the stack; run 'cgr daemon down' and then 'cgr daemon up', which keeps "
-    "the data volumes."
+    "them; run 'cgr daemon down' and then 'cgr daemon up', which keeps the "
+    "data volumes."
 )
-WARN_UNPROTECTED_STACK_NOT_STOPPED = (
-    "The stack just started does not enforce the configured credentials, and "
-    "stopping it failed: {detail}. Run 'cgr daemon down' before it is used."
+WARN_OPEN_SERVICES_NOT_STOPPED = (
+    "Could not stop the services that accept connections without the "
+    "configured credentials ({services}): {detail}. Run 'cgr daemon down' "
+    "before the stack is used."
 )
 ERR_STACK_NOT_HEALTHY = (
     "Stack started but {service} did not become healthy within {timeout}s."

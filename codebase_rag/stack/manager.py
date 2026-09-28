@@ -454,10 +454,16 @@ class StackManager:
         Carrying on would leave the data open while the settings say it is
         protected, as the start path refuses to do.
         """
-        if open_services := self._services_accepting_anonymous():
+        self._raise_if_open(self._services_accepting_anonymous())
+        self._raise_if_qdrant_rejects_key()
+
+    def _raise_if_open(self, open_services: list[str]) -> None:
+        if open_services:
             raise StackError(
                 cs.ERR_STACK_ACCEPTS_ANONYMOUS.format(services=", ".join(open_services))
             )
+
+    def _raise_if_qdrant_rejects_key(self) -> None:
         # The probe is plain http, so like the app it sends the key only when
         # QDRANT_ALLOW_INSECURE_API_KEY allows that.
         api_key = self.qdrant_api_key
@@ -551,6 +557,10 @@ class StackManager:
             # project again with the environment `up` will run in.
             config = self._resolved_config()
         self._verify_resolved_auth(config)
+        # A service already running open was not started here, so like a stack
+        # found fully up it is refused and left running. Whatever is open after
+        # `up -d` is then this start's own, and the only thing it stops.
+        self._raise_if_open(self._services_accepting_anonymous())
         logger.info(cs.MSG_STARTING_STACK)
         # `up -d` that fails or is cut short may already have started some
         # containers, and the credential check in wait_healthy never runs.
@@ -578,18 +588,20 @@ class StackManager:
     def down(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
         self._stop_containers("down", timeout)
 
-    def stop(self, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S) -> None:
-        """Stop the containers but keep them, with their logs and volumes."""
-        self._stop_containers(cs.COMPOSE_STOP_COMMAND, timeout)
+    def stop(
+        self, *services: str, timeout: float = cs.DEFAULT_DOCKER_TIMEOUT_S
+    ) -> None:
+        """Stop the containers of `services`, or all, keeping logs and volumes."""
+        self._stop_containers(cs.COMPOSE_STOP_COMMAND, timeout, *services)
 
-    def _stop_containers(self, command: str, timeout: float) -> None:
+    def _stop_containers(self, command: str, timeout: float, *services: str) -> None:
         if not self.compose_file.exists():
             return
         if shutil.which(cs.DOCKER_BIN) is None:
             raise StackError(cs.ERR_DOCKER_NOT_INSTALLED)
         logger.info(cs.MSG_STOPPING_STACK)
         result = subprocess.run(
-            self._compose_cmd(command),
+            self._compose_cmd(command, *services),
             capture_output=True,
             text=True,
             encoding=root_cs.ENCODING_UTF8,
@@ -630,9 +642,10 @@ class StackManager:
         self,
         timeout: float = cs.DEFAULT_HEALTH_TIMEOUT_S,
     ) -> None:
-        # Every caller has just started the stack. One whose wait fails or is
-        # interrupted never reaches the credential check below, so an open
-        # service it started is found and stopped here instead.
+        # Every caller has just started the stack, after `up` refused one that
+        # was already open. A start whose wait fails or is interrupted never
+        # reaches the credential check below, so an open service it started
+        # is found and stopped here instead.
         try:
             self._wait_for_services(timeout)
         except (StackError, KeyboardInterrupt):
@@ -640,13 +653,14 @@ class StackManager:
             raise
         # Ready is not the same as protected: prove the started containers
         # enforce the credentials rather than rely on Compose having
-        # recreated each one whose environment changed. A stack that does
-        # not is stopped rather than left running open.
-        try:
-            self.raise_if_auth_not_enforced()
-        except StackError:
-            self._stop_unprotected_stack()
-            raise
+        # recreated each one whose environment changed. An open service is
+        # stopped rather than left running; a Qdrant that rejects the key is
+        # protected by another one, so it is refused but left running.
+        open_services = self._services_accepting_anonymous()
+        if open_services:
+            self._stop_open_services(open_services)
+        self._raise_if_open(open_services)
+        self._raise_if_qdrant_rejects_key()
 
     def _wait_for_services(self, timeout: float) -> None:
         logger.info(
@@ -683,24 +697,27 @@ class StackManager:
             )
 
     def _stop_if_left_open(self) -> None:
-        """Stop a stack that a failed or interrupted start left running open.
+        """Stop the open services a failed or interrupted start left running.
 
-        Only an open service stops it: a protected one that is merely slow to
-        start is left running. Either way, the error that ended the start is
-        the one reported.
+        A protected service that is merely slow to start is left running.
+        Either way, the error that ended the start is the one reported.
         """
         if open_services := self._services_accepting_anonymous():
             logger.warning(
                 cs.WARN_START_LEFT_STACK_OPEN.format(services=", ".join(open_services))
             )
-            self._stop_unprotected_stack()
+            self._stop_open_services(open_services)
 
-    def _stop_unprotected_stack(self) -> None:
+    def _stop_open_services(self, open_services: list[str]) -> None:
         # Whatever stops the stop, the error that led here is the one to report.
         try:
-            self.stop()
+            self.stop(*open_services)
         except (StackError, subprocess.TimeoutExpired, OSError) as e:
-            logger.warning(cs.WARN_UNPROTECTED_STACK_NOT_STOPPED.format(detail=e))
+            logger.warning(
+                cs.WARN_OPEN_SERVICES_NOT_STOPPED.format(
+                    services=", ".join(open_services), detail=e
+                )
+            )
 
     def _raise_if_memgraph_rejects_credentials(self) -> None:
         """Name a rejected login instead of reporting Memgraph as down.
