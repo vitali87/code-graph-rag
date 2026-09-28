@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -511,10 +512,11 @@ class JsTypeInferenceEngine:
         ut.find_return_statements(method_node, return_nodes, self._get_language_obj())
 
         # One O(body) scan shared by every `return <identifier>` in this
-        # method; deliberately NOT stored on the engine: a tree-sitter node id
-        # is a recycled heap address across parses, and holding Node values
-        # would pin whole trees against the bounded AST cache.
-        ctor_index: _CtorBindingIndex | None = None
+        # method, built on first use; deliberately NOT stored on the engine: a
+        # tree-sitter node id is a recycled heap address across parses, and
+        # holding Node values would pin whole trees against the bounded AST
+        # cache.
+        ctor_index = cache(partial(self._js_ctor_binding_index, method_node))
 
         for return_node in return_nodes:
             # Nested callables own their returns: a callback's `return new
@@ -527,58 +529,76 @@ class JsTypeInferenceEngine:
                 return_node, method_node
             ):
                 continue
-            for child in return_node.children:
-                if child.type == cs.TS_RETURN:
-                    continue
-
-                if inferred_type := ut.analyze_return_expression(child, method_qn):
-                    return inferred_type
-
-                if not owner_is_method:
-                    # An IIFE's `return x` reads the IIFE's OWN locals; the
-                    # method-body binding index says nothing about them.
-                    continue
-
-                # `return x` where the METHOD'S OWN body binds `x = new
-                # C(...)` (the cache-then-construct factory, fastify's
-                # ContentType.from, issue #992): the CONSTRUCTED class types
-                # the return when every construction reaching THIS return's
-                # variable agrees. Bindings resolve by SCOPE SPAN: the
-                # innermost declarator whose scope encloses the return is the
-                # variable, so a nested-block shadow neither erases an outer
-                # construction nor inherits it. Unknown-value assignments
-                # (the cache hit) do not veto; a second DIFFERENT class does.
-                if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
-                    if ctor_index is None:
-                        ctor_index = self._js_ctor_binding_index(method_node)
-                    constructed = self._js_constructed_for(
-                        name, child.start_byte, ctor_index
-                    )
-                    if constructed is None:
-                        continue
-                    ctor = ut.extract_constructor_name(constructed)
-                    if ctor:
-                        own_qn = ut.analyze_return_expression(constructed, method_qn)
-                        own_leaf = (
-                            own_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if own_qn else None
-                        )
-                        # analyze_return_expression resolves a NEW to the
-                        # method's OWN class; keep that qn precision only
-                        # when the constructed class IS the own class.
-                        # Otherwise resolve the constructed class in the
-                        # FACTORY'S module (where the construction names it),
-                        # falling back to the bare name.
-                        if ctor == own_leaf:
-                            return own_qn
-                        if own_qn and cs.SEPARATOR_DOT in own_qn:
-                            factory_module = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                            if resolved := self._resolve_js_class_name(
-                                ctor, factory_module
-                            ):
-                                return resolved
-                        return ctor
+            if inferred := self._return_node_type(
+                return_node, method_qn, owner_is_method, ctor_index
+            ):
+                return inferred
 
         return None
+
+    def _return_node_type(
+        self,
+        return_node: ASTNode,
+        method_qn: str,
+        owner_is_method: bool,
+        ctor_index: Callable[[], _CtorBindingIndex],
+    ) -> str | None:
+        for child in return_node.children:
+            if child.type == cs.TS_RETURN:
+                continue
+
+            if inferred_type := ut.analyze_return_expression(child, method_qn):
+                return inferred_type
+
+            if not owner_is_method:
+                # An IIFE's `return x` reads the IIFE's OWN locals; the
+                # method-body binding index says nothing about them.
+                continue
+
+            # `return x` where the METHOD'S OWN body binds `x = new C(...)`
+            # (the cache-then-construct factory, fastify's ContentType.from,
+            # issue #992): the CONSTRUCTED class types the return when every
+            # construction reaching THIS return's variable agrees. Bindings
+            # resolve by SCOPE SPAN: the innermost declarator whose scope
+            # encloses the return is the variable, so a nested-block shadow
+            # neither erases an outer construction nor inherits it.
+            # Unknown-value assignments (the cache hit) do not veto; a second
+            # DIFFERENT class does.
+            if child.type != cs.TS_IDENTIFIER or not (name := safe_decode_text(child)):
+                continue
+            if resolved := self._constructed_return_type(
+                name, child.start_byte, ctor_index(), method_qn
+            ):
+                return resolved
+        return None
+
+    def _constructed_return_type(
+        self,
+        name: str,
+        start_byte: int,
+        ctor_index: _CtorBindingIndex,
+        method_qn: str,
+    ) -> str | None:
+        constructed = self._js_constructed_for(name, start_byte, ctor_index)
+        if constructed is None:
+            return None
+        ctor = ut.extract_constructor_name(constructed)
+        if not ctor:
+            return None
+        own_qn = ut.analyze_return_expression(constructed, method_qn)
+        own_leaf = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if own_qn else None
+        # analyze_return_expression resolves a NEW to the method's OWN class;
+        # keep that qn precision only when the constructed class IS the own
+        # class. Otherwise resolve the constructed class in the FACTORY'S
+        # module (where the construction names it), falling back to the bare
+        # name.
+        if ctor == own_leaf:
+            return own_qn
+        if own_qn and cs.SEPARATOR_DOT in own_qn:
+            factory_module = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if resolved := self._resolve_js_class_name(ctor, factory_module):
+                return resolved
+        return ctor
 
     @staticmethod
     def _return_belongs_to(return_node: ASTNode, method_node: ASTNode) -> bool:

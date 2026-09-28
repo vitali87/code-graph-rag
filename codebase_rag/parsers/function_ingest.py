@@ -315,188 +315,230 @@ class FunctionIngestMixin:
         for func_node in captures.get(cs.CAPTURE_FUNCTION, []):
             if has_classes and self._is_method(func_node, lang_config):
                 continue
-
-            # A C# local function whose name is a reserved keyword is a
-            # parse-recovery artifact: a `#if` splitting an if/else chain
-            # mid-method makes tree-sitter parse the trailing `else if` as a
-            # local_function_statement named `if`. Drop it rather than emit a
-            # bogus (or anonymised) Function node.
-            if (
-                language == cs.SupportedLanguage.CSHARP
-                and func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT
-            ):
-                name_node = func_node.child_by_field_name(cs.FIELD_NAME)
-                if (
-                    name_node
-                    and name_node.text
-                    and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
-                ):
-                    continue
-
-            # A C# member declaration (method/property/operator/ctor) that a
-            # `#if`-truncated class node detached into the namespace's
-            # declaration_list reaches here with no class ancestor. It is a real
-            # class member by grammar invariant, so recover its class and emit a
-            # Method rather than mislabelling it a module Function.
-            if (
-                language == cs.SupportedLanguage.CSHARP
-                and self._recover_csharp_orphan_method(
-                    func_node, module_qn, lang_config, lang_queries, file_path
-                )
-            ):
-                continue
-
-            if language == cs.SupportedLanguage.CPP:
-                if self._handle_cpp_out_of_class_method(
-                    func_node, module_qn, lang_queries
-                ):
-                    continue
-                # The query captures a templated function twice: the
-                # template_declaration wrapper AND its inner definition.
-                # The wrapper is the canonical node (mirroring the class
-                # rule); registering the inner too mints a `qn@line`
-                # duplicate that call attribution can bind to (issue #652).
-                if (
-                    func_node.type == cs.CppNodeType.FUNCTION_DEFINITION
-                    and func_node.parent is not None
-                    and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
-                ):
-                    continue
-                # A macro invocation parsed as a type-less definition
-                # (`FMT_CATCH(...) {}`) must not mint a phantom Function, and a
-                # recovery-orphaned ctor of the same shape must register as a
-                # METHOD of its class, not a module Function that steals the
-                # class's qn. Same-file classes register after this pass, so EVERY
-                # artifact-shaped node (named-param or not) is deferred; the flush
-                # applies the class-registry tiebreak and named-param evidence.
-                if cpp_utils.is_recovery_artifact_shape(func_node):
-                    self._deferred_cpp_artifacts.append(
-                        _DeferredCppArtifact(
-                            func_node, module_qn, lang_config, lang_queries
-                        )
-                    )
-                    continue
-                # A most-vexing-parse misparse (`FlutterWindow window(project);`
-                # inside a function body, issue #871) is a stack-object
-                # construction, not a function declaration: minting it would
-                # create a phantom Function the call pass can bind to (and
-                # deferring it as a prototype would resurrect it at flush).
-                # The construction edges are emitted by the per-caller
-                # declaration pass instead.
-                if cpp_utils.is_cpp_vexing_parse_construction(func_node):
-                    continue
-                # A free-function PROTOTYPE (a declaration with a
-                # function_declarator) may duplicate a bodied definition in
-                # another file; hold it back so resolve_deferred_cpp_prototypes
-                # can drop it when the definition registers (issue #893). A
-                # prototype with INTERNAL linkage (`static`, or inside an
-                # anonymous namespace) is TU-local, so no cross-module
-                # definition can be its definition: it registers inline as
-                # before.
-                if (
-                    func_node.type == cs.CppNodeType.DECLARATION
-                    and any(
-                        child.type == cs.CppNodeType.FUNCTION_DECLARATOR
-                        for child in func_node.children
-                    )
-                    and not cpp_utils.cpp_declaration_has_internal_linkage(func_node)
-                ):
-                    self._deferred_cpp_prototypes.append(
-                        _DeferredCppPrototype(
-                            func_node, module_qn, lang_config, lang_queries
-                        )
-                    )
-                    continue
-
-            if language == cs.SupportedLanguage.GO and self._defer_go_receiver_method(
-                func_node, module_qn, lang_queries
+            if self._skip_language_function(
+                func_node, module_qn, language, lang_config, lang_queries, file_path
             ):
                 continue
 
             resolution = self._resolve_function_identity(
                 func_node, module_qn, language, lang_config, file_path
             )
-            if not resolution:
-                continue
-
-            # A nameless JS/TS function expression may be one a NAMED pass
-            # (object literal, export, assignment, prototype) registers under its
-            # real name; those passes run after this one, so hold the anonymous
-            # registration back and flush only unclaimed spans (each eager
-            # registration was a duplicate node).
-            if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
-                self._deferred_js_anonymous.append(
-                    _DeferredRegistration(
-                        func_node,
-                        resolution,
-                        module_qn,
-                        language,
-                        lang_config,
-                        lang_queries,
-                    )
-                )
-                continue
-
-            # A Rust item written inside a function body, a closure or a
-            # const/static initializer is reachable by path from nowhere, yet it
-            # registers in the qn space of the module or impl target that
-            # encloses it. Registering it here would let it take the natural qn
-            # of the method or module item of that name, which does own it and
-            # whose callers then resolve to this one; hold it back until those
-            # have claimed their names (issue #1037).
-            if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(
-                func_node
+            if not resolution or self._defer_function_registration(
+                func_node, resolution, module_qn, language, lang_config, lang_queries
             ):
-                self._deferred_rust_body_local.append(
-                    _DeferredRegistration(
-                        func_node,
-                        resolution,
-                        module_qn,
-                        language,
-                        lang_config,
-                        lang_queries,
-                    )
-                )
                 continue
 
             self._register_function(
                 func_node, resolution, module_qn, language, lang_config, lang_queries
             )
+            self._record_free_function_return_type(
+                func_node, language, resolution.qualified_name
+            )
 
-            # Record a free C++ function's return type so a chained call off a
-            # factory (`make().run()`) can type the receiver and resolve the next
-            # hop. Runs here, not in the CPP resolver, because the unified-FQN path
-            # wins for C++ and would otherwise bypass the recording.
-            if language == cs.SupportedLanguage.CPP and (
-                return_type := cpp_utils.extract_return_type_name(func_node)
-            ):
-                self.method_return_types[resolution.qualified_name] = return_type
+    def _skip_language_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        match language:
+            case cs.SupportedLanguage.CSHARP:
+                return self._skip_csharp_function(
+                    func_node, module_qn, lang_config, lang_queries, file_path
+                )
+            case cs.SupportedLanguage.CPP:
+                return self._skip_cpp_function(
+                    func_node, module_qn, lang_config, lang_queries
+                )
+            case cs.SupportedLanguage.GO:
+                return self._defer_go_receiver_method(
+                    func_node, module_qn, lang_queries
+                )
+            case _:
+                return False
 
-            # Same for a free Rust fn (impl methods are recorded in class
-            # ingest): a call-bound local (`let s = make()`) types from
-            # this map. No impl target here, so a `Self` return stays None.
-            if language == cs.SupportedLanguage.RUST and (
-                return_type := rs_utils.extract_return_type_name(func_node, None)
+    def _skip_csharp_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+        file_path: Path | None,
+    ) -> bool:
+        # A C# local function whose name is a reserved keyword is a
+        # parse-recovery artifact: a `#if` splitting an if/else chain
+        # mid-method makes tree-sitter parse the trailing `else if` as a
+        # local_function_statement named `if`. Drop it rather than emit a
+        # bogus (or anonymised) Function node.
+        if func_node.type == cs.TS_CSHARP_LOCAL_FUNCTION_STATEMENT:
+            name_node = func_node.child_by_field_name(cs.FIELD_NAME)
+            if (
+                name_node
+                and name_node.text
+                and safe_decode_text(name_node) in cs.CSHARP_RESERVED_KEYWORDS
             ):
-                self.method_return_types[resolution.qualified_name] = return_type
+                return True
 
-            # Same for a Dart free function: a call-bound local
-            # (`var g = makeIt()` via the enrichment pass) types from
-            # this map.
-            if language == cs.SupportedLanguage.DART and (
-                return_type := dart_return_type_name(func_node)
-            ):
-                self.method_return_types[resolution.qualified_name] = return_type
+        # A C# member declaration (method/property/operator/ctor) that a
+        # `#if`-truncated class node detached into the namespace's
+        # declaration_list reaches here with no class ancestor. It is a real
+        # class member by grammar invariant, so recover its class and emit a
+        # Method rather than mislabelling it a module Function.
+        return self._recover_csharp_orphan_method(
+            func_node, module_qn, lang_config, lang_queries, file_path
+        )
 
-            # Go free functions record their FIRST return type in a
-            # dedicated map so `cm, err := getManager()` types cm under the
-            # (T, error) idiom (viper's false Get->Get self edge). Not
-            # method_return_types: chaining must keep skipping uncallable
-            # multi-return callees.
-            if language == cs.SupportedLanguage.GO and (
-                return_type := go_utils.extract_first_return_type_name(func_node)
-            ):
-                self.go_function_return_types[resolution.qualified_name] = return_type
+    def _skip_cpp_function(
+        self,
+        func_node: Node,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+    ) -> bool:
+        if self._handle_cpp_out_of_class_method(func_node, module_qn, lang_queries):
+            return True
+        # The query captures a templated function twice: the
+        # template_declaration wrapper AND its inner definition.
+        # The wrapper is the canonical node (mirroring the class
+        # rule); registering the inner too mints a `qn@line`
+        # duplicate that call attribution can bind to (issue #652).
+        if (
+            func_node.type == cs.CppNodeType.FUNCTION_DEFINITION
+            and func_node.parent is not None
+            and func_node.parent.type == cs.CppNodeType.TEMPLATE_DECLARATION
+        ):
+            return True
+        # A macro invocation parsed as a type-less definition
+        # (`FMT_CATCH(...) {}`) must not mint a phantom Function, and a
+        # recovery-orphaned ctor of the same shape must register as a
+        # METHOD of its class, not a module Function that steals the
+        # class's qn. Same-file classes register after this pass, so EVERY
+        # artifact-shaped node (named-param or not) is deferred; the flush
+        # applies the class-registry tiebreak and named-param evidence.
+        if cpp_utils.is_recovery_artifact_shape(func_node):
+            self._deferred_cpp_artifacts.append(
+                _DeferredCppArtifact(func_node, module_qn, lang_config, lang_queries)
+            )
+            return True
+        # A most-vexing-parse misparse (`FlutterWindow window(project);`
+        # inside a function body, issue #871) is a stack-object
+        # construction, not a function declaration: minting it would
+        # create a phantom Function the call pass can bind to (and
+        # deferring it as a prototype would resurrect it at flush).
+        # The construction edges are emitted by the per-caller
+        # declaration pass instead.
+        if cpp_utils.is_cpp_vexing_parse_construction(func_node):
+            return True
+        # A free-function PROTOTYPE (a declaration with a
+        # function_declarator) may duplicate a bodied definition in
+        # another file; hold it back so resolve_deferred_cpp_prototypes
+        # can drop it when the definition registers (issue #893). A
+        # prototype with INTERNAL linkage (`static`, or inside an
+        # anonymous namespace) is TU-local, so no cross-module
+        # definition can be its definition: it registers inline as
+        # before.
+        if (
+            func_node.type == cs.CppNodeType.DECLARATION
+            and any(
+                child.type == cs.CppNodeType.FUNCTION_DECLARATOR
+                for child in func_node.children
+            )
+            and not cpp_utils.cpp_declaration_has_internal_linkage(func_node)
+        ):
+            self._deferred_cpp_prototypes.append(
+                _DeferredCppPrototype(func_node, module_qn, lang_config, lang_queries)
+            )
+            return True
+        return False
+
+    def _defer_function_registration(
+        self,
+        func_node: Node,
+        resolution: FunctionResolution,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        lang_config: LanguageSpec,
+        lang_queries: LanguageQueries,
+    ) -> bool:
+        # A nameless JS/TS function expression may be one a NAMED pass
+        # (object literal, export, assignment, prototype) registers under its
+        # real name; those passes run after this one, so hold the anonymous
+        # registration back and flush only unclaimed spans (each eager
+        # registration was a duplicate node).
+        if language in cs.JS_TS_LANGUAGES and resolution.is_anonymous:
+            self._deferred_js_anonymous.append(
+                _DeferredRegistration(
+                    func_node,
+                    resolution,
+                    module_qn,
+                    language,
+                    lang_config,
+                    lang_queries,
+                )
+            )
+            return True
+
+        # A Rust item written inside a function body, a closure or a
+        # const/static initializer is reachable by path from nowhere, yet it
+        # registers in the qn space of the module or impl target that
+        # encloses it. Registering it here would let it take the natural qn
+        # of the method or module item of that name, which does own it and
+        # whose callers then resolve to this one; hold it back until those
+        # have claimed their names (issue #1037).
+        if language == cs.SupportedLanguage.RUST and rs_utils.is_body_local(func_node):
+            self._deferred_rust_body_local.append(
+                _DeferredRegistration(
+                    func_node,
+                    resolution,
+                    module_qn,
+                    language,
+                    lang_config,
+                    lang_queries,
+                )
+            )
+            return True
+        return False
+
+    def _record_free_function_return_type(
+        self, func_node: Node, language: cs.SupportedLanguage, qualified_name: str
+    ) -> None:
+        # Record a free C++ function's return type so a chained call off a
+        # factory (`make().run()`) can type the receiver and resolve the next
+        # hop. Runs here, not in the CPP resolver, because the unified-FQN path
+        # wins for C++ and would otherwise bypass the recording.
+        if language == cs.SupportedLanguage.CPP and (
+            return_type := cpp_utils.extract_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Same for a free Rust fn (impl methods are recorded in class
+        # ingest): a call-bound local (`let s = make()`) types from
+        # this map. No impl target here, so a `Self` return stays None.
+        if language == cs.SupportedLanguage.RUST and (
+            return_type := rs_utils.extract_return_type_name(func_node, None)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Same for a Dart free function: a call-bound local
+        # (`var g = makeIt()` via the enrichment pass) types from
+        # this map.
+        if language == cs.SupportedLanguage.DART and (
+            return_type := dart_return_type_name(func_node)
+        ):
+            self.method_return_types[qualified_name] = return_type
+
+        # Go free functions record their FIRST return type in a
+        # dedicated map so `cm, err := getManager()` types cm under the
+        # (T, error) idiom (viper's false Get->Get self edge). Not
+        # method_return_types: chaining must keep skipping uncallable
+        # multi-return callees.
+        if language == cs.SupportedLanguage.GO and (
+            return_type := go_utils.extract_first_return_type_name(func_node)
+        ):
+            self.go_function_return_types[qualified_name] = return_type
 
     def _function_span_claimed(self, module_qn: str, func_node: Node) -> bool:
         # A span is claimed when a pass recorded THIS function node's location;
