@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from http.client import HTTPMessage
 from typing import IO
 
 import mgclient
+from loguru import logger
 
+from .. import constants as root_cs
 from . import constants as cs
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
@@ -38,6 +46,46 @@ _DIRECT_OPENER = urllib.request.build_opener(
 )
 
 
+# mgclient's C transport reports each failed read or write with perror() on
+# fd 2, beneath sys.stderr, although the probe gets the same failure back as
+# the exception it handles. While Memgraph starts, Docker's port proxy accepts
+# every probe and then drops it, so waiting printed one such line per attempt
+# (issue #2356). Only the descriptor itself can be pointed elsewhere, and it is
+# one per process, so probes take turns: two swapping it at once would each
+# restore the other's capture file as stderr.
+_NATIVE_STDERR_LOCK = threading.Lock()
+
+
+@contextmanager
+def _mgclient_stderr_to_debug_log() -> Iterator[None]:
+    with _NATIVE_STDERR_LOCK, tempfile.TemporaryFile() as capture:
+        try:
+            saved = os.dup(cs.NATIVE_STDERR_FD)
+        except OSError:
+            saved = None
+        if saved is None:
+            # With fd 2 closed there is no terminal to keep clean.
+            yield
+            return
+        # Text Python still buffers for the terminal belongs there, not in
+        # the capture.
+        if sys.stderr is not None:
+            sys.stderr.flush()
+        try:
+            os.dup2(capture.fileno(), cs.NATIVE_STDERR_FD)
+            yield
+        finally:
+            os.dup2(saved, cs.NATIVE_STDERR_FD)
+            os.close(saved)
+            # Kept rather than dropped, for whoever is chasing a Memgraph that
+            # never answers; the probe's own result is what reports it.
+            capture.seek(0)
+            output = capture.read().decode(root_cs.ENCODING_UTF8, errors="replace")
+            if output := output.strip():
+                logger.debug(cs.MSG_MEMGRAPH_PROBE_OUTPUT.format(output=output))
+
+
+@_mgclient_stderr_to_debug_log()
 def _bolt_reachable(
     host: str, port: int, credentials: tuple[str, str] | None = None
 ) -> bool:
@@ -89,6 +137,7 @@ def memgraph_accepts_anonymous(host: str, port: int) -> bool:
     return memgraph_anonymous_access(host, port) is cs.AnonymousAccess.ALLOWED
 
 
+@_mgclient_stderr_to_debug_log()
 def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     # Memgraph refuses a login at connect, with the same exception type as a
     # refused connection, so only the message tells the two apart.
@@ -111,6 +160,7 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     return cs.AnonymousAccess.ALLOWED
 
 
+@_mgclient_stderr_to_debug_log()
 def memgraph_rejects_credentials(
     host: str, port: int, credentials: tuple[str, str]
 ) -> bool:

@@ -83,6 +83,9 @@ MSG_STACK_STOPPED = "Stack stopped."
 MSG_RESTARTING_STACK = "Restarting cgr stack..."
 MSG_RENDERING_COMPOSE = "Rendering compose file to {path}"
 MSG_WAITING_FOR_HEALTH = "Waiting for {service} on {host}:{port}..."
+MSG_MEMGRAPH_PROBE_OUTPUT = "mgclient output while probing Memgraph: {output}"
+# The descriptor C code writes stderr to, whatever sys.stderr is bound to.
+NATIVE_STDERR_FD = 2
 
 PACKAGE_COMPOSE_RELATIVE = "../docker-compose.yaml"
 
