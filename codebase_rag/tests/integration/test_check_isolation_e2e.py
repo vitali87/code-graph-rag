@@ -18,9 +18,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from codebase_rag.check_isolation import IsolationGuard
 from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import run_check
+from codebase_rag.tests.conftest import git_env
 
 if TYPE_CHECKING:
     from codebase_rag.services.graph_service import MemgraphIngestor
@@ -54,6 +56,7 @@ def _git(root: Path, *args: str) -> None:
         cwd=root,
         check=True,
         capture_output=True,
+        env=git_env(),
     )
 
 
@@ -177,21 +180,31 @@ class TestIsolatedCheck:
         """Findings key on a repo-relative path, so a sibling project in the
         shared graph can hold the same one. This runs the real Cypher; the
         unit tier can only check the double's modelling of it, because that
-        store dispatches on query identity (greptile-local, #1718)."""
+        store dispatches on query identity (greptile-local, #1718).
+
+        The guard is driven directly so a finding can land between capture
+        and restore, as one the check wrote does: the cleanup must delete
+        that one and only that one."""
         _index(memgraph_ingestor, repo)
-        memgraph_ingestor.execute_write(
-            "CREATE (n:CodeSmell {qualified_name: $qn, path: $path})",
-            {"qn": "otherproj.pkg.util.3.0.bare_except", "path": "pkg/util.py"},
-        )
-        _edit(repo)
+        create = "CREATE (n:CodeSmell {qualified_name: $qn, path: $path})"
+        sibling = "otherproj.pkg.util.3.0.bare_except"
+        own = f"{PROJECT}.pkg.util.3.0.bare_except"
+        memgraph_ingestor.execute_write(create, {"qn": sibling, "path": "pkg/util.py"})
+        guard = IsolationGuard(memgraph_ingestor, PROJECT, repo)
+        guard.capture(["pkg/util.py"])
+        memgraph_ingestor.execute_write(create, {"qn": own, "path": "pkg/util.py"})
 
-        _run_check_delta(memgraph_ingestor, repo, isolated=True)
+        guard.restore()
 
-        rows = memgraph_ingestor.fetch_all(
-            "MATCH (n:CodeSmell {qualified_name: $qn}) RETURN count(n) AS c",
-            {"qn": "otherproj.pkg.util.3.0.bare_except"},
-        )
-        assert int(rows[0]["c"]) == 1, "the sibling project's finding was deleted"
+        def count(qn: str) -> int:
+            rows = memgraph_ingestor.fetch_all(
+                "MATCH (n:CodeSmell {qualified_name: $qn}) RETURN count(n) AS c",
+                {"qn": qn},
+            )
+            return int(rows[0]["c"])
+
+        assert count(own) == 0, "the finding the check wrote was not deleted"
+        assert count(sibling) == 1, "the sibling project's finding was deleted"
 
     def test_the_same_edit_measures_the_same_way_twice(
         self, memgraph_ingestor: MemgraphIngestor, repo: Path
