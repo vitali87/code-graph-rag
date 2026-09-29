@@ -1200,7 +1200,7 @@ class CallResolver:
             return set()
         targets: set[tuple[str, str]] = set()
         for qn in self.function_registry.find_ending_with(method_name):
-            definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
+            _, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if (
                 dot
                 and name == method_name

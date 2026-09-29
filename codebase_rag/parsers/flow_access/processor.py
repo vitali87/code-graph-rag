@@ -1601,11 +1601,12 @@ class FlowProcessor:
         for index, name in enumerate(targets):
             if name is None:
                 continue
-            rhs = (
-                values[0]
-                if spread
-                else (values[index] if index < len(values) else None)
-            )
+            if spread:
+                rhs = values[0]
+            elif index < len(values):
+                rhs = values[index]
+            else:
+                rhs = None
             computed.append(
                 (name, self._lean_binding_taint(node, name, rhs, tainted, jc), rhs)
             )
@@ -4198,7 +4199,7 @@ class FlowProcessor:
                 if not src:
                     continue
                 dst = closure.setdefault((f_qn, p_name), set())
-                if not src <= dst:
+                if not src.issubset(dst):
                     dst |= src
                     changed = True
         return closure
