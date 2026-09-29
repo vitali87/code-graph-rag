@@ -14,7 +14,6 @@ from typing import NamedTuple
 
 from . import constants as cs
 from .flow_verdict import CYPHER_FLOW_COVERAGE_GAPS, CYPHER_FLOW_EDGES, QueryFn
-from .trace.ingest import load_callables
 from .trace.records import FramePoint
 from .trace.resolution import CallableNode, FrameResolver, ResolutionStats
 
@@ -245,7 +244,7 @@ def parse_arity_error(message: str) -> ArityError | None:
 
 def diagnose_arity(
     error: ArityError, declared: tuple[str, ...], is_method: bool
-) -> ArityVerdict | None:
+) -> ArityVerdict:
     """Check a parsed arity error against a function's declared parameters.
 
     `self` is the subtlety this exists to get right. CPython counts the bound
@@ -382,6 +381,11 @@ class _CrashGraph:
             cs.KEY_PROJECT_PREFIX: prefix,
             cs.KEY_PROJECT_NAME: project_name,
         }
+        # Deferred: trace.ingest imports the parser stack, which the CLI would
+        # otherwise load at start-up through editing -> structural_delta
+        # (issue #2253).
+        from .trace.ingest import load_callables
+
         self.nodes: list[CallableNode] = load_callables(fetch_all, prefix)
         self.by_qn: dict[str, CallableNode] = {
             node.qualified_name: node for node in self.nodes

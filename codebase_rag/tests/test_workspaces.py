@@ -16,8 +16,9 @@ from codebase_rag.workspaces import (
     list_workspaces,
     load_workspace,
     remove_repo,
+    save_workspace,
 )
-from codebase_rag.workspaces.models import WorkspaceConfig
+from codebase_rag.workspaces.models import WorkspaceConfig, WorkspaceRepo
 
 runner = CliRunner()
 
@@ -38,6 +39,20 @@ class TestStorage:
         assert loaded.name == "alpha"
         assert loaded.description == "testing"
         assert loaded.repos == []
+
+    @pytest.mark.parametrize(
+        "repo_path",
+        [r"C:\src\x64\build", r"C:\Users\dev\xylophone", r"C:\Users\dev\repo"],
+    )
+    def test_windows_repo_path_round_trips(
+        self, _temp_home: Path, repo_path: str
+    ) -> None:
+        # A TOML 0.5 writer left `\x` unescaped. That is not a TOML escape, so a
+        # workspace holding such a path saved without error and then never loaded.
+        repo = WorkspaceRepo(path=repo_path, project_name="build")
+        save_workspace(WorkspaceConfig(name="win", repos=[repo]))
+
+        assert load_workspace("win").repos == [repo]
 
     def test_create_duplicate_raises(self, _temp_home: Path) -> None:
         create_workspace("dup")
@@ -81,6 +96,7 @@ class TestStorage:
         config, repo = add_repo("mono", str(repo_dir))
         assert repo.path == str(repo_dir.resolve())
         assert repo.project_name.startswith("some_repo__")
+        assert repo.project_named is False
         assert config.repos[0].project_name == repo.project_name
 
     def test_add_repo_with_explicit_project_name(
@@ -91,6 +107,7 @@ class TestStorage:
         create_workspace("mono")
         _, repo = add_repo("mono", str(repo_dir), project_name="custom_name")
         assert repo.project_name == "custom_name"
+        assert repo.project_named is True
 
     def test_add_repo_missing_path(self, tmp_path: Path, _temp_home: Path) -> None:
         create_workspace("mono")
@@ -192,7 +209,7 @@ def test_start_with_workspace_passes_all_projects(
     repo_b.mkdir()
 
     create_workspace("mono")
-    add_repo("mono", str(repo_a), project_name="proj_a")
+    _, workspace_repo_a = add_repo("mono", str(repo_a))
     add_repo("mono", str(repo_b), project_name="proj_b")
 
     with (
@@ -214,9 +231,17 @@ def test_start_with_workspace_passes_all_projects(
     assert result.exit_code == 0, result.output
     assert mock_sync.call_count == 2
     project_names_synced = [c.kwargs["project_name"] for c in mock_sync.call_args_list]
-    assert set(project_names_synced) == {"proj_a", "proj_b"}
+    assert set(project_names_synced) == {workspace_repo_a.project_name, "proj_b"}
+    project_provenance = {
+        call.kwargs["project_name"]: call.kwargs["project_named"]
+        for call in mock_sync.call_args_list
+    }
+    assert project_provenance == {workspace_repo_a.project_name: False, "proj_b": True}
     mock_single.assert_called_once()
-    assert mock_single.call_args.kwargs["active_projects"] == ["proj_a", "proj_b"]
+    assert mock_single.call_args.kwargs["active_projects"] == [
+        workspace_repo_a.project_name,
+        "proj_b",
+    ]
 
 
 def test_start_with_unknown_workspace_errors(

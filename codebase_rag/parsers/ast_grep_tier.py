@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 _PATTERNS_DIR = Path(__file__).parent / "ast_grep_patterns"
 # leading bare name of a captured signature, for `name_head` rules
-_LEADING_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[!?]?")
+_LEADING_IDENTIFIER_RE = re.compile(r"[A-Za-z_]\w*[!?]?", re.ASCII)
 # Metavar conventions contributors must follow in the YAML patterns.
 _NAME_METAVAR = "NAME"
 _PATH_METAVAR = "PATH"
@@ -347,6 +347,10 @@ class AstGrepTier:
         try:
             if rule.pattern is not None:
                 return root.find_all(pattern=rule.pattern)
+            # `_parse_rule` gives every rule exactly one selector; a rule built
+            # with neither matches nothing rather than failing the whole file.
+            if rule.kind is None:
+                return []
             matches = root.find_all(kind=rule.kind)
             if rule.has_child:
                 matches = [

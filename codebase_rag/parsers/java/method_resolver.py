@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...decorators import recursion_guard
+from ...decorators import depth_guard, recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
 from .utils import (
@@ -163,7 +163,7 @@ def _callable_visible_to_caller(
 
 
 def _pick_overload(
-    matches: list[tuple[str, str]],
+    matches: Sequence[tuple[str, str]],
     arg_count: int | None,
     arg_types: tuple[str | None, ...],
 ) -> tuple[str, str] | None:
@@ -187,6 +187,31 @@ def _pick_overload(
             if _java_signature_arity(match[1]) == arg_count:
                 return match
     return matches[0]
+
+
+def _java_getter_return_type(method_lower: str) -> str | None:
+    # A getter's likely type from its name: getName -> String, getId -> long,
+    # getSize/getLength -> int.
+    if cs.JAVA_NAME_PATTERN in method_lower:
+        return cs.JAVA_TYPE_STRING_FQN
+    if cs.JAVA_ID_PATTERN in method_lower:
+        return cs.JAVA_TYPE_LONG
+    if cs.JAVA_SIZE_PATTERN in method_lower or cs.JAVA_LENGTH_PATTERN in method_lower:
+        return cs.JAVA_TYPE_INT
+    return None
+
+
+def _java_factory_return_type(method_call: str) -> str | None:
+    # A qualified create/new factory's likely product from its method name.
+    parts = method_call.split(cs.SEPARATOR_DOT)
+    if len(parts) < 2:
+        return None
+    method_name_lower = parts[-1].lower()
+    if cs.JAVA_USER_PATTERN in method_name_lower:
+        return cs.JAVA_HEURISTIC_USER
+    if cs.JAVA_ORDER_PATTERN in method_name_lower:
+        return cs.JAVA_HEURISTIC_ORDER
+    return None
 
 
 class JavaMethodResolverMixin:
@@ -243,6 +268,44 @@ class JavaMethodResolverMixin:
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
 
+    def _java_this_type(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # Inside a method-body anonymous class `this` is the anon (its base
+        # type), which the lexical named-class walk misses; prefer that, then
+        # the lexical containing class (precise in multi-class files); fall
+        # back to the first class under the module otherwise.
+        if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
+            return anon_base
+        if lexical := self._lexical_class_qn(context_node, module_qn):
+            return lexical
+        return next(
+            (
+                str(qn)
+                for qn, entity_type in self.function_registry.find_with_prefix(
+                    module_qn
+                )
+                if entity_type == NodeType.CLASS
+            ),
+            None,
+        )
+
+    def _java_super_type(
+        self, context_node: ASTNode | None, module_qn: str
+    ) -> str | None:
+        # The lexical class's parent when available; otherwise the first class
+        # under the module that has a parent.
+        if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
+            parent_qn := self._find_parent_class(lexical)
+        ):
+            return parent_qn
+        for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
+            if entity_type == NodeType.CLASS and (
+                parent_qn := self._find_parent_class(qn)
+            ):
+                return parent_qn
+        return None
+
     def _resolve_java_object_type(
         self,
         object_ref: str,
@@ -258,38 +321,14 @@ class JavaMethodResolverMixin:
         # then the lexical containing class (precise in multi-class files); fall back
         # to the first class under the module otherwise.
         if object_ref == cs.JAVA_KEYWORD_THIS:
-            if anon_base := self._enclosing_anon_base_qn(context_node, module_qn):
-                return anon_base
-            if lexical := self._lexical_class_qn(context_node, module_qn):
-                return lexical
-            return next(
-                (
-                    str(qn)
-                    for qn, entity_type in self.function_registry.find_with_prefix(
-                        module_qn
-                    )
-                    if entity_type == NodeType.CLASS
-                ),
-                None,
-            )
+            return self._java_this_type(context_node, module_qn)
 
-        # 'super' reference: resolve the lexical class then its parent when
-        # available; otherwise the first class under the module with a parent.
         if object_ref == cs.JAVA_KEYWORD_SUPER:
-            if (lexical := self._lexical_class_qn(context_node, module_qn)) and (
-                parent_qn := self._find_parent_class(lexical)
-            ):
-                return parent_qn
-            for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
-                if entity_type == NodeType.CLASS:
-                    if parent_qn := self._find_parent_class(qn):
-                        return parent_qn
-            return None
+            return self._java_super_type(context_node, module_qn)
 
-        if module_qn in self.import_processor.import_mapping:
-            import_map = self.import_processor.import_mapping[module_qn]
-            if object_ref in import_map:
-                return self._imported_class_qn(import_map[object_ref], object_ref)
+        import_map = self.import_processor.import_mapping.get(module_qn)
+        if import_map is not None and object_ref in import_map:
+            return self._imported_class_qn(import_map[object_ref], object_ref)
 
         simple_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{object_ref}"
         if (
@@ -445,6 +484,45 @@ class JavaMethodResolverMixin:
             and _callable_visible_to_caller(entity_type, qn, caller_qn)
         ]
         return _pick_overload(matches, arg_count, arg_types)
+
+    def _resolve_unqualified_java_call(
+        self,
+        call_node: ASTNode,
+        method_name: str,
+        module_qn: str,
+        arg_count: int,
+        arg_types: tuple[str | None, ...],
+        caller_qn: str | None,
+    ) -> tuple[str, str] | None:
+        logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
+        # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
+        # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
+        # so bind against the anon's base type FIRST: `_lexical_class_qn` only
+        # sees the enclosing NAMED class and would mis-bind an inherited call to
+        # a same-named method there. Then the enclosing class hierarchy; the bare
+        # module-wide scan is the last resort (it ignores lexical scope).
+        if (anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)) and (
+            result := self._resolve_instance_method(
+                anon_base_qn, method_name, module_qn, arg_count, arg_types
+            )
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+            return result
+        if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
+            result := self._resolve_instance_method(
+                enclosing_qn, method_name, module_qn, arg_count, arg_types
+            )
+        ):
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+            return result
+        result = self._resolve_static_or_local_method(
+            method_name, module_qn, arg_count, arg_types, caller_qn
+        )
+        if result:
+            logger.debug(ls.JAVA_FOUND_STATIC, result=result)
+        else:
+            logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
+        return result
 
     def _resolve_instance_method(
         self,
@@ -704,28 +782,16 @@ class JavaMethodResolverMixin:
 
     def _heuristic_method_return_type(self, method_call: str) -> str | None:
         method_lower = method_call.lower()
-        if cs.JAVA_GETTER_PATTERN in method_lower:
-            if cs.JAVA_NAME_PATTERN in method_lower:
-                return cs.JAVA_TYPE_STRING_FQN
-            if cs.JAVA_ID_PATTERN in method_lower:
-                return cs.JAVA_TYPE_LONG
-            if (
-                cs.JAVA_SIZE_PATTERN in method_lower
-                or cs.JAVA_LENGTH_PATTERN in method_lower
-            ):
-                return cs.JAVA_TYPE_INT
+        if cs.JAVA_GETTER_PATTERN in method_lower and (
+            getter_type := _java_getter_return_type(method_lower)
+        ):
+            return getter_type
 
         if (
             cs.JAVA_CREATE_PATTERN in method_lower
             or cs.JAVA_NEW_PATTERN in method_lower
-        ):
-            parts = method_call.split(cs.SEPARATOR_DOT)
-            if len(parts) >= 2:
-                method_name_lower = parts[-1].lower()
-                if cs.JAVA_USER_PATTERN in method_name_lower:
-                    return cs.JAVA_HEURISTIC_USER
-                if cs.JAVA_ORDER_PATTERN in method_name_lower:
-                    return cs.JAVA_HEURISTIC_ORDER
+        ) and (factory_type := _java_factory_return_type(method_call)):
+            return factory_type
 
         if cs.JAVA_IS_PATTERN in method_lower or cs.JAVA_HAS_PATTERN in method_lower:
             return cs.JAVA_TYPE_BOOLEAN
@@ -799,6 +865,10 @@ class JavaMethodResolverMixin:
             class_qn, method_name, tuple(_java_param_type_names(method_qn))
         )
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _do_resolve_java_method_call(
         self,
         call_node: ASTNode,
@@ -844,37 +914,9 @@ class JavaMethodResolverMixin:
             return None
 
         if not object_ref:
-            logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
-            # An unqualified call `m(...)` is `this.m(...)`. Inside a method-body
-            # anonymous class (`new Base(){ read(){ m(); } }`), `this` is the anon,
-            # so bind against the anon's base type FIRST: `_lexical_class_qn` only
-            # sees the enclosing NAMED class and would mis-bind an inherited call to
-            # a same-named method there. Then the enclosing class hierarchy; the bare
-            # module-wide scan is the last resort (it ignores lexical scope).
-            if (
-                anon_base_qn := self._enclosing_anon_base_qn(call_node, module_qn)
-            ) and (
-                result := self._resolve_instance_method(
-                    anon_base_qn, str(method_name), module_qn, arg_count, arg_types
-                )
-            ):
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-                return result
-            if (enclosing_qn := self._lexical_class_qn(call_node, module_qn)) and (
-                result := self._resolve_instance_method(
-                    enclosing_qn, str(method_name), module_qn, arg_count, arg_types
-                )
-            ):
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-                return result
-            result = self._resolve_static_or_local_method(
-                str(method_name), module_qn, arg_count, arg_types, caller_qn
+            return self._resolve_unqualified_java_call(
+                call_node, str(method_name), module_qn, arg_count, arg_types, caller_qn
             )
-            if result:
-                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
-            else:
-                logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
-            return result
 
         logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE, object=object_ref)
         if not (

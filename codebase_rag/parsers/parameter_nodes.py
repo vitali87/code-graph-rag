@@ -17,6 +17,7 @@ from tree_sitter import Node
 
 from .. import constants as cs
 from ..services import IngestorProtocol
+from ..types_defs import CSharpCallShape
 from .utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -462,6 +463,20 @@ def csharp_declared_parameters(func_node: Node) -> list[DeclaredParameter]:
     return slots.declared
 
 
+def csharp_call_shape(func_node: Node) -> CSharpCallShape:
+    """The arity bounds and staticness C# bare-call binding checks."""
+    params = csharp_declared_parameters(func_node)
+    return CSharpCallShape(
+        required=sum(not (p.has_default or p.is_variadic) for p in params),
+        variadic=any(p.is_variadic for p in params),
+        is_static=any(
+            child.type == cs.TS_CSHARP_MODIFIER
+            and safe_decode_text(child) == cs.TS_CSHARP_MODIFIER_STATIC
+            for child in func_node.children
+        ),
+    )
+
+
 # --- Lua ---------------------------------------------------------------------
 
 
@@ -818,7 +833,7 @@ def emit_parameter_type_edges(
                 source,
                 cs.RelationshipType.OF_TYPE,
                 (
-                    str(resolver._registry[target_qn]),
+                    resolver.label_for(target_qn),
                     cs.KEY_QUALIFIED_NAME,
                     target_qn,
                 ),
