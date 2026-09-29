@@ -37,6 +37,8 @@ def setup_logging() -> None:
         sys.stderr,
         level=cs.MCP_LOG_LEVEL_INFO,
         format=cs.MCP_LOG_FORMAT,
+        backtrace=False,
+        diagnose=False,
     )
 
 

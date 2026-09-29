@@ -98,6 +98,7 @@ RESOLUTION_RANK: dict[str, int] = {
     EdgeResolution.TRACE_CONFIRMED: 4,
 }
 KEY_SUFFIX = "suffix"
+KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
@@ -134,6 +135,10 @@ KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
+# The `$id` a per-node query addresses its node by.
+KEY_ID = "id"
+# A shared node's inbound-edge count in the isolated check's snapshot.
+KEY_INBOUND = "inbound"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
@@ -546,6 +551,12 @@ class AuditCheck(StrEnum):
     UNDOCUMENTED_RELATIONSHIP = "undocumented_relationship"
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
+
+# Labels cgr writes for its own bookkeeping rather than as part of the code
+# graph: not in NODE_SCHEMAS (the Cypher prompt is built from it), and not
+# graded by the structural audit. `IncompleteRun` is the sync marker, which
+# doctor reports as an interrupted sync instead (issue #2394).
+AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun"})
 
 # Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
@@ -1005,6 +1016,19 @@ KEY_CALLER_PATH = "caller_path"
 KEY_CALLER_LABEL = "caller_label"
 KEY_CALLER_QN = "caller_qn"
 KEY_REL = "rel"
+# Isolated check capture rows (issue #1718): the far end of an edge touching
+# the scope carries its own label, key fields and (for the labels the check
+# can prune or re-grade) properties, prefixed so they sit beside the near
+# end's in one row.
+KEY_OUTGOING = "outgoing"
+FAR_END_PREFIX = "far_"
+KEY_FAR_LABEL = FAR_END_PREFIX + KEY_LABEL
+KEY_FAR_PROPS = FAR_END_PREFIX + KEY_PROPS
+CYPHER_PARAM_ABSOLUTE_PATHS = "absolute_paths"
+CYPHER_PARAM_KEEP = "keep"
+# The isolated check's created shared nodes, as parallel label / name lists.
+CYPHER_PARAM_LABELS = "labels"
+CYPHER_PARAM_QUALIFIED_NAMES = "qualified_names"
 KEY_TARGET_LABEL = "target_label"
 KEY_TARGET_QN = "target_qn"
 
