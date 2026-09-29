@@ -15,6 +15,7 @@ from .config import settings
 from .constants import (
     PAYLOAD_NODE_ID,
     PAYLOAD_QUALIFIED_NAME,
+    QDRANT_DEFAULT_DB_PATH,
     QDRANT_INSECURE_URL_SCHEME,
     VECTOR_DIM_SETTINGS,
     VectorStoreBackend,
@@ -165,6 +166,9 @@ def get_qdrant_client(validate: bool = True) -> Any:
             client = QdrantClient(
                 url=settings.QDRANT_URL, api_key=_qdrant_api_key(settings.QDRANT_URL)
             )
+        elif (bundled := _bundled_qdrant_url()) is not None:
+            logger.info(ls.QDRANT_USING_BUNDLED.format(url=bundled))
+            client = QdrantClient(url=bundled, api_key=None)
         else:
             try:
                 client = QdrantClient(path=settings.QDRANT_DB_PATH)
@@ -183,6 +187,22 @@ def get_qdrant_client(validate: bool = True) -> Any:
         _CLIENT = client
         _CLIENT_BACKEND = VectorStoreBackend.QDRANT
     return _CLIENT
+
+
+def _bundled_qdrant_url() -> str | None:
+    """The stack's Qdrant, when the embedded store is only the default.
+
+    With QDRANT_URL unset the app always opened the embedded store at the
+    cwd-relative QDRANT_DB_PATH, so with `cgr daemon up` running the vectors
+    went into a hidden folder of the indexed repository and the stack's Qdrant
+    stayed empty (issue #2355). A QDRANT_DB_PATH the user set is their choice
+    and is kept, and then the stack is not even probed.
+    """
+    if settings.QDRANT_DB_PATH != QDRANT_DEFAULT_DB_PATH:
+        return None
+    from .stack import bundled_qdrant_url
+
+    return bundled_qdrant_url()
 
 
 def _qdrant_api_key(url: str) -> str | None:

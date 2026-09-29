@@ -14,8 +14,19 @@ Semantic search requires the `semantic` extra:
 pip install 'code-graph-rag[semantic]'
 ```
 
-Qdrant is the default vector store. It runs in local file mode unless
-`QDRANT_URL` points at a Qdrant server. For a server that requires an API key
+Qdrant is the default vector store. Where the vectors go is decided in this
+order:
+
+1. `QDRANT_URL` set: that Qdrant server.
+2. `QDRANT_DB_PATH` set: an embedded, file-based Qdrant in that folder.
+3. Neither set, and the stack `cgr daemon up` starts is running: its Qdrant,
+   on the address and port Compose publishes it on (`CGR_STACK_BIND_HOST`,
+   `QDRANT_HTTP_PORT`, default `127.0.0.1:6333`). No API key is sent to it; a
+   stack Qdrant that requires one is left alone with a warning.
+4. Otherwise: an embedded Qdrant in `./.qdrant_code_embeddings`, relative to
+   the directory cgr runs in.
+
+The embedding cache stays in `QDRANT_DB_PATH` in every case. For a server that requires an API key
 (Qdrant Cloud, or a self-hosted server started with `QDRANT__SERVICE__API_KEY`),
 also set `QDRANT_API_KEY`, over an `https://` URL:
 

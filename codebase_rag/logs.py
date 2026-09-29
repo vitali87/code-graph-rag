@@ -204,6 +204,15 @@ QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
 QDRANT_DELETE_PROJECT_FAILED = (
     "Failed to delete Qdrant vectors for project '{project}': {error}"
 )
+QDRANT_USING_BUNDLED = (
+    "Storing embeddings in the Qdrant the cgr stack runs at {url} (QDRANT_URL is "
+    "unset); set QDRANT_DB_PATH to keep them in an embedded store instead"
+)
+QDRANT_BUNDLED_WANTS_KEY = (
+    "The cgr stack's Qdrant at {url} refuses requests without a key, so embeddings "
+    "stay in the embedded store at '{path}'. Set QDRANT_URL and QDRANT_API_KEY to "
+    "use the stack's Qdrant"
+)
 QDRANT_LOCK_ERROR = (
     "Failed to open embedded Qdrant at '{path}': {error}. The storage folder is "
     "locked by another process; look for the '.lock' sentinel inside it. Embedded "
