@@ -94,6 +94,7 @@ RESOLUTION_RANK: dict[str, int] = {
     EdgeResolution.TRACE_CONFIRMED: 4,
 }
 KEY_SUFFIX = "suffix"
+KEY_VARIANT_PREFIX = "variant_prefix"
 KEY_COL = "col"
 KEY_END_COL = "end_col"
 KEY_ARG_COUNT = "arg_count"
