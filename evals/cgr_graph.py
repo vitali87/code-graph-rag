@@ -750,7 +750,7 @@ class _StatefulIngestor:
         node = self._node_addressed_by(query, params or {}, cq.build_node_props_query)
         if node is not None:
             props = self.nodes.get(node)
-            return [] if props is None else [{cs.KEY_PROPS: dict(props)}]
+            return [] if props is None else [{cs.KEY_PROPS: _result_props(props)}]
         match query:
             case cq.CYPHER_LIST_PROJECTS:
                 return self._project_rows()
@@ -808,7 +808,10 @@ class _StatefulIngestor:
                 return []
             case cq.CYPHER_CHECK_SCOPE_NODES:
                 return [
-                    {cs.KEY_LABEL: label, cs.KEY_PROPS: dict(self.nodes[(label, uid)])}
+                    {
+                        cs.KEY_LABEL: label,
+                        cs.KEY_PROPS: _result_props(self.nodes[(label, uid)]),
+                    }
                     for (label, uid) in sorted(
                         self._check_scope(params or {}),
                         key=lambda n: (n[0], _str(n[1])),
@@ -825,7 +828,7 @@ class _StatefulIngestor:
                 return [
                     {
                         cs.KEY_LABEL: label,
-                        cs.KEY_PROPS: dict(props),
+                        cs.KEY_PROPS: _result_props(props),
                         cs.KEY_INBOUND: len(self._in.get((label, uid), ())),
                     }
                     for (label, uid), props in self.nodes.items()
@@ -1454,10 +1457,10 @@ class _StatefulIngestor:
                 row.update(self._check_end_fields(far, cs.FAR_END_PREFIX))
                 row[cs.KEY_REL] = rel_type
                 row[cs.KEY_OUTGOING] = outgoing
-                row[cs.KEY_PROPS] = dict(self.edge_props.get(edge, {}))
+                row[cs.KEY_PROPS] = _result_props(self.edge_props.get(edge, {}))
                 far_props = self.nodes.get(far)
                 row[cs.KEY_FAR_PROPS] = (
-                    dict(far_props)
+                    _result_props(far_props)
                     if far[0] in _CHECK_FAR_PROP_LABELS and far_props is not None
                     else None
                 )
