@@ -138,6 +138,27 @@ def _log_failed_calls(
         )
 
 
+def _log_failed_relationships(
+    pattern: tuple[str, str, str, str, str], attempted: int, successful: int
+) -> None:
+    # Only CALLS losses used to be itemised; a lost edge of any other type
+    # showed up only as a count in the INFO flush summary, so a run that
+    # dropped data looked clean (issue #2400).
+    failed = attempted - successful
+    if failed <= 0:
+        return
+    from_label, _, rel_type, to_label, _ = pattern
+    logger.warning(
+        ls.MG_RELS_FAILED.format(
+            count=failed,
+            attempted=attempted,
+            from_label=from_label,
+            rel_type=rel_type,
+            to_label=to_label,
+        )
+    )
+
+
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
@@ -734,6 +755,8 @@ class MemgraphIngestor:
 
         if rel_type == REL_TYPE_CALLS:
             _log_failed_calls(from_label, to_label, params_list, batch_successful)
+        else:
+            _log_failed_relationships(pattern, len(params_list), batch_successful)
 
         return len(params_list), batch_successful
 
