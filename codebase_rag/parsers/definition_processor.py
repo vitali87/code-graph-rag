@@ -619,19 +619,24 @@ class DefinitionProcessor(
 
         parent_rel_path = relative_path.parent
         parent_container_qn = structural_elements.get(parent_rel_path)
-        parent_label, parent_key, parent_val = (
-            (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-            if parent_container_qn
-            else (
-                (
-                    cs.NodeLabel.FOLDER,
-                    cs.KEY_ABSOLUTE_PATH,
-                    cached_resolve_posix(self.repo_path / parent_rel_path),
-                )
-                if parent_rel_path != Path(".")
-                else (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
+        if parent_container_qn:
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.PACKAGE,
+                cs.KEY_QUALIFIED_NAME,
+                parent_container_qn,
             )
-        )
+        elif parent_rel_path != Path("."):
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.FOLDER,
+                cs.KEY_ABSOLUTE_PATH,
+                cached_resolve_posix(self.repo_path / parent_rel_path),
+            )
+        else:
+            parent_label, parent_key, parent_val = (
+                cs.NodeLabel.PROJECT,
+                cs.KEY_NAME,
+                self.project_name,
+            )
         self.ingestor.ensure_relationship_batch(
             (parent_label, parent_key, parent_val),
             cs.RelationshipType.CONTAINS_MODULE,

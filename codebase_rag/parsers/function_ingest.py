@@ -354,9 +354,7 @@ class FunctionIngestMixin:
                     func_node, module_qn, lang_config, lang_queries
                 )
             case cs.SupportedLanguage.GO:
-                return self._defer_go_receiver_method(
-                    func_node, module_qn, lang_queries
-                )
+                return self._defer_go_receiver_method(func_node, module_qn)
             case _:
                 return False
 
@@ -1001,12 +999,7 @@ class FunctionIngestMixin:
                 return real_class_qn, True
         return entry.fallback_class_qn, False
 
-    def _defer_go_receiver_method(
-        self,
-        func_node: Node,
-        module_qn: str,
-        lang_queries: LanguageQueries | None = None,
-    ) -> bool:
+    def _defer_go_receiver_method(self, func_node: Node, module_qn: str) -> bool:
         if not go_utils.is_receiver_method(func_node):
             return False
         receiver_type = go_utils.extract_receiver_type_name(func_node)

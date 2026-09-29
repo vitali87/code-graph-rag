@@ -628,7 +628,7 @@ def dart_import_prefix(import_node: Node) -> str | None:
     return None
 
 
-def dart_resolve_import(uri: str, module_qn: str, project_name: str) -> str:
+def dart_resolve_import(uri: str, module_qn: str) -> str:
     """Full import target: external URIs kept verbatim, relative paths resolved.
 
     `dart:` and `package:` targets are external and returned unchanged. A

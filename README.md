@@ -45,15 +45,27 @@
 Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="demo">
+  <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
+</p>
+<p align="center">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+</p>
+
+<p align="center">
+  <b>2. Ask:</b> <code>cgr start</code> answers questions and edits code, grounded in that graph
+</p>
+<p align="center">
+  <img src="./assets/demo.gif" alt="cgr agent answering questions about the indexed repository">
 </p>
 
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Code Generation**: Split Cypher response cleaning and AST-grep rule validation into smaller, more manageable helpers for improved clarity and maintainability.
-- **Scripting Improvements**: Resolved an issue where closed pull request run associations were incorrectly reported as missing, and improved error reporting in scripts to avoid over-claiming failing checks.
-- **Data Handling**: Enhanced the handling of CONTAINS_SECTION in the double's module subtree and refined snippet lookup to project the matched node's own path.
+- **Vector Store Improvements**: Enhanced handling of Milvus collection sizes and embedding size checks to prevent errors.
+- **Provider Configuration**: Improved default endpoint handling for providers when configuration is not explicitly set.
+- **Project Scope**: Increased project-level scoping for exclusions, module deletions, and other operations.
+- **CLI Enhancements**: Added a Credits page to the documentation and improved the status reporting for CLI syncs.
+- **Dependency Updates**: Updated several dependencies including transformers, actions, and SonarSource tools.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.

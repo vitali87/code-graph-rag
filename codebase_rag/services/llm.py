@@ -105,7 +105,11 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
+# A relationship bracket (`-[...]`) holding a variable-length `*`; group 1
+# is everything after the first `*`, which may carry a properties map after
+# the bounds (`*1..3 {w: 1}`), so only its leading bounds are inspected.
+_VARLEN_PATTERN = re.compile(r"-\s*\[[^\]*]*\*([^\]]*)\]")
+_VARLEN_BOUNDS = re.compile(r"\s*(\d*)\s*(\.\.\s*(\d*))?")
 # Runs on masked text, where comments are spaces and backtick identifiers
 # are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
 # around the dots is legal Cypher and removed before the allowlist check.
@@ -123,14 +127,16 @@ def _validate_cypher_read_only(query: str) -> None:
 
 
 def _validate_no_unbounded_paths(query: str) -> None:
-    for match in _VARLEN_PATTERN.finditer(query):
-        spec = match.group(1).strip()
-        if not spec:
+    # Masked text, so a `*` inside a string literal is never read as the
+    # operator. A bare `*`, an open range (`*1..`, `*..`) or a `*` followed
+    # only by a properties map (`*{w: 1}`) is unbounded; a lone hop count
+    # (`*5`) or a range with an upper bound (`*1..3`, `*..3`) is not.
+    for match in _VARLEN_PATTERN.finditer(mask_literals_and_comments(query)):
+        bounds = _VARLEN_BOUNDS.match(match.group(1))
+        if bounds is None or not (
+            bounds.group(3) if bounds.group(2) else bounds.group(1)
+        ):
             raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
-        if ".." in spec:
-            upper = spec.split("..", 1)[1].lstrip()
-            if not upper or not upper[0].isdigit():
-                raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
 def _validate_call_procedures(query: str) -> None:

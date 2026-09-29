@@ -1612,6 +1612,34 @@ class ShellCommander:
         self.is_yolo = is_yolo or (lambda: False)
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
+    async def _spawn_segment(
+        self, segment: str, env: dict[str, str], pipe_stdin: bool
+    ) -> asyncio.subprocess.Process:
+        cmd_parts = shlex.split(segment)
+        executable = shutil.which(cmd_parts[0], path=env["PATH"])
+        if not executable:
+            executable = cmd_parts[0]
+
+        try:
+            return await asyncio.create_subprocess_exec(
+                executable,
+                *cmd_parts[1:],
+                stdin=asyncio.subprocess.PIPE if pipe_stdin else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.project_root,
+                env=env,
+            )
+        except OSError as e:
+            # A bare str(OSError) hides WHICH segment failed to spawn, so
+            # an intermittent runner failure surfaces as an opaque -1
+            # (issue #902). Name the segment and the resolved executable.
+            raise RuntimeError(
+                te.COMMAND_SPAWN_FAILED.format(
+                    segment=segment, executable=executable, error=e
+                )
+            ) from e
+
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
         start_time = time.monotonic()
         input_data: bytes | None = None
@@ -1626,30 +1654,7 @@ class ShellCommander:
             if remaining_timeout <= 0:
                 raise TimeoutError
 
-            cmd_parts = shlex.split(segment)
-            executable = shutil.which(cmd_parts[0], path=env["PATH"])
-            if not executable:
-                executable = cmd_parts[0]
-
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    executable,
-                    *cmd_parts[1:],
-                    stdin=asyncio.subprocess.PIPE if input_data is not None else None,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=self.project_root,
-                    env=env,
-                )
-            except OSError as e:
-                # A bare str(OSError) hides WHICH segment failed to spawn, so
-                # an intermittent runner failure surfaces as an opaque -1
-                # (issue #902). Name the segment and the resolved executable.
-                raise RuntimeError(
-                    te.COMMAND_SPAWN_FAILED.format(
-                        segment=segment, executable=executable, error=e
-                    )
-                ) from e
+            proc = await self._spawn_segment(segment, env, input_data is not None)
             try:
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(input=input_data), timeout=remaining_timeout

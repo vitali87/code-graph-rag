@@ -1872,6 +1872,33 @@ def _notice_single_project_endpoint_roots(show_progress: bool) -> None:
         typer.echo(cs.CLI_DEADCODE_SINGLE_PROJECT_ENDPOINTS, err=True)
 
 
+def _require_dead_code_project(resolved: str | None, projects: list[str]) -> str:
+    # An explicit name absent from the graph must error, not scan a
+    # nonexistent prefix and report a clean project (the duplicates command
+    # gained this guard first). Raised OUTSIDE the connection context so a
+    # user typo never trips the service layer's error logging on exit.
+    if resolved is not None and resolved not in projects:
+        app_context.console.print(
+            style(
+                cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
+                    project=resolved, projects=projects
+                ),
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
+
+    if resolved is None:
+        message = (
+            cs.CLI_ERR_DEADCODE_NO_PROJECTS
+            if not projects
+            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
+        )
+        app_context.console.print(style(message, cs.Color.RED))
+        raise typer.Exit(1)
+    return resolved
+
+
 @app.command(
     name=ch.CLICommandName.DEAD_CODE,
     help=ch.CMD_DEAD_CODE,
@@ -1955,29 +1982,7 @@ def dead_code(
         logger.exception(ls.DEADCODE_ERROR.format(error=e))
         raise typer.Exit(1) from e
 
-    # An explicit name absent from the graph must error, not scan a
-    # nonexistent prefix and report a clean project (the duplicates command
-    # gained this guard first). Raised OUTSIDE the connection context so a
-    # user typo never trips the service layer's error logging on exit.
-    if resolved is not None and resolved not in projects:
-        app_context.console.print(
-            style(
-                cs.CLI_ERR_DEADCODE_UNKNOWN_PROJECT.format(
-                    project=resolved, projects=projects
-                ),
-                cs.Color.RED,
-            )
-        )
-        raise typer.Exit(1)
-
-    if resolved is None:
-        message = (
-            cs.CLI_ERR_DEADCODE_NO_PROJECTS
-            if not projects
-            else cs.CLI_ERR_DEADCODE_AMBIGUOUS_PROJECT.format(projects=projects)
-        )
-        app_context.console.print(style(message, cs.Color.RED))
-        raise typer.Exit(1)
+    resolved = _require_dead_code_project(resolved, projects)
 
     candidates = [
         _to_dead_code_row(row) for row in _filter_excluded_rows(rows, exclude)

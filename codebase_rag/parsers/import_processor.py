@@ -128,80 +128,115 @@ def _rs_strip_comments_and_strings(source: str) -> str:
     out: list[str] = []
     i, n = 0, len(source)
     while i < n:
-        c = source[i]
-        nxt = source[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            j = source.find("\n", i)
-            i = n if j == -1 else j
-            continue
-        if c == "/" and nxt == "*":
-            depth = 1
-            i += 2
-            while i < n and depth:
-                if source.startswith("/*", i):
-                    depth += 1
-                    i += 2
-                elif source.startswith("*/", i):
-                    depth -= 1
-                    i += 2
-                else:
-                    if source[i] == "\n":
-                        out.append("\n")
-                    i += 1
-            continue
-        if c == "r" and nxt in ('"', "#"):
-            j = i + 1
-            hashes = 0
-            while j < n and source[j] == "#":
-                hashes += 1
-                j += 1
-            if j < n and source[j] == '"':
-                end_marker = '"' + "#" * hashes
-                k = source.find(end_marker, j + 1)
-                i = n if k == -1 else k + len(end_marker)
-                out.append('""')
-                continue
-        if c == '"':
-            start = i
+        token_end = _rs_scan_token(source, i, out)
+        if token_end is None:
+            out.append(source[i])
             i += 1
-            while i < n:
-                if source[i] == "\\":
-                    i += 2
-                    continue
-                if source[i] == '"':
-                    i += 1
-                    break
-                i += 1
-            literal = source[start:i]
-            keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
-            out.append(literal if keep and "\n" not in literal else '""')
-            continue
-        if c == "'":
-            # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
-            # closing quote and passes through untouched. The escape must be
-            # honoured: pairing '\'' at its FIRST following quote leaves an
-            # orphan quote that swallows the rest of the file.
-            j = i + 1
-            if j < n and source[j] == "\\":
-                k = j + 1
-                if source.startswith("u{", k):
-                    brace = source.find("}", k + 2)
-                    k = k + 2 if brace == -1 else brace + 1
-                elif k < n and source[k] == "x":
-                    k += 3
-                else:
-                    k += 1
-                if k < n and source[k] == "'":
-                    out.append("''")
-                    i = k + 1
-                    continue
-            elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
-                out.append("''")
-                i = j + 2
-                continue
-        out.append(c)
-        i += 1
+        else:
+            i = token_end
     return "".join(out)
+
+
+def _rs_scan_token(source: str, i: int, out: list[str]) -> int | None:
+    """Consume the comment or literal starting at `i`, appending what it
+    leaves behind to `out` and returning the index just past it; None when
+    `source[i]` opens neither and passes through as plain code."""
+    n = len(source)
+    c = source[i]
+    nxt = source[i + 1] if i + 1 < n else ""
+    if c == "/" and nxt == "/":
+        j = source.find("\n", i)
+        return n if j == -1 else j
+    if c == "/" and nxt == "*":
+        return _rs_skip_block_comment(source, i + 2, out)
+    if c == "r" and nxt in ('"', "#"):
+        raw_end = _rs_raw_string_end(source, i)
+        if raw_end is not None:
+            out.append('""')
+            return raw_end
+    if c == '"':
+        return _rs_scan_string(source, i, out)
+    if c == "'":
+        char_end = _rs_char_literal_end(source, i)
+        if char_end is not None:
+            out.append("''")
+            return char_end
+    return None
+
+
+def _rs_skip_block_comment(source: str, i: int, out: list[str]) -> int:
+    n = len(source)
+    depth = 1
+    while i < n and depth:
+        if source.startswith("/*", i):
+            depth += 1
+            i += 2
+        elif source.startswith("*/", i):
+            depth -= 1
+            i += 2
+        else:
+            if source[i] == "\n":
+                out.append("\n")
+            i += 1
+    return i
+
+
+def _rs_raw_string_end(source: str, i: int) -> int | None:
+    n = len(source)
+    j = i + 1
+    hashes = 0
+    while j < n and source[j] == "#":
+        hashes += 1
+        j += 1
+    if j < n and source[j] == '"':
+        end_marker = '"' + "#" * hashes
+        k = source.find(end_marker, j + 1)
+        return n if k == -1 else k + len(end_marker)
+    return None
+
+
+def _rs_scan_string(source: str, i: int, out: list[str]) -> int:
+    n = len(source)
+    start = i
+    i += 1
+    while i < n:
+        if source[i] == "\\":
+            i += 2
+            continue
+        if source[i] == '"':
+            i += 1
+            break
+        i += 1
+    literal = source[start:i]
+    keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
+    out.append(literal if keep and "\n" not in literal else '""')
+    return i
+
+
+def _rs_char_literal_end(source: str, i: int) -> int | None:
+    # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
+    # closing quote and passes through untouched. The escape must be
+    # honoured: pairing '\'' at its FIRST following quote leaves an
+    # orphan quote that swallows the rest of the file.
+    n = len(source)
+    j = i + 1
+    if j < n and source[j] == "\\":
+        k = _rs_char_escape_end(source, j + 1)
+        if k < n and source[k] == "'":
+            return k + 1
+    elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
+        return j + 2
+    return None
+
+
+def _rs_char_escape_end(source: str, k: int) -> int:
+    n = len(source)
+    if source.startswith("u{", k):
+        brace = source.find("}", k + 2)
+        return k + 2 if brace == -1 else brace + 1
+    if k < n and source[k] == "x":
+        return k + 3
+    return k + 1
 
 
 class RustEntryDecls(NamedTuple):
@@ -4956,7 +4991,7 @@ class ImportProcessor:
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            if full_name := dart_resolve_import(uri, module_qn, self.project_name):
+            if full_name := dart_resolve_import(uri, module_qn):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)

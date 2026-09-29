@@ -2226,10 +2226,10 @@ class IOAccessProcessor:
             )
 
     @staticmethod
-    def _rels(direction: IODirection) -> tuple[cs.RelationshipType, ...]:
+    def _rels(direction: IODirection) -> list[cs.RelationshipType]:
         if direction == IODirection.READ_WRITE:
-            return (
+            return [
                 cs.RelationshipType.READS_FROM,
                 cs.RelationshipType.WRITES_TO,
-            )
-        return (_DIRECTION_REL[direction],)
+            ]
+        return [_DIRECTION_REL[direction]]
