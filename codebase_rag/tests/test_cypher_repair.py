@@ -11,8 +11,9 @@ from __future__ import annotations
 import io
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 import pytest
+from pydantic_ai import Tool
 from rich.console import Console
 
 from codebase_rag.prompts import build_cypher_repair_request
@@ -29,12 +30,18 @@ _REJECTED = (
 _REPAIRED = _REJECTED.replace("ORDER BY type", "ORDER BY type[0]")
 _ROWS = [{"qualified_name": "proj.mod", "type": ["Module"]}]
 
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception types are bound once here.
+_DatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
+_ProgrammingError: type[Exception] = mgclient.ProgrammingError  # ty: ignore[unresolved-attribute]
+_OperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+
 
 @pytest.mark.parametrize(
     "error",
     [
-        mgclient.DatabaseError(_LIST_SORT_ERROR),
-        mgclient.ProgrammingError("syntax error"),
+        _DatabaseError(_LIST_SORT_ERROR),
+        _ProgrammingError("syntax error"),
     ],
 )
 def test_an_engine_refusal_is_a_query_rejection(error: BaseException) -> None:
@@ -44,7 +51,7 @@ def test_an_engine_refusal_is_a_query_rejection(error: BaseException) -> None:
 @pytest.mark.parametrize(
     "error",
     [
-        mgclient.OperationalError("couldn't connect to host: Connection refused"),
+        _OperationalError("couldn't connect to host: Connection refused"),
         TimeoutError(),
         ValueError("not from the engine"),
     ],
@@ -67,7 +74,7 @@ def _tool(
     fetch_effects: list[object],
     repaired: str = _REPAIRED,
     project_name: str | None = None,
-) -> tuple[object, MagicMock, MagicMock]:
+) -> tuple[Tool, MagicMock, MagicMock]:
     ingestor = MagicMock()
     ingestor.fetch_read_only.side_effect = fetch_effects
     cypher_gen = MagicMock()
@@ -81,9 +88,7 @@ def _tool(
 
 
 async def test_a_rejected_query_is_regenerated_once_with_the_error() -> None:
-    tool, ingestor, cypher_gen = _tool(
-        [mgclient.DatabaseError(_LIST_SORT_ERROR), _ROWS]
-    )
+    tool, ingestor, cypher_gen = _tool([_DatabaseError(_LIST_SORT_ERROR), _ROWS])
     result = await tool.function(natural_language_query=_QUESTION)
 
     cypher_gen.repair.assert_awaited_once_with(_QUESTION, _REJECTED, _LIST_SORT_ERROR)
@@ -96,7 +101,7 @@ async def test_a_rejected_query_is_regenerated_once_with_the_error() -> None:
 
 
 async def test_a_lost_connection_is_not_regenerated() -> None:
-    tool, _, cypher_gen = _tool([mgclient.OperationalError("connection refused")])
+    tool, _, cypher_gen = _tool([_OperationalError("connection refused")])
     result = await tool.function(natural_language_query=_QUESTION)
 
     cypher_gen.repair.assert_not_awaited()
@@ -106,7 +111,7 @@ async def test_a_lost_connection_is_not_regenerated() -> None:
 
 async def test_a_second_rejection_is_reported_not_retried_again() -> None:
     tool, ingestor, cypher_gen = _tool(
-        [mgclient.DatabaseError(_LIST_SORT_ERROR), mgclient.DatabaseError("still bad")]
+        [_DatabaseError(_LIST_SORT_ERROR), _DatabaseError("still bad")]
     )
     result = await tool.function(natural_language_query=_QUESTION)
 
@@ -119,7 +124,7 @@ async def test_a_second_rejection_is_reported_not_retried_again() -> None:
 async def test_the_repaired_query_must_still_pass_the_project_scope_check() -> None:
     unscoped = "MATCH (n) RETURN n.name AS name ORDER BY name;"
     tool, ingestor, _ = _tool(
-        [mgclient.DatabaseError(_LIST_SORT_ERROR)],
+        [_DatabaseError(_LIST_SORT_ERROR)],
         repaired=unscoped,
         project_name="proj",
     )
@@ -138,6 +143,7 @@ async def test_repair_asks_the_generator_with_the_query_and_error() -> None:
         repaired = await generator.repair(_QUESTION, _REJECTED, _LIST_SORT_ERROR)
 
     assert repaired == _REPAIRED
+    assert generate.await_args is not None
     request = generate.await_args.args[0]
     assert request == build_cypher_repair_request(
         _QUESTION, _REJECTED, _LIST_SORT_ERROR

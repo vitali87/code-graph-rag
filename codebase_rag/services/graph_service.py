@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import threading
 import types
 from collections import defaultdict
@@ -31,6 +32,7 @@ from ..constants import (
     KEY_TO_VAL,
     LEGACY_NODE_CONSTRAINTS,
     MERGE_KEY_PROPS_BY_REL,
+    NEO4J_EXCEPTIONS_MODULE,
     NODE_NAME_INDEXES,
     NODE_UNIQUE_CONSTRAINTS,
     REL_TYPE_CALLS,
@@ -116,6 +118,12 @@ def _created_count(results: Sequence[ResultRow]) -> int:
     return total
 
 
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception types are bound once here.
+_MgclientDatabaseError: type[Exception] = mgclient.DatabaseError  # ty: ignore[unresolved-attribute]
+_MgclientOperationalError: type[Exception] = mgclient.OperationalError  # ty: ignore[unresolved-attribute]
+
+
 def is_query_rejection(error: BaseException) -> bool:
     """Whether the engine refused the query itself, not the connection.
 
@@ -126,18 +134,14 @@ def is_query_rejection(error: BaseException) -> bool:
     `DatabaseError`; in neo4j, `AuthError` and `Forbidden` subclass
     `ClientError` (issue #2361).
     """
-    if isinstance(error, mgclient.DatabaseError):
-        return not isinstance(error, mgclient.OperationalError)
+    if isinstance(error, _MgclientDatabaseError):
+        return not isinstance(error, _MgclientOperationalError)
     try:
-        from neo4j.exceptions import (  # ty: ignore[unresolved-import]
-            AuthError,
-            ClientError,
-            Forbidden,
-        )
+        neo4j_exceptions = importlib.import_module(NEO4J_EXCEPTIONS_MODULE)
     except ImportError:
         return False
-    return isinstance(error, ClientError) and not isinstance(
-        error, (AuthError, Forbidden)
+    return isinstance(error, neo4j_exceptions.ClientError) and not isinstance(
+        error, (neo4j_exceptions.AuthError, neo4j_exceptions.Forbidden)
     )
 
 
