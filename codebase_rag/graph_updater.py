@@ -971,6 +971,71 @@ def _read_bytes(path: Path) -> bytes:
         return b""
 
 
+def _direct_children(keys: Iterable[str], prefix: str) -> set[str]:
+    children: set[str] = set()
+    for key in keys:
+        if not key.startswith(prefix):
+            continue
+        rest = key[len(prefix) :]
+        if "/" not in rest:
+            children.add(rest)
+    return children
+
+
+def _entry_flag(probe: Callable[[], bool]) -> bool:
+    try:
+        return probe()
+    except OSError:
+        return False
+
+
+def _scan_dir_children(dir_path_str: str) -> tuple[set[str], set[str]]:
+    files: set[str] = set()
+    dirs: set[str] = set()
+    with os.scandir(dir_path_str) as it:
+        for entry in it:
+            name = entry.name
+            if name in cs.CGR_STATE_FILENAMES:
+                continue
+            is_dir_following = _entry_flag(entry.is_dir)
+            if is_dir_following and _entry_flag(entry.is_symlink):
+                continue
+            (dirs if is_dir_following else files).add(name)
+    return files, dirs
+
+
+def _cached_file_unchanged(
+    file_path_str: str, old_hash: str, cache_mtime: float
+) -> bool:
+    if old_hash == cs.HASH_CACHE_UNREADABLE:
+        # A file the last run could not read is retried by the next real
+        # pass, whatever its directory's mtime says (#1983).
+        return False
+    try:
+        stat = os.stat(file_path_str)
+    except OSError:
+        return False
+    if stat.st_mtime <= cache_mtime:
+        return True
+    try:
+        current_hash = _hash_file(Path(file_path_str))
+    except OSError:
+        # A cached file that can no longer be read is not "in sync": the
+        # batch pass counts it unreadable and leaves it out of the cache,
+        # where raising here ended the run (issue #1992).
+        return False
+    return current_hash == old_hash
+
+
+def _cached_files_unchanged(
+    repo_str: str, old_hashes: FileHashCache, cache_mtime: float
+) -> bool:
+    return all(
+        _cached_file_unchanged(f"{repo_str}/{file_key}", old_hash, cache_mtime)
+        for file_key, old_hash in old_hashes.items()
+    )
+
+
 class GraphUpdater:
     """Drive a full or incremental ingest of a repository into the graph.
 
@@ -1795,12 +1860,7 @@ class GraphUpdater:
         """
         if not self.repo_path.is_dir():
             raise FileNotFoundError(ls.REPO_PATH_MISSING.format(path=self.repo_path))
-        py_engine = self.factory.type_inference._python_type_inference
-        if py_engine is not None:
-            py_engine._available_classes_cache.clear()
-            py_engine._return_stmt_cache.clear()
-            py_engine._method_return_type_cache.clear()
-            py_engine._self_assignment_cache.clear()
+        self._clear_python_inference_caches()
         # Reset per-run parse tracking so a reused updater does not reprocess
         # a previous run's files in Pass 3.
         self._parsed_files.clear()
@@ -1864,17 +1924,7 @@ class GraphUpdater:
         self._pending_cache_observed_at = None
         self._pending_parser_fingerprint = None
         if not force and self._is_already_in_sync():
-            logger.info(ls.GRAPH_ALREADY_IN_SYNC)
-            self.skipped_because_in_sync = True
-            # The re-anchor runs here too: a run whose re-anchor failed still
-            # published its cache, so the next unchanged run takes this path,
-            # and "re-attached by the next run" (the re-anchor's own contract)
-            # would otherwise be false for exactly the run that needs it. Two
-            # statements, no-ops when every note is attached (issue #1808).
-            self._reanchor_glosses()
-            self.ingestor.flush_all()
-            if self._single_file is None and not self._graph_state_unknown:
-                self._stamp_exclusion_state(only_if_changed=True)
+            self._finish_in_sync_run()
             return
 
         # Cleared only when a REAL indexing run begins: an in-sync no-op above
@@ -2032,6 +2082,30 @@ class GraphUpdater:
 
         self._generate_semantic_embeddings()
 
+        self._commit_run_state()
+
+    def _clear_python_inference_caches(self) -> None:
+        py_engine = self.factory.type_inference._python_type_inference
+        if py_engine is not None:
+            py_engine._available_classes_cache.clear()
+            py_engine._return_stmt_cache.clear()
+            py_engine._method_return_type_cache.clear()
+            py_engine._self_assignment_cache.clear()
+
+    def _finish_in_sync_run(self) -> None:
+        logger.info(ls.GRAPH_ALREADY_IN_SYNC)
+        self.skipped_because_in_sync = True
+        # The re-anchor runs here too: a run whose re-anchor failed still
+        # published its cache, so the next unchanged run takes this path,
+        # and "re-attached by the next run" (the re-anchor's own contract)
+        # would otherwise be false for exactly the run that needs it. Two
+        # statements, no-ops when every note is attached (issue #1808).
+        self._reanchor_glosses()
+        self.ingestor.flush_all()
+        if self._single_file is None and not self._graph_state_unknown:
+            self._stamp_exclusion_state(only_if_changed=True)
+
+    def _commit_run_state(self) -> None:
         # The delombok state commits ONLY here, after every pass and the
         # graph flush succeeded: a run that dies mid-way must not convince
         # its successor that the overlay-affected files were reprocessed.
@@ -2200,27 +2274,11 @@ class GraphUpdater:
         # the unchanged handlers must still re-emit under the new prefix, so
         # they come back from the graph. A full build queued them all already.
         if not self._is_full_build:
-            if only is None:
-                rehydrated = self._rehydrated_route_handlers(
-                    {qn for _label, qn, _decorators, _module in entries},
-                    set(module_asts),
+            entries.extend(
+                self._rehydrated_endpoint_entries(
+                    entries, only, known_files, module_asts
                 )
-            else:
-                # Scoped: only the handlers of the router modules pulled in
-                # above; a module in `only` re-parsed and queued its own.
-                # Handlers are attributed against every module the graph
-                # knows, never the partial scoped set, or a package
-                # `__init__` pulled in by an import would stand in for its
-                # unloaded children and claim unrelated routers' handlers.
-                rehydrated = [
-                    entry
-                    for entry in self._rehydrated_route_handlers(
-                        {qn for _label, qn, _decorators, _module in entries},
-                        set(known_files),
-                    )
-                    if entry[3] in module_asts and entry[3] not in only
-                ]
-            entries.extend(rehydrated)
+            )
         if not entries:
             return
         self._drop_stale_handler_exposes(
@@ -2233,12 +2291,10 @@ class GraphUpdater:
             # spun up inside a test is not a production endpoint (#910).
             # Rehydrated handlers live in graph-backed modules absent from
             # the re-parse map, so the merged python-files map goes first.
-            path = module_files.get(
-                module_qn or ""
-            ) or self.factory.definition_processor.module_qn_to_file_path.get(
-                module_qn or ""
-            )
-            if self._is_test_module(path):
+            if self._is_test_module(
+                module_files.get(module_qn or "")
+                or dp.module_qn_to_file_path.get(module_qn or "")
+            ):
                 continue
             emit_endpoints(
                 self._sink,
@@ -2466,6 +2522,28 @@ class GraphUpdater:
         if self._registry_unread:
             return []
         return out
+
+    def _rehydrated_endpoint_entries(
+        self,
+        entries: list[tuple[cs.NodeLabel, str, list[str], str | None]],
+        only: set[str] | None,
+        known_files: Mapping[str, Path],
+        module_asts: Mapping[str, Node],
+    ) -> list[tuple[cs.NodeLabel, str, list[str], str | None]]:
+        pending_qns = {qn for _label, qn, _decorators, _module in entries}
+        if only is None:
+            return self._rehydrated_route_handlers(pending_qns, set(module_asts))
+        # Scoped: only the handlers of the router modules pulled in above; a
+        # module in `only` re-parsed and queued its own. Handlers are
+        # attributed against every module the graph knows, never the partial
+        # scoped set, or a package `__init__` pulled in by an import would
+        # stand in for its unloaded children and claim unrelated routers'
+        # handlers.
+        return [
+            entry
+            for entry in self._rehydrated_route_handlers(pending_qns, set(known_files))
+            if entry[3] in module_asts and entry[3] not in only
+        ]
 
     def _rehydrated_route_handlers(
         self, already_pending: set[str], module_qns: set[str]
@@ -4441,63 +4519,19 @@ class GraphUpdater:
         old_dir_mtimes: DirMtimesCache,
     ) -> tuple[str | None, str | None]:
         prefix = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
-        expected_files: set[str] = set()
-        expected_dirs: set[str] = set()
-        for fk in old_hashes:
-            if fk.startswith(prefix):
-                rest = fk[len(prefix) :]
-                if "/" not in rest:
-                    expected_files.add(rest)
-        for dk in old_dir_mtimes:
-            if dk == cs.ROOT_DIR_KEY or not dk.startswith(prefix):
-                continue
-            rest = dk[len(prefix) :]
-            if "/" not in rest:
-                expected_dirs.add(rest)
-
-        actual_files: set[str] = set()
-        actual_dirs: set[str] = set()
+        expected_files = _direct_children(old_hashes, prefix)
+        expected_dirs = _direct_children(
+            (dk for dk in old_dir_mtimes if dk != cs.ROOT_DIR_KEY), prefix
+        )
         try:
-            with os.scandir(dir_path_str) as it:
-                for entry in it:
-                    name = entry.name
-                    if name in cs.CGR_STATE_FILENAMES:
-                        continue
-                    try:
-                        is_symlink = entry.is_symlink()
-                    except OSError:
-                        is_symlink = False
-                    try:
-                        is_dir_following = entry.is_dir()
-                    except OSError:
-                        is_dir_following = False
-                    if is_symlink and is_dir_following:
-                        continue
-                    if is_dir_following:
-                        actual_dirs.add(name)
-                    else:
-                        actual_files.add(name)
+            actual_files, actual_dirs = _scan_dir_children(dir_path_str)
         except OSError:
             return None, dir_key
 
-        dir_parts: tuple[str, ...] = (
-            () if dir_key == cs.ROOT_DIR_KEY else tuple(dir_key.split("/"))
-        )
-        dir_prefix_for_keep = "" if dir_key == cs.ROOT_DIR_KEY else f"{dir_key}/"
-
-        for name in actual_dirs - expected_dirs:
-            if not self._should_keep_dir(name, dir_prefix_for_keep):
-                continue
-            return f"{prefix}{name}", None
-        for name in actual_files - expected_files:
-            if should_skip_rel_file(
-                f"{prefix}{name}",
-                dir_parts,
-                exclude_paths=self.exclude_paths,
-                unignore_paths=self.unignore_paths,
-            ):
-                continue
-            return f"{prefix}{name}", None
+        if addition := self._first_indexable_addition(
+            dir_key, prefix, actual_dirs - expected_dirs, actual_files - expected_files
+        ):
+            return addition, None
 
         for name in expected_files - actual_files:
             return None, f"{prefix}{name}"
@@ -4505,6 +4539,29 @@ class GraphUpdater:
             return None, f"{prefix}{name}"
 
         return None, None
+
+    def _first_indexable_addition(
+        self,
+        dir_key: str,
+        prefix: str,
+        new_dirs: set[str],
+        new_files: set[str],
+    ) -> str | None:
+        dir_parts: tuple[str, ...] = (
+            () if dir_key == cs.ROOT_DIR_KEY else tuple(dir_key.split("/"))
+        )
+        for name in new_dirs:
+            if self._should_keep_dir(name, prefix):
+                return f"{prefix}{name}"
+        for name in new_files:
+            if not should_skip_rel_file(
+                f"{prefix}{name}",
+                dir_parts,
+                exclude_paths=self.exclude_paths,
+                unignore_paths=self.unignore_paths,
+            ):
+                return f"{prefix}{name}"
+        return None
 
     def _should_keep_dir(self, dirname: str, dir_prefix: str) -> bool:
         return should_keep_dir(
@@ -4646,29 +4703,9 @@ class GraphUpdater:
         return False
 
     def _is_already_in_sync(self) -> bool:
-        if self._delombok_state_changed:
-            # The overlay's effect changed while the checked-in bytes did
-            # not; the affected files must reparse.
-            return False
-        if self._single_file is not None:
+        if self._sync_state_forces_reparse():
             return False
         cache_path = self.repo_path / cs.HASH_CACHE_FILENAME
-        if not cache_path.is_file():
-            return False
-        # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
-        # hash below would send the run into the endpoint passes that owe it
-        # (issue #2193).
-        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
-            return False
-        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
-            return False
-        # Nothing on disk changes when only the exclusion set does, so no
-        # hash or directory mtime below can see it: a file excluded by a CLI
-        # flag alone would keep the Module, Class and Method nodes the last
-        # run gave it (issue #1606). `.cgrignore` was covered only
-        # incidentally, by being an indexed and hashed file itself.
-        if not self._exclusions_match_last_run():
-            return False
         cache_mtime = _trustworthy_cache_mtime(cache_path)
         dir_mtimes_path = self.repo_path / cs.DIR_MTIMES_FILENAME
         old_hashes = (
@@ -4679,7 +4716,36 @@ class GraphUpdater:
         old_dir_mtimes = _load_dir_mtimes(dir_mtimes_path)
         if not old_hashes or not old_dir_mtimes:
             return False
+        return self._cached_dirs_unchanged(
+            old_hashes, old_dir_mtimes
+        ) and _cached_files_unchanged(str(self.repo_path), old_hashes, cache_mtime)
 
+    def _sync_state_forces_reparse(self) -> bool:
+        if self._delombok_state_changed:
+            # The overlay's effect changed while the checked-in bytes did
+            # not; the affected files must reparse.
+            return True
+        if self._single_file is not None:
+            return True
+        if not (self.repo_path / cs.HASH_CACHE_FILENAME).is_file():
+            return True
+        # A skipped EXPOSES cleanup is owed: nothing on disk changed, so no
+        # hash below would send the run into the endpoint passes that owe it
+        # (issue #2193).
+        if (self.repo_path / cs.EXPOSES_CLEANUP_PENDING_FILENAME).exists():
+            return True
+        if (self.repo_path / cs.PRUNE_PENDING_FILENAME).exists():
+            return True
+        # Nothing on disk changes when only the exclusion set does, so no
+        # hash or directory mtime below can see it: a file excluded by a CLI
+        # flag alone would keep the Module, Class and Method nodes the last
+        # run gave it (issue #1606). `.cgrignore` was covered only
+        # incidentally, by being an indexed and hashed file itself.
+        return not self._exclusions_match_last_run()
+
+    def _cached_dirs_unchanged(
+        self, old_hashes: FileHashCache, old_dir_mtimes: DirMtimesCache
+    ) -> bool:
         repo_str = str(self.repo_path)
         for dir_key, cached_mtime in old_dir_mtimes.items():
             dir_path_str = (
@@ -4689,33 +4755,12 @@ class GraphUpdater:
                 current_mtime = os.stat(dir_path_str).st_mtime
             except OSError:
                 return False
-            if current_mtime != cached_mtime:
-                addition, removal = self._diff_dir_against_cache(
-                    dir_path_str, dir_key, old_hashes, old_dir_mtimes
-                )
-                if addition is not None or removal is not None:
-                    return False
-
-        for file_key, old_hash in old_hashes.items():
-            if old_hash == cs.HASH_CACHE_UNREADABLE:
-                # A file the last run could not read is retried by the next
-                # real pass, whatever its directory's mtime says (#1983).
-                return False
-            file_path_str = f"{repo_str}/{file_key}"
-            try:
-                stat = os.stat(file_path_str)
-            except OSError:
-                return False
-            if stat.st_mtime <= cache_mtime:
+            if current_mtime == cached_mtime:
                 continue
-            try:
-                current_hash = _hash_file(Path(file_path_str))
-            except OSError:
-                # A cached file that can no longer be read is not "in sync":
-                # the batch pass counts it unreadable and leaves it out of
-                # the cache, where raising here ended the run (issue #1992).
-                return False
-            if current_hash != old_hash:
+            addition, removal = self._diff_dir_against_cache(
+                dir_path_str, dir_key, old_hashes, old_dir_mtimes
+            )
+            if addition is not None or removal is not None:
                 return False
         return True
 
