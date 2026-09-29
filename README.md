@@ -61,9 +61,11 @@ Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by c
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Code Generation**: Split Cypher response cleaning and AST-grep rule validation into smaller, more manageable helpers for improved clarity and maintainability.
-- **Scripting Improvements**: Resolved an issue where closed pull request run associations were incorrectly reported as missing, and improved error reporting in scripts to avoid over-claiming failing checks.
-- **Data Handling**: Enhanced the handling of CONTAINS_SECTION in the double's module subtree and refined snippet lookup to project the matched node's own path.
+- **Vector Store Improvements**: Enhanced handling of Milvus collection sizes and embedding size checks to prevent errors.
+- **Provider Configuration**: Improved default endpoint handling for providers when configuration is not explicitly set.
+- **Project Scope**: Increased project-level scoping for exclusions, module deletions, and other operations.
+- **CLI Enhancements**: Added a Credits page to the documentation and improved the status reporting for CLI syncs.
+- **Dependency Updates**: Updated several dependencies including transformers, actions, and SonarSource tools.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
