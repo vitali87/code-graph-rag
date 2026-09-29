@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import toml
+import tomli_w
 from pydantic import ValidationError
 
 from ..config import settings
@@ -56,8 +56,8 @@ def save_workspace(config: WorkspaceConfig, home: Path | None = None) -> Path:
     path = workspace_path(config.name, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"workspace": config.model_dump()}
-    with path.open("w", encoding="utf-8") as f:
-        toml.dump(payload, f)
+    with path.open("wb") as f:
+        tomli_w.dump(payload, f)
     return path
 
 
@@ -103,6 +103,7 @@ def add_repo(
     repo = WorkspaceRepo(
         path=str(resolved),
         project_name=(project_name or derive_project_name(resolved)),
+        project_named=bool(project_name and project_name.strip()),
     )
     config.repos.append(repo)
     save_workspace(config, home=home)

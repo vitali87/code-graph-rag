@@ -1,12 +1,16 @@
 name: PR Split Score
 
+# pull_request, never pull_request_target: scoring needs no privilege, so a
+# fork's read-only token is enough, and GitHub disables pull_request_target
+# by default in public repositories from 2026-11-02. Fork runs wait for
+# approval only for a first-time contributor (the repository's
+# fork-PR approval policy); a returning contributor is scored at once.
 on:
   pull_request:
     branches: [main]
 
 permissions:
   contents: read
-  pull-requests: write
 
 # A new push to the same PR supersedes the queued or running analysis of the
 # previous head; cancelling it keeps the runner queue for live heads.
@@ -21,8 +25,39 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: pr-split score
+        id: score
         uses: vitali87/pr-split@95cdcd9748109351b2aa7129ede2269989d8f61c # v1.0.1
         with:
           max-loc: "400"
+          # No API call. The report needs none, and the comment write it
+          # replaces failed with a 403 on every oversized fork PR, since a
+          # fork's token is read-only: the one case the score is for.
+          post-comment: "false"
+
+      # The job summary and a warning annotation are written by the runner,
+      # not through the API, so they reach a fork's author the same as ours.
+      - name: Report
+        env:
+          TOTAL_LOC: ${{ steps.score.outputs.total-loc }}
+          TOTAL_GROUPS: ${{ steps.score.outputs.total-groups }}
+          SHOULD_SPLIT: ${{ steps.score.outputs.should-split }}
+          MAX_LOC: "400"
+        run: |
+          # The pinned action renders its report here and exposes no output
+          # naming the path. It is absent when the PR is under the limit, and
+          # also when an over-limit PR yields no plan: that is still over.
+          report="${RUNNER_TEMP}/pr-split-comment.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          elif [ "${TOTAL_LOC:-0}" -gt "$MAX_LOC" ]; then
+            echo "pr-split: ${TOTAL_LOC} LOC, over the ${MAX_LOC} LOC limit; no split plan could be generated (see the pr-split score step log)." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=PR over ${MAX_LOC} LOC::${TOTAL_LOC} LOC, over the ${MAX_LOC} LOC limit; pr-split could not generate a split plan. Consider splitting it by hand."
+          else
+            echo "pr-split: ${TOTAL_LOC} LOC, within the ${MAX_LOC} LOC limit." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$SHOULD_SPLIT" = "true" ]; then
+            echo "::warning title=PR over ${MAX_LOC} LOC::${TOTAL_LOC} LOC; pr-split suggests ${TOTAL_GROUPS} smaller PRs. The plan is in this job's summary. Run pr-split split locally to create them."
+          fi

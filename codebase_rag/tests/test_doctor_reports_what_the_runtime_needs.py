@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 from codebase_rag import cli as cli_module
 from codebase_rag import constants as cs
 from codebase_rag.config import PROVIDER_ENV_KEYS, settings
+from codebase_rag.console_marks import status_mark
 from codebase_rag.schemas import HealthCheckResult
 from codebase_rag.tools.health_checker import HealthChecker
 
@@ -93,6 +94,19 @@ class TestMarksMatchTheConsole:
         assert result.exit_code == 1, result.output
         assert f"{cs.HEALTH_MARK_PASS} {_PASS.name}" in text, text
         assert f"{cs.HEALTH_MARK_FAIL} {_FAIL.name}" in text, text
+
+    @pytest.mark.parametrize("encoding", [cs.ENCODING_UTF8, "cp65001", "cp950"])
+    def test_doctor_picks_the_mark_the_query_table_picks(
+        self, monkeypatch: pytest.MonkeyPatch, encoding: str
+    ) -> None:
+        """One rule for both tables (#2120). `cp65001` is Windows' UTF-8 code
+        page, what a `chcp 65001` terminal reports: it carries both glyphs,
+        but its name does not start with "utf", so a rule matching the name
+        instead of asking the codec gave doctor ASCII there."""
+        result, text = _run_doctor(monkeypatch, encoding)
+        assert isinstance(result.exception, SystemExit), result.exception
+        assert f"{status_mark(True, encoding)} {_PASS.name}" in text, text
+        assert f"{status_mark(False, encoding)} {_FAIL.name}" in text, text
 
 
 @pytest.fixture

@@ -100,7 +100,8 @@ def test_failed_contract_reports_rollback_without_running_success_hook(
         after_apply=after_apply,
     )
 
-    assert report.verdict is not None and not report.verdict.ok
+    assert report.verdict is not None
+    assert not report.verdict.ok
     after_apply.assert_not_called()
     assert not report.applied
     if undone:
@@ -139,7 +140,7 @@ def test_cli_failed_contract_exits_nonzero_and_serializes_rollback_status(
             "codebase_rag.graph_cli._project_and_fetch",
             return_value=(PROJECT, store.fetch_all, MagicMock()),
         ),
-        patch("codebase_rag.cli.GraphUpdater", return_value=updater),
+        patch("codebase_rag.graph_updater.GraphUpdater", return_value=updater),
         patch.object(updater, "reingest", side_effect=reingest),
     ):
         result = CliRunner().invoke(
@@ -206,7 +207,8 @@ def test_rename_without_contract_failure_has_no_rollback_status(
     assert report.undone is None
     assert report.applied is (mode != "dry_run")
     if mode == "measured":
-        assert report.verdict is not None and report.verdict.ok
+        assert report.verdict is not None
+        assert report.verdict.ok
     if mode == "dry_run":
         after_apply.assert_not_called()
     else:

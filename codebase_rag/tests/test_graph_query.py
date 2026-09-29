@@ -757,7 +757,9 @@ def test_cli_definition_reads_source_only_for_the_repos_own_project(
         "--repo-path",
         str(tmp_path),
     ]
-    with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
+    with patch(
+        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect()
+    ):
         foreign = CliRunner().invoke(graph_cli, args)
         with patch.object(sys.modules[__name__], "PROJECT_ROOT", str(tmp_path)):
             own = CliRunner().invoke(graph_cli, args)
@@ -776,7 +778,9 @@ def _mock_connect() -> MagicMock:
 
 
 def test_cli_callers_prints_sorted_json(tmp_path: Path) -> None:
-    with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
+    with patch(
+        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect()
+    ):
         result = CliRunner().invoke(
             graph_cli,
             [
@@ -813,6 +817,52 @@ def test_cli_every_subcommand_is_registered() -> None:
         "importers",
         "tests-reaching",
     }
+
+
+def test_a_type_resolves_by_its_namespace_qualified_natural_name() -> None:
+    """`Serilog.ILogger` is the name a C# reader searches for, and the
+    interface's qualified name no longer ends with it once the mirrored
+    namespace is left out (issue #1629); the `namespace` property answers,
+    and the type ranks with the dotted-suffix matches rather than after
+    them."""
+    module = _node(
+        "Module", f"{P}.src.Serilog.ILogger", "src/Serilog/ILogger.cs", 1, 40
+    )
+    interface = _node(
+        "Interface", f"{P}.src.Serilog.ILogger.ILogger", "src/Serilog/ILogger.cs", 5, 38
+    )
+    interface[cs.KEY_NAMESPACE] = "Serilog"
+    other = _node(
+        "Class", f"{P}.src.Other.ILogger.ILogger", "src/Other/ILogger.cs", 1, 9
+    )
+    other[cs.KEY_NAMESPACE] = "Other"
+    nodes = [module, interface, other]
+
+    def fetch_all(query: str, params: PropertyDict | None = None) -> list[ResultRow]:
+        assert query == cq.CYPHER_GRAPH_RESOLVE_NAME
+        p = params or {}
+        qn = str(p[cs.KEY_QN])
+        return [
+            n
+            for n in nodes
+            if str(n[cs.KEY_QUALIFIED_NAME]) == qn
+            or str(n[cs.KEY_QUALIFIED_NAME]).endswith(str(p[cs.KEY_SUFFIX]))
+            or n[cs.KEY_NAME] == p[cs.KEY_NAME]
+            or (
+                n.get(cs.KEY_NAMESPACE)
+                and f"{n[cs.KEY_NAMESPACE]}.{n[cs.KEY_NAME]}" == qn
+            )
+        ]
+
+    rows = graph_query.resolve(fetch_all, P, "Serilog.ILogger")
+    assert [r["qualified_name"] for r in rows] == [
+        f"{P}.src.Serilog.ILogger",
+        f"{P}.src.Serilog.ILogger.ILogger",
+        f"{P}.src.Other.ILogger.ILogger",
+    ]
+    assert rows[1]["label"] == "Interface"
+    # The other namespace's type matched by bare name only, so it ranks last.
+    assert graph_query.resolve(fetch_all, P, "Other.ILogger")[0]["label"] == "Class"
 
 
 def test_rows_of_a_project_extending_the_name_are_not_this_projects(

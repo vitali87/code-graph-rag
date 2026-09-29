@@ -34,7 +34,8 @@ from . import cypher_queries as cq
 from .capture import CaptureSelection, default_capture
 from .check_isolation import GraphStore, IsolationGuard
 from .config import load_ignore_patterns
-from .graph_updater import GraphUpdater, _load_exclusion_state
+from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
+from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries, PropertyDict, ReingestReport
 from .utils.path_utils import derive_project_name
@@ -130,6 +131,41 @@ def _stamp_is_named(stored: dict[str, list[str] | str]) -> bool:
     return bool(stored.get("named"))
 
 
+def _stamp_belongs_to(
+    stored: dict[str, list[str] | str],
+    repo_root: Path,
+    project_name: str,
+    explicit: bool,
+) -> bool:
+    owner = stored.get("project")
+    if _stamp_is_named(stored):
+        return owner == project_name
+    default_names = {derive_project_name(repo_root), repo_root.resolve().name}
+    return not explicit and owner in default_names and project_name in default_names
+
+
+def _own_project_stamp(
+    stamps: dict[str, dict[str, list[str] | str]],
+    repo_root: Path,
+    project_name: str,
+    explicit: bool,
+) -> dict[str, list[str] | str] | None:
+    """This project's own entry from the per-project map, if it has one."""
+    exact = stamps.get(project_name)
+    if exact is not None and _stamp_belongs_to(
+        exact, repo_root, project_name, explicit
+    ):
+        return exact
+    return next(
+        (
+            stamp
+            for stamp in stamps.values()
+            if _stamp_belongs_to(stamp, repo_root, project_name, explicit)
+        ),
+        None,
+    )
+
+
 def indexed_scope(
     repo_root: Path, project_name: str, *, explicit: bool = False
 ) -> tuple[frozenset[str] | None, frozenset[str] | None]:
@@ -150,7 +186,18 @@ def indexed_scope(
     the wrong project silently re-ingests files the index left out, or drops
     files it deliberately kept.
     """
-    stored = _load_exclusion_state(repo_root / cs.EXCLUSION_STATE_FILENAME)
+    state_path = repo_root / cs.EXCLUSION_STATE_FILENAME
+    stored = _load_exclusion_state(state_path)
+    # Every project indexed from this tree keeps its own entry, so one that
+    # a later project's run overwrote at the top level still has its scope
+    # (issue #1987). Its ownership is judged by the same rule as the
+    # top-level stamp below; with no entry that is this project's, the
+    # top-level stamp decides as it did before the map existed.
+    own = _own_project_stamp(
+        _load_project_stamps(state_path), repo_root, project_name, explicit
+    )
+    if own is not None:
+        stored = own
     if stored is not None:
         owner = stored.get("project")
         # `cgr index` without --project stamps the bare directory name
@@ -167,16 +214,7 @@ def indexed_scope(
         # an unnamed stamp does not serve `--project myrepo`, because the
         # last unnamed run of this tree overwrote whatever the named project
         # had stamped, and its scope is simply gone rather than inferable.
-        default_names = {derive_project_name(repo_root), repo_root.resolve().name}
-        stamp_named = _stamp_is_named(stored)
-        if stamp_named:
-            mine = owner == project_name
-        else:
-            mine = (
-                not explicit
-                and owner in default_names
-                and project_name in default_names
-            )
+        mine = _stamp_belongs_to(stored, repo_root, project_name, explicit)
         if isinstance(owner, str) and not mine:
             raise CheckError(
                 cs.CHECK_SCOPE_OF_OTHER_PROJECT.format(
@@ -186,8 +224,8 @@ def indexed_scope(
         exclude = stored.get("exclude") or []
         unignore = stored.get("unignore") or []
         return (
-            frozenset(exclude) or None,  # type: ignore[arg-type]
-            frozenset(unignore) or None,  # type: ignore[arg-type]
+            frozenset(exclude) or None,
+            frozenset(unignore) or None,
         )
     cgrignore = load_ignore_patterns(repo_root)
     return cgrignore.exclude or None, cgrignore.unignore or None
@@ -310,8 +348,8 @@ def _measure_then_restore(
     # transaction around the two, so a failure between them leaves the graph
     # partial. The persistent incomplete-run marker every mutating path sets
     # (#1679) records that: set before the first write, cleared only once the
-    # restore has finished, so a failed restore leaves readers refusing and
-    # the next full update repairing (bot review, #1718).
+    # graph and the hash cache are both back, so a failed restore leaves
+    # readers refusing and the next full update repairing (bot review, #1718).
     marker: PropertyDict = {
         cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_RUN_ID: uuid.uuid4().hex,
@@ -324,20 +362,24 @@ def _measure_then_restore(
     finally:
         try:
             guard.restore()
-            store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
         finally:
             cache.put_back()
+        # Only once BOTH are back: a cache left holding the re-parse's hashes
+        # would make the next update skip the edited files, so a failed cache
+        # restore must keep the marker too (CodeRabbit, #1718).
+        store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
 
 
 def run_check(
     repo_root: Path,
     base: str,
     project_name: str,
-    ingestor: object,
+    ingestor: QueryingIngestorProtocol,
     parsers: Mapping[cs.SupportedLanguage, Parser],
     queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
+    project_named: bool | None = None,
     isolated: bool = False,
     capture: CaptureSelection | None = None,
 ) -> StructuralDelta:
@@ -352,11 +394,12 @@ def run_check(
     changed = normalise_paths(changed, repo_root)
     deleted = normalise_paths(deleted, repo_root)
     updater = GraphUpdater(
-        ingestor=ingestor,  # type: ignore[arg-type]
+        ingestor=ingestor,
         repo_path=repo_root,
         parsers=parsers,
         queries=queries,
         project_name=project_name,
+        project_named=project_named,
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
         # The selection isolated mode validated must be the one the run
@@ -365,7 +408,7 @@ def run_check(
         # refused (Greptile, #1718).
         capture=capture,
     )
-    fetch_all = getattr(ingestor, "fetch_all")
+    fetch_all = ingestor.fetch_all
 
     def measure(apply: Callable[[], ReingestReport]) -> StructuralDelta:
         return observe(

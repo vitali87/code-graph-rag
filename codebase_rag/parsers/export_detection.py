@@ -222,32 +222,37 @@ def _module_export_list_names(node: Node) -> set[str]:
         root = root.parent
     names: set[str] = set()
     for statement in root.children:
-        if statement.type != cs.TS_EXPORT_STATEMENT:
-            continue
-        # A re-export (`export { x } from './y'`) names another module's
-        # symbol, not this file's declaration, so skip clauses with a source.
-        if any(child.type == cs.TS_STRING for child in statement.children):
-            continue
-        clause = next(
-            (c for c in statement.children if c.type == cs.TS_EXPORT_CLAUSE), None
-        )
-        if clause is not None:
-            for specifier in clause.children:
-                if specifier.type != cs.TS_EXPORT_SPECIFIER:
-                    continue
-                local = next(
-                    (c for c in specifier.children if c.type == cs.TS_IDENTIFIER), None
-                )
-                if local is not None:
-                    names.add(local.text.decode())
-            continue
-        if any(c.type == cs.TS_EXPORT_DEFAULT for c in statement.children):
-            ident = next(
-                (c for c in statement.children if c.type == cs.TS_IDENTIFIER), None
-            )
-            if ident is not None:
-                names.add(ident.text.decode())
+        if statement.type == cs.TS_EXPORT_STATEMENT:
+            names.update(_export_statement_local_names(statement))
     return names
+
+
+def _first_child_of_type(node: Node, node_type: str) -> Node | None:
+    return next((c for c in node.children if c.type == node_type), None)
+
+
+def _export_statement_local_names(statement: Node) -> list[str]:
+    # A re-export (`export { x } from './y'`) names another module's symbol,
+    # not this file's declaration, so a clause with a source exports nothing.
+    if _first_child_of_type(statement, cs.TS_STRING) is not None:
+        return []
+    clause = _first_child_of_type(statement, cs.TS_EXPORT_CLAUSE)
+    if clause is not None:
+        locals_ = (
+            _first_child_of_type(specifier, cs.TS_IDENTIFIER)
+            for specifier in clause.children
+            if specifier.type == cs.TS_EXPORT_SPECIFIER
+        )
+        return [
+            text.decode()
+            for local in locals_
+            if local is not None and (text := local.text) is not None
+        ]
+    if _first_child_of_type(statement, cs.TS_EXPORT_DEFAULT) is not None:
+        ident = _first_child_of_type(statement, cs.TS_IDENTIFIER)
+        if ident is not None and ident.text is not None:
+            return [ident.text.decode()]
+    return []
 
 
 def _java_exported(node: Node) -> bool:

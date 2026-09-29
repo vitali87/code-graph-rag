@@ -6,6 +6,8 @@ description: "Configure Code-Graph-RAG with provider settings, environment varia
 
 Configuration is managed through environment variables in the `.env` file. The provider-explicit configuration supports mixing different providers for orchestrator and cypher models.
 
+Set a role's `*_PROVIDER` and `*_MODEL` together. If neither is set, that role uses the local Ollama default (`llama3.2`). Setting only one of them (for example `ORCHESTRATOR_PROVIDER=anthropic` without `ORCHESTRATOR_MODEL`) is an error: `cgr start` exits with a message naming the missing variable, and `cgr doctor` reports it as a failed check.
+
 ## Provider Examples
 
 ### All Ollama (Local Models)
@@ -121,7 +123,11 @@ Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io
 | `NEO4J_DATABASE` | `neo4j` | Neo4j database name |
 | `TARGET_REPO_PATH` | `.` | Default repository path |
 | `CPP_FRONTEND` | `hybrid` | C/C++ frontend mode: `treesitter`, `libclang`, or `hybrid`. The libclang-backed modes require the [`cpp` extra and a compilation database](../guide/cpp-semantic-mode.md). |
+| `CSHARP_FRONTEND` | `treesitter` | C# frontend mode: `treesitter`, `auto`, `hybrid`, or `roslyn`. With `dotnet` on `PATH`, `auto` resolves to `hybrid`, and `hybrid`/`roslyn` run the Roslyn path: `dotnet restore` evaluates the analysed repository's MSBuild files, and its source generators execute. Without `dotnet`, all three fall back to `treesitter` (`auto` logs an info message; an explicit `hybrid` or `roslyn` logs a warning). Select a Roslyn-backed mode only for repositories you trust. See the [graph schema documentation](../architecture/graph-schema.md). |
+| `WEB_SEARCH_PROVIDER` | `duckduckgo` | Web-search backend: keyless `duckduckgo` or `serpdive`. The web-search tool is registered by default, so searches can send query text to the selected external provider even when this variable is unset. |
+| `SERPDIVE_API_KEY` | _(unset)_ | API key used when `WEB_SEARCH_PROVIDER=serpdive`; without one, web search falls back to DuckDuckGo. |
 | `CGR_CAPTURE_LOCAL_DEFINITIONS` | `true` | Capture methods of classes defined inside function bodies (function-local definitions). On by default for exhaustive structure capture; set to `false` to keep the graph free of throwaway helpers and test mocks. |
+| `CGR_CONTEXT_COMPACTION_ENABLED` | `true` | Drop old tool output once the context passes the critical threshold, keeping a long session inside the model's window. Set to `false` to keep every tool result and accept the ceiling instead; the agent prints a notice whenever it compacts. |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the local Ollama server (`/v1` is appended for the OpenAI-compatible endpoint) |
 
 ## Setting Up Ollama

@@ -1,6 +1,7 @@
 import pytest
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Query
 
+from codebase_rag.parsers.js_ts import utils as js_ts_utils
 from codebase_rag.parsers.js_ts.utils import (
     analyze_return_expression,
     extract_constructor_name,
@@ -305,6 +306,33 @@ function earlyExit() {
         return_nodes: list = []
         find_return_statements(func_node, return_nodes)
         assert len(return_nodes) == 1
+
+    def test_failing_query_falls_back_to_the_same_answer(
+        self, js_parser: Parser, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        code = b"""
+function sign(x) {
+    if (x > 0) {
+        return 1;
+    }
+    return -1;
+}
+"""
+        tree = js_parser.parse(code)
+        func_node = tree.root_node.children[0]
+        language = Language(tsjs.language())
+
+        def refuse(language_obj: Language, query_text: str) -> Query:
+            raise RuntimeError(query_text)
+
+        with_query: list = []
+        find_return_statements(func_node, with_query, language)
+        monkeypatch.setattr(js_ts_utils, "get_cached_query", refuse)
+        walked: list = []
+        find_return_statements(func_node, walked, language)
+
+        assert len(with_query) == 2
+        assert walked == with_query
 
 
 @pytest.mark.skipif(not JS_AVAILABLE, reason="tree-sitter-javascript not available")

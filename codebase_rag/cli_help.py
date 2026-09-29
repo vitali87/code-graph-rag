@@ -249,13 +249,16 @@ HELP_TRACE_PULL_HEADER = (
     "Extra HTTP request header as NAME=VALUE (e.g. Authorization=Bearer TOKEN); "
     "repeatable."
 )
-HELP_TRACE_PULL_TIMEOUT = "HTTP request timeout in seconds (default 60)."
+HELP_TRACE_PULL_TIMEOUT = (
+    "Seconds the whole download may take, headers and body (default 60)."
+)
 ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url}; expected an http:// or https:// URL."
 # The header value can be a bearer token, so it is never echoed back.
 ERR_TRACE_PULL_BAD_HEADER = (
     "Invalid --header; expected NAME=VALUE (for example Authorization=Bearer TOKEN)."
 )
 ERR_TRACE_PULL_FAILED = "Could not download {url}: {error}."
+ERR_TRACE_PULL_TIMED_OUT = "Downloading {url} did not finish within {timeout:g}s."
 ERR_TRACE_PULL_TOO_LARGE = (
     "Profile at {url} exceeds the maximum download size (256 MB)."
 )
@@ -389,6 +392,13 @@ HELP_QUERY_OUTPUT_FORMAT = "Format --ask-agent output as table or json."
 HELP_MCP_TRANSPORT = "Transport to serve: stdio or http."
 HELP_MCP_HTTP_HOST = "HTTP bind host. Used only with --transport http."
 HELP_MCP_HTTP_PORT = "HTTP bind port. Used only with --transport http."
+HELP_MCP_WORKSPACE = (
+    "Serve the projects of workspace NAME: `list_projects` shows them, a "
+    "`project` argument, when given, must name one (omitted, the server "
+    "takes the project rooted at its directory, or the workspace's only "
+    "one), and source is read from each repo's own root. Also read from the "
+    "MCP_WORKSPACE environment variable."
+)
 
 HELP_DEADCODE_PROJECT_NAME = (
     "Project to scan. If omitted, cgr uses the only indexed project."

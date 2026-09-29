@@ -1,6 +1,6 @@
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 ## What It Does
 
@@ -57,11 +57,22 @@ uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `
 usually runs ahead of the published version. A security fix is the exception: it
 ships immediately rather than waiting for the cadence.
 
-To run code newer than the latest release, install from git:
+To run code newer than the latest release, install from git with uv:
 
 ```bash
-pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
+
+Use uv for this: it applies the project's `[tool.uv.sources]`, which build the C
+and C++ grammars from forks that keep the declarations upstream drops after a
+`#define` whose value contains a block comment. `pip` ignores those sources and
+installs the upstream grammars.
+
+To upgrade, rerun the install with `--upgrade` and the extras you chose, for
+example `pip install --upgrade 'code-graph-rag[treesitter-full]'`. With uv or pipx,
+run `uv tool upgrade code-graph-rag` or `pipx upgrade code-graph-rag` instead; see the
+[installation guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#upgrade)
+for git installs and the other methods.
 
 ### Prerequisites
 
