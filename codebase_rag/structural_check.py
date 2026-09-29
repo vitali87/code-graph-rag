@@ -25,6 +25,7 @@ from tree_sitter import Parser
 from . import constants as cs
 from .config import load_ignore_patterns
 from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_stamps
+from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries
 from .utils.path_utils import derive_project_name
@@ -224,7 +225,7 @@ def run_check(
     repo_root: Path,
     base: str,
     project_name: str,
-    ingestor: object,
+    ingestor: QueryingIngestorProtocol,
     parsers: Mapping[cs.SupportedLanguage, Parser],
     queries: Mapping[cs.SupportedLanguage, LanguageQueries],
     exclude_paths: frozenset[str] | None = None,
@@ -241,7 +242,7 @@ def run_check(
     changed = normalise_paths(changed, repo_root)
     deleted = normalise_paths(deleted, repo_root)
     updater = GraphUpdater(
-        ingestor=ingestor,  # type: ignore[arg-type]
+        ingestor=ingestor,
         repo_path=repo_root,
         parsers=parsers,
         queries=queries,
@@ -250,9 +251,8 @@ def run_check(
         exclude_paths=exclude_paths,
         unignore_paths=unignore_paths,
     )
-    fetch_all = getattr(ingestor, "fetch_all")
     return observe(
-        fetch_all,
+        ingestor.fetch_all,
         project_name,
         [*changed, *deleted],
         lambda: updater.reingest(changed, deleted=deleted),

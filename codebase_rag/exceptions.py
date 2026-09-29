@@ -140,6 +140,9 @@ AUTH_INCOMPLETE = (
     "Either provide both or neither."
 )
 
+# Graph reads (used with raise)
+INGESTOR_NOT_QUERYABLE = "{kind} has no graph to read."
+
 # Access control errors (used with raise)
 ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
 

@@ -73,7 +73,7 @@ class TestBeamDone:
 
     def test_done_when_eos_top_and_enough_finished(self) -> None:
         beam = Beam(size=2, eos=2, device=torch.device("cpu"))
-        beam.eosTop = True
+        beam.eos_top = True
         beam.finished = [
             (torch.tensor(0.5), 1, 0),
             (torch.tensor(0.4), 1, 1),
@@ -82,7 +82,7 @@ class TestBeamDone:
 
     def test_not_done_when_not_eos_top(self) -> None:
         beam = Beam(size=2, eos=2, device=torch.device("cpu"))
-        beam.eosTop = False
+        beam.eos_top = False
         beam.finished = [
             (torch.tensor(0.5), 1, 0),
             (torch.tensor(0.4), 1, 1),
@@ -91,7 +91,7 @@ class TestBeamDone:
 
     def test_not_done_when_not_enough_finished(self) -> None:
         beam = Beam(size=3, eos=2, device=torch.device("cpu"))
-        beam.eosTop = True
+        beam.eos_top = True
         beam.finished = [
             (torch.tensor(0.5), 1, 0),
         ]
@@ -198,14 +198,14 @@ class TestBeamMultipleEos:
         assert len(result[0]) == 1
 
     def test_advance_records_completion_on_alternate_eos(self) -> None:
-        # advance must record a finished hypothesis and set eosTop when the top
+        # advance must record a finished hypothesis and set eos_top when the top
         # token is any configured EOS id (not just the first).
         beam = Beam(size=1, eos=[2, 99], device=torch.device("cpu"))
         word_probs = torch.full((1, 100), -1e9)
         word_probs[0, 99] = 0.0
         beam.advance(word_probs)
         assert len(beam.finished) == 1
-        assert beam.eosTop is True
+        assert beam.eos_top is True
 
 
 class TestForwardAttentionMask:
@@ -316,3 +316,30 @@ class TestGenerate:
         preds = instance.generate(source_ids, beam_size=2, max_length=3)
 
         assert preds.shape == (2, 2, 3)
+
+
+class TestDecode:
+    def _make(self) -> UniXcoder:
+        instance = UniXcoder.__new__(UniXcoder)
+        nn.Module.__init__(instance)
+        instance.tokenizer = MagicMock()
+        instance.tokenizer.decode.side_effect = lambda ids, **_kw: " ".join(
+            str(int(i)) for i in ids
+        )
+        return instance
+
+    def test_each_beam_decodes_up_to_its_first_pad(self) -> None:
+        instance = self._make()
+        source_ids = torch.tensor([[[5, 6, 0, 7], [8, 0, 0, 0]]])
+
+        assert instance.decode(source_ids) == [["5 6", "8"]]
+
+    def test_a_batch_shaped_decode_is_rejected(self) -> None:
+        # Negative: a tokenizer answering a list for one sequence is not a
+        # prediction, and must not be passed off as one.
+        instance = self._make()
+        instance.tokenizer.decode.side_effect = lambda ids, **_kw: ["a", "b"]
+        source_ids = torch.tensor([[[5, 6]]])
+
+        with pytest.raises(AssertionError):
+            instance.decode(source_ids)

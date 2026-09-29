@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from . import cli_help as ch
 from . import constants as cs
 from . import graph_query
+
+if TYPE_CHECKING:
+    from .services.graph_service import MemgraphIngestor
 
 
 def _emit(payload: object) -> None:
@@ -19,7 +23,7 @@ def _emit(payload: object) -> None:
 
 def _project_and_fetch(
     project: str | None, repo_path: Path
-) -> tuple[str, graph_query.QueryFn, object]:
+) -> tuple[str, graph_query.QueryFn, MemgraphIngestor]:
     from .cli_runtime import connect_memgraph
     from .config import settings
     from .utils.path_utils import derive_project_name
@@ -35,7 +39,7 @@ def _run_query_and_emit(
     query: Callable[[graph_query.QueryFn, str], object],
 ) -> None:
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
-    with ingestor:  # type: ignore[attr-defined]
+    with ingestor:
         _emit(query(fetch_all, name))
 
 

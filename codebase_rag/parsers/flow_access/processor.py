@@ -1601,11 +1601,12 @@ class FlowProcessor:
         for index, name in enumerate(targets):
             if name is None:
                 continue
-            rhs = (
-                values[0]
-                if spread
-                else (values[index] if index < len(values) else None)
-            )
+            if spread:
+                rhs = values[0]
+            elif index < len(values):
+                rhs = values[index]
+            else:
+                rhs = None
             computed.append(
                 (name, self._lean_binding_taint(node, name, rhs, tainted, jc), rhs)
             )
@@ -1786,33 +1787,7 @@ class FlowProcessor:
             return
         self._apply_csharp_out_writes(node, args, tainted, jc)
         if (sink := self._js_match_sink(raw, jc.flow.write_sinks, jc)) is not None:
-            dst_identity = literal_target(
-                node,
-                sink.target_arg,
-                sink.target_kw,
-                string_type=jc.descriptor.string_type,
-                content_type=jc.descriptor.string_content_type,
-                keyword_arg_type=jc.descriptor.keyword_arg_type,
-                wrapper_type=jc.descriptor.argument_wrapper_type,
-                template_type=jc.descriptor.template_string_type,
-                substitution_type=jc.descriptor.template_substitution_type,
-            )
-            for _via, taint in args:
-                if taint is None:
-                    continue
-                for origin in taint.origins:
-                    self._emit_resource_flow(origin, sink.kind, dst_identity)
-                if taint.pending:
-                    self._deferred_resource_flows.append(
-                        (taint.pending, sink.kind, dst_identity)
-                    )
-                # A parameter reaching this sink is a parameter-to-sink summary
-                # (issue #1169), composed at finalize against every call site
-                # passing a tainted argument into this parameter.
-                for pname in taint.params:
-                    self._param_sinks[(jc.flow.caller_qn, pname)].add(
-                        (sink.kind, dst_identity)
-                    )
+            self._js_emit_sink_flows(node, sink, args, jc)
             return
         # A tainted write through a bound resource handle (issue #1204).
         if handles and self._emit_handle_write(raw, args, handles, jc):
@@ -1833,6 +1808,50 @@ class FlowProcessor:
             if jc.arg_handle_sinks:
                 self._emit_arg_handle_write(raw, node, args, handles, jc)
             return
+        self._js_emit_arg_edges(node, callee, args, jc)
+
+    def _js_emit_sink_flows(
+        self,
+        node: Node,
+        sink: IOSink,
+        args: list[tuple[str, Taint | None]],
+        jc: _JsCtx,
+    ) -> None:
+        dst_identity = literal_target(
+            node,
+            sink.target_arg,
+            sink.target_kw,
+            string_type=jc.descriptor.string_type,
+            content_type=jc.descriptor.string_content_type,
+            keyword_arg_type=jc.descriptor.keyword_arg_type,
+            wrapper_type=jc.descriptor.argument_wrapper_type,
+            template_type=jc.descriptor.template_string_type,
+            substitution_type=jc.descriptor.template_substitution_type,
+        )
+        for _via, taint in args:
+            if taint is None:
+                continue
+            for origin in taint.origins:
+                self._emit_resource_flow(origin, sink.kind, dst_identity)
+            if taint.pending:
+                self._deferred_resource_flows.append(
+                    (taint.pending, sink.kind, dst_identity)
+                )
+            # A parameter reaching this sink is a parameter-to-sink summary
+            # (issue #1169), composed at finalize against every call site
+            # passing a tainted argument into this parameter.
+            for pname in taint.params:
+                self._param_sinks[(jc.flow.caller_qn, pname)].add(
+                    (sink.kind, dst_identity)
+                )
+
+    def _js_emit_arg_edges(
+        self,
+        node: Node,
+        callee: tuple[str, str],
+        args: list[tuple[str, Taint | None]],
+        jc: _JsCtx,
+    ) -> None:
         callee_type, callee_qn = callee
         for via, taint in args:
             if taint is None:
@@ -2270,52 +2289,63 @@ class FlowProcessor:
         if call_sel is not None:
             raw = dart_call_name(call_sel)
             if raw is not None:
-                ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
-                if ctor is not None and ctor.direction != IODirection.READ:
-                    identity = self._dart_first_string_arg(call_sel)
-                    return None, frozenset({HandleBinding(ctor.kind, identity)})
-                read = self._js_match_sink(raw, jc.flow.read_sinks, jc)
-                if read is not None:
-                    identity = (
-                        self._dart_first_string_arg(call_sel)
-                        if read.target_arg == 0
-                        else DYNAMIC_TARGET
-                    )
-                    return (
-                        Taint(
-                            frozenset({HandleBinding(read.kind, identity)}), frozenset()
-                        ),
-                        frozenset(),
-                    )
-                handle_read = self._dart_handle_read_taint(raw, handles, jc)
-                if handle_read is not None:
-                    return handle_read, frozenset()
-                callee = self._resolve(
-                    raw,
-                    jc.flow.module_qn,
-                    jc.flow.class_context,
-                    jc.flow.caller_qn,
-                    jc.flow.language,
-                    jc.flow.local_var_types,
-                )
-                if callee is not None:
-                    self._return_edge_candidates.append(
-                        (callee[0], callee[1], jc.flow.caller_spec)
-                    )
-                    # Dart resolves a call's value here rather than through
-                    # _js_expr_taint, so it needs the same per-call pass-through
-                    # token to compose a helper's returned parameter (#1363).
-                    token = _passthrough_result_token(jc.flow.caller_qn, call_sel)
-                    return (
-                        Taint(frozenset(), frozenset({callee[1], token})),
-                        frozenset(),
-                    )
+                return self._dart_call_rhs(call_sel, raw, handles, jc)
             return None, frozenset()
-        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_IDENTIFIER and rhs[0].text:
-            alias = rhs[0].text.decode(cs.ENCODING_UTF8)
+        if len(rhs) == 1:
+            return self._dart_single_rhs(rhs[0], tainted, handles, jc)
+        return None, frozenset()
+
+    def _dart_single_rhs(
+        self, node: Node, tainted: _TaintMap, handles: _HandleMap, jc: _JsCtx
+    ) -> tuple[Taint | None, frozenset[HandleBinding]]:
+        if node.type == cs.TS_DART_IDENTIFIER and node.text:
+            alias = node.text.decode(cs.ENCODING_UTF8)
             return tainted.get(alias), handles.get(alias, frozenset())
-        if len(rhs) == 1 and rhs[0].type == cs.TS_DART_STRING_LITERAL:
-            return self._dart_interpolation_taint(rhs[0], tainted, jc), frozenset()
+        if node.type == cs.TS_DART_STRING_LITERAL:
+            return self._dart_interpolation_taint(node, tainted, jc), frozenset()
+        return None, frozenset()
+
+    def _dart_call_rhs(
+        self, call_sel: Node, raw: str, handles: _HandleMap, jc: _JsCtx
+    ) -> tuple[Taint | None, frozenset[HandleBinding]]:
+        ctor = self._js_match_sink(raw, jc.handle_ctors, jc)
+        if ctor is not None and ctor.direction != IODirection.READ:
+            identity = self._dart_first_string_arg(call_sel)
+            return None, frozenset({HandleBinding(ctor.kind, identity)})
+        read = self._js_match_sink(raw, jc.flow.read_sinks, jc)
+        if read is not None:
+            identity = (
+                self._dart_first_string_arg(call_sel)
+                if read.target_arg == 0
+                else DYNAMIC_TARGET
+            )
+            return (
+                Taint(frozenset({HandleBinding(read.kind, identity)}), frozenset()),
+                frozenset(),
+            )
+        handle_read = self._dart_handle_read_taint(raw, handles, jc)
+        if handle_read is not None:
+            return handle_read, frozenset()
+        callee = self._resolve(
+            raw,
+            jc.flow.module_qn,
+            jc.flow.class_context,
+            jc.flow.caller_qn,
+            jc.flow.language,
+            jc.flow.local_var_types,
+        )
+        if callee is not None:
+            self._return_edge_candidates.append(
+                (callee[0], callee[1], jc.flow.caller_spec)
+            )
+            # Dart resolves a call's value here rather than through
+            # _js_expr_taint, so it needs the same per-call pass-through
+            # token to compose a helper's returned parameter (#1363).
+            token = _passthrough_result_token(jc.flow.caller_qn, call_sel)
+            return (
+                Taint(frozenset(), frozenset({callee[1], token})),
+                frozenset(),
+            )
         return None, frozenset()
 
     def _dart_interpolation_taint(
@@ -3890,50 +3920,51 @@ class FlowProcessor:
             # Any returned expression may hand the closure to the caller
             # (`return send`, `return send if c else other`): it escapes.
             self._note_capture_escapes_in(child)
-            if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
-                name = child.text.decode(cs.ENCODING_UTF8)
-                if (taint := tainted.get(name)) is not None:
-                    tainted_here = True
-                    result = _merge_taint(result, taint)
-            elif child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
-                if seed := self._source_binding(
-                    child, raw, ctx.import_map, ctx.read_sinks
-                ):
-                    tainted_here = True
-                    result = _merge_taint(result, Taint(frozenset({seed}), frozenset()))
-                    continue
-                callee = self._resolve(
-                    raw,
-                    ctx.module_qn,
-                    ctx.class_context,
-                    ctx.caller_qn,
-                    ctx.language,
-                    ctx.local_var_types,
-                )
-                if callee is not None:
-                    self._return_edge_candidates.append(
-                        (callee[0], callee[1], ctx.caller_spec)
-                    )
-                    tainted_here = True
-                    result = _merge_taint(
-                        result, Taint(frozenset(), frozenset({callee[1]}))
-                    )
-                    # `return redact(x)`: record that each of this function's
-                    # parameters appearing in the returned call reaches its return
-                    # through the callee, so a pass-through chain resolves (#1168).
-                    for pnames, via in self._returned_arg_params(child, tainted):
-                        for pname in pnames:
-                            self._return_param_edges.append(
-                                (ctx.caller_qn, pname, callee[1], via)
-                            )
-            elif child.type == cs.TS_PY_SUBSCRIPT:
-                # `return os.environ["K"]`: the subscript source flows out of
-                # the function exactly like the call-shaped env reads (issue
-                # #1324).
-                if seed := self._py_env_member_seed(child, ctx):
-                    tainted_here = True
-                    result = _merge_taint(result, Taint(frozenset({seed}), frozenset()))
+            if (taint := self._return_child_taint(child, tainted, ctx)) is not None:
+                tainted_here = True
+                result = _merge_taint(result, taint)
         return result if tainted_here else None
+
+    def _return_child_taint(
+        self, child: Node, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        # The Taint one returned value node contributes, or None if it adds none.
+        if child.type == cs.TS_PY_IDENTIFIER and child.text is not None:
+            name = child.text.decode(cs.ENCODING_UTF8)
+            return tainted.get(name)
+        if child.type == cs.TS_PY_CALL and (raw := call_name(child)) is not None:
+            return self._return_call_taint(child, raw, tainted, ctx)
+        if child.type == cs.TS_PY_SUBSCRIPT:
+            # `return os.environ["K"]`: the subscript source flows out of
+            # the function exactly like the call-shaped env reads (issue
+            # #1324).
+            if seed := self._py_env_member_seed(child, ctx):
+                return Taint(frozenset({seed}), frozenset())
+        return None
+
+    def _return_call_taint(
+        self, child: Node, raw: str, tainted: _TaintMap, ctx: _FlowCtx
+    ) -> Taint | None:
+        if seed := self._source_binding(child, raw, ctx.import_map, ctx.read_sinks):
+            return Taint(frozenset({seed}), frozenset())
+        callee = self._resolve(
+            raw,
+            ctx.module_qn,
+            ctx.class_context,
+            ctx.caller_qn,
+            ctx.language,
+            ctx.local_var_types,
+        )
+        if callee is None:
+            return None
+        self._return_edge_candidates.append((callee[0], callee[1], ctx.caller_spec))
+        # `return redact(x)`: record that each of this function's
+        # parameters appearing in the returned call reaches its return
+        # through the callee, so a pass-through chain resolves (#1168).
+        for pnames, via in self._returned_arg_params(child, tainted):
+            for pname in pnames:
+                self._return_param_edges.append((ctx.caller_qn, pname, callee[1], via))
+        return Taint(frozenset(), frozenset({callee[1]}))
 
     def _returned_arg_params(
         self, call_node: Node, tainted: _TaintMap
@@ -4015,6 +4046,33 @@ class FlowProcessor:
         # return) into that callee's return summary, so a caller consuming the
         # callee's return resolves through to the argument's origins.
         return_params = self._resolve_return_params()
+        extra_origins, extra_pending = self._pass_through_extras(return_params)
+        resolved, is_tainted = self._resolve_summaries(extra_origins, extra_pending)
+        for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
+            if is_tainted.get(callee_qn):
+                self._emit_return_edge((callee_type, callee_qn), caller_spec)
+        self._emit_deferred_resource_flows(resolved)
+        self._emit_deferred_arg_edges(is_tainted)
+        # Forward parameter-taint (issue #1142): close the parameter-sink map
+        # over transitive hand-offs, then for each concrete call site emit a
+        # resource flow from every origin the argument resolves to (its own plus
+        # any pending callee's return origins) into every sink the matched
+        # parameter reaches.
+        self._emit_param_call_site_flows(resolved)
+        # One-shot per run: clear so a reused processor never re-emits.
+        self._return_edge_candidates.clear()
+        self._deferred_resource_flows.clear()
+        self._deferred_arg_edges.clear()
+        self._param_sinks.clear()
+        self._param_flow_edges.clear()
+        self._return_param_edges.clear()
+        self._param_call_sites.clear()
+        self._positional_params.clear()
+        self._variadic_params.clear()
+
+    def _pass_through_extras(
+        self, return_params: set[tuple[str, str]]
+    ) -> tuple[dict[str, set[HandleBinding]], dict[str, set[str]]]:
         extra_origins: dict[str, set[HandleBinding]] = defaultdict(set)
         extra_pending: dict[str, set[str]] = defaultdict(set)
         for arg_taint, callee_qn, via, token in self._param_call_sites:
@@ -4025,10 +4083,11 @@ class FlowProcessor:
             # carries only its own argument's taint (issue #1168).
             extra_origins[token] |= arg_taint.origins
             extra_pending[token] |= arg_taint.pending
-        resolved, is_tainted = self._resolve_summaries(extra_origins, extra_pending)
-        for callee_type, callee_qn, caller_spec in self._return_edge_candidates:
-            if is_tainted.get(callee_qn):
-                self._emit_return_edge((callee_type, callee_qn), caller_spec)
+        return extra_origins, extra_pending
+
+    def _emit_deferred_resource_flows(
+        self, resolved: dict[str, frozenset[HandleBinding]]
+    ) -> None:
         for pending, sink_kind, sink_identity in self._deferred_resource_flows:
             # Union origins across pending callees first so a shared origin is
             # emitted once, not per callee.
@@ -4037,6 +4096,8 @@ class FlowProcessor:
                 origins |= resolved.get(callee_qn, frozenset())
             for origin in origins:
                 self._emit_resource_flow(origin, sink_kind, sink_identity)
+
+    def _emit_deferred_arg_edges(self, is_tainted: dict[str, bool]) -> None:
         for (
             pending,
             caller_spec,
@@ -4051,11 +4112,10 @@ class FlowProcessor:
                     (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
                     properties={KEY_VIA: via, KEY_KIND: FlowKind.ARG.value},
                 )
-        # Forward parameter-taint (issue #1142): close the parameter-sink map
-        # over transitive hand-offs, then for each concrete call site emit a
-        # resource flow from every origin the argument resolves to (its own plus
-        # any pending callee's return origins) into every sink the matched
-        # parameter reaches.
+
+    def _emit_param_call_site_flows(
+        self, resolved: dict[str, frozenset[HandleBinding]]
+    ) -> None:
         param_sink_closure = self._resolve_param_sinks()
         for arg_taint, callee_qn, via, _token in self._param_call_sites:
             pname = self._param_name_for_via(callee_qn, via)
@@ -4070,16 +4130,6 @@ class FlowProcessor:
             for origin in origins:
                 for sink_kind, sink_identity in reached:
                     self._emit_resource_flow(origin, sink_kind, sink_identity)
-        # One-shot per run: clear so a reused processor never re-emits.
-        self._return_edge_candidates.clear()
-        self._deferred_resource_flows.clear()
-        self._deferred_arg_edges.clear()
-        self._param_sinks.clear()
-        self._param_flow_edges.clear()
-        self._return_param_edges.clear()
-        self._param_call_sites.clear()
-        self._positional_params.clear()
-        self._variadic_params.clear()
 
     def _resolve_summaries(
         self,
@@ -4149,7 +4199,7 @@ class FlowProcessor:
                 if not src:
                     continue
                 dst = closure.setdefault((f_qn, p_name), set())
-                if not src <= dst:
+                if not src.issubset(dst):
                     dst |= src
                     changed = True
         return closure

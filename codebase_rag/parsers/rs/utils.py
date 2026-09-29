@@ -217,24 +217,41 @@ def _process_scoped_use_list(
 
 def _impl_field_type_name(impl_node: Node, field: str) -> str | None:
     for i in range(impl_node.child_count):
-        if impl_node.field_name_for_child(i) == field:
-            type_node = impl_node.child(i)
-            if type_node is None:
-                continue
-            match type_node.type:
-                case cs.TS_GENERIC_TYPE:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            return safe_decode_text(child)
-                case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
-                    return safe_decode_text(type_node)
-                case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
-                    for child in type_node.children:
-                        if child.type == cs.TS_TYPE_IDENTIFIER:
-                            if name := safe_decode_text(child):
-                                return name
-
+        if impl_node.field_name_for_child(i) != field:
+            continue
+        type_node = impl_node.child(i)
+        if type_node is None:
+            continue
+        found, name = _impl_type_node_name(type_node)
+        if found:
+            return name
     return None
+
+
+def _impl_type_node_name(type_node: Node) -> tuple[bool, str | None]:
+    # (decided, name) for one impl target/trait type node; not decided means
+    # the node carries no name here and the caller keeps scanning.
+    match type_node.type:
+        case cs.TS_GENERIC_TYPE:
+            ident = next(
+                (c for c in type_node.children if c.type == cs.TS_TYPE_IDENTIFIER),
+                None,
+            )
+            return ident is not None, safe_decode_text(ident) if ident else None
+        case cs.TS_TYPE_IDENTIFIER | cs.TS_RS_PRIMITIVE_TYPE:
+            return True, safe_decode_text(type_node)
+        case cs.TS_RS_SCOPED_TYPE_IDENTIFIER:
+            name = next(
+                (
+                    decoded
+                    for c in type_node.children
+                    if c.type == cs.TS_TYPE_IDENTIFIER
+                    and (decoded := safe_decode_text(c))
+                ),
+                None,
+            )
+            return name is not None, name
+    return False, None
 
 
 def extract_return_type_name(func_node: Node, impl_target: str | None) -> str | None:
@@ -372,44 +389,61 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
     namespace it does not own, so on a key collision the pure writer's
     map wins.
     """
-    nearest = None
-    block = None
-    current = node.parent
-    while current and current.type != cs.TS_RS_SOURCE_FILE:
-        if block is None and current.type == cs.TS_RS_BLOCK:
-            block = current
-        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
-            return block, None, True
-        if (
-            current.type == cs.TS_RS_FUNCTION_ITEM
-            or current.type in cs.FQN_RS_SCOPE_TYPES
-        ):
-            body = current.child_by_field_name(cs.FIELD_BODY)
-            if (
-                current.type == cs.TS_RS_FUNCTION_ITEM
-                and block is not None
-                and (body is None or block.id != body.id)
-            ):
-                # A use in an INNER block of the fn body is in scope for
-                # that block alone (rustc-verified): store it span-gated
-                # like an initializer-block use, never fn-wide.
-                return block, None, True
-            if current.type in cs.FQN_RS_SCOPE_TYPES and block is not None:
-                # An expression block in a class-body position (enum
-                # discriminant, array length, const-generic default) is
-                # scoped to that block alone, exactly like a const/static
-                # initializer: a class type has no qn a use could key on,
-                # so store it span-gated instead of dropping it (#1016).
-                return block, None, True
-            nearest = current
-            break
-        current = current.parent
+    block_scoped, nearest = _rust_use_nearest_scope(node)
+    if block_scoped:
+        return nearest, None, True
     if nearest is None:
         return None, [], True
     if nearest.type == cs.TS_RS_FUNCTION_ITEM:
         return nearest, None, True
     if nearest.type != cs.TS_RS_MOD_ITEM:
         return None, None, True
+    parts, pure = _rust_mod_chain_parts(node)
+    return None, parts, pure
+
+
+def _rust_use_nearest_scope(node: Node) -> tuple[bool, Node | None]:
+    # (True, block) when the use is scoped to one block alone (a
+    # const/static initializer, an inner fn block, or a class-body
+    # expression); else (False, the nearest fn/class-like/mod scope or None).
+    block = None
+    current = node.parent
+    while current and current.type != cs.TS_RS_SOURCE_FILE:
+        if block is None and current.type == cs.TS_RS_BLOCK:
+            block = current
+        if current.type in (cs.TS_RS_CONST_ITEM, cs.TS_RS_STATIC_ITEM):
+            return True, block
+        if (
+            current.type == cs.TS_RS_FUNCTION_ITEM
+            or current.type in cs.FQN_RS_SCOPE_TYPES
+        ):
+            return (
+                (True, block)
+                if _rust_use_in_inner_block(current, block)
+                else (False, current)
+            )
+        current = current.parent
+    return False, None
+
+
+def _rust_use_in_inner_block(scope: Node, block: Node | None) -> bool:
+    if block is None:
+        return False
+    if scope.type == cs.TS_RS_FUNCTION_ITEM:
+        # A use in an INNER block of the fn body is in scope for that block
+        # alone (rustc-verified): store it span-gated like an
+        # initializer-block use, never fn-wide.
+        body = scope.child_by_field_name(cs.FIELD_BODY)
+        if body is None or block.id != body.id:
+            return True
+    # An expression block in a class-body position (enum discriminant, array
+    # length, const-generic default) is scoped to that block alone, exactly
+    # like a const/static initializer: a class type has no qn a use could key
+    # on, so store it span-gated instead of dropping it (#1016).
+    return scope.type in cs.FQN_RS_SCOPE_TYPES
+
+
+def _rust_mod_chain_parts(node: Node) -> tuple[list[str], bool]:
     parts: list[str] = []
     pure = True
     current = node.parent
@@ -420,17 +454,23 @@ def rust_use_scope(node: Node) -> tuple[Node | None, list[str] | None, bool]:
             cs.TS_RS_STATIC_ITEM,
         ):
             pure = False
-        elif current.type == cs.TS_IMPL_ITEM:
-            if target := extract_impl_target(current):
-                parts.append(target)
-        elif current.type in cs.FQN_RS_SCOPE_TYPES:
-            if name_node := current.child_by_field_name(cs.FIELD_NAME):
-                text = name_node.text
-                if text is not None:
-                    parts.append(text.decode(cs.RS_ENCODING_UTF8))
+        elif (segment := _rust_scope_segment(current)) is not None:
+            parts.append(segment)
         current = current.parent
     parts.reverse()
-    return None, parts, pure
+    return parts, pure
+
+
+def _rust_scope_segment(scope: Node) -> str | None:
+    # The qn segment an impl block or class-like/mod scope contributes.
+    if scope.type == cs.TS_IMPL_ITEM:
+        return extract_impl_target(scope) or None
+    if scope.type not in cs.FQN_RS_SCOPE_TYPES:
+        return None
+    name_node = scope.child_by_field_name(cs.FIELD_NAME)
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode(cs.RS_ENCODING_UTF8)
 
 
 def block_item_at(

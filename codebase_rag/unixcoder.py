@@ -81,15 +81,17 @@ class UniXcoder(nn.Module):
         return tokens_ids
 
     def decode(self, source_ids: torch.Tensor) -> list[list[str]]:
-        predictions = []
+        predictions: list[list[str]] = []
         for x in source_ids:
-            prediction = []
+            prediction: list[str] = []
             for y in x:
                 t = y.cpu().numpy()
                 t = list(t)
                 if 0 in t:
                     t = t[: t.index(0)]
                 text = self.tokenizer.decode(t, clean_up_tokenization_spaces=False)
+                # One sequence decodes to one string; only a batch is a list.
+                assert isinstance(text, str)
                 prediction.append(text)
             predictions.append(prediction)
         return predictions
@@ -136,7 +138,6 @@ class UniXcoder(nn.Module):
         preds = []
         zero = torch.LongTensor(1).fill_(0).to(device)
         source_len = list(source_ids.ne(1).sum(-1).cpu().numpy())
-        length = source_ids.size(-1)
         encoder_output = self.model(source_ids, attention_mask=mask)
         for i in range(source_ids.shape[0]):
             context = [
@@ -195,7 +196,7 @@ class Beam:
     __slots__ = (
         "_eos",
         "device",
-        "eosTop",
+        "eos_top",
         "finished",
         "nextYs",
         "prevKs",
@@ -212,7 +213,7 @@ class Beam:
         # Normalise to a set of stop ids so a config with multiple EOS tokens
         # terminates on any of them (transformers 5.5 typing).
         self._eos: frozenset[int] = frozenset(eos if isinstance(eos, list) else [eos])
-        self.eosTop = False
+        self.eos_top = False
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
     def get_current_state(self) -> torch.Tensor:
@@ -248,10 +249,10 @@ class Beam:
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
         if int(self.nextYs[-1][0]) in self._eos:
-            self.eosTop = True
+            self.eos_top = True
 
     def done(self) -> bool:
-        return self.eosTop and len(self.finished) >= self.size
+        return self.eos_top and len(self.finished) >= self.size
 
     def get_final(self) -> list[tuple[torch.Tensor, int, int]]:
         if len(self.finished) == 0:

@@ -244,7 +244,7 @@ def parse_arity_error(message: str) -> ArityError | None:
 
 def diagnose_arity(
     error: ArityError, declared: tuple[str, ...], is_method: bool
-) -> ArityVerdict | None:
+) -> ArityVerdict:
     """Check a parsed arity error against a function's declared parameters.
 
     `self` is the subtlety this exists to get right. CPython counts the bound
