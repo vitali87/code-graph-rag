@@ -128,9 +128,7 @@ class TestGenerateAnonymousFunctionName:
         func_node = find_first_node_of_type(root, "function_expression")
         assert func_node is not None
 
-        result = definition_processor._generate_anonymous_function_name(
-            func_node, "proj.module"
-        )
+        result = definition_processor._generate_anonymous_function_name(func_node)
         assert result.startswith("iife_func_")
 
     def test_iife_arrow(
@@ -147,9 +145,7 @@ class TestGenerateAnonymousFunctionName:
         arrow_node = find_first_node_of_type(root, "arrow_function")
         assert arrow_node is not None
 
-        result = definition_processor._generate_anonymous_function_name(
-            arrow_node, "proj.module"
-        )
+        result = definition_processor._generate_anonymous_function_name(arrow_node)
         assert result.startswith("iife_arrow_")
 
     def test_regular_anonymous(
@@ -166,9 +162,7 @@ class TestGenerateAnonymousFunctionName:
         func_node = find_first_node_of_type(root, "function")
         assert func_node is not None
 
-        result = definition_processor._generate_anonymous_function_name(
-            func_node, "proj.module"
-        )
+        result = definition_processor._generate_anonymous_function_name(func_node)
         assert result.startswith("anonymous_")
 
 

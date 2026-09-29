@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple, TypedDict
 
@@ -875,7 +875,7 @@ class _TarjanState:
 def _tarjan_descend(
     state: _TarjanState,
     graph: dict[str, frozenset[str]],
-    work: list[tuple[str, Iterable[str]]],
+    work: list[tuple[str, Iterator[str]]],
     node: str,
     child: str,
 ) -> None:
@@ -894,7 +894,7 @@ def strongly_connected(graph: dict[str, frozenset[str]]) -> list[frozenset[str]]
     for root in sorted(graph):
         if root in state.index:
             continue
-        work: list[tuple[str, Iterable[str]]] = [
+        work: list[tuple[str, Iterator[str]]] = [
             (root, iter(sorted(graph.get(root, ()))))
         ]
         state.enter(root)

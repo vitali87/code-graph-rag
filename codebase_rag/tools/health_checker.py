@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 from loguru import logger
 
 from .. import constants as cs
@@ -15,6 +16,10 @@ from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
+
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception type is bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
 
 
 @contextmanager
@@ -63,13 +68,12 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
     # Accumulated rather than returned as differently-shaped tuples: this
     # is a variadic `except` argument, not a fixed-arity value, and the
     # list makes that intent explicit (python:S8495).
-    types: list[type[BaseException]] = [mgclient.Error]
+    types: list[type[BaseException]] = [_MgclientError]
     if settings.GRAPH_BACKEND == DIALECT_NEO4J:
+        # Imported by name, as `services.neo4j_driver` does, so the check
+        # reads the same with or without the extra installed.
         try:
-            from neo4j.exceptions import (  # ty: ignore[unresolved-import]
-                AuthError,
-                DriverError,
-            )
+            neo4j_exceptions = importlib.import_module(cs.NEO4J_EXCEPTIONS_MODULE)
         except ImportError:  # pragma: no cover - depends on extras
             pass
         else:
@@ -80,7 +84,7 @@ def _connection_error_types() -> tuple[type[BaseException], ...]:
             # query failure and must NOT be reported as a connectivity
             # problem, so it deliberately falls through to the generic
             # branch.
-            types += [DriverError, AuthError]
+            types += [neo4j_exceptions.DriverError, neo4j_exceptions.AuthError]
     return tuple(types)
 
 

@@ -45,7 +45,7 @@ class MakeCommand(NamedTuple):
     description: str
 
 
-MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):.*?## (.+)$")
+MAKEFILE_PATTERN = re.compile(r"^([a-zA-Z_-]+):(?:(?!## ).)*## (.+)$")
 
 
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -204,7 +204,7 @@ def fetch_pypi_summary(package_name: str, cache: dict[str, tuple[str, float]]) -
 
     url = f"https://pypi.org/pypi/{package_name}/json"
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 - fixed https://pypi.org URL
             charset = response.headers.get_content_charset() or ENCODING_UTF8
             data = json.loads(response.read().decode(charset))
             summary = data.get("info", {}).get("summary", "") or ""

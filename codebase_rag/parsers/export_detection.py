@@ -243,10 +243,14 @@ def _export_statement_local_names(statement: Node) -> list[str]:
             for specifier in clause.children
             if specifier.type == cs.TS_EXPORT_SPECIFIER
         )
-        return [local.text.decode() for local in locals_ if local is not None]
+        return [
+            text.decode()
+            for local in locals_
+            if local is not None and (text := local.text) is not None
+        ]
     if _first_child_of_type(statement, cs.TS_EXPORT_DEFAULT) is not None:
         ident = _first_child_of_type(statement, cs.TS_IDENTIFIER)
-        if ident is not None:
+        if ident is not None and ident.text is not None:
             return [ident.text.decode()]
     return []
 

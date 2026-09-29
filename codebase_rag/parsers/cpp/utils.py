@@ -92,7 +92,7 @@ _EXPORT_STOP_TYPES = frozenset(
 def is_exported(node: Node) -> bool:
     current = node
     export_text = cs.CppNodeType.EXPORT
-    while current and current.parent:
+    while current.parent:
         parent = current.parent
 
         for child in parent.children:
