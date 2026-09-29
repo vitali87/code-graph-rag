@@ -119,3 +119,25 @@ def test_cli_context_reads_no_local_source_for_another_project(
 
     assert "local checkout source" not in run(OTHER)
     assert "local checkout source" in run(LOCAL)
+
+
+def test_cli_context_exits_nonzero_when_nothing_matches(
+    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codebase_rag import graph_cli
+    from codebase_rag.cli import app
+
+    local_root, store = graph
+    monkeypatch.setattr(
+        graph_cli,
+        "_project_and_fetch",
+        lambda project, repo_path: (LOCAL, store.fetch_all, contextlib.nullcontext()),
+    )
+    result = CliRunner().invoke(
+        app, ["context", f"{LOCAL}.pkg.mod.missing", "--repo-path", str(local_root)]
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["resolved"] is None
+    assert cs.CONTEXT_UNRESOLVED.format(target=f"{LOCAL}.pkg.mod.missing") in (
+        result.stderr
+    )
