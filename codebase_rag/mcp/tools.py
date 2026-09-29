@@ -2973,16 +2973,19 @@ class MCPToolsRegistry:
         return await self._graph_query(
             cs.MCPToolName.CONTEXT,
             project,
-            lambda name: self._run_context(name, target, budget_tokens, project),
+            lambda name: self._run_context(name, target, budget_tokens),
         )
 
     def _run_context(
-        self, project_name: str, target: str, budget_tokens: int, project: str | None
+        self, project_name: str, target: str, budget_tokens: int
     ) -> object:
         from codebase_rag.context_slice import context as build_context
 
+        # Scoped to the project `_graph_query` resolved, not the optional
+        # argument: an omitted `project` would otherwise search every project
+        # and resolve to a name the project-scoped reads cannot find.
         def search(text: str) -> list[SemanticSearchResult]:
-            return semantic_code_search(self.ingestor, text, project=project)
+            return semantic_code_search(self.ingestor, text, project=project_name)
 
         return build_context(
             self.ingestor.fetch_all,

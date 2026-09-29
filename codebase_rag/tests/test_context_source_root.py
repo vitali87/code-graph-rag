@@ -141,3 +141,47 @@ def test_cli_context_exits_nonzero_when_nothing_matches(
     assert cs.CONTEXT_UNRESOLVED.format(target=f"{LOCAL}.pkg.mod.missing") in (
         result.stderr
     )
+
+
+async def test_mcp_context_scopes_free_text_search_to_the_resolved_project(
+    graph: tuple[Path, _StatefulIngestor], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With `project` omitted the tool reads the project this server's root
+    # derives to; the embedding search that resolves free text must be held
+    # to that same project, or it can pick another project's symbol that the
+    # project-scoped reads then cannot find.
+    from codebase_rag.mcp import tools as mcp_tools
+    from codebase_rag.mcp.tools import MCPToolsRegistry
+    from codebase_rag.utils.path_utils import derive_project_name
+
+    local_root, store = graph
+    ingestor = MagicMock()
+    ingestor.fetch_all = store.fetch_all
+    ingestor.list_projects.return_value = [LOCAL, OTHER]
+    registry = MCPToolsRegistry(
+        project_root=str(local_root), ingestor=ingestor, cypher_gen=MagicMock()
+    )
+    registry._semantic_search_tool = MagicMock()
+    scopes: list[str | None] = []
+
+    def fake_search(
+        _ingestor: object, _text: str, top_k: int = 5, project: str | None = None
+    ) -> list:
+        scopes.append(project)
+        return [
+            {
+                "node_id": 1,
+                "qualified_name": f"{project}.pkg.mod.f",
+                "name": "f",
+                "type": "Function",
+                "score": 0.9,
+            }
+        ]
+
+    monkeypatch.setattr(mcp_tools, "semantic_code_search", fake_search)
+
+    derived = derive_project_name(local_root)
+    payload = await registry.context(target="return the checkout source")
+    assert scopes == [derived]
+    assert isinstance(payload, dict)
+    assert payload["resolved"] == f"{derived}.pkg.mod.f"
