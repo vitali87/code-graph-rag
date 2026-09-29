@@ -2956,7 +2956,13 @@ class GraphUpdater:
             or not isinstance(self.ingestor, QueryProtocol)
         ):
             return
-        rows = self.ingestor.fetch_all(cs.CYPHER_PROJECT_CONSTANT_TYPES, project_params)
+        # `svc.` selects `svc.v2`'s rows too; requeued, a sibling's fact would
+        # resolve against THIS project's registry and write a cross-project
+        # OF_TYPE no later run deletes (issue #1970).
+        rows = self._owned_rows(
+            self.ingestor.fetch_all(cs.CYPHER_PROJECT_CONSTANT_TYPES, project_params),
+            cs.KEY_QUALIFIED_NAME,
+        )
         pending = self.factory.definition_processor.pending_constant_types
         for row in rows:
             qn = row.get(cs.KEY_QUALIFIED_NAME)
