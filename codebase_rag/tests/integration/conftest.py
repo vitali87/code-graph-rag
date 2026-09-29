@@ -163,7 +163,7 @@ def neo4j_ingestor(
             settings.NEO4J_URI = previous_uri
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def memgraph_connection(
     memgraph_container: dict[str, str | int],
 ) -> Generator[mgclient.Connection, None, None]:
@@ -202,7 +202,7 @@ def memgraph_connection(
     conn.close()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def memgraph_ingestor(
     memgraph_container: dict[str, str | int],
 ) -> Generator[MemgraphIngestor, None, None]:

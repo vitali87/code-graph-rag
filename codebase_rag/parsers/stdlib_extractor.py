@@ -10,6 +10,23 @@ from .. import logs as ls
 from ..types_defs import FunctionRegistryTrieProtocol
 
 
+def _python_module_has_entity(module_name: str, entity_name: str) -> bool:
+    # Whether importing `module_name` exposes a non-module `entity_name`.
+    try:
+        import importlib
+        import inspect
+
+        module = importlib.import_module(module_name)
+        if not hasattr(module, entity_name):
+            return False
+        obj = getattr(module, entity_name)
+        return (
+            inspect.isclass(obj) or inspect.isfunction(obj) or not inspect.ismodule(obj)
+        )
+    except (ImportError, AttributeError):
+        return False
+
+
 class StdlibCacheStats(TypedDict):
     cache_entries: int
     cache_languages: list[str]
@@ -208,54 +225,14 @@ class StdlibExtractor:
 
                 importlib.import_module(module_name)
             except ImportError:
-                if (
-                    self.function_registry
-                    and full_qualified_name in self.function_registry
-                ):
-                    module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                    _cache_stdlib_result(
-                        cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
-                    )
-                    return module_path
+                return self._python_unimportable_entity_path(parts, full_qualified_name)
 
-                if parts[0] == self.project_name:
-                    relative_parts = parts[1:]
-                    module_file = (
-                        self.repo_path
-                        / Path(*relative_parts[:-1])
-                        / f"{relative_parts[-1]}.py"
-                    )
-                    module_init = self.repo_path / Path(*relative_parts) / "__init__.py"
-
-                    if module_file.exists() or module_init.exists():
-                        return full_qualified_name
-
-                module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                _cache_stdlib_result(
-                    cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
-                )
-                return module_path
-
-        try:
-            import importlib
-            import inspect
-
-            module = importlib.import_module(module_name)
-
-            if hasattr(module, entity_name):
-                obj = getattr(module, entity_name)
-                if (
-                    inspect.isclass(obj)
-                    or inspect.isfunction(obj)
-                    or not inspect.ismodule(obj)
-                ):
-                    module_path = cs.SEPARATOR_DOT.join(parts[:-1])
-                    _cache_stdlib_result(
-                        cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
-                    )
-                    return module_path
-        except (ImportError, AttributeError):
-            pass
+        if _python_module_has_entity(module_name, entity_name):
+            module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+            _cache_stdlib_result(
+                cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+            )
+            return module_path
 
         result = (
             cs.SEPARATOR_DOT.join(parts[:-1])
@@ -264,6 +241,36 @@ class StdlibExtractor:
         )
         _cache_stdlib_result(cs.SupportedLanguage.PYTHON, full_qualified_name, result)
         return result
+
+    def _python_unimportable_entity_path(
+        self, parts: list[str], full_qualified_name: str
+    ) -> str:
+        # A module this interpreter cannot import: a registered entity or any
+        # other name resolves to its parent module, unless it is a project
+        # module file or package in its own right.
+        module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+        registered = bool(
+            self.function_registry and full_qualified_name in self.function_registry
+        )
+        if (
+            not registered
+            and parts[0] == self.project_name
+            and self._is_project_python_module(parts[1:])
+        ):
+            return full_qualified_name
+        _cache_stdlib_result(
+            cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+        )
+        return module_path
+
+    def _is_project_python_module(self, relative_parts: list[str]) -> bool:
+        if self.repo_path is None:
+            return False
+        module_file = (
+            self.repo_path / Path(*relative_parts[:-1]) / f"{relative_parts[-1]}.py"
+        )
+        module_init = self.repo_path / Path(*relative_parts) / "__init__.py"
+        return module_file.exists() or module_init.exists()
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
         cached_result = _get_cached_stdlib_result(

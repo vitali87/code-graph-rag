@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Tool
 
 
-def extract_tool_names(tools: list["Tool"]) -> ToolNames:
+def extract_tool_names(tools: list["Tool[None]"]) -> ToolNames:
     registered = {t.name for t in tools}
 
     def resolve_tool_name(
@@ -221,7 +221,7 @@ def _format_active_projects_block(
 
 
 def build_rag_orchestrator_prompt(
-    tools: list["Tool"],
+    tools: list["Tool[None]"],
     project_instructions: str | None = None,
     active_projects: list[str] | None = None,
     backend: str | None = None,

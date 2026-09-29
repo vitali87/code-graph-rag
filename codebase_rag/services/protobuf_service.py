@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from google.protobuf.message import Message
 from loguru import logger
 
 import codec.schema_pb2 as pb
@@ -53,6 +54,13 @@ _RelKey = tuple[str, int, str, tuple[tuple[str, PropertyValue], ...]]
 
 _REL_TYPE_CACHE: dict = {}
 _MSG_CLASS_CACHE: dict[str, type | None] = {}
+
+
+def _message_class_for(label: str) -> type | None:
+    # The generated protobuf message class for a node label, memoised.
+    if label not in _MSG_CLASS_CACHE:
+        _MSG_CLASS_CACHE[label] = getattr(pb, label, None)
+    return _MSG_CLASS_CACHE[label]
 
 
 class ProtobufFileIngestor:
@@ -135,12 +143,7 @@ class ProtobufFileIngestor:
         if (existing := self._nodes.get(node_key)) is not None:
             payload_message = getattr(existing, payload_field_name)
         else:
-            if label in _MSG_CLASS_CACHE:
-                payload_message_class = _MSG_CLASS_CACHE[label]
-            else:
-                payload_message_class = getattr(pb, label, None)
-                _MSG_CLASS_CACHE[label] = payload_message_class
-            if not payload_message_class:
+            if not _message_class_for(label):
                 logger.warning(ls.PROTOBUF_NO_MESSAGE_CLASS.format(label=label))
                 return
             node = pb.Node()
@@ -148,21 +151,24 @@ class ProtobufFileIngestor:
             self._nodes[node_key] = node
 
         for key, value in properties.items():
-            if hasattr(payload_message, key):
-                if value is None:
-                    continue
-                if key == cs.KEY_PATH and isinstance(value, str):
-                    # The payload path must match the node's canonical id:
-                    # writers already emit repo-relative paths here, but the
-                    # export enforces it so an absolute writer path can never
-                    # make the artifact checkout-specific.
-                    value = self._canonical_ref(value)
-                destination_attribute = getattr(payload_message, key)
-                if hasattr(destination_attribute, "extend") and isinstance(value, list):
-                    del destination_attribute[:]
-                    destination_attribute.extend(value)
-                else:
-                    setattr(payload_message, key, value)
+            if value is not None and hasattr(payload_message, key):
+                self._assign_payload_field(payload_message, key, value)
+
+    def _assign_payload_field(
+        self, payload_message: Message, key: str, value: PropertyValue
+    ) -> None:
+        if key == cs.KEY_PATH and isinstance(value, str):
+            # The payload path must match the node's canonical id: writers
+            # already emit repo-relative paths here, but the export enforces it
+            # so an absolute writer path can never make the artifact
+            # checkout-specific.
+            value = self._canonical_ref(value)
+        destination_attribute = getattr(payload_message, key)
+        if hasattr(destination_attribute, "extend") and isinstance(value, list):
+            del destination_attribute[:]
+            destination_attribute.extend(value)
+        else:
+            setattr(payload_message, key, value)
 
     def ensure_relationship_batch(
         self,

@@ -11,6 +11,19 @@ if TYPE_CHECKING:
     from ...types_defs import ASTNode
 
 
+def _enclosing_declarator_name(node: ASTNode) -> str | None:
+    # The first identifier of the nearest `variable_declarator` ancestor that
+    # has one names an arrow function (`const f = () => ...`).
+    current = node.parent
+    while current:
+        if current.type == cs.TS_VARIABLE_DECLARATOR:
+            for child in current.children:
+                if child.type == cs.TS_IDENTIFIER and child.text:
+                    return safe_decode_text(child)
+        current = current.parent
+    return None
+
+
 class JsTsHandler(BaseLanguageHandler):
     __slots__ = ()
 
@@ -67,13 +80,7 @@ class JsTsHandler(BaseLanguageHandler):
             return safe_decode_text(name_node)
 
         if node.type == cs.TS_ARROW_FUNCTION:
-            current = node.parent
-            while current:
-                if current.type == cs.TS_VARIABLE_DECLARATOR:
-                    for child in current.children:
-                        if child.type == cs.TS_IDENTIFIER and child.text:
-                            return safe_decode_text(child)
-                current = current.parent
+            return _enclosing_declarator_name(node)
 
         return None
 
@@ -98,21 +105,28 @@ class JsTsHandler(BaseLanguageHandler):
         current = func_node.parent
 
         while current and current.type not in lang_config.module_node_types:
-            if current.type in lang_config.function_node_types:
-                # The declared name first, then the assignment-derived one.
-                if (name := self._extract_node_name(current)) or (
-                    name := self.extract_function_name(current)
-                ):
-                    path_parts.append(name)
-            elif current.type in lang_config.class_node_types:
-                if not self.is_inside_method_with_object_literals(func_node):
-                    return None
-                if name := self._extract_node_name(current):
-                    path_parts.append(name)
-            elif current.type == cs.TS_METHOD_DEFINITION:
-                if name := self._extract_node_name(current):
-                    path_parts.append(name)
+            if (
+                current.type not in lang_config.function_node_types
+                and current.type in lang_config.class_node_types
+                and not self.is_inside_method_with_object_literals(func_node)
+            ):
+                return None
+            if name := self._ancestor_path_name(current, lang_config):
+                path_parts.append(name)
             current = current.parent
 
         path_parts.reverse()
         return path_parts
+
+    def _ancestor_path_name(
+        self, node: ASTNode, lang_config: LanguageSpec
+    ) -> str | None:
+        if node.type in lang_config.function_node_types:
+            # The declared name first, then the assignment-derived one.
+            return self._extract_node_name(node) or self.extract_function_name(node)
+        if (
+            node.type in lang_config.class_node_types
+            or node.type == cs.TS_METHOD_DEFINITION
+        ):
+            return self._extract_node_name(node)
+        return None
