@@ -966,16 +966,14 @@ class TypeInferenceEngine:
                     caller_node, module_qn
                 )
             case cs.SupportedLanguage.GO:
-                return self.go_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
-                )
+                return self.go_type_inference.build_local_variable_type_map(caller_node)
             case cs.SupportedLanguage.RUST:
                 return self.rust_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node
                 )
             case cs.SupportedLanguage.CPP:
                 return self.cpp_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node
                 )
             case _:
                 return {}

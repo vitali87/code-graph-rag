@@ -3,15 +3,39 @@ from __future__ import annotations
 import time
 import urllib.error
 import urllib.request
+from http.client import HTTPMessage
+from typing import IO
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 
 from . import constants as cs
 
+# pymgclient 1.6 re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception type is bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        return None
+
+
 # The Qdrant probes can carry the API key, and urllib's default opener would
 # route even a loopback request through an HTTP_PROXY that no_proxy does not
-# exempt, handing the key to the proxy.
-_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# exempt, handing the key to the proxy. Its redirect handler would likewise
+# copy the key onto a redirect to any host; Qdrant never redirects these
+# endpoints, so a 3xx fails the probe instead of being followed.
+_DIRECT_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _RefuseRedirects()
+)
 
 
 def _bolt_reachable(
@@ -32,7 +56,7 @@ def _bolt_reachable(
         finally:
             conn.close()
         return True
-    except (mgclient.Error, OSError):
+    except (_MgclientError, OSError):
         return False
 
 
@@ -70,7 +94,7 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
     # refused connection, so only the message tells the two apart.
     try:
         conn = mgclient.connect(host=host, port=port)
-    except mgclient.Error as e:
+    except _MgclientError as e:
         if cs.MEMGRAPH_AUTH_FAILURE in str(e):
             return cs.AnonymousAccess.REFUSED
         return cs.AnonymousAccess.NO_ANSWER
@@ -80,7 +104,7 @@ def memgraph_anonymous_access(host: str, port: int) -> cs.AnonymousAccess:
         cursor = conn.cursor()
         cursor.execute(cs.BOLT_PROBE_QUERY)
         cursor.fetchall()
-    except (mgclient.Error, OSError):
+    except (_MgclientError, OSError):
         return cs.AnonymousAccess.NO_ANSWER
     finally:
         conn.close()
@@ -95,7 +119,7 @@ def memgraph_rejects_credentials(
         conn = mgclient.connect(
             host=host, port=port, username=username, password=password
         )
-    except mgclient.Error as e:
+    except _MgclientError as e:
         return cs.MEMGRAPH_AUTH_FAILURE in str(e)
     except OSError:
         return False
@@ -106,14 +130,14 @@ def memgraph_rejects_credentials(
 def qdrant_accepts_anonymous(
     port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> bool:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
     return _qdrant_answers(request, timeout)
 
 
 def qdrant_anonymous_access(
     port: int, timeout: float = 1.5, host: str = cs.LOOPBACK_HOST
 ) -> cs.AnonymousAccess:
-    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))
+    request = urllib.request.Request(_qdrant_url(host, port, cs.QDRANT_DATA_PROBE_PATH))  # noqa: S310 - _qdrant_url fixes the http scheme
     try:
         with _DIRECT_OPENER.open(request, timeout=timeout) as resp:
             status = resp.status
@@ -137,7 +161,7 @@ def qdrant_accepts_key(
     too, so the probe is an alias update with no actions: Qdrant requires
     write access for it, and it changes nothing.
     """
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310 - _qdrant_url fixes the http scheme
         _qdrant_url(host, port, cs.QDRANT_WRITE_PROBE_PATH),
         data=cs.QDRANT_WRITE_PROBE_BODY,
         headers={

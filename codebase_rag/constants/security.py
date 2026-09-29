@@ -153,8 +153,10 @@ NEO4J_PLAN_CHILDREN = "children"
 # The optional `neo4j` package, imported by name (issue #2191): its typed
 # surface declares every statement `LiteralString`, which a runtime-built
 # statement can never be, so `services.neo4j_driver` types what it uses
-# with its own protocols instead.
-NEO4J_MODULE = "neo4j"
+# with its own protocols instead. Declared `str` rather than left a literal,
+# which a checker would resolve to the package itself.
+NEO4J_MODULE: str = "neo4j"
+NEO4J_EXCEPTIONS_MODULE: str = "neo4j.exceptions"
 # An untrusted query is planned with EXPLAIN and runs only if every plan
 # operator is known to read. An allowlist, not a list of writes, so an
 # operator this list has never seen (a new write, or a write under a new
@@ -859,22 +861,24 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "protocol.ext.allow",
     }
 )
+GIT_CONFIG_KEY_PREFIX_FILTER = "filter."
+GIT_CONFIG_KEY_SUFFIX_COMMAND = ".command"
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,
 # `filter.<name>.clean`, and `alias.<name>` whose values git also runs.
 SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
     ("credential.", ".helper"),
-    ("filter.", ".clean"),
-    ("filter.", ".smudge"),
-    ("filter.", ".process"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".clean"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".smudge"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".process"),
     ("difftool.", ".cmd"),
     ("mergetool.", ".cmd"),
     ("alias.", ""),
     ("diff.", ".textconv"),
-    ("diff.", ".command"),
+    ("diff.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("merge.", ".driver"),
-    ("trailer.", ".command"),
+    ("trailer.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("pager.", ""),
-    ("protocol.", ".command"),
+    ("protocol.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
 )
 
 # Enumerating key NAMES cannot be complete: git's own config documentation
@@ -887,7 +891,7 @@ SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
 # suffix does not follow the convention (core.pager, core.editor).
 SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES = (
     ".cmd",
-    ".command",
+    GIT_CONFIG_KEY_SUFFIX_COMMAND,
     ".helper",
     ".program",
     ".driver",

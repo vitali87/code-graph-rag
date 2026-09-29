@@ -517,6 +517,19 @@ def test_get_milvus_client_uses_uri_token_and_db(reset_global_client: None) -> N
     )
 
 
+def test_milvus_client_omits_unset_credentials() -> None:
+    # Negative: an unset token or database must not reach the client at all,
+    # so the client's own defaults stay in force.
+    import codebase_rag.vector_store as vs
+
+    with (
+        patch.object(vs.settings, "MILVUS_URI", "http://localhost:19530"),
+        patch.object(vs.settings, "MILVUS_TOKEN", None),
+        patch.object(vs.settings, "MILVUS_DB_NAME", None),
+    ):
+        assert vs._milvus_client_kwargs() == {"uri": "http://localhost:19530"}
+
+
 def test_milvus_empty_search_response_returns_empty_list() -> None:
     import codebase_rag.vector_store as vs
 

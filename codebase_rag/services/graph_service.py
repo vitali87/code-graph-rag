@@ -9,7 +9,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 from loguru import logger
 
 from codebase_rag.config import settings
@@ -64,6 +64,7 @@ from ..types_defs import (
     GraphMetadata,
     NodeBatchRow,
     PropertyDict,
+    PropertyParams,
     PropertyValue,
     RelBatchRow,
     ResultRow,
@@ -423,7 +424,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_constraint(label, prop))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
@@ -479,7 +480,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_index(label, prop))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         # The unique-key indexes serve MERGE at write time; generated Cypher
         # reads filter on bare `name`, which needs its own label+name index
@@ -487,7 +488,7 @@ class MemgraphIngestor:
         for label in NODE_NAME_INDEXES:
             try:
                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_INDEXES_DONE)
 
@@ -820,13 +821,15 @@ class MemgraphIngestor:
         logger.info(ls.MG_FLUSH_COMPLETE)
 
     def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
         bounded_query = _apply_memory_limit(
             query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
         )
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
-        return self._execute_query(bounded_query, params)
+        return self._execute_query(
+            bounded_query, dict(params) if params is not None else None
+        )
 
     def fetch_read_only(self, query: str) -> list[ResultRow]:
         """Run an untrusted (LLM-generated) query so that it cannot write.
@@ -858,11 +861,9 @@ class MemgraphIngestor:
         )
         return self._execute_query(bounded_query)
 
-    def execute_write(
-        self, query: str, params: dict[str, PropertyValue] | None = None
-    ) -> None:
+    def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
-        self._execute_query(query, params)
+        self._execute_query(query, dict(params) if params is not None else None)
 
     def export_graph_to_dict(self) -> GraphData:
         logger.info(ls.MG_EXPORTING)

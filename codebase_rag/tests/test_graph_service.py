@@ -392,6 +392,27 @@ class TestEnsureConstraints:
         for label in NODE_NAME_INDEXES:
             assert f"CREATE INDEX ON :{label}(name);" in executed_queries
 
+    def test_continues_on_unique_key_index_error(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+        first_label, first_prop = next(iter(NODE_UNIQUE_CONSTRAINTS.items()))
+
+        def fail_first_key_index(query: str) -> list[dict]:
+            executed_queries.append(query)
+            if query == f"CREATE INDEX ON :{first_label}({first_prop});":
+                raise RuntimeError("Index already exists")
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=fail_first_key_index
+        ):
+            ingestor.ensure_constraints()
+
+        for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
+            assert f"CREATE INDEX ON :{label}({prop});" in executed_queries
+        for label in NODE_NAME_INDEXES:
+            assert f"CREATE INDEX ON :{label}(name);" in executed_queries
+
 
 class TestLegacyPathKeyMigration:
     """Superseded Folder/File relative-path keys must migrate safely (#897)."""
