@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from codebase_rag import constants as cs
@@ -239,6 +240,22 @@ def _int(value: PropertyValue) -> int | None:
     # ResultValue shape. bool is an int subclass but line numbers are never
     # bool, so the guard is exact.
     return value if isinstance(value, int) else None
+
+
+_CYPHER_PARAM = re.compile(ec.CYPHER_PARAM_PATTERN)
+
+
+def _require_bound_params(query: str, params: PropertyDict | None) -> None:
+    """Refuse a statement with an unbound `$name`, as the real store does.
+
+    The double matches queries by identity and reads only the parameters it
+    needs, so a caller that dropped one the Cypher text still names used to
+    pass here while Memgraph failed it on every sync (issue #2392).
+    """
+    if missing := sorted(set(_CYPHER_PARAM.findall(query)) - set(params or {})):
+        raise ValueError(
+            ec.CYPHER_PARAMS_MISSING.format(names=", ".join(missing), query=query)
+        )
 
 
 class _StatefulIngestor:
@@ -720,6 +737,7 @@ class _StatefulIngestor:
     def fetch_all(
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
+        _require_bound_params(query, params)
         match query:
             case cq.CYPHER_LIST_PROJECTS:
                 return self._project_rows()
@@ -1270,6 +1288,7 @@ class _StatefulIngestor:
         return rows
 
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
+        _require_bound_params(query, params)
         path = params.get(cs.KEY_PATH) if params else None
         match query:
             case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
