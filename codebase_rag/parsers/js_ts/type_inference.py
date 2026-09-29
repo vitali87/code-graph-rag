@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -95,6 +96,22 @@ def _find_function_declaration(root: ASTNode, name: str) -> ASTNode | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def _js_await_call(arguments: ASTNode) -> ASTNode | None:
+    # The call whose argument list this is, when that call is the grammar's
+    # parse of `await (X)()`: a call to an identifier spelled `await`.
+    call = arguments.parent
+    if call is None or call.type != cs.TS_CALL_EXPRESSION:
+        return None
+    func = call.child_by_field_name(cs.FIELD_FUNCTION)
+    if (
+        func is not None
+        and func.type == cs.TS_IDENTIFIER
+        and safe_decode_text(func) == cs.JS_AWAIT_IDENTIFIER
+    ):
+        return call
+    return None
+
+
 class JsTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -134,7 +151,7 @@ class JsTypeInferenceEngine:
                     cursor = QueryCursor(q)
                     captures = cursor.captures(caller_node)
                     return captures.get("declarator", [])
-                except Exception:
+                except Exception:  # noqa: S112 - a failed query falls through to the next language
                     continue
         return None
 
@@ -210,16 +227,7 @@ class JsTypeInferenceEngine:
 
     def _type_from_type_node(self, node: ASTNode, module_qn: str) -> str | None:
         if node.type == cs.TS_UNION_TYPE:
-            # `User | null` names a single concrete member; wider unions are
-            # not a receiver type.
-            members = [
-                child
-                for child in node.named_children
-                if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
-            ]
-            if len(members) == 1:
-                return self._type_from_type_node(members[0], module_qn)
-            return None
+            return self._union_member_type(node, module_qn)
         if node.type == cs.TS_ARRAY_TYPE:
             inner = next(iter(node.named_children), None)
             element = self._type_from_type_node(inner, module_qn) if inner else None
@@ -233,6 +241,18 @@ class JsTypeInferenceEngine:
             return self._resolve_js_class_name(name, module_qn) or name
         if node.type == cs.TS_NESTED_TYPE_IDENTIFIER:
             return safe_decode_text(node)
+        return None
+
+    def _union_member_type(self, node: ASTNode, module_qn: str) -> str | None:
+        # `User | null` names a single concrete member; wider unions are
+        # not a receiver type.
+        members = [
+            child
+            for child in node.named_children
+            if (safe_decode_text(child) or "") not in cs.TS_NULLISH_TYPE_TEXTS
+        ]
+        if len(members) == 1:
+            return self._type_from_type_node(members[0], module_qn)
         return None
 
     def _generic_type(self, node: ASTNode, module_qn: str) -> str | None:
@@ -375,34 +395,47 @@ class JsTypeInferenceEngine:
                 class_qn = self._resolve_js_class_name(class_name, module_qn)
                 return class_qn or class_name
 
-        elif value_node.type == cs.TS_CALL_EXPRESSION:
-            func_node = value_node.child_by_field_name("function")
-            func_type = func_node.type if func_node else cs.STR_NONE
-            logger.debug(ls.JS_CALL_EXPR_FUNC_NODE, func_type=func_type)
-
-            if func_node and func_node.type == cs.TS_MEMBER_EXPRESSION:
-                method_call_text = ut.extract_method_call(func_node)
-                logger.debug(ls.JS_EXTRACTED_METHOD_CALL, method_call=method_call_text)
-                if method_call_text:
-                    if inferred_type := self._infer_js_method_return_type(
-                        method_call_text, module_qn
-                    ):
-                        logger.debug(
-                            ls.JS_TYPE_INFERRED,
-                            method_call=method_call_text,
-                            inferred_type=inferred_type,
-                        )
-                        return inferred_type
-                    logger.debug(
-                        ls.JS_RETURN_TYPE_INFER_FAILED, method_call=method_call_text
-                    )
-
-            elif func_node and func_node.type == cs.TS_IDENTIFIER:
-                func_name = func_node.text
-                if func_name:
-                    return safe_decode_text(func_node)
+        elif value_node.type == cs.TS_CALL_EXPRESSION and (
+            call_type := self._infer_js_call_value_type(value_node, module_qn)
+        ):
+            return call_type
 
         logger.debug(ls.JS_NO_PATTERN_MATCHED, node_type=value_node.type)
+        return None
+
+    def _infer_js_call_value_type(
+        self, value_node: ASTNode, module_qn: str
+    ) -> str | None:
+        # `obj.method()` takes the method's inferred return type; a bare
+        # `factory()` is typed by the callee's own name.
+        func_node = value_node.child_by_field_name("function")
+        func_type = func_node.type if func_node else cs.STR_NONE
+        logger.debug(ls.JS_CALL_EXPR_FUNC_NODE, func_type=func_type)
+        if func_node is None:
+            return None
+        if func_node.type == cs.TS_MEMBER_EXPRESSION:
+            return self._infer_js_member_call_type(func_node, module_qn)
+        if func_node.type == cs.TS_IDENTIFIER and func_node.text:
+            return safe_decode_text(func_node)
+        return None
+
+    def _infer_js_member_call_type(
+        self, func_node: ASTNode, module_qn: str
+    ) -> str | None:
+        method_call_text = ut.extract_method_call(func_node)
+        logger.debug(ls.JS_EXTRACTED_METHOD_CALL, method_call=method_call_text)
+        if not method_call_text:
+            return None
+        if inferred_type := self._infer_js_method_return_type(
+            method_call_text, module_qn
+        ):
+            logger.debug(
+                ls.JS_TYPE_INFERRED,
+                method_call=method_call_text,
+                inferred_type=inferred_type,
+            )
+            return inferred_type
+        logger.debug(ls.JS_RETURN_TYPE_INFER_FAILED, method_call=method_call_text)
         return None
 
     def _infer_js_method_return_type(
@@ -482,10 +515,11 @@ class JsTypeInferenceEngine:
         ut.find_return_statements(method_node, return_nodes, self._get_language_obj())
 
         # One O(body) scan shared by every `return <identifier>` in this
-        # method; deliberately NOT stored on the engine: a tree-sitter node id
-        # is a recycled heap address across parses, and holding Node values
-        # would pin whole trees against the bounded AST cache.
-        ctor_index: _CtorBindingIndex | None = None
+        # method, built on first use; deliberately NOT stored on the engine: a
+        # tree-sitter node id is a recycled heap address across parses, and
+        # holding Node values would pin whole trees against the bounded AST
+        # cache.
+        ctor_index = cache(partial(self._js_ctor_binding_index, method_node))
 
         for return_node in return_nodes:
             # Nested callables own their returns: a callback's `return new
@@ -498,58 +532,76 @@ class JsTypeInferenceEngine:
                 return_node, method_node
             ):
                 continue
-            for child in return_node.children:
-                if child.type == cs.TS_RETURN:
-                    continue
-
-                if inferred_type := ut.analyze_return_expression(child, method_qn):
-                    return inferred_type
-
-                if not owner_is_method:
-                    # An IIFE's `return x` reads the IIFE's OWN locals; the
-                    # method-body binding index says nothing about them.
-                    continue
-
-                # `return x` where the METHOD'S OWN body binds `x = new
-                # C(...)` (the cache-then-construct factory, fastify's
-                # ContentType.from, issue #992): the CONSTRUCTED class types
-                # the return when every construction reaching THIS return's
-                # variable agrees. Bindings resolve by SCOPE SPAN: the
-                # innermost declarator whose scope encloses the return is the
-                # variable, so a nested-block shadow neither erases an outer
-                # construction nor inherits it. Unknown-value assignments
-                # (the cache hit) do not veto; a second DIFFERENT class does.
-                if child.type == cs.TS_IDENTIFIER and (name := safe_decode_text(child)):
-                    if ctor_index is None:
-                        ctor_index = self._js_ctor_binding_index(method_node)
-                    constructed = self._js_constructed_for(
-                        name, child.start_byte, ctor_index
-                    )
-                    if constructed is None:
-                        continue
-                    ctor = ut.extract_constructor_name(constructed)
-                    if ctor:
-                        own_qn = ut.analyze_return_expression(constructed, method_qn)
-                        own_leaf = (
-                            own_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if own_qn else None
-                        )
-                        # analyze_return_expression resolves a NEW to the
-                        # method's OWN class; keep that qn precision only
-                        # when the constructed class IS the own class.
-                        # Otherwise resolve the constructed class in the
-                        # FACTORY'S module (where the construction names it),
-                        # falling back to the bare name.
-                        if ctor == own_leaf:
-                            return own_qn
-                        if own_qn and cs.SEPARATOR_DOT in own_qn:
-                            factory_module = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                            if resolved := self._resolve_js_class_name(
-                                ctor, factory_module
-                            ):
-                                return resolved
-                        return ctor
+            if inferred := self._return_node_type(
+                return_node, method_qn, owner_is_method, ctor_index
+            ):
+                return inferred
 
         return None
+
+    def _return_node_type(
+        self,
+        return_node: ASTNode,
+        method_qn: str,
+        owner_is_method: bool,
+        ctor_index: Callable[[], _CtorBindingIndex],
+    ) -> str | None:
+        for child in return_node.children:
+            if child.type == cs.TS_RETURN:
+                continue
+
+            if inferred_type := ut.analyze_return_expression(child, method_qn):
+                return inferred_type
+
+            if not owner_is_method:
+                # An IIFE's `return x` reads the IIFE's OWN locals; the
+                # method-body binding index says nothing about them.
+                continue
+
+            # `return x` where the METHOD'S OWN body binds `x = new C(...)`
+            # (the cache-then-construct factory, fastify's ContentType.from,
+            # issue #992): the CONSTRUCTED class types the return when every
+            # construction reaching THIS return's variable agrees. Bindings
+            # resolve by SCOPE SPAN: the innermost declarator whose scope
+            # encloses the return is the variable, so a nested-block shadow
+            # neither erases an outer construction nor inherits it.
+            # Unknown-value assignments (the cache hit) do not veto; a second
+            # DIFFERENT class does.
+            if child.type != cs.TS_IDENTIFIER or not (name := safe_decode_text(child)):
+                continue
+            if resolved := self._constructed_return_type(
+                name, child.start_byte, ctor_index(), method_qn
+            ):
+                return resolved
+        return None
+
+    def _constructed_return_type(
+        self,
+        name: str,
+        start_byte: int,
+        ctor_index: _CtorBindingIndex,
+        method_qn: str,
+    ) -> str | None:
+        constructed = self._js_constructed_for(name, start_byte, ctor_index)
+        if constructed is None:
+            return None
+        ctor = ut.extract_constructor_name(constructed)
+        if not ctor:
+            return None
+        own_qn = ut.analyze_return_expression(constructed, method_qn)
+        own_leaf = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1] if own_qn else None
+        # analyze_return_expression resolves a NEW to the method's OWN class;
+        # keep that qn precision only when the constructed class IS the own
+        # class. Otherwise resolve the constructed class in the FACTORY'S
+        # module (where the construction names it), falling back to the bare
+        # name.
+        if ctor == own_leaf:
+            return own_qn
+        if own_qn and cs.SEPARATOR_DOT in own_qn:
+            factory_module = own_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if resolved := self._resolve_js_class_name(ctor, factory_module):
+                return resolved
+        return ctor
 
     @staticmethod
     def _return_belongs_to(return_node: ASTNode, method_node: ASTNode) -> bool:
@@ -601,22 +653,12 @@ class JsTypeInferenceEngine:
                 current = current.parent
                 continue
             if current.type == cs.TS_ARGUMENTS:
-                call = current.parent
-                func = (
-                    call.child_by_field_name(cs.FIELD_FUNCTION)
-                    if call is not None and call.type == cs.TS_CALL_EXPRESSION
-                    else None
-                )
-                if (
-                    call is not None
-                    and func is not None
-                    and func.type == cs.TS_IDENTIFIER
-                    and safe_decode_text(func) == cs.JS_AWAIT_IDENTIFIER
-                ):
-                    node = call
-                    current = call.parent
-                    continue
-                return None
+                call = _js_await_call(current)
+                if call is None:
+                    return None
+                node = call
+                current = call.parent
+                continue
             if current.type == cs.TS_CALL_EXPRESSION:
                 func = current.child_by_field_name(cs.FIELD_FUNCTION)
                 if func is not None and func.id == node.id:

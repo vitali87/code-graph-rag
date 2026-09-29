@@ -255,8 +255,8 @@ class TestAnthropicProvider:
         with pytest.raises(ValueError, match="Anthropic provider requires api_key"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_anthropic_model_creation(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -267,8 +267,8 @@ class TestAnthropicProvider:
         mock_anthropic_model.assert_called_once()
         assert result == mock_model
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_anthropic_model_enables_prompt_caching(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -327,8 +327,8 @@ class TestAzureOpenAIProvider:
         with pytest.raises(ValueError, match="Azure OpenAI provider requires endpoint"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.base.PydanticAzureProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.azure.AzureProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_azure_model_creation(
         self, mock_chat_model: Any, mock_azure_provider: Any
     ) -> None:
@@ -391,8 +391,8 @@ class TestMiniMaxProvider:
             provider = MiniMaxProvider()
             assert provider.api_key == "env-mm-key"
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_minimax_openai_model_creation(
         self, mock_chat_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -410,8 +410,8 @@ class TestMiniMaxProvider:
         )
         assert result == mock_model
 
-    @patch("codebase_rag.providers.base.PydanticAnthropicProvider")
-    @patch("codebase_rag.providers.base.AnthropicModel")
+    @patch("pydantic_ai.providers.anthropic.AnthropicProvider")
+    @patch("pydantic_ai.models.anthropic.AnthropicModel")
     def test_minimax_anthropic_model_creation(
         self, mock_anthropic_model: Any, mock_anthropic_provider: Any
     ) -> None:
@@ -444,8 +444,8 @@ class TestMiniMaxProvider:
 
 
 class TestModelCreation:
-    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
+    @patch("pydantic_ai.providers.google.GoogleProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
     def test_google_model_creation_without_thinking_budget(
         self, mock_google_model: Any, mock_google_provider: Any
     ) -> None:
@@ -471,9 +471,9 @@ class TestModelCreation:
         # not smuggle in an unrelated setting.
         assert "google_thinking_config" not in call_kwargs["settings"]
 
-    @patch("codebase_rag.providers.base.PydanticGoogleProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
-    @patch("codebase_rag.providers.base.GoogleModelSettings")
+    @patch("pydantic_ai.providers.google.GoogleProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
+    @patch("pydantic_ai.models.google.GoogleModelSettings")
     def test_google_model_creation_with_thinking_budget(
         self,
         mock_model_settings: Any,
@@ -508,8 +508,8 @@ class TestModelCreation:
         assert "settings" in call_kwargs
         assert call_kwargs["settings"] == mock_settings
 
-    @patch("codebase_rag.providers.base.GoogleCloudProvider")
-    @patch("codebase_rag.providers.base.GoogleModel")
+    @patch("pydantic_ai.providers.google_cloud.GoogleCloudProvider")
+    @patch("pydantic_ai.models.google.GoogleModel")
     def test_google_vertex_model_creation_uses_cloud_provider(
         self, mock_google_model: Any, mock_cloud_provider: Any
     ) -> None:
@@ -538,8 +538,8 @@ class TestModelCreation:
             settings={"max_tokens": settings.MODEL_MAX_TOKENS},
         )
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIResponsesModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIResponsesModel")
     def test_openai_model_creation(
         self, mock_openai_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -557,8 +557,8 @@ class TestModelCreation:
             "gpt-4o", provider=mock_openai_provider.return_value
         )
 
-    @patch("codebase_rag.providers.base.PydanticOpenAIProvider")
-    @patch("codebase_rag.providers.base.OpenAIChatModel")
+    @patch("pydantic_ai.providers.openai.OpenAIProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     def test_ollama_model_creation(
         self, mock_openai_chat_model: Any, mock_openai_provider: Any
     ) -> None:
@@ -592,12 +592,20 @@ class TestLiteLLMProvider:
         provider = LiteLLMProvider()
         assert provider.endpoint == "http://localhost:4000/v1"
 
-    def test_litellm_no_endpoint_validation_error(self) -> None:
+    def test_litellm_default_endpoint_applies_through_the_config_factory(
+        self,
+    ) -> None:
+        from codebase_rag.config import ModelConfig
+        from codebase_rag.providers.base import get_provider_from_config
         from codebase_rag.providers.litellm import LiteLLMProvider
 
-        provider = LiteLLMProvider(endpoint="")
-        with pytest.raises(ValueError, match="LiteLLM provider requires endpoint"):
-            provider.validate_config()
+        # The factory passes every config key, endpoint=None included, so a
+        # parameter default alone never took effect and validation failed.
+        provider = get_provider_from_config(
+            ModelConfig(provider=Provider.LITELLM_PROXY, model_id="gpt-4o")
+        )
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.endpoint == "http://localhost:4000/v1"
 
     @patch("httpx.Client")
     def test_litellm_validation_success(self, mock_client: Any) -> None:
@@ -654,8 +662,8 @@ class TestLiteLLMProvider:
         with pytest.raises(ValueError, match="LiteLLM proxy server not responding"):
             provider.validate_config()
 
-    @patch("codebase_rag.providers.litellm.PydanticLiteLLMProvider")
-    @patch("codebase_rag.providers.litellm.OpenAIChatModel")
+    @patch("pydantic_ai.providers.litellm.LiteLLMProvider")
+    @patch("pydantic_ai.models.openai.OpenAIChatModel")
     @patch("httpx.Client")
     def test_litellm_model_creation(
         self, mock_client: Any, mock_chat_model: Any, mock_litellm_provider: Any
@@ -679,3 +687,74 @@ class TestLiteLLMProvider:
             "openai/gpt-4o", provider=mock_litellm_provider.return_value
         )
         assert result == mock_model
+
+
+# (endpoint as configured, base URL the health check must target). Ports and
+# hostnames ending in characters of "/v1" guard against char-set stripping.
+V1_SUFFIX_CASES = [
+    ("http://host:4001/v1", "http://host:4001"),
+    ("http://host:4000/v1", "http://host:4000"),
+    ("http://llmdev/v1", "http://llmdev"),
+    ("http://node1/v1", "http://node1"),
+    ("http://host:4001/v1/", "http://host:4001"),
+    ("http://host:4001", "http://host:4001"),
+    ("http://host:4001/", "http://host:4001"),
+    ("http://llmdev", "http://llmdev"),
+    ("http://node1", "http://node1"),
+]
+
+
+class TestV1SuffixStripping:
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    def test_strip_v1_suffix(self, endpoint: str, expected: str) -> None:
+        from codebase_rag.providers.base import strip_v1_suffix
+
+        assert strip_v1_suffix(endpoint) == expected
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_ollama_health_check_url(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        get = mock_client.return_value.__enter__.return_value.get
+        get.return_value.status_code = 200
+
+        OllamaProvider(endpoint=endpoint).validate_config()
+
+        get.assert_called_once_with(f"{expected}/api/tags")
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_litellm_provider_health_check_url(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        from codebase_rag.providers.litellm import LiteLLMProvider
+
+        get = mock_client.return_value.__enter__.return_value.get
+        get.return_value.status_code = 200
+
+        LiteLLMProvider(endpoint=endpoint).validate_config()
+
+        get.assert_called_once_with(f"{expected}/health", headers={})
+
+    @pytest.mark.parametrize(("endpoint", "expected"), V1_SUFFIX_CASES)
+    @patch("httpx.Client")
+    def test_check_litellm_proxy_running_urls(
+        self, mock_client: MagicMock, endpoint: str, expected: str
+    ) -> None:
+        from codebase_rag.providers.base import check_litellm_proxy_running
+
+        health_response = MagicMock()
+        health_response.status_code = 401
+        models_response = MagicMock()
+        models_response.status_code = 200
+        get = mock_client.return_value.__enter__.return_value.get
+        get.side_effect = [health_response, models_response]
+
+        assert check_litellm_proxy_running(endpoint, api_key="sk-test")
+
+        headers = {"Authorization": "Bearer sk-test"}
+        assert get.call_args_list == [
+            ((f"{expected}/health",), {"headers": headers}),
+            ((f"{expected}/v1/models",), {"headers": headers}),
+        ]

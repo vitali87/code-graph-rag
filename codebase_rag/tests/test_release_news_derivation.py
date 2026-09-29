@@ -87,15 +87,12 @@ def test_security_notice_falls_back_when_the_advisory_fetch_fails(
     )
     fake_gh.chmod(0o755)
     out = tmp_path / "security.md"
-    script = (
-        _security_notice_script()
-        .replace("${{ steps.decide.outputs.ghsa }}", "GHSA-aaaa-bbbb-cccc")
-        .replace("/tmp/security.md", str(out))
-    )
+    script = _security_notice_script().replace("/tmp/security.md", str(out))
     env = {
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
         "GITHUB_REPOSITORY": "vitali87/code-graph-rag",
+        "GHSA": "GHSA-aaaa-bbbb-cccc",
     }
 
     subprocess.run(["bash", "-e", "-c", script], check=True, env=env)

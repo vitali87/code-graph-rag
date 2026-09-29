@@ -57,7 +57,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
    - Follow the existing code style and patterns
    - Add tests: this is project policy, not a suggestion. New functionality must come with tests that exercise it, and bug fixes must include a regression test that fails without the fix
    - Update documentation if needed
-   - Do not add inline comments (see Comment Policy below)
+   - Add a comment only where it explains why, not what (see Comment Policy below)
 
 4. **Test Your Changes**:
    - Run the existing tests to ensure nothing is broken
@@ -77,14 +77,25 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
 - Tests are required for new functionality and for bug fixes; PRs adding major functionality without tests will not be merged
 - Update documentation when necessary
 - Be responsive to feedback during code review
+- Show a user-visible change in the PR description (see below)
+
+### Show the change
+
+A pull request that changes something a user can see must show it working, in the PR description, before and after. This applies to humans and AI agents alike.
+
+- **What counts as user-visible:** CLI commands, output and prompts; MCP tool results; the nodes, relationships and properties the graph holds for a real snippet; the realtime watcher; the docs site and the README.
+- **How to show it:** a terminal change gets a GIF recorded with [VHS](https://github.com/charmbracelet/vhs), with the `.tape` file kept out of the repository. A graph, browser or docs change gets a screenshot. Record from the PR's own branch, running its own code.
+- **How to attach it:** embed it inline as a GitHub attachment, never committed. Reference the file in the body and let `gh` upload it: `gh pr create --attach ./after.png` or `gh pr edit <n> --attach ./after.png` (GitHub CLI 2.99 or later). A body line such as `![after](./after.png)` is rewritten to the uploaded `github.com/user-attachments` URL; without one the image is appended. By hand, drag or paste the file into the description.
+- **When nothing is visible:** an internal refactor, a test-only or CI-only change says so in one line instead, for example `No user-visible change: refactors the call resolver's cache key.`
 
 ### Continuous Integration
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
 
-1. **Lint & Format** - Code style validation:
+1. **Lint & Format** - Code style and security validation:
    - `ruff check` with GitHub annotations
    - `ruff format --check`
+   - Bandit, through the same pre-commit hook you run locally (high-severity findings fail the job)
 
 2. **Type Check** - Static type analysis:
    - `ty check` on production code (excludes tests)

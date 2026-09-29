@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.tests.conftest import (
     get_nodes,
     get_qualified_names,
@@ -184,8 +186,6 @@ def test_blank_helper_edge_shapes() -> None:
 
 
 def test_parse_recovery_passthrough_shapes() -> None:
-    import pytest as _pytest
-
     from codebase_rag import constants as cs
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp.preproc_recovery import (
@@ -194,7 +194,7 @@ def test_parse_recovery_passthrough_shapes() -> None:
 
     parsers, _ = load_parsers()
     if "cpp" not in parsers or "python" not in parsers:
-        _pytest.skip("parsers not available")
+        pytest.skip("parsers not available")
 
     # a non-C-family language never enters the recovery path, even for
     # unparseable content

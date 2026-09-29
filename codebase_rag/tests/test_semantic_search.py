@@ -456,3 +456,52 @@ async def test_get_function_source_tool_handles_not_found(
     result = await tool.function(999)
 
     assert "Could not retrieve source code" in result
+
+
+@pytest.mark.skipif(
+    not has_semantic_dependencies(), reason="semantic dependencies not installed"
+)
+def test_get_function_source_code_rejects_non_integer_lines(
+    mock_ingestor: MagicMock,
+) -> None:
+    # Negative: a line stored as text is no location; nothing is read.
+    from codebase_rag.tools.semantic_search import get_function_source_code
+
+    mock_ingestor.fetch_all.return_value = [
+        {
+            "qualified_name": "project.module.func",
+            "start_line": "10",
+            "end_line": "15",
+            "path": "/tmp/test.py",
+        }
+    ]
+    mock_extract = MagicMock(return_value="def func(): ...")
+
+    with patch(
+        "codebase_rag.utils.source_extraction.extract_source_lines", mock_extract
+    ):
+        result = get_function_source_code(mock_ingestor, 123)
+
+    assert result is None
+    mock_extract.assert_not_called()
+
+
+@patch(
+    "codebase_rag.tools.semantic_search.has_semantic_dependencies", return_value=True
+)
+@patch("codebase_rag.vector_store.search_embeddings")
+@patch("codebase_rag.embedder.embed_code")
+def test_semantic_code_search_reports_a_non_text_label_as_unknown(
+    mock_embed: MagicMock, mock_search: MagicMock, _deps: MagicMock
+) -> None:
+    # Negative: a label that is not text is not a node type.
+    from codebase_rag.tools.semantic_search import semantic_code_search
+
+    mock_embed.return_value = [0.0]
+    mock_search.return_value = [(1, 0.99)]
+    ingestor = MagicMock()
+    ingestor.fetch_all.return_value = [{"node_id": 1, "type": [None]}]
+
+    results = semantic_code_search(ingestor, "find foo", top_k=1)
+
+    assert results[0]["type"] == cs.SEMANTIC_TYPE_UNKNOWN
