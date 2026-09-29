@@ -9,7 +9,9 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+import click
 import mgclient
+import typer
 from loguru import logger
 
 from codebase_rag.config import settings
@@ -79,6 +81,20 @@ from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
     from .neo4j_driver import Neo4jDriver
+
+# Raised on purpose to end a command with its own exit code once it has told
+# the user why; logging them as a failed write buried that message under a
+# traceback (#2414). typer's are listed beside click's because a typer that
+# vendors click raises its own copies (#1409). Ctrl+C is not here: it stops
+# work that did not choose to stop.
+_DELIBERATE_EXITS: tuple[type[BaseException], ...] = (
+    SystemExit,
+    click.exceptions.Exit,
+    click.exceptions.Abort,
+    click.ClickException,
+    typer.Exit,
+    typer.Abort,
+)
 
 
 def _apply_memory_limit(
@@ -209,13 +225,21 @@ class MemgraphIngestor:
 
     def __exit__(
         self,
-        exc_type: type | None,
-        exc_val: Exception | None,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         try:
             if exc_type:
-                logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
+                if issubclass(exc_type, _DELIBERATE_EXITS):
+                    # Kept at DEBUG with its traceback: a command may turn a
+                    # real failure into its own message and an exit, and the
+                    # cause should stay one LOGURU_LEVEL away.
+                    logger.opt(exception=exc_val).debug(
+                        ls.MG_DELIBERATE_EXIT.format(kind=exc_type.__name__)
+                    )
+                else:
+                    logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
                 # Best-effort flush: persist buffered nodes/relationships even when
                 # an exception occurred. Catch broad Exception so a secondary flush
                 # failure never masks the original.
@@ -243,8 +267,8 @@ class MemgraphIngestor:
 
     async def __aexit__(
         self,
-        exc_type: type | None,
-        exc_val: Exception | None,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
         exc_tb: types.TracebackType | None,
     ) -> None:
         self.__exit__(exc_type, exc_val, exc_tb)
