@@ -202,3 +202,84 @@ class _serve_then_stop:
 
     def __exit__(self, *exc: object) -> None:
         self._gen.close()
+
+
+@pytest.fixture
+def fresh_embedding_cache() -> Generator[None, None, None]:
+    from codebase_rag import embedder
+
+    embedder.clear_embedding_cache()
+    yield
+    embedder.clear_embedding_cache()
+
+
+def _cache_path() -> Path:
+    from codebase_rag import embedder
+
+    path = embedder.get_embedding_cache()._path
+    assert path is not None
+    return path
+
+
+def test_the_embedding_cache_leaves_the_repository_with_the_vectors(
+    stack_home: Path,
+    open_qdrant: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fresh_embedding_cache: None,
+) -> None:
+    # The cache holds the vectors too; left at the cwd-relative default it
+    # still dropped a hidden folder into every indexed repository.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv(stack_cs.COMPOSE_QDRANT_HTTP_PORT_VAR, str(open_qdrant))
+
+    path = _cache_path()
+
+    assert path.parent == stack_home
+    assert not (repo / cs.QDRANT_DEFAULT_DB_PATH).exists()
+
+
+def test_without_the_stack_the_cache_stays_beside_the_embedded_store(
+    _isolate_cgr_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_embedding_cache: None,
+) -> None:
+    # Negative: the embedded store and its cache keep sharing a folder.
+    monkeypatch.setattr(settings, "QDRANT_DB_PATH", cs.QDRANT_DEFAULT_DB_PATH)
+
+    assert _cache_path() == Path(cs.QDRANT_DEFAULT_DB_PATH) / (
+        cs.EMBEDDING_CACHE_FILENAME
+    )
+
+
+def test_an_explicit_url_keeps_the_cache_where_it_was(
+    stack_home: Path,
+    open_qdrant: int,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_embedding_cache: None,
+) -> None:
+    # Negative: only the bundled stack's cache moves.
+    monkeypatch.setenv(stack_cs.COMPOSE_QDRANT_HTTP_PORT_VAR, str(open_qdrant))
+    monkeypatch.setattr(settings, "QDRANT_URL", "http://qdrant.internal:6333")
+
+    assert _cache_path().parent == Path(cs.QDRANT_DEFAULT_DB_PATH)
+
+
+def test_the_stack_is_probed_once_for_the_client_and_the_cache(
+    stack_home: Path,
+    open_qdrant: int,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_embedding_cache: None,
+) -> None:
+    from codebase_rag import stack
+
+    monkeypatch.setenv(stack_cs.COMPOSE_QDRANT_HTTP_PORT_VAR, str(open_qdrant))
+    probe = MagicMock(wraps=stack.bundled_qdrant_url)
+    monkeypatch.setattr(stack, "bundled_qdrant_url", probe)
+
+    _client_kwargs()
+    _cache_path()
+
+    assert probe.call_count == 1

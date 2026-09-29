@@ -26,7 +26,12 @@ order:
 4. Otherwise: an embedded Qdrant in `./.qdrant_code_embeddings`, relative to
    the directory cgr runs in.
 
-The embedding cache stays in `QDRANT_DB_PATH` in every case. For a server that requires an API key
+The embedding cache (`.embedding_cache.json`) sits in the embedded store's
+folder, and moves to the stack's folder (`CGR_HOME`, default `~/.cgr`) along
+with the vectors in case 3, so nothing is written into the indexed repository.
+Its keys carry the embedding model, so one cache serves every project.
+
+For a server that requires an API key
 (Qdrant Cloud, or a self-hosted server started with `QDRANT__SERVICE__API_KEY`),
 also set `QDRANT_API_KEY`, over an `https://` URL:
 
