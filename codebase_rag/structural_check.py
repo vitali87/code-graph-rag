@@ -348,8 +348,8 @@ def _measure_then_restore(
     # transaction around the two, so a failure between them leaves the graph
     # partial. The persistent incomplete-run marker every mutating path sets
     # (#1679) records that: set before the first write, cleared only once the
-    # restore has finished, so a failed restore leaves readers refusing and
-    # the next full update repairing (bot review, #1718).
+    # graph and the hash cache are both back, so a failed restore leaves
+    # readers refusing and the next full update repairing (bot review, #1718).
     marker: PropertyDict = {
         cs.KEY_PROJECT_NAME: project_name,
         cs.KEY_RUN_ID: uuid.uuid4().hex,
@@ -362,9 +362,12 @@ def _measure_then_restore(
     finally:
         try:
             guard.restore()
-            store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
         finally:
             cache.put_back()
+        # Only once BOTH are back: a cache left holding the re-parse's hashes
+        # would make the next update skip the edited files, so a failed cache
+        # restore must keep the marker too (CodeRabbit, #1718).
+        store.execute_write(cq.CYPHER_CLEAR_PROJECT_INCOMPLETE, marker)
 
 
 def run_check(
