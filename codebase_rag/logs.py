@@ -143,6 +143,7 @@ EXPORT_FOUND = "  Found {export_type}: {name} (qn: {qn})"
 # Definition processor logs
 DEF_PARSING_AST = "Parsing and Caching AST for {language}: {path}"
 DEF_UNSUPPORTED_LANGUAGE = "Unsupported language '{language}' for {path}"
+DEF_NO_PARSER = "No parser available for {language}"
 DEF_PARSE_FAILED = "Failed to parse or ingest {path}: {error}"
 DEF_PARSING_DEPENDENCY = "  Parsing dependency file: {path}"
 DEF_FOUND_DEPENDENCY = "    Found dependency: {name} (spec: {spec})"

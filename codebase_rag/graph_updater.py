@@ -5652,7 +5652,14 @@ class GraphUpdater:
             ):
                 continue
             language = lang_config.language
-            parser = self.queries[language][cs.KEY_PARSER]
+            # `parsers` and `queries` arrive separately; a language one lacks
+            # is left to the per-file path rather than aborting the run.
+            language_queries = self.queries.get(language)
+            if language_queries is None:
+                continue
+            parser = language_queries.get(cs.KEY_PARSER)
+            if parser is None:
+                continue
             tree = parse_with_preproc_recovery(parser, file_bytes, language)
             root_node = tree.root_node
             combined_query = COMBINED_FUNC_CLASS_IMPORT_QUERIES.get(language)
