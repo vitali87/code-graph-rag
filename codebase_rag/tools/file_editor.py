@@ -270,6 +270,14 @@ class FileEditor:
             logger.error(ls.EDITOR_SURGICAL_ERROR.format(error=e))
             return False
 
+    async def replace_code_block_async(
+        self, file_path: str, target_block: str, replacement_block: str
+    ) -> bool:
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self.replace_code_block, file_path, target_block, replacement_block
+            )
+
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
         logger.info(ls.TOOL_FILE_EDIT.format(path=file_path))
         return await self._edit_validated(file_path, new_content)
@@ -300,7 +308,7 @@ def create_file_editor_tool(file_editor: FileEditor) -> Tool:
     async def replace_code_surgically(
         file_path: str, target_code: str, replacement_code: str
     ) -> str:
-        success = file_editor.replace_code_block(
+        success = await file_editor.replace_code_block_async(
             file_path, target_code, replacement_code
         )
         if success:
