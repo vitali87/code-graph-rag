@@ -14,7 +14,7 @@ from .. import constants as cs
 from .. import exceptions as ex
 from .. import logs as ls
 from ..config import ModelConfig, normalised_credential, settings
-from ..utils.endpoints import strip_v1_suffix
+from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
 # Each provider imports its pydantic-ai model and provider classes inside
 # `create_model`, so building one model loads one SDK rather than all of them
@@ -538,7 +538,7 @@ def list_providers() -> list[str]:
 def check_ollama_running(endpoint: str | None = None) -> bool:
     endpoint = endpoint or settings.OLLAMA_BASE_URL
     try:
-        health_url = urljoin(endpoint, cs.OLLAMA_HEALTH_PATH)
+        health_url = join_endpoint_path(endpoint, cs.OLLAMA_HEALTH_PATH)
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
             return response.status_code == cs.HTTP_OK

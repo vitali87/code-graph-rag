@@ -21,3 +21,16 @@ def strip_v1_suffix(endpoint: str) -> str:
         .removesuffix(cs.V1_PATH)
         .rstrip(cs.SEPARATOR_SLASH)
     )
+
+
+def join_endpoint_path(endpoint: str, path: str) -> str:
+    """`path` appended below `endpoint`'s own path.
+
+    Not `urljoin`: an absolute `path` replaces the endpoint's path there, so an
+    Ollama served behind a proxy at `https://host/ollama` would be probed at
+    `https://host/api/tags` and reported as not running (review of PR 2502).
+    """
+    return (
+        f"{endpoint.rstrip(cs.SEPARATOR_SLASH)}"
+        f"{cs.SEPARATOR_SLASH}{path.lstrip(cs.SEPARATOR_SLASH)}"
+    )

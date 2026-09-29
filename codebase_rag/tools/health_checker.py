@@ -5,7 +5,6 @@ import os
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from urllib.parse import urljoin
 
 import httpx
 import mgclient
@@ -18,7 +17,7 @@ from ..graph_dialects import DIALECT_NEO4J
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
-from ..utils.endpoints import strip_v1_suffix
+from ..utils.endpoints import join_endpoint_path, strip_v1_suffix
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
@@ -107,7 +106,7 @@ def _ollama_models(base_url: str) -> list[str] | None:
     """The models an Ollama server has pulled, or None if none answered."""
     try:
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
-            response = client.get(urljoin(base_url, cs.OLLAMA_HEALTH_PATH))
+            response = client.get(join_endpoint_path(base_url, cs.OLLAMA_HEALTH_PATH))
     except httpx.HTTPError:
         return None
     if response.status_code != cs.HTTP_OK:

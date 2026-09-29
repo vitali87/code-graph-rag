@@ -176,3 +176,42 @@ def test_a_key_based_provider_without_a_key_still_fails(
     monkeypatch.delenv(cs.ENV_OPENAI_API_KEY, raising=False)
 
     assert not _orchestrator().passed
+
+
+@pytest.mark.parametrize("prefix", ["/ollama", "/proxy/ollama/"])
+def test_an_ollama_behind_a_path_prefix_is_probed_under_it(
+    monkeypatch: pytest.MonkeyPatch, prefix: str
+) -> None:
+    # Review of PR 2502: `urljoin` with the absolute `/api/tags` dropped the
+    # endpoint's own path, so an Ollama served at `https://host/ollama` was
+    # probed at `https://host/api/tags` and reported as not running.
+    with _ollama(_tags(cs.DEFAULT_MODEL)) as (url, requests):
+        monkeypatch.setattr(settings, "OLLAMA_BASE_URL", f"{url}{prefix}")
+        _orchestrator()
+
+    assert requests == [f"{prefix.rstrip('/')}{cs.OLLAMA_HEALTH_PATH}"]
+
+
+@pytest.mark.parametrize("prefix", ["/ollama", "/ollama/v1"])
+def test_the_provider_probes_the_same_url_as_doctor(prefix: str) -> None:
+    # The provider's own start-up check must agree with doctor, or doctor
+    # says ready and `cgr start` then refuses the same endpoint.
+    from codebase_rag.providers.base import OllamaProvider
+
+    with _ollama(_tags(cs.DEFAULT_MODEL)) as (url, requests):
+        OllamaProvider(endpoint=f"{url}{prefix}").validate_config()
+
+    assert requests == [f"/ollama{cs.OLLAMA_HEALTH_PATH}"]
+
+
+@pytest.mark.parametrize("configured", ["", "/"])
+def test_an_endpoint_without_a_path_is_probed_at_the_root(
+    monkeypatch: pytest.MonkeyPatch, configured: str
+) -> None:
+    # Negative: no prefix, and no doubled slash from a trailing one.
+    with _ollama(_tags(cs.DEFAULT_MODEL)) as (url, requests):
+        monkeypatch.setattr(settings, "OLLAMA_BASE_URL", f"{url}{configured}")
+        result = _orchestrator()
+
+    assert result.passed, result
+    assert requests == [cs.OLLAMA_HEALTH_PATH]
