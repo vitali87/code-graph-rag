@@ -15,10 +15,10 @@ from .. import constants as cs
 from .. import graph_audit
 from ..config import PROVIDER_ENV_KEYS, ModelConfig, settings
 from ..graph_dialects import DIALECT_NEO4J
-from ..providers.base import strip_v1_suffix
 from ..schemas import HealthCheckResult
 from ..services.graph_service import MemgraphIngestor
 from ..types_defs import ConnectionProtocol, CursorProtocol, ResultRow
+from ..utils.endpoints import strip_v1_suffix
 
 # pymgclient 1.6 re-exports its C extension through `import *`, which a type
 # checker cannot see into, so the exception type is bound once here.
