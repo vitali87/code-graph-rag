@@ -249,6 +249,7 @@ class TestShellFeedsTheRecord:
 
         commander = MagicMock()
         commander.is_yolo = MagicMock(return_value=True)
+        commander.refusal = MagicMock(return_value=None)
         commander.execute = AsyncMock(
             return_value=ShellCommandResult(
                 return_code=1, stdout="", stderr=f"error near: {SECRET}"

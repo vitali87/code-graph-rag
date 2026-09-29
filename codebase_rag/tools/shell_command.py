@@ -1725,44 +1725,33 @@ class ShellCommander:
 
         return last_return_code, "\n".join(all_stdout), "\n".join(all_stderr)
 
+    def refusal(self, command: str) -> str | None:
+        """Why the safety checks refuse `command`, or None when it may run.
+
+        The tool asks this BEFORE any approval prompt: a command the allowlist
+        or a danger check rejects is refused whatever the user answers, so
+        prompting for it only interrupts them (issue #2359, comment).
+        """
+        if subshell_pattern := _has_subshell(command):
+            return te.COMMAND_SUBSHELL_NOT_ALLOWED.format(pattern=subshell_pattern)
+        if pattern_reason := _check_pipeline_patterns(command):
+            return te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
+        groups = _parse_command(command)
+        if not groups:
+            return te.COMMAND_EMPTY
+        return self._validation_error(groups)
+
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
         """Run a command after the safety checks, capturing both streams."""
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
-            if subshell_pattern := _has_subshell(command):
-                err_msg = te.COMMAND_SUBSHELL_NOT_ALLOWED.format(
-                    pattern=subshell_pattern
-                )
+            if err_msg := self.refusal(command):
                 logger.error(err_msg)
                 return ShellCommandResult(
                     return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
                 )
-
-            if pattern_reason := _check_pipeline_patterns(command):
-                err_msg = te.COMMAND_DANGEROUS_PATTERN.format(reason=pattern_reason)
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
-
             groups = _parse_command(command)
-            if not groups:
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=te.COMMAND_EMPTY,
-                )
-
-            if err_msg := self._validation_error(groups):
-                logger.error(err_msg)
-                return ShellCommandResult(
-                    return_code=cs.SHELL_RETURN_CODE_ERROR,
-                    stdout="",
-                    stderr=err_msg,
-                )
 
             last_return_code, final_stdout, final_stderr = await self._run_groups(
                 groups
@@ -1792,6 +1781,31 @@ class ShellCommander:
             )
 
 
+def _refusal_or_none(shell_commander: ShellCommander, command: str) -> str | None:
+    # A command that cannot even be parsed is the executor's to report, with
+    # the same message it always gave.
+    try:
+        return shell_commander.refusal(command)
+    except (ValueError, IndexError):
+        return None
+
+
+def _is_confined_read(command: str, project_root: Path) -> bool:
+    """Whether every segment is a read the non-interactive rules allow.
+
+    Those rules already let an operator-less run read with `ls`, `rg`, `cat`,
+    `find`, `wc`, `head`, `tail`, `sort`, `uniq` and `cut`: no write forms,
+    redirects, symlink following, option-carried inputs, or paths outside
+    the project root. Such a read shows the agent nothing the file reader
+    tool does not, which never asks, and its output still feeds the egress
+    taint gate (issue #1128). Prompting for it in interactive mode only
+    interrupted the user and pushed the agent further from the graph
+    (issue #2359). Git stays behind approval: `-C` and `--git-dir` reach
+    outside the root in ways these rules do not model.
+    """
+    return _noninteractive_denial(command, project_root) is None
+
+
 def create_shell_command_tool(
     shell_commander: ShellCommander, read_record: ReadContentRecord | None = None
 ) -> Tool[None]:
@@ -1802,9 +1816,15 @@ def create_shell_command_tool(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
         """Run a shell command, recording both output streams."""
+        if err_msg := _refusal_or_none(shell_commander, command):
+            logger.error(err_msg)
+            return ShellCommandResult(
+                return_code=cs.SHELL_RETURN_CODE_ERROR, stdout="", stderr=err_msg
+            )
         if (
             not shell_commander.is_yolo()
             and _requires_approval(command)
+            and not _is_confined_read(command, shell_commander.project_root)
             and not ctx.tool_call_approved
         ):
             raise ApprovalRequired(metadata={"command": command})

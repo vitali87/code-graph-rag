@@ -70,8 +70,13 @@ FILE_WRITER = (
 )
 
 SHELL_COMMAND = (
-    "Executes shell commands from allowlist. "
-    "Read-only commands run without approval; write operations require user confirmation."
+    "Executes allowlisted shell commands; `grep` is not available, use `rg`. "
+    "Reads confined to the project (ls, rg, cat, find, wc, head, tail, sort, uniq, "
+    "cut, with no redirects or paths outside it) run without approval; anything "
+    "else asks the user first. A fallback: callers, callees, inheritance, counts, "
+    "package layout and dependencies come from `"
+    + AgenticToolName.QUERY_GRAPH
+    + "`, so ask it before reconstructing them with rg, ls or wc."
 )
 
 CODE_RETRIEVAL = (

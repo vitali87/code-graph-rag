@@ -329,14 +329,16 @@ class TestToolApprovalBehavior:
         result = await tool.function(mock_ctx, "pwd")
         assert result.return_code == 0, result.stderr
 
-    async def test_filesystem_read_requires_approval(
+    async def test_a_read_outside_the_project_requires_approval(
         self, shell_commander: ShellCommander
     ) -> None:
+        # A read confined to the project runs without a prompt (issue #2359);
+        # one that reaches outside it still asks.
         tool = create_shell_command_tool(shell_commander)
         mock_ctx = MagicMock()
         mock_ctx.tool_call_approved = False
         with pytest.raises(ApprovalRequired):
-            await tool.function(mock_ctx, "ls")
+            await tool.function(mock_ctx, "ls ..")
 
     async def test_write_command_requires_approval(
         self, shell_commander: ShellCommander
