@@ -92,9 +92,10 @@ A pull request that changes something a user can see must show it working, in th
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
 
-1. **Lint & Format** - Code style validation:
+1. **Lint & Format** - Code style and security validation:
    - `ruff check` with GitHub annotations
    - `ruff format --check`
+   - Bandit, through the same pre-commit hook you run locally (high-severity findings fail the job)
 
 2. **Type Check** - Static type analysis:
    - `ty check` on production code (excludes tests)
