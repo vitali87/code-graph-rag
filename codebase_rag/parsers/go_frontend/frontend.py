@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -98,6 +99,10 @@ _BUILD_LOCK = ".build-lock"
 # with: a failed build is not retried every sync, only once Go or the helper's
 # sources change (issue #2395).
 _BUILD_FAILED_MARKER = ".build-failed"
+# How long a failed build is remembered. A failure the environment caused (a
+# module proxy outage, a full disk) clears without Go or the helper changing,
+# so the next attempt waits a day rather than forever (PR #2417 review).
+_BUILD_FAILURE_RETRY_S = 24 * 60 * 60
 _GO_MOD = "go.mod"
 _GO_DIRECTIVE = re.compile(r"^go\s+(\d+(?:\.\d+)*)\s*$", re.MULTILINE)
 _GO_VERSION = re.compile(r"^go(\d+(?:\.\d+)*)$")
@@ -165,7 +170,9 @@ def _binary_fresh(binary: Path) -> bool:
     return binary.is_file() and binary.stat().st_mtime >= _newest_source_mtime()
 
 
-def _compile_tool(go: str, src: Path, out: Path) -> bool:
+def _compile_tool(go: str, src: Path, out: Path) -> bool | None:
+    """True when the helper built, False when `go build` failed, and None when
+    it timed out, which says nothing about whether the helper builds."""
     # Build from a copy in the writable cache, never the bundled source dir,
     # which is read-only under a pip install (the build writes nothing there,
     # but a shared GOCACHE/module fetch wants a writable working tree).
@@ -193,7 +200,7 @@ def _compile_tool(go: str, src: Path, out: Path) -> bool:
                 stderr=f"timed out after {_BUILD_TIMEOUT}s"
             )
         )
-        return False
+        return None
     if proc.returncode != 0:
         logger.warning(ls.GO_FRONTEND_BUILD_FAILED.format(stderr=proc.stderr.strip()))
     return proc.returncode == 0
@@ -248,9 +255,12 @@ def _too_old(version: str | None) -> tuple[int, ...] | None:
 
 def _failure_remembered(marker: Path, version: str | None) -> bool:
     try:
-        return marker.stat().st_mtime >= _newest_source_mtime() and marker.read_text(
-            encoding=cs.ENCODING_UTF8
-        ) == (version or "")
+        written = marker.stat().st_mtime
+        return (
+            written >= _newest_source_mtime()
+            and time.time() - written < _BUILD_FAILURE_RETRY_S
+            and marker.read_text(encoding=cs.ENCODING_UTF8) == (version or "")
+        )
     except OSError:
         return False
 
@@ -262,11 +272,11 @@ def _compile_and_remember(
     try:
         if built:
             marker.unlink(missing_ok=True)
-        else:
+        elif built is False:
             marker.write_text(version or "", encoding=cs.ENCODING_UTF8)
     except OSError:
         pass
-    return built
+    return bool(built)
 
 
 def _build_tool(go: str) -> Path | None:

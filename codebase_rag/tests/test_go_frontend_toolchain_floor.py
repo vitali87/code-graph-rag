@@ -9,8 +9,10 @@ on every sync.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -41,9 +43,12 @@ def _version(text: str) -> tuple[int, ...]:
 class _FakeGo:
     """Answers the two commands the frontend runs before any analysis."""
 
-    def __init__(self, version: str, build_ok: bool) -> None:
+    def __init__(
+        self, version: str, build_ok: bool, time_out_first: bool = False
+    ) -> None:
         self.version = version
         self.build_ok = build_ok
+        self.time_out_first = time_out_first
         self.builds = 0
 
     def __call__(
@@ -53,6 +58,8 @@ class _FakeGo:
             return subprocess.CompletedProcess(cmd, 0, stdout=f"{self.version}\n")
         if len(cmd) > 1 and cmd[1] == "build":
             self.builds += 1
+            if self.time_out_first and self.builds == 1:
+                raise subprocess.TimeoutExpired(cmd, timeout=1)
             if self.build_ok:
                 out = Path(cmd[cmd.index("-o") + 1])
                 out.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +171,38 @@ def test_a_failed_build_is_not_retried_on_the_next_sync(
 
     assert fake.builds == 1
     assert len(warnings) == 1
+
+
+def test_a_timed_out_build_is_retried_on_the_next_sync(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # A wedged toolchain or a slow module fetch says nothing about whether the
+    # helper builds, so it is not remembered (PR #2417 review).
+    fake = _FakeGo("go1.26.0", build_ok=True, time_out_first=True)
+    _run(monkeypatch, go_repo, fake)
+
+    _facts, warnings = _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 2
+    assert warnings == []
+
+
+def test_a_remembered_failure_expires(
+    monkeypatch: pytest.MonkeyPatch, go_repo: Path, cgr_home: Path
+) -> None:
+    # A failure the environment caused (a module proxy outage, a full disk)
+    # clears without Go or the helper changing, so the marker only holds for
+    # a while (PR #2417 review).
+    fake = _FakeGo("go1.26.0", build_ok=False)
+    _run(monkeypatch, go_repo, fake)
+    [marker] = cgr_home.rglob(fe._BUILD_FAILED_MARKER)
+    stale = time.time() - fe._BUILD_FAILURE_RETRY_S - 60
+    os.utime(marker, (stale, stale))
+    fake.build_ok = True
+
+    _run(monkeypatch, go_repo, fake)
+
+    assert fake.builds == 2
 
 
 def test_a_new_toolchain_retries_a_remembered_failure(
