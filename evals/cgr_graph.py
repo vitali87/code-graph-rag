@@ -901,7 +901,7 @@ class _StatefulIngestor:
                 ]
             case cs.CYPHER_PROJECT_CONSTANT_TYPES:
                 # The Constant counterpart (issue #1806), for the same reason.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
