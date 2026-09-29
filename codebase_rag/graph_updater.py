@@ -7670,7 +7670,7 @@ class GraphUpdater:
                 verify_stored_ids,
             )
 
-            logger.info(ls.PASS_4_EMBEDDINGS)
+            logger.info(ls.PASS_5_EMBEDDINGS)
 
             results = self.ingestor.fetch_all(
                 cs.CYPHER_QUERY_EMBEDDINGS, {"project_name": self.project_name}

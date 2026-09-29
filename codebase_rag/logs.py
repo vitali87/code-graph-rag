@@ -12,7 +12,7 @@ PASS_2_FILES = (
     "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
 )
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
-PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
+PASS_5_EMBEDDINGS = "--- Pass 5: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
 EMITTING_FRONTEND_PROBE_FAILED = (
     "Emitting frontend for {lang} raised while probing availability; skipping "
