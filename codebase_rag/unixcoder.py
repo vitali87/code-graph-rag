@@ -138,7 +138,6 @@ class UniXcoder(nn.Module):
         preds = []
         zero = torch.LongTensor(1).fill_(0).to(device)
         source_len = list(source_ids.ne(1).sum(-1).cpu().numpy())
-        length = source_ids.size(-1)
         encoder_output = self.model(source_ids, attention_mask=mask)
         for i in range(source_ids.shape[0]):
             context = [
@@ -197,7 +196,7 @@ class Beam:
     __slots__ = (
         "_eos",
         "device",
-        "eosTop",
+        "eos_top",
         "finished",
         "nextYs",
         "prevKs",
@@ -214,7 +213,7 @@ class Beam:
         # Normalise to a set of stop ids so a config with multiple EOS tokens
         # terminates on any of them (transformers 5.5 typing).
         self._eos: frozenset[int] = frozenset(eos if isinstance(eos, list) else [eos])
-        self.eosTop = False
+        self.eos_top = False
         self.finished: list[tuple[torch.Tensor, int, int]] = []
 
     def get_current_state(self) -> torch.Tensor:
@@ -250,10 +249,10 @@ class Beam:
                 self.finished.append((s, len(self.nextYs) - 1, i))
 
         if int(self.nextYs[-1][0]) in self._eos:
-            self.eosTop = True
+            self.eos_top = True
 
     def done(self) -> bool:
-        return self.eosTop and len(self.finished) >= self.size
+        return self.eos_top and len(self.finished) >= self.size
 
     def get_final(self) -> list[tuple[torch.Tensor, int, int]]:
         if len(self.finished) == 0:

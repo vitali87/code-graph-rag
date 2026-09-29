@@ -545,19 +545,12 @@ async def run_optimization_loop(
 
 
 async def run_with_cancellation[T](
-    coro: Coroutine[None, None, T], timeout: float | None = None
+    coro: Coroutine[None, None, T],
 ) -> T | CancelledResult:
     task = asyncio.create_task(coro)
 
     try:
-        return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
-    except TimeoutError:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        app_context.console.print(
-            f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
-        )
-        return CancelledResult(cancelled=True)
+        return await task
     except (asyncio.CancelledError, KeyboardInterrupt):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -1378,7 +1371,7 @@ def _shift_tab_listener():
         finally:
             try:
                 loop.remove_reader(fd)
-            except Exception:
+            except Exception:  # noqa: S110 - best-effort; the terminal restore below must still run
                 pass
     finally:
         try:

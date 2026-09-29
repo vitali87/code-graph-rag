@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.1.35"
+version = "0.1.38"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "PYPI_README.md"
 requires-python = ">=3.12"
@@ -163,7 +163,7 @@ target-version = "py312"
 exclude = ["codec/", "benchmarks/", "optimize/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PL", "T201"]
+select = ["E", "F", "W", "I", "UP", "PL", "T201", "S"]
 ignore = [
     "E501",     # line too long
     "PLR2004",  # magic value comparison (too noisy)
@@ -175,10 +175,17 @@ ignore = [
     "PLR0915",  # too many statements
     "PLW2901",  # loop variable overwritten (intentional for .strip())
     "PLW0603",  # global statement (singleton pattern)
+    "S101",     # assert (Bandit skips B101 too)
+    "S105",     # password-by-name heuristic: fires on *_TOKEN / PASS_* constants; secret scanning covers real secrets
+    "S106",     # same heuristic for keyword arguments
+    "S107",     # same heuristic for argument defaults
+    "S603",     # any subprocess call with an argv list; the shell=True rules (S602, S604, S605) stay on
+    "S607",     # toolchains resolve from PATH by design; shutil.which reads the same PATH
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["T201"]
+# Tests are outside Bandit's and SonarCloud's security scope too.
+"**/tests/**" = ["T201", "S"]
 "benchmarks/**" = ["T201"]
 "evals/flows_corpus/**" = ["T201"]
 # The corpus builder is a CLI script; its output is the point.

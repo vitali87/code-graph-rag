@@ -127,7 +127,7 @@ def build_cases(target: Path, sample: int, seed: int = 0) -> list[QACase]:
         # property names are excluded from the question universe entirely.
         and name not in properties
     ]
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - seeded sampling for reproducible evals
     picked = candidates if len(candidates) <= sample else rng.sample(candidates, sample)
     return [
         QACase(name, QUESTION_TEMPLATE.format(name=name), frozenset(files))
@@ -279,7 +279,7 @@ def build_multihop_cases(target: Path, sample: int, seed: int = 0) -> list[QACas
                 frozenset(expected),
             )
         )
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - seeded sampling for reproducible evals
     picked = candidates if len(candidates) <= sample else rng.sample(candidates, sample)
     return sorted(picked)
 

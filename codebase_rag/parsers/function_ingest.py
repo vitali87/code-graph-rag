@@ -1347,7 +1347,7 @@ class FunctionIngestMixin:
 
         is_anonymous = not func_name
         if not func_name:
-            func_name = self._generate_anonymous_function_name(func_node, module_qn)
+            func_name = self._generate_anonymous_function_name(func_node)
 
         func_qn = self._build_function_qn(
             func_node, module_qn, func_name, language, lang_config
@@ -1666,7 +1666,7 @@ class FunctionIngestMixin:
         # passes' naming identical.
         return js_ts_utils.arrow_binding_name(func_node)
 
-    def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
+    def _generate_anonymous_function_name(self, func_node: Node) -> str:
         parent = func_node.parent
         if parent and parent.type == cs.TS_PARENTHESIZED_EXPRESSION:
             grandparent = parent.parent
