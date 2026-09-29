@@ -378,6 +378,39 @@ class MiniMaxProvider(ApiKeyProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class AtlasCloudProvider(ApiKeyProvider):
+    __slots__ = ("api_key", "endpoint")
+    _missing_key_error: ClassVar[str] = ex.ATLASCLOUD_NO_KEY
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_ATLASCLOUD_API_KEY)
+        self.endpoint = endpoint or cs.ATLASCLOUD_DEFAULT_ENDPOINT
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.ATLASCLOUD
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import (
+            OpenAIProvider as PydanticOpenAIProvider,
+        )
+
+        self.validate_config()
+        # api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
@@ -385,6 +418,7 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.ANTHROPIC: AnthropicProvider,
     cs.Provider.AZURE: AzureOpenAIProvider,
     cs.Provider.MINIMAX: MiniMaxProvider,
+    cs.Provider.ATLASCLOUD: AtlasCloudProvider,
 }
 
 

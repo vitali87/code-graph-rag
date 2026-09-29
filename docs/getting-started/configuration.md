@@ -79,6 +79,22 @@ Both model IDs work with either compatible endpoint. For the China service, use
 
 Get your MiniMax API key from the [MiniMax Platform](https://platform.minimax.io/user-center/basic-information/interface-key).
 
+### Atlas Cloud Models
+
+```bash
+ORCHESTRATOR_PROVIDER=atlascloud
+ORCHESTRATOR_MODEL=openai/gpt-4.1-mini
+ORCHESTRATOR_API_KEY=your-atlascloud-api-key
+
+CYPHER_PROVIDER=atlascloud
+CYPHER_MODEL=deepseek-ai/DeepSeek-V3.1-Terminus
+CYPHER_API_KEY=your-atlascloud-api-key
+```
+
+[Atlas Cloud](https://www.atlascloud.ai/) is an OpenAI-compatible gateway serving models from
+multiple vendors under `vendor/model` ids. Get your API key from the
+[Atlas Cloud dashboard](https://www.atlascloud.ai/).
+
 ## Orchestrator Model Settings
 
 | Variable | Description |

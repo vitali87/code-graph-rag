@@ -16,6 +16,7 @@ class Provider(StrEnum):
     AZURE = "azure"
     LITELLM_PROXY = "litellm_proxy"
     MINIMAX = "minimax"
+    ATLASCLOUD = "atlascloud"
 
 
 DEFAULT_MODEL_ROLE = "model"
@@ -31,6 +32,7 @@ ENV_AZURE_API_KEY = "AZURE_API_KEY"
 ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
 ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
 ENV_MINIMAX_API_KEY = "MINIMAX_API_KEY"
+ENV_ATLASCLOUD_API_KEY = "ATLASCLOUD_API_KEY"
 
 
 class GoogleProviderType(StrEnum):
@@ -41,6 +43,7 @@ class GoogleProviderType(StrEnum):
 # Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
+ATLASCLOUD_DEFAULT_ENDPOINT = "https://api.atlascloud.ai/v1"
 LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
 # pydantic-ai module whose presence decides whether the LiteLLM provider registers.
 PYDANTIC_AI_LITELLM_MODULE = "pydantic_ai.providers.litellm"

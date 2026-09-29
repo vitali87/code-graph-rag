@@ -23,6 +23,10 @@ MINIMAX_NO_KEY = (
     "MiniMax provider requires api_key. "
     "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY or MINIMAX_API_KEY in .env file."
 )
+ATLASCLOUD_NO_KEY = (
+    "Atlas Cloud provider requires api_key. "
+    "Set ORCHESTRATOR_API_KEY or CYPHER_API_KEY or ATLASCLOUD_API_KEY in .env file."
+)
 OLLAMA_NOT_RUNNING = (
     "Ollama server not responding at {endpoint}. "
     "Make sure Ollama is running: ollama serve"
