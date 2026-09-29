@@ -133,3 +133,44 @@ def test_the_app_console_writes_no_escapes_into_a_pipe() -> None:
 
     assert ESC not in result.stdout
     assert LONG_LINE in result.stdout.splitlines()
+
+
+def test_term_dumb_on_a_terminal_writes_no_escapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TERM", "dumb")
+    tty = _FakeTTY()
+    console = terminal_aware_console(file=tty)
+
+    console.print(STYLED_LINE)
+
+    assert ESC not in tty.getvalue()
+
+
+def test_a_terminal_still_wraps_a_long_plain_message() -> None:
+    tty = _FakeTTY()
+    console = terminal_aware_console(file=tty)
+
+    console.print(LONG_LINE)
+
+    assert len(tty.getvalue().splitlines()) > 1
+
+
+def test_an_explicit_soft_wrap_false_is_respected_in_a_file() -> None:
+    buffer = io.StringIO()
+    console = terminal_aware_console(file=buffer)
+
+    console.print(LONG_LINE, soft_wrap=False)
+
+    assert len(buffer.getvalue().splitlines()) > 1
+
+
+def test_a_renderable_mixed_with_text_is_not_soft_wrapped() -> None:
+    buffer = io.StringIO()
+    console = terminal_aware_console(file=buffer)
+    words = [f"w{i}" for i in range(60)]
+
+    console.print("heading", Panel(" ".join(words)))
+
+    rendered = buffer.getvalue()
+    assert all(word in rendered for word in words)
