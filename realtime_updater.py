@@ -552,7 +552,13 @@ def main(
         python realtime_updater.py /path/to/repo --debounce 0
     """
     logger.remove()
-    logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level=LOG_LEVEL_INFO)
+    logger.add(
+        sys.stdout,
+        format=REALTIME_LOGGER_FORMAT,
+        level=LOG_LEVEL_INFO,
+        backtrace=False,
+        diagnose=False,
+    )
     logger.info(logs.LOGGER_CONFIGURED)
 
     # Validate max_wait is greater than debounce when both are enabled

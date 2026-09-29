@@ -240,7 +240,12 @@ def _global_options(
     settings.QUIET = quiet
     if quiet:
         logger.remove()
-        logger.add(lambda msg: app_context.console.print(msg, end=""), level="ERROR")
+        logger.add(
+            lambda msg: app_context.console.print(msg, end=""),
+            level="ERROR",
+            backtrace=False,
+            diagnose=False,
+        )
     else:
         _default_log_level_to_info()
 
