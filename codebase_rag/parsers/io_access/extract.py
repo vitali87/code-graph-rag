@@ -71,27 +71,32 @@ def _python_parameter_names(scope_node: Node) -> set[str]:
         return set()
     names: set[str] = set()
     for param in params.named_children:
-        if param.type in (
-            cs.TS_PY_DEFAULT_PARAMETER,
-            cs.TS_PY_TYPED_DEFAULT_PARAMETER,
-        ):
-            name = param.child_by_field_name(cs.TS_FIELD_NAME)
-            if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
-                names.add(name.text.decode(cs.ENCODING_UTF8))
-        elif param.type == cs.TS_PY_TYPED_PARAMETER:
-            # A typed parameter has no `name` field: the binding identifier is
-            # the DIRECT child before the `type` field (`os: int` -> os); the
-            # annotation identifier sits inside the type field and is never a
-            # binding here.
-            name = next(
-                (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
-                None,
-            )
-            if name is not None and name.text is not None:
-                names.add(name.text.decode(cs.ENCODING_UTF8))
-        else:
-            names |= _binding_identifiers(param)
+        names |= _python_parameter_bindings(param)
     return names
+
+
+def _python_parameter_bindings(param: Node) -> set[str]:
+    if param.type in (
+        cs.TS_PY_DEFAULT_PARAMETER,
+        cs.TS_PY_TYPED_DEFAULT_PARAMETER,
+    ):
+        name = param.child_by_field_name(cs.TS_FIELD_NAME)
+        if name is not None and name.type == cs.TS_PY_IDENTIFIER and name.text:
+            return {name.text.decode(cs.ENCODING_UTF8)}
+        return set()
+    if param.type == cs.TS_PY_TYPED_PARAMETER:
+        # A typed parameter has no `name` field: the binding identifier is the
+        # DIRECT child before the `type` field (`os: int` -> os); the
+        # annotation identifier sits inside the type field and is never a
+        # binding here.
+        name = next(
+            (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER),
+            None,
+        )
+        if name is not None and name.text is not None:
+            return {name.text.decode(cs.ENCODING_UTF8)}
+        return set()
+    return _binding_identifiers(param)
 
 
 def _global_declared_names(scope_node: Node) -> set[str]:
@@ -341,7 +346,7 @@ def is_require_alias(declarator: Node, call_type: str) -> bool:
 def normalise(name: str | None, import_map: dict[str, str]) -> str | None:
     if name is None:
         return None
-    head, sep, rest = name.partition(cs.SEPARATOR_DOT)
+    head, _, rest = name.partition(cs.SEPARATOR_DOT)
     base = import_map.get(head)
     if base is None:
         return name
@@ -742,6 +747,34 @@ def _deconstruction_pairs(
     return names, values
 
 
+def _declarator_field_targets(
+    node: Node, name_field: str, descriptor: LanguageDescriptor
+) -> list[str | None]:
+    field_node = node.child_by_field_name(name_field)
+    if field_node is None:
+        return [None]
+    targets = lean_binding_targets(field_node, descriptor)
+    # C++ `int *x = ..`: the name hides behind pointer/reference declarators.
+    return [cpp_declarator_name(field_node)] if targets == [None] else targets
+
+
+def _container_targets_values(
+    node: Node, descriptor: LanguageDescriptor
+) -> tuple[list[str | None], list[Node]]:
+    # Lua's `assignment_statement` wraps its targets in a `variable_list`
+    # (each a `name` field) and its values in an `expression_list` (each a
+    # `value` field); a multi-assign `a, b = f(), g()` pairs them by position.
+    targets: list[str | None] = []
+    values: list[Node] = []
+    for child in node.named_children:
+        if child.type == descriptor.binding_target_container_type:
+            for name in child.children_by_field_name(cs.TS_FIELD_NAME):
+                targets.extend(lean_binding_targets(name, descriptor))
+        elif child.type == descriptor.binding_value_container_type:
+            values.extend(child.children_by_field_name(cs.FIELD_VALUE))
+    return targets, values
+
+
 def binding_targets_values(
     node: Node, descriptor: LanguageDescriptor
 ) -> tuple[list[str | None], list[Node]]:
@@ -753,26 +786,19 @@ def binding_targets_values(
     left = node.child_by_field_name(cs.FIELD_LEFT)
     if left is not None:
         right = node.child_by_field_name(cs.FIELD_RIGHT)
-        if _is_tuple_assignment(left, right, descriptor):
-            return _deconstruction_pairs(left, right, descriptor)  # type: ignore[arg-type]
+        if right is not None and _is_tuple_assignment(left, right, descriptor):
+            return _deconstruction_pairs(left, right, descriptor)
         return (
             lean_binding_targets(left, descriptor),
-            lean_binding_values(node.child_by_field_name(cs.FIELD_RIGHT), descriptor),
+            lean_binding_values(right, descriptor),
         )
     if (
         descriptor.declarator_name_field is not None
         and node.type == descriptor.declarator_type
     ):
-        field_node = node.child_by_field_name(descriptor.declarator_name_field)
-        if field_node is None:
-            targets: list[str | None] = [None]
-        else:
-            targets = lean_binding_targets(field_node, descriptor)
-            if targets == [None]:
-                targets = [cpp_declarator_name(field_node)]
-        return targets, lean_binding_values(
-            node.child_by_field_name(cs.FIELD_VALUE), descriptor
-        )
+        return _declarator_field_targets(
+            node, descriptor.declarator_name_field, descriptor
+        ), lean_binding_values(node.child_by_field_name(cs.FIELD_VALUE), descriptor)
     if (
         descriptor.tuple_pattern_type is not None
         and descriptor.tuple_value_type is not None
@@ -791,19 +817,8 @@ def binding_targets_values(
         descriptor.binding_target_container_type is not None
         and node.type == descriptor.declarator_type
     ):
-        # Lua's `assignment_statement` wraps its targets in a `variable_list`
-        # (each a `name` field) and its values in an `expression_list` (each a
-        # `value` field); a multi-assign `a, b = f(), g()` pairs them by position.
-        container_targets: list[str | None] = []
-        container_values: list[Node] = []
-        for child in node.named_children:
-            if child.type == descriptor.binding_target_container_type:
-                for name in child.children_by_field_name(cs.TS_FIELD_NAME):
-                    container_targets.extend(lean_binding_targets(name, descriptor))
-            elif child.type == descriptor.binding_value_container_type:
-                container_values.extend(child.children_by_field_name(cs.FIELD_VALUE))
-        return container_targets, container_values
-    targets = []
+        return _container_targets_values(node, descriptor)
+    targets: list[str | None] = []
     for name in node.children_by_field_name(cs.TS_FIELD_NAME):
         targets.extend(lean_binding_targets(name, descriptor))
     value = node.child_by_field_name(cs.FIELD_VALUE)

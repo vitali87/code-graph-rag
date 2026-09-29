@@ -109,6 +109,15 @@ def generic_arity_of_type_text(text: str) -> int:
     # Number of top-level type arguments in a type reference:
     # `Builder` -> 0, `Builder<T>` -> 1, `Map<K, List<V>>` -> 2. Used to
     # disambiguate same-simple-name generic/non-generic type declarations.
+    open_idx = text.find(cs.CHAR_ANGLE_OPEN, _type_leaf_start(text))
+    if open_idx < 0:
+        return 0
+    return _count_top_level_type_args(text[open_idx + 1 :])
+
+
+def _type_leaf_start(text: str) -> int:
+    # Index where the last top-level `.`/`::`-separated segment begins, so
+    # `Outer<A>.Inner<B, C>` counts Inner's arguments, not Outer's.
     leaf_start = 0
     depth = 0
     index = 0
@@ -125,13 +134,15 @@ def generic_arity_of_type_text(text: str) -> int:
             elif char == cs.SEPARATOR_DOT:
                 leaf_start = index + 1
         index += 1
+    return leaf_start
 
-    open_idx = text.find(cs.CHAR_ANGLE_OPEN, leaf_start)
-    if open_idx < 0:
-        return 0
+
+def _count_top_level_type_args(args_text: str) -> int:
+    # Comma-separated arguments up to the `>` closing the list `args_text`
+    # opens after; nested `<>`, `()` and `[]` commas are not counted.
     depth = 0
     count = 1
-    for ch in text[open_idx + 1 :]:
+    for ch in args_text:
         if ch in "<([":
             depth += 1
         elif ch in ")]":

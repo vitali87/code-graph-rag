@@ -76,6 +76,21 @@ MSG_SYNCING_WORKSPACE = (
 CLI_MSG_SYNC_SKIPPED = "Knowledge graph already in sync for '{project}' ({elapsed:.2f}s, no changes detected)."
 CLI_MSG_SYNC_DONE = "Knowledge graph sync done for '{project}' in {elapsed:.2f}s."
 CLI_MSG_CLEANING_DB = "Cleaning database..."
+# The CLI sync's incomplete-run marker (issue #2219). One run id for every CLI
+# sync of a project, not one per run: a CLI sync never publishes its hash cache
+# unless it finishes, so the next successful sync of the project reprocesses
+# the interrupted window and is exactly the run that makes the graph whole
+# again. Sharing the id lets that run's run-scoped clear remove the marker the
+# interrupted one stranded, while MCP runs keep their own ids untouched.
+CLI_SYNC_RUN_ID = "cli-sync"
+CLI_ERR_SYNC_MARKER_FAILED = (
+    "Refusing to sync '{project}': the incomplete-run marker could not be "
+    "written, so an interrupted sync would leave a partial graph that looks "
+    "complete. Check the graph connection and retry."
+)
+CLI_STATUS_SYNC_INCOMPLETE = (
+    "sync interrupted or in progress -- re-run if no sync is active"
+)
 CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
 CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_WARN_CLEAN_OTHER_PROJECTS = (
@@ -127,6 +142,13 @@ PACKAGE_NAME = "code-graph-rag"
 CLI_MODULE_INVOCATION = "codebase_rag.cli"
 CLI_ENTRY_POINT_NAMES: frozenset[str] = frozenset({"cgr", PACKAGE_NAME})
 CLI_MSG_VERSION = "{package} version {version}"
+# The Credits page on the docs site (issue #2175). A release binary also
+# names its notices sidecar, which the build writes beside it as
+# `<binary name>.THIRD_PARTY_NOTICES.txt` (`build-binaries.yml`).
+CREDITS_URL = "https://docs.code-graph-rag.com/credits/"
+CLI_MSG_CREDITS = "Third-party credits: {url}"
+CLI_MSG_CREDITS_NOTICES = "Third-party notices: {name}, beside this binary"
+THIRD_PARTY_NOTICES_SUFFIX = ".THIRD_PARTY_NOTICES.txt"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
@@ -454,7 +476,6 @@ TABLE_ROW_TARGET_REPOSITORY = "Target Repository"
 
 MSG_CONNECTED_MEMGRAPH = "Successfully connected to Memgraph."
 MSG_THINKING_CANCELLED = "Thinking cancelled."
-MSG_TIMEOUT_FORMAT = "Operation timed out after {timeout} seconds."
 MSG_TOOL_CALL_CANCELLED = "Tool call cancelled by user."
 MSG_CHAT_INSTRUCTIONS = (
     "Ask questions about your codebase graph. Type 'exit' or 'quit' to end."
@@ -678,18 +699,78 @@ QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
 QUERY_SUMMARY_DB_ERROR = "There was an error querying the database: {error}"
-# Refused rather than answered unscoped: rows with no qualified name cannot
-# be attributed to a project, so the requested scope cannot be honoured.
-QUERY_SUMMARY_UNSCOPEABLE = (
-    "This query cannot be scoped to project {project!r}: it returns no "
-    "qualified name, so results cannot be attributed to a project. Ask for "
-    "the qualified name in the query."
+
+
+class ScopeRefusal(StrEnum):
+    """Which check `requires_project_evidence` refused a scoped query on."""
+
+    UNANALYSABLE = "unanalysable"
+    NO_RETURN = "no_return"
+    TRANSFORMED_TERM = "transformed_term"
+    UNBOUND_AGGREGATE = "unbound_aggregate"
+    UNRESTRICTED_AGGREGATE = "unrestricted_aggregate"
+    UNATTRIBUTED_ENTITY = "unattributed_entity"
+    NO_QUALIFIED_NAME = "no_qualified_name"
+
+
+# Refused rather than answered unscoped: a scoped query whose rows cannot be
+# attributed to a project cannot honour the requested scope. One message per
+# refusal (issue #2197): a shared one claimed a missing qualified name
+# whatever the check was, and an agent that followed its advice was refused
+# again.
+QUERY_SUMMARY_UNSCOPEABLE_PREFIX = (
+    "This query cannot be scoped to project {project!r}: "
 )
+QUERY_SUMMARY_UNSCOPEABLE_REASONS: dict[ScopeRefusal, str] = {
+    ScopeRefusal.UNANALYSABLE: (
+        "it uses {subjects}, which the scope check does not analyse. Write it "
+        "as MATCH, WHERE, RETURN and LIMIT with plain property reads."
+    ),
+    ScopeRefusal.NO_RETURN: (
+        "it has no RETURN clause, so nothing it produces can be attributed to "
+        "a project."
+    ),
+    ScopeRefusal.TRANSFORMED_TERM: (
+        "a returned term is neither a plain property read such as "
+        "`n.qualified_name` nor a single aggregate, so it cannot be attributed "
+        "to a project. Return plain `<variable>.<property>` values."
+    ),
+    ScopeRefusal.UNBOUND_AGGREGATE: (
+        "an aggregate such as `count(*)` measures no variable, so what it "
+        "counts cannot be restricted to the project. Aggregate over a "
+        "variable instead, such as `count(n)`, and restrict it with "
+        "`n.qualified_name STARTS WITH '{project}.'`."
+    ),
+    ScopeRefusal.UNRESTRICTED_AGGREGATE: (
+        "the aggregate over {subjects} is not restricted to the project, so "
+        "its result would span every indexed project. Add {predicates} to the "
+        "WHERE clause."
+    ),
+    ScopeRefusal.UNATTRIBUTED_ENTITY: (
+        "the values returned for {subjects} carry no qualified name of their "
+        "own, so they cannot be attributed to a project. Return "
+        "{qualified_names} as well."
+    ),
+    ScopeRefusal.NO_QUALIFIED_NAME: (
+        "it returns no qualified name, so results cannot be attributed to a "
+        "project. Ask for the qualified name in the query."
+    ),
+}
+QUERY_SCOPE_SUBJECT = "`{name}`"
+QUERY_SCOPE_RESTRICTION = "`{name}.qualified_name STARTS WITH '{project}.'`"
+QUERY_SCOPE_QUALIFIED_NAME = "`{name}.qualified_name`"
+QUERY_SCOPE_LIST_SEPARATOR = ", "
+QUERY_SCOPE_AND_SEPARATOR = " AND "
 QUERY_SUMMARY_TIMEOUT = (
     "Query exceeded the {timeout:.1f}s timeout and was cancelled. "
     "Avoid unbounded traversals; add depth bounds or use a graph-algorithm procedure."
 )
 QUERY_RESULTS_PANEL_TITLE = "[bold blue]Cypher Query Results[/bold blue]"
+# C0 and C1 control characters other than tab and newline. A graph value is
+# printed to the operator's terminal, so an ESC or OSC sequence stored in a
+# docstring or annotation must be shown, not obeyed (#2260).
+QUERY_CELL_CONTROL_CHARS = r"[\x00-\x08\x0b-\x1f\x7f-\x9f]"
+QUERY_CELL_CONTROL_ESCAPE = "\\x{code:02x}"
 
 MSG_SEMANTIC_NO_RESULTS = (
     "No semantic matches found for query: '{query}'. This could mean:\n"

@@ -37,7 +37,7 @@ def _patch_graph(monkeypatch, graph):
     def _connect(batch_size):
         yield graph
 
-    monkeypatch.setattr("codebase_rag.main.connect_memgraph", _connect)
+    monkeypatch.setattr("codebase_rag.cli_runtime.connect_memgraph", _connect)
 
 
 def _write_header_only_trace(tmp_path):

@@ -12,7 +12,7 @@ PASS_2_FILES = (
     "\n--- Pass 2: Processing Files, Caching ASTs, and Collecting Definitions ---"
 )
 PASS_3_CALLS = "--- Pass 3: Processing Function Calls from AST Cache ---"
-PASS_4_EMBEDDINGS = "--- Pass 4: Generating semantic embeddings ---"
+PASS_5_EMBEDDINGS = "--- Pass 5: Generating semantic embeddings ---"
 CPP_FRONTEND_RUNNING = "--- C/C++ libclang frontend: {path} ---"
 EMITTING_FRONTEND_PROBE_FAILED = (
     "Emitting frontend for {lang} raised while probing availability; skipping "
@@ -320,6 +320,10 @@ WATCHER_REBUILDING_AFTER_FAILURE = (
     "Re-indexing the whole repository before this change, because the last "
     "re-ingest failed part way through."
 )
+WATCHER_EXPANSION_FAILED = (
+    "Could not list the files a directory event covers: {error}. Re-indexing "
+    "the whole repository instead."
+)
 INITIAL_SCAN = "Performing initial full codebase scan..."
 INITIAL_SCAN_DONE = "Initial scan complete. Starting real-time watcher."
 WATCHING = "Watching for changes in: {path}"
@@ -333,6 +337,8 @@ BINARY_INFO = "Binary: {path}"
 BINARY_SIZE = "Size: {size:.1f} MB"
 BUILD_STDOUT = "STDOUT: {stdout}"
 BUILD_STDERR = "STDERR: {stderr}"
+BUILD_FORBIDDEN_ENTRIES = "Binary bundles entries it must not ship: {entries}"
+BUILD_BINARY_MISSING = "Build reported success but no binary exists at {path}"
 
 # Graph summary logs
 GRAPH_SUMMARY = "Graph Summary:"
@@ -514,6 +520,10 @@ SEMANTIC_FOUND = "Found {count} semantic matches for: {query}"
 SEMANTIC_FAILED = "Semantic search failed for query '{query}': {error}"
 SEMANTIC_NODE_NOT_FOUND = "No node found with ID: {id}"
 SEMANTIC_INVALID_LOCATION = "Missing or invalid source location info for node {id}"
+SEMANTIC_STALE_PROJECT_ROOT = (
+    "No source for node {id}: project '{project}' was indexed at '{root}', "
+    "which no longer exists; re-index the project"
+)
 SEMANTIC_SOURCE_FAILED = "Failed to get source code for node {id}: {error}"
 SEMANTIC_TOOL_SEARCH = "[Tool:SemanticSearch] Searching for: '{query}'"
 SEMANTIC_TOOL_SOURCE = "[Tool:GetFunctionSource] Retrieving source for node ID: {id}"
@@ -909,6 +919,13 @@ MCP_INCOMPLETE_MARKER_RECOVERED = (
     "that stopped before its first graph write, so the graph is as that run "
     "found it; cleared it and continuing."
 )
+CLI_SYNC_MARKER_NOT_CLEARED = (
+    "The sync of {project} finished, but its incomplete-run marker could not "
+    "be cleared: {error}. The graph is complete; the next sync clears it."
+)
+CLI_SYNC_MARKERS_UNREADABLE = (
+    "Could not read incomplete-run markers for cgr status: {error}"
+)
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
 MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
 MCP_HTTP_EXPOSURE_REFUSED = (
@@ -963,6 +980,10 @@ REINGEST_MODULE_PATHS_UNKNOWN = (
 REINGEST_CONTAINER_KIND_UNKNOWN = (
     "Re-ingest aborted: a directory's recorded container kind could not be "
     "read, so whether it is new or has diverged from disk is unknown"
+)
+INCREMENTAL_FRONTEND_RERUN_FAILED = (
+    "Frontend re-run failed; its files are rebuilt with tree-sitter and the "
+    "error is raised after the changed files: {error}"
 )
 INCREMENTAL_FILE_FAILED = (
     "Failed to index {path}; the remaining changed files are still rebuilt "
@@ -1041,6 +1062,12 @@ GLOSS_REANCHOR_FAILED = (
 
 # Orphan pruning logs
 PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_SKIPPED_REGISTRY_UNREAD = (
+    "Project registry unreadable; left {count} qualified-name rows unpruned so "
+    "a project whose name extends this one keeps its nodes. The next healthy "
+    "run prunes them."
+)
+PRUNE_PENDING_NOT_UPDATED = "Orphan-prune pending marker not updated"
 PRUNE_QUERY_FAILED = "Could not read {label} paths from the graph; skipping its prune."
 PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
 PRUNE_DELETING = "Pruning orphan {label}: {path}"

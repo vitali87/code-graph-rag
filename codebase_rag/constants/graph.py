@@ -112,6 +112,13 @@ KEY_PATH = "path"
 # target-side lookup to match, so the waiting importer is recorded here and
 # stays findable from the created file's path alone (issue #1714).
 KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
+# Names this module referenced and could not resolve when it was parsed: an
+# import that named no module (the guessed qn and the written name), a quoted
+# include matching no file, a base class that resolved to nothing or to a
+# phantom, a call with no callee. A file ADDED later is matched against them
+# so the modules that waited for it are re-parsed (issue #1568). Written
+# unconditionally on every parse so a resolved name clears.
+KEY_UNRESOLVED_REFERENCES = "unresolved_references"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -140,9 +147,12 @@ KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
 KEY_PROJECT_PREFIX = "project_prefix"
+KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# Registered projects whose names extend this one (`svc.v2` under `svc`).
+KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
@@ -657,9 +667,25 @@ CYPHER_DELETE_MODULE = (
     # module subtree with it. A repository-root __init__.py's module qn IS
     # the bare project name (no trailing dot), so the prefix test alone
     # would miss it.
+    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
+    # name extends this one is excluded: a module belongs to the LONGEST
+    # registered name it sits under (issue #1985).
     "MATCH (m:Module {path: $path}) "
-    "WHERE m.qualified_name = $project_name "
-    "OR m.qualified_name STARTS WITH $project_prefix "
+    "WHERE (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
+    "OR m.qualified_name STARTS WITH (p + '.')) "
+    # The same exclusion read from the graph itself: `$nested_projects` comes
+    # from a registry read that can fail, and an empty list would let `svc.`
+    # take `svc.v2`'s module again. The delete must still run then (a full
+    # rebuild over an unreadable graph deletes before it re-parses), so the
+    # query rules those modules out on its own (CodeRabbit, PR #2125).
+    # OPTIONAL MATCH rather than an EXISTS subquery, which Memgraph rejects.
+    "OPTIONAL MATCH (nested:Project) "
+    "WHERE nested.name STARTS WITH $project_prefix "
+    "AND (m.qualified_name = nested.name "
+    "OR m.qualified_name STARTS WITH (nested.name + '.')) "
+    "WITH m, nested WHERE nested IS NULL "
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
@@ -723,6 +749,9 @@ CYPHER_FILE_CONTAINERS = (
     "RETURN labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
 )
+# The module names a project records, by file path, for the incremental
+# requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
+# holds every project, and filtering in Python read them all (bot review).
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
@@ -864,7 +893,7 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "AND importer.qualified_name STARTS WITH $project_prefix "
     "AND NOT target.qualified_name STARTS WITH $project_prefix "
     "AND ANY(name IN $module_names WHERE target.qualified_name = name "
-    "OR target.qualified_name STARTS WITH name + '.') "
+    "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
 # Modules carrying at least one unresolved relative specifier, with the
@@ -882,6 +911,36 @@ CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS = (
     "importer.unresolved_specifiers AS specifiers"
 )
 CYPHER_KEY_SPECIFIERS = "specifiers"
+# Modules whose recorded unresolved references name a file that now exists:
+# by one of its names exactly (its module qn, its import spellings, its path
+# suffixes, the simple names it defines) or under one of its qn prefixes (a
+# Rust `use crate::base::Base` records the whole path). Project-scoped on the
+# waiting side; self-selecting, since a re-parse that resolves the name
+# rewrites the list without it (issue #1568).
+CYPHER_UNRESOLVED_REFERENCE_WAITERS = (
+    "MATCH (m:Module) "
+    "WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name STARTS WITH $project_prefix "
+    "OR m.qualified_name = $project_name) "
+    "AND m.unresolved_references IS NOT NULL "
+    "AND any(n IN m.unresolved_references WHERE n IN $names "
+    "OR any(p IN $prefixes WHERE n STARTS WITH p)) "
+    "RETURN DISTINCT m.path AS caller_path"
+)
+CYPHER_PARAM_NAMES = "names"
+CYPHER_PARAM_PREFIXES = "prefixes"
+# SET, not merge, so a name that now resolves is gone from the list (issue
+# #1568); after a flush, so the Module nodes of a first build exist to
+# match. Two shapes because a parameter value is a scalar or a list of
+# strings: the modules with nothing unresolved (most of them) in one
+# statement, and one statement per module that recorded names.
+CYPHER_CLEAR_UNRESOLVED_REFERENCES = (
+    "UNWIND $qns AS qn MATCH (m:Module {qualified_name: qn}) "
+    "SET m.unresolved_references = []"
+)
+CYPHER_SET_UNRESOLVED_REFERENCES = (
+    "MATCH (m:Module {qualified_name: $qn}) SET m.unresolved_references = $names"
+)
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
@@ -1000,6 +1059,15 @@ KEY_HASHES = "hashes"
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
+# The text-quote anchor (issue #1808, stage five): digests of the subject's
+# own text with its name masked, and of the non-blank lines either side of
+# it. Versioned like the hash so a later format is never compared to this one.
+KEY_ANCHOR_QUOTE = "anchor_quote"
+KEY_ANCHOR_PREFIX = "anchor_prefix"
+KEY_ANCHOR_SUFFIX = "anchor_suffix"
+ANCHOR_QUOTE_VERSION = "aq1:"
+# Non-blank lines of context digested on each side of a definition.
+ANCHOR_CONTEXT_LINES = 3
 KEY_WRITE_ID = "write_id"
 KEY_CANDIDATES = "candidates"
 KEY_ORPHANED = "orphaned"

@@ -410,8 +410,27 @@ a project frame is excluded from the converted trace; addresses that do not
 symbolise at all (stripped symbols, missing debug info) are additionally
 counted and reported, so that symbolisation gap is visible rather than silent. Overhead is one mutex-guarded table insert per call — fine
 for test workloads, not for production; the edge table holds 65k distinct
-pairs, and conversion **rejects** a trace the shim marked `dropped` (table
-overflowed) rather than pass off an incomplete call graph as exact.
+pairs, and conversion **rejects** a trace the shim marked `dropped`: edges
+were lost because the table filled, calls nested deeper than its 4096-frame
+stack, or an instrumented signal handler ran while the shim was busy. It does
+not pass off an incomplete call graph as exact.
+
+Frames left through `longjmp`, or through a C++ exception under clang++, never
+run their exit hook, so a call made afterwards can name a skipped frame as its
+caller. The shim detects this in two ways and marks the trace `unwound`, which
+conversion also rejects:
+
+- an exit that does not match the innermost recorded frame;
+- a call whose caller's frame is not above it on the stack.
+
+Either way the shim resynchronises its depth, so a long-running program cannot
+overflow it. The second check only acts on a frame strictly above the recorded
+caller: an inlined call's hooks run from its caller's own frame, so equal
+addresses are not treated as proof. A jump that lands where a new call reuses
+the skipped frame's exact address can therefore still go unnoticed. Programs that switch stacks, through `sigaltstack` signal handlers
+or coroutines, can trip the second check and are refused. Build such
+workloads with g++, which runs exit hooks while unwinding exceptions, or trace
+them another way.
 
 ## Recording a production trace (eBPF continuous profilers)
 

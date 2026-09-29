@@ -248,13 +248,16 @@ HELP_TRACE_PULL_HEADER = (
     "Extra HTTP request header as NAME=VALUE (e.g. Authorization=Bearer TOKEN); "
     "repeatable."
 )
-HELP_TRACE_PULL_TIMEOUT = "HTTP request timeout in seconds (default 60)."
+HELP_TRACE_PULL_TIMEOUT = (
+    "Seconds the whole download may take, headers and body (default 60)."
+)
 ERR_TRACE_PULL_BAD_URL = "Unsupported URL {url}; expected an http:// or https:// URL."
 # The header value can be a bearer token, so it is never echoed back.
 ERR_TRACE_PULL_BAD_HEADER = (
     "Invalid --header; expected NAME=VALUE (for example Authorization=Bearer TOKEN)."
 )
 ERR_TRACE_PULL_FAILED = "Could not download {url}: {error}."
+ERR_TRACE_PULL_TIMED_OUT = "Downloading {url} did not finish within {timeout:g}s."
 ERR_TRACE_PULL_TOO_LARGE = (
     "Profile at {url} exceeds the maximum download size (256 MB)."
 )
