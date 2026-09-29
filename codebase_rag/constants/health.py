@@ -33,6 +33,16 @@ HEALTH_CHECK_GRAPH_INTEGRITY_OK_MSG = "No orphans or schema violations"
 HEALTH_CHECK_GRAPH_INTEGRITY_VIOLATIONS_MSG = "{count} violation(s) found"
 HEALTH_CHECK_GRAPH_INTEGRITY_ERROR_MSG = "Audit queries failed"
 HEALTH_CHECK_GRAPH_INTEGRITY_SEPARATOR = "; "
+# An outstanding `:IncompleteRun` marker, reported the way `cgr status`
+# reports it rather than as a schema violation (issue #2394).
+HEALTH_CHECK_INTERRUPTED_SYNC = "Interrupted syncs"
+HEALTH_CHECK_INTERRUPTED_SYNC_MSG = (
+    "{count} project(s) have a sync that was interrupted or is still running"
+)
+HEALTH_CHECK_INTERRUPTED_SYNC_DETAIL = (
+    "project {project}: last sync was interrupted or is still running; re-run "
+    "`cgr start --update-graph` if no sync is active"
+)
 
 # Model credentials are judged by the rule the runtime applies at
 # start-up (`ModelConfig.validate_api_key`), so doctor cannot fail a
