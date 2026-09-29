@@ -120,6 +120,9 @@ HTTP_METHOD_POST = "POST"
 HTTP_CONTENT_TYPE_HEADER = "Content-Type"
 JSON_CONTENT_TYPE = "application/json"
 QDRANT_READY_PATH = "/readyz"
+# A stopped stack refuses the connection at once; a running one answers well
+# inside this, so the check costs nothing noticeable when the vector store opens.
+BUNDLED_QDRANT_PROBE_TIMEOUT_S = 1.0
 QDRANT_API_KEY_HEADER = "api-key"
 ERR_COMPOSE_AUTH_MISMATCH = (
     "Compose would start {variables} with a value that does not come from "
@@ -170,6 +173,8 @@ ERR_STACK_ACCEPTS_ANONYMOUS = (
 # The substitution that pins published ports to a host address. Its absence
 # marks a compose file rendered before the loopback default (issue #1012).
 COMPOSE_BIND_HOST_VAR = "CGR_STACK_BIND_HOST"
+# The compose file publishes Qdrant's HTTP API on ${QDRANT_HTTP_PORT:-6333}.
+COMPOSE_QDRANT_HTTP_PORT_VAR = "QDRANT_HTTP_PORT"
 # Compose reads unset interpolation variables from this file beside the
 # compose file.
 COMPOSE_DOTENV_FILENAME = ".env"
