@@ -78,11 +78,12 @@ def test_an_interrupted_embeddings_pass_commits_the_run_before_stopping(
     embedding_io: tuple[MagicMock, MagicMock],
 ) -> None:
     _interrupt_embeddings_query(mock_ingestor)
+    updater = _updater(py_project, mock_ingestor)
 
     # Still a KeyboardInterrupt, so a caller that does not look for it (the
     # watcher's initial scan) stops exactly as it did before.
     with pytest.raises(KeyboardInterrupt) as stopped:
-        _updater(py_project, mock_ingestor).run()
+        updater.run()
 
     hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
@@ -99,9 +100,10 @@ def test_an_interrupted_embeddings_pass_keeps_the_vectors_it_computed(
 ) -> None:
     cache, close_client = embedding_io
     _interrupt_embeddings_query(mock_ingestor)
+    updater = _updater(py_project, mock_ingestor)
 
     with pytest.raises(KeyboardInterrupt):
-        _updater(py_project, mock_ingestor).run()
+        updater.run()
 
     cache.save.assert_called_once_with()
     close_client.assert_called_once_with()
@@ -112,13 +114,14 @@ def test_an_interrupt_before_the_embeddings_pass_commits_nothing(
 ) -> None:
     # Only the last pass may be cut short: an earlier one leaves the graph
     # partial, and a committed cache would hide that from the next sync.
+    updater = _updater(py_project, mock_ingestor)
     with (
         patch.object(
             GraphUpdater, "_prune_orphan_nodes", side_effect=KeyboardInterrupt
         ),
         pytest.raises(KeyboardInterrupt) as stopped,
     ):
-        _updater(py_project, mock_ingestor).run()
+        updater.run()
 
     assert type(stopped.value) is KeyboardInterrupt
     # The walk leaves an empty placeholder; only a committed run fills it.
@@ -141,10 +144,7 @@ def test_a_failed_embeddings_pass_still_ends_the_run_normally(
 
     mock_ingestor.fetch_all.side_effect = fetch_all
 
-    try:
-        _updater(py_project, mock_ingestor).run()
-    except KeyboardInterrupt:
-        pytest.fail("a failed embeddings pass was reported as Ctrl+C")
+    _updater(py_project, mock_ingestor).run()
 
     hashes = json.loads((py_project / cs.HASH_CACHE_FILENAME).read_text())
     assert {"module_a.py", "module_b.py"} <= set(hashes)
@@ -165,10 +165,7 @@ def test_a_reused_updater_does_not_replay_an_earlier_interrupt(
     mock_ingestor.fetch_all.side_effect = None
     (py_project / "module_a.py").write_text("def func_a():\n    return 1\n")
 
-    try:
-        updater.run()
-    except KeyboardInterrupt:
-        pytest.fail("the second run replayed the first run's interrupt")
+    updater.run()
 
     assert not updater.skipped_because_in_sync
 

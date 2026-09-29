@@ -75,8 +75,9 @@ def test_an_interrupt_the_task_raised_itself_is_not_swallowed() -> None:
     def task() -> None:
         raise KeyboardInterrupt
 
+    worker = _Worker(task)
     with pytest.raises(KeyboardInterrupt):
-        _Worker(task).run()
+        worker.run()
 
 
 def test_a_second_interrupt_does_not_cut_the_cleanup_short() -> None:
