@@ -105,6 +105,7 @@ from .types_defs import (
     StructuralReplaceArgs,
     ToolArgs,
 )
+from .utils.interruptible_thread import run_in_interruptible_thread
 from .utils.rich_markdown import LeftAlignedMarkdown
 from .utils.token_utils import estimate_message_tokens
 
@@ -2176,7 +2177,7 @@ async def _run_pre_chat_sync(task: Callable[[], None], message: str) -> None:
     logger.disable("codebase_rag")
     try:
         with _thinking_with_status_bar(message):
-            await asyncio.to_thread(task)
+            await run_in_interruptible_thread(task)
     finally:
         logger.enable("codebase_rag")
 
