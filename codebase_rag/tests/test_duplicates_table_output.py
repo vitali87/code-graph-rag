@@ -63,6 +63,10 @@ def _render(
 ) -> str:
     console = terminal_aware_console(file=file)
     console.width = width
+    # A VT-capable terminal, as Windows Terminal is detected: Rich never
+    # writes OSC 8 links for a legacy Windows console, which is what it
+    # detects on a CI runner whose stdout is not a console at all.
+    console.legacy_windows = False
     monkeypatch.setattr(cli.app_context, "console", console)
     cli._emit_duplicates(
         GROUPS,
