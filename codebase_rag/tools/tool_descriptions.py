@@ -219,6 +219,32 @@ MCP_IMPORTERS = (
     "Modules that import a module, with each import statement's line, "
     "column, bound alias and imported symbol. " + _MCP_DETERMINISTIC_NOTE
 )
+MCP_PARAM_ENDPOINT_TARGET = (
+    "The handler's qualified name, or the endpoint identity as `endpoints` "
+    "lists it (`GET /users/{id}`)."
+)
+MCP_ENDPOINTS = (
+    "The endpoints a project exposes (routes, RPC methods, dispatch keys), one "
+    "row per endpoint with its identity (`GET /users/{id}`), kind, handler, "
+    "file and how many call sites in the whole graph reach it through "
+    "RESOLVES_TO or a direct access. Zero callers on a graph holding only this "
+    "project means none are indexed, not that the endpoint is dead; index the "
+    "calling services with `--capture io` first. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_ENDPOINT_CALLERS = (
+    "Call sites, in any indexed project, that reach one endpoint: `target` is "
+    "the handler's qualified name or the endpoint identity (`GET /users/{id}`). "
+    "Each row names the caller, its file, the URL it accesses and the direction "
+    "(READS_FROM or WRITES_TO); an RPC or dispatch caller reaches the endpoint "
+    "directly, so its `url` is the endpoint identity. Literal URLs resolve; "
+    "dynamic ones do not and are absent here. " + _MCP_DETERMINISTIC_NOTE
+)
+MCP_REMOTE_DEPENDENCIES = (
+    "Every network access a project makes, one row per call site and URL, with "
+    "the endpoint, handler and project it resolves to when one is indexed; a "
+    "row with no endpoint is a dependency the graph cannot place (a dynamic "
+    "URL, or a service not indexed). " + _MCP_DETERMINISTIC_NOTE
+)
 MCP_TESTS_REACHING = (
     "Test functions and methods from which a qualified name is reachable "
     "through CALLS / REFERENCES / INSTANTIATES, with the distance and the "
@@ -249,10 +275,18 @@ MCP_GLOSSES = (
     "on revert), MOVED when the name is gone and exactly one definition in "
     "the project carries the recorded hash (the note follows it; "
     "`moved_from` keeps the old name), AMBIGUOUS when several do "
-    "(`candidate_qns` lists them) and LOST when none does. A note on a class "
-    "or module, or one written before hashes were recorded, is not graded "
-    "while attached (there is no hash to compare) and is LOST if its name "
-    "disappears (there is no hash to follow). "
+    "(`candidate_qns` lists them). When no definition carries the hash (a "
+    "rename changes it), the note's text-quote anchor is tried: a digest of "
+    "the definition's own text with its name masked, so exactly one "
+    "definition in the project whose body still matches is followed as MOVED "
+    "(then graded STALE, since the signature changed), several with the same "
+    "body are told apart by the lines around them or listed as AMBIGUOUS, "
+    "and none is LOST. The quote is recorded only when the note was written "
+    "against this server's own checkout. A note on a module, or one written "
+    "before hashes were recorded, is not graded while attached (there is no "
+    "hash to compare) and is LOST if its name disappears (a module has no span "
+    "to quote); a class, interface, enum, type or union carries a hash like a "
+    "function and is graded and repaired the same way. "
     "A target that no longer resolves returns the error plus `orphaned`: the "
     "unattached notes written against that name. " + _MCP_DETERMINISTIC_NOTE
 )
@@ -472,6 +506,9 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.OVERRIDES: MCP_OVERRIDES,
     MCPToolName.IMPORTERS: MCP_IMPORTERS,
     MCPToolName.TESTS_REACHING: MCP_TESTS_REACHING,
+    MCPToolName.ENDPOINTS: MCP_ENDPOINTS,
+    MCPToolName.ENDPOINT_CALLERS: MCP_ENDPOINT_CALLERS,
+    MCPToolName.REMOTE_DEPENDENCIES: MCP_REMOTE_DEPENDENCIES,
     MCPToolName.ANNOTATE: MCP_ANNOTATE,
     MCPToolName.GLOSSES: MCP_GLOSSES,
     MCPToolName.RENAME: MCP_RENAME,

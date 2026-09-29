@@ -15,6 +15,8 @@ except ImportError:
     print("Run: uv add pyyaml requests typer")
     sys.exit(1)
 
+REQUEST_TIMEOUT_SECONDS = 30
+
 
 def load_labels_config() -> list[dict]:
     """Load labels from .github/labels.yml"""
@@ -53,7 +55,7 @@ def get_existing_labels(repo: str, token: str) -> dict[str, dict]:
         "Accept": "application/vnd.github.v3+json",
     }
 
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
     response.raise_for_status()
 
     return {label["name"]: label for label in response.json()}
@@ -76,11 +78,15 @@ def create_or_update_label(
 
     if existing:
         url = f"https://api.github.com/repos/{repo}/labels/{label['name']}"
-        response = requests.patch(url, headers=headers, json=data)
+        response = requests.patch(
+            url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
+        )
         action = "Updated"
     else:
         url = f"https://api.github.com/repos/{repo}/labels"
-        response = requests.post(url, headers=headers, json=data)
+        response = requests.post(
+            url, headers=headers, json=data, timeout=REQUEST_TIMEOUT_SECONDS
+        )
         action = "Created"
 
     if response.status_code in (200, 201):

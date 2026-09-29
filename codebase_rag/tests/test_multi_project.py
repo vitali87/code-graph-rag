@@ -42,6 +42,19 @@ class TestPromptActiveProjectsBlock:
         assert "list_projects" in prompt
         assert "Project Scope" in prompt
 
+    def test_no_projects_uses_resolved_backend_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("codebase_rag.prompts.settings.GRAPH_BACKEND", "neo4j")
+        prompt_neo4j = build_rag_orchestrator_prompt([], active_projects=None)
+        assert "This Neo4j database may contain multiple" in prompt_neo4j
+        assert "Memgraph" not in prompt_neo4j
+
+        monkeypatch.setattr("codebase_rag.prompts.settings.GRAPH_BACKEND", "memgraph")
+        prompt_memgraph = build_rag_orchestrator_prompt([], active_projects=None)
+        assert "This Memgraph database may contain multiple" in prompt_memgraph
+        assert "Neo4j" not in prompt_memgraph
+
     def test_single_project_mentions_starts_with(self) -> None:
         prompt = build_rag_orchestrator_prompt([], active_projects=["only_one"])
         assert "only_one" in prompt

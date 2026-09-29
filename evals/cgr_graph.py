@@ -9,8 +9,10 @@ from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
     ResultRow,
+    ResultScalar,
     ResultValue,
 )
+from codebase_rag.utils import qn_markers
 
 from . import constants as ec
 from .ignore_rules import ignore_rules
@@ -18,6 +20,29 @@ from .types_defs import DefNode, EdgeKey, GraphData, NameEdge, NodeKey
 
 _RelTuple = tuple[str, PropertyValue, str, str, PropertyValue]
 _NodeId = tuple[str, PropertyValue]
+#: The merge-key properties a relationship carries, as (name, value) pairs in
+#: the order `MERGE_KEY_PROPS_BY_REL` lists them. Pairs rather than bare values
+#: so a row carrying only `line` cannot collide with one carrying only `col`.
+_SiteKey = tuple[tuple[str, PropertyValue], ...]
+#: What the stateful store keys an edge on: the endpoints AND the site, which
+#: is what the production store does (`MERGE_KEY_PROPS_BY_REL`). Keyed on
+#: endpoints alone, a caller that reached the same callee twice held two edges
+#: in production and one here, and the second site overwrote the first (#1911).
+_EdgeKey = tuple[str, PropertyValue, str, str, PropertyValue, _SiteKey]
+
+
+def _site_key(rel_type: str, properties: PropertyDict | None) -> _SiteKey:
+    """The part of an edge's identity that is not its endpoints.
+
+    Mirrors the production store: `MERGE_KEY_PROPS_BY_REL` names the props that
+    join the MERGE key for a relationship type, and props absent from a batch's
+    rows are dropped from the key at flush time -- so a CALLS row with no site
+    still merges on its endpoints alone, exactly as it does here.
+    """
+    key_props = cs.MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+    if not key_props or not properties:
+        return ()
+    return tuple((prop, properties[prop]) for prop in key_props if prop in properties)
 
 
 class _CapturingIngestor:
@@ -82,6 +107,7 @@ _DEFINES_RELS = frozenset(
 _MODULE_SUBTREE_RELS = _DEFINES_RELS | {
     cs.RelationshipType.HAS_PARAMETER.value,
     cs.RelationshipType.HAS_FIELD.value,
+    cs.RelationshipType.HAS_VARIANT.value,
     cs.RelationshipType.CONTAINS_SECTION.value,
     cs.RelationshipType.DEFINES_CONSTANT.value,
 }
@@ -182,11 +208,30 @@ def _result(value: PropertyValue | None) -> ResultValue:
     return value
 
 
+def _result_props(
+    props: PropertyDict,
+) -> dict[str, ResultScalar | list[ResultScalar]]:
+    return {
+        key: list[ResultScalar](value) if isinstance(value, list) else value
+        for key, value in props.items()
+    }
+
+
 def _text(value: PropertyValue) -> str | None:
     # path / qualified_name / absolute_path are always textual; narrow the
     # general PropertyValue (which includes list[str]) to the ResultValue
     # shape the prune query consumer expects.
     return value if isinstance(value, str) else None
+
+
+def _shadowed_by_longer_owner(
+    qualified_name: str, longer_project_prefixes: set[str]
+) -> bool:
+    return any(
+        qualified_name == project_name
+        or qualified_name.startswith(f"{project_name}{cs.SEPARATOR_DOT}")
+        for project_name in longer_project_prefixes
+    )
 
 
 def _int(value: PropertyValue) -> int | None:
@@ -205,12 +250,11 @@ class _StatefulIngestor:
     # emulated (matched by identity).
     def __init__(self) -> None:
         self.nodes: dict[_NodeId, PropertyDict] = {}
-        self.edges: set[_RelTuple] = set()
-        self.edge_props: dict[_RelTuple, PropertyDict] = {}
+        self.edge_props: dict[_EdgeKey, PropertyDict] = {}
         # Adjacency indexes so a subtree delete costs the subtree, not a
         # scan of every edge per node (the real store has indexes too).
-        self._out: dict[_NodeId, set[_RelTuple]] = {}
-        self._in: dict[_NodeId, set[_RelTuple]] = {}
+        self._out: dict[_NodeId, set[_EdgeKey]] = {}
+        self._in: dict[_NodeId, set[_EdgeKey]] = {}
 
     def ensure_node_batch(self, label: str, properties: PropertyDict) -> None:
         # Same += merge semantics as _CapturingIngestor: partial re-emissions
@@ -227,12 +271,57 @@ class _StatefulIngestor:
     ) -> None:
         from_label, _from_key, from_val = from_spec
         to_label, _to_key, to_val = to_spec
-        edge = (str(from_label), from_val, str(rel_type), str(to_label), to_val)
-        self.edges.add(edge)
+        edge = (
+            str(from_label),
+            from_val,
+            str(rel_type),
+            str(to_label),
+            to_val,
+            _site_key(str(rel_type), properties),
+        )
         self._out.setdefault((str(from_label), from_val), set()).add(edge)
         self._in.setdefault((str(to_label), to_val), set()).add(edge)
         if properties:
             self.edge_props[edge] = dict(properties)
+
+    @property
+    def keyed_edges(self) -> set[_EdgeKey]:
+        """Every edge with its site, one entry per site."""
+        return {edge for edges in self._out.values() for edge in edges}
+
+    def props_for(self, edge: _RelTuple | _EdgeKey) -> PropertyDict:
+        """Properties of an edge, given either its keyed or its endpoint form.
+
+        Readers that snapshot the endpoint view still need the properties, and
+        `edge_props` is keyed by site -- a five-element lookup would silently
+        return `{}` and turn a property comparison into a comparison of
+        nothing. An endpoint form can cover several sites; their props are
+        merged in site order, which is what such a reader saw before sites
+        existed.
+        """
+        if len(edge) == 6:
+            return dict(self.edge_props.get(edge, {}))  # type: ignore[arg-type]
+        # Only the source node's own adjacency can hold the edge's sites, so
+        # read that rather than rebuilding every edge in the store per call
+        # (issue #2116).
+        merged: PropertyDict = {}
+        endpoint = tuple(edge)
+        for keyed in sorted(
+            (e for e in self._out.get((edge[0], edge[1]), ()) if e[:5] == endpoint),
+            key=repr,
+        ):
+            merged.update(self.edge_props.get(keyed, {}))
+        return merged
+
+    @property
+    def edges(self) -> set[_RelTuple]:
+        """Every edge by endpoints alone, one entry per node pair.
+
+        A view over `keyed_edges`, so a caller that reached the same callee
+        twice appears once here and twice there -- which is what the
+        production store does, and what this stand-in did not (#1911).
+        """
+        return {edge[:5] for edge in self.keyed_edges}
 
     # --- structural delta reads (issue #1525) --------------------------------
 
@@ -273,7 +362,11 @@ class _StatefulIngestor:
         return _str(self.nodes.get((label, uid), {}).get(cs.KEY_PATH))
 
     def _delta_definitions(
-        self, prefix: str, paths: set[str] | None, qns: set[str] | None
+        self,
+        prefix: str,
+        paths: set[str] | None,
+        qns: set[str] | None,
+        longer_project_prefixes: set[str],
     ) -> list[ResultRow]:
         rows: list[ResultRow] = []
         for (label, _uid), props in self.nodes.items():
@@ -284,7 +377,9 @@ class _StatefulIngestor:
             # reached with callee names that CYPHER_DELTA_SITES did not
             # prefix-scope, so a shared graph can hold a same-named
             # definition from another project.
-            if not qn.startswith(prefix):
+            if not qn.startswith(prefix) or _shadowed_by_longer_owner(
+                qn, longer_project_prefixes
+            ):
                 continue
             if paths is not None and props.get(cs.KEY_PATH) not in paths:
                 continue
@@ -293,19 +388,26 @@ class _StatefulIngestor:
             rows.append(self._delta_node_row(label, props))
         return rows
 
-    def _delta_sites(self, prefix: str, paths: set[str]) -> list[ResultRow]:
+    def _delta_sites(
+        self, prefix: str, paths: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
         # Through the adjacency indexes: the edges into and out of the
         # nodes at `paths`, not a scan of every edge.
-        candidates: set[_RelTuple] = set()
+        candidates: set[_EdgeKey] = set()
         for node_id, props in self.nodes.items():
             if props.get(cs.KEY_PATH) in paths:
                 candidates.update(self._in.get(node_id, ()))
                 candidates.update(self._out.get(node_id, ()))
         rows: list[ResultRow] = []
-        ordered: list[_RelTuple] = sorted(candidates, key=repr)
+        ordered: list[_EdgeKey] = sorted(candidates, key=repr)
         for edge in ordered:
-            fl, fv, rel, tl, tv = edge
-            if rel not in self._DELTA_SITE_RELS or not _str(fv).startswith(prefix):
+            fl, fv, rel, tl, tv, _site = edge
+            caller_qn = _str(fv)
+            if (
+                rel not in self._DELTA_SITE_RELS
+                or not caller_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(caller_qn, longer_project_prefixes)
+            ):
                 continue
             from_path = self._delta_path_of(fl, fv)
             to_path = self._delta_path_of(tl, tv)
@@ -327,7 +429,9 @@ class _StatefulIngestor:
             )
         return rows
 
-    def _delta_callers_of(self, prefix: str, qns: set[str]) -> list[ResultRow]:
+    def _delta_callers_of(
+        self, prefix: str, qns: set[str], longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
         # Through the inbound index, the way the real query uses the
         # qualified-name index: one lookup per frontier name.
         rows: list[ResultRow] = []
@@ -341,23 +445,27 @@ class _StatefulIngestor:
             for label in labels:
                 if (label, qn) not in self.nodes:
                     continue
-                self._delta_callers_into(prefix, (label, qn), seen, rows)
+                self._delta_callers_into(
+                    prefix, (label, qn), longer_project_prefixes, seen, rows
+                )
         return rows
 
     def _delta_callers_into(
         self,
         prefix: str,
         target: _NodeId,
+        longer_project_prefixes: set[str],
         seen: set[tuple[str, str]],
         rows: list[ResultRow],
     ) -> None:
         for edge in self._in.get(target, ()):
-            fl, fv, rel, _tl, tv = edge
+            fl, fv, rel, _tl, tv, _site = edge
             caller = self.nodes.get((fl, fv))
             if (
                 rel not in self._DELTA_SITE_RELS
                 or caller is None
                 or not _str(fv).startswith(prefix)
+                or _shadowed_by_longer_owner(_str(fv), longer_project_prefixes)
                 or (_str(fv), _str(tv)) in seen
             ):
                 continue
@@ -366,18 +474,26 @@ class _StatefulIngestor:
             row[cs.KEY_TO_QN] = _result(tv)
             rows.append(row)
 
-    def _delta_module_imports(self, prefix: str) -> list[ResultRow]:
+    def _delta_module_imports(
+        self, prefix: str, longer_project_prefixes: set[str]
+    ) -> list[ResultRow]:
         module = cs.NodeLabel.MODULE.value
         rows: list[ResultRow] = []
         for node_id, props in self.nodes.items():
             label, uid = node_id
-            if label != module or not _str(uid).startswith(prefix):
+            source_qn = _str(uid)
+            if (
+                label != module
+                or not source_qn.startswith(prefix)
+                or _shadowed_by_longer_owner(source_qn, longer_project_prefixes)
+            ):
                 continue
-            for _fl, fv, rel, tl, tv in self._out.get(node_id, ()):
+            for _fl, fv, rel, tl, tv, _site in self._out.get(node_id, ()):
                 if (
                     rel == cs.RelationshipType.IMPORTS.value
                     and tl == module
                     and _str(tv).startswith(prefix)
+                    and not _shadowed_by_longer_owner(_str(tv), longer_project_prefixes)
                 ):
                     rows.append(
                         {
@@ -426,7 +542,7 @@ class _StatefulIngestor:
         ]
 
     def _graph_edge_row(
-        self, edge: _RelTuple, keys: tuple[str, ...], node: _NodeId
+        self, edge: _EdgeKey, keys: tuple[str, ...], node: _NodeId
     ) -> ResultRow:
         label, uid = node
         props = self.nodes.get(node, {})
@@ -448,6 +564,16 @@ class _StatefulIngestor:
         if props is None:
             return []
         return [{cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH))}]
+
+    def _project_rows(self) -> list[ResultRow]:
+        return [
+            {
+                cs.KEY_NAME: _result(props.get(cs.KEY_NAME)),
+                cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH)),
+            }
+            for (label, _uid), props in self.nodes.items()
+            if label == cs.NodeLabel.PROJECT.value
+        ]
 
     def _graph_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         qn = _str(params.get(cs.KEY_QN))
@@ -509,6 +635,12 @@ class _StatefulIngestor:
 
     def _delta_rows(self, query: str, params: PropertyDict) -> list[ResultRow]:
         prefix = _str(params.get(cs.KEY_PROJECT_PREFIX))
+        raw_longer = params.get(cs.KEY_LONGER_PROJECT_PREFIXES)
+        longer_project_prefixes = (
+            {str(value) for value in raw_longer if isinstance(value, str)}
+            if isinstance(raw_longer, list)
+            else set()
+        )
         raw_paths = params.get(cs.CYPHER_PARAM_PATHS)
         paths = set(raw_paths) if isinstance(raw_paths, list) else set()
         module = cs.NodeLabel.MODULE.value
@@ -517,6 +649,7 @@ class _StatefulIngestor:
             return self._delta_callers_of(
                 prefix,
                 {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set(),
+                longer_project_prefixes,
             )
         if query == cq.CYPHER_DELTA_RUST_MODULES:
             return [
@@ -525,6 +658,9 @@ class _StatefulIngestor:
                 if label == module
                 and _str(props.get(cs.KEY_PATH)).endswith(cs.EXT_RS)
                 and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                and not _shadowed_by_longer_owner(
+                    _str(props.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+                )
             ]
         if query == cq.CYPHER_DELTA_RUST_TEST_FNS:
             return [
@@ -532,17 +668,23 @@ class _StatefulIngestor:
                 for (label, _uid), props in self.nodes.items()
                 if label in (cs.NodeLabel.FUNCTION.value, cs.NodeLabel.METHOD.value)
                 and props.get(cs.KEY_PATH) in paths
+                and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+                and not _shadowed_by_longer_owner(
+                    _str(props.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+                )
             ]
         if query == cq.CYPHER_DELTA_DEFINITIONS:
-            return self._delta_definitions(prefix, paths, None)
+            return self._delta_definitions(prefix, paths, None, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_DEFINITIONS_BY_QN:
             raw_qns = params.get(cs.KEY_QNS)
             wanted = {str(q) for q in raw_qns} if isinstance(raw_qns, list) else set()
-            return self._delta_definitions(prefix, None, wanted)
+            return self._delta_definitions(
+                prefix, None, wanted, longer_project_prefixes
+            )
         if query == cq.CYPHER_DELTA_SITES:
-            return self._delta_sites(prefix, paths)
+            return self._delta_sites(prefix, paths, longer_project_prefixes)
         if query == cq.CYPHER_DELTA_MODULE_IMPORTS:
-            return self._delta_module_imports(prefix)
+            return self._delta_module_imports(prefix, longer_project_prefixes)
         if query == cq.CYPHER_DEAD_CODE_RELS:
             return [
                 {
@@ -563,10 +705,12 @@ class _StatefulIngestor:
             for (label, _uid), props in self.nodes.items()
             if label not in self._DELTA_SKIPPED_LABELS
             and _str(props.get(cs.KEY_QUALIFIED_NAME)).startswith(prefix)
+            and not _shadowed_by_longer_owner(
+                _str(props.get(cs.KEY_QUALIFIED_NAME)), longer_project_prefixes
+            )
         ]
 
     def reset_edges(self) -> None:
-        self.edges = set()
         self.edge_props = {}
         self._out = {}
         self._in = {}
@@ -578,6 +722,8 @@ class _StatefulIngestor:
         self, query: str, params: PropertyDict | None = None
     ) -> list[ResultRow]:
         match query:
+            case cq.CYPHER_LIST_PROJECTS:
+                return self._project_rows()
             case cs.CYPHER_ALL_FILE_PATHS:
                 return self._path_rows(_FILE_LABEL)
             case (
@@ -637,7 +783,7 @@ class _StatefulIngestor:
                 )
                 inbound: list[ResultRow] = []
                 for edge in self._edges_into(changed):
-                    from_label, from_val, rel_type, to_label, to_val = edge
+                    from_label, from_val, rel_type, to_label, to_val, _site = edge
                     if rel_type not in _INBOUND_DEPENDENT_RELS:
                         continue
                     caller = self.nodes.get((from_label, from_val))
@@ -656,7 +802,7 @@ class _StatefulIngestor:
                             cs.KEY_CALLER_PATH: _text(caller_path),
                             # The restore re-emits the edge with its own
                             # properties (its site, issue #1522).
-                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
+                            cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound
@@ -673,6 +819,7 @@ class _StatefulIngestor:
                     rel_type,
                     to_label,
                     to_val,
+                    _site,
                 ) in self._edges_into(reindexed):
                     if rel_type not in _AFFECTED_CALLER_RELS:
                         continue
@@ -714,11 +861,14 @@ class _StatefulIngestor:
                             raw_param_types := props.get(cs.KEY_PARAM_TYPES), list
                         )
                         else None,
+                        cs.KEY_NAMESPACE: _text(props[cs.KEY_NAMESPACE])
+                        if cs.KEY_NAMESPACE in props
+                        else None,
                     }
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -735,7 +885,7 @@ class _StatefulIngestor:
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
                 # requeue for the same reason as the Parameter query above.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -751,7 +901,7 @@ class _StatefulIngestor:
                 ]
             case cs.CYPHER_PROJECT_CONSTANT_TYPES:
                 # The Constant counterpart (issue #1806), for the same reason.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -768,8 +918,8 @@ class _StatefulIngestor:
             case cs.CYPHER_ALL_INHERITS:
                 prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 inherits: list[tuple[str, int, ResultRow]] = []
-                for edge in self.edges:
-                    _from_label, from_val, rel_type, _to_label, to_val = edge
+                for edge in self.keyed_edges:
+                    _from_label, from_val, rel_type, _to_label, to_val, _site = edge
                     if rel_type != _INHERITS_REL or not _str(from_val).startswith(
                         prefix
                     ):
@@ -815,9 +965,27 @@ class _StatefulIngestor:
                     qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
                     if qn == project_name or (prefix and qn.startswith(prefix)):
                         project_rows.append(
-                            {cs.KEY_PATH: _text(props.get(cs.KEY_PATH))}
+                            {
+                                cs.KEY_PATH: _text(props.get(cs.KEY_PATH)),
+                                cs.KEY_QUALIFIED_NAME: qn,
+                            }
                         )
                 return project_rows
+            case cq.CYPHER_LIST_PROJECTS:
+                # Every Project node, by name (issue #1970): the updater
+                # decides ownership of a prefix-scoped row by the longest
+                # registered name.
+                return sorted(
+                    (
+                        {
+                            cs.KEY_NAME: _str(uid),
+                            cs.KEY_ROOT_PATH: _result(props.get(cs.KEY_ROOT_PATH)),
+                        }
+                        for (label, uid), props in self.nodes.items()
+                        if label == cs.NodeLabel.PROJECT.value
+                    ),
+                    key=lambda row: str(row[cs.KEY_NAME]),
+                )
             case cs.CYPHER_ALL_MODULE_PATHS_INTERNAL:
                 rows: list[ResultRow] = []
                 for (label, _uid), props in self.nodes.items():
@@ -911,6 +1079,44 @@ class _StatefulIngestor:
                             seen_paths.add(importer_path)
                             importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
                 return importer_rows
+            case cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS:
+                # Modules whose recorded unresolved references an added file
+                # satisfies, by an exact name or under a qn prefix (issue
+                # #1568). Emulated for the same reason as the specifier
+                # lookup below: an unanswered query reads as "no waiters".
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
+                wanted = (
+                    {n for n in raw_names if isinstance(n, str)}
+                    if isinstance(raw_names, list)
+                    else set()
+                )
+                wanted_prefixes = (
+                    [p for p in raw_prefixes if isinstance(p, str)]
+                    if isinstance(raw_prefixes, list)
+                    else []
+                )
+                waiting: set[str] = set()
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
+                    in_project = (prefix and qn.startswith(prefix)) or qn == own_name
+                    if not path or not in_project:
+                        continue
+                    if not isinstance(recorded, list):
+                        continue
+                    if any(
+                        n in wanted
+                        or any(str(n).startswith(p) for p in wanted_prefixes)
+                        for n in recorded
+                    ):
+                        waiting.add(path)
+                return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
                 # Modules carrying a dropped relative specifier (issue #1714).
                 # Emulated rather than left to fall through: an unanswered
@@ -1047,13 +1253,20 @@ class _StatefulIngestor:
                     continue
                 pairs = [(None, (to_label, to_val))]
             else:
-                # Module -DEFINES-> container -DEFINES_METHOD-> Method.
+                # Module -DEFINES-> container -DEFINES_METHOD-> Method, read
+                # from the container's own adjacency: scanning every edge per
+                # container made this quadratic (issue #2116). A method
+                # reached through several sites appears once, as in `edges`.
                 pairs = [
-                    (to_val, (m_label, m_val))
-                    for (c_label, c_val, m_rel, m_label, m_val) in self.edges
-                    if m_rel == cs.RelationshipType.DEFINES_METHOD.value
-                    and (c_label, c_val) == (to_label, to_val)
-                    and m_label == target_label
+                    (to_val, method)
+                    for method in {
+                        (m_label, m_val)
+                        for _cl, _cv, m_rel, m_label, m_val, _site in self._out.get(
+                            (to_label, to_val), ()
+                        )
+                        if m_rel == cs.RelationshipType.DEFINES_METHOD.value
+                        and m_label == target_label
+                    }
                 ]
             for container_qn, node_id in pairs:
                 props = self.nodes.get(node_id)
@@ -1076,8 +1289,27 @@ class _StatefulIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
+                # Modules with nothing unresolved this parse (issue #1568).
+                raw_qns = params.get(cs.KEY_QNS) if params else None
+                for qn in raw_qns if isinstance(raw_qns, list) else []:
+                    node = self.nodes.get((_MODULE_LABEL, qn))
+                    if node is not None:
+                        node[cs.KEY_UNRESOLVED_REFERENCES] = []
+            case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
+                # One module's list, replaced so a resolved name leaves it.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
-                self._delete_module_subtree(path)
+                self._delete_module_subtree(
+                    path,
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                    params.get(cs.KEY_NESTED_PROJECTS) if params else None,
+                )
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
                 # absolute path (issue #897).
@@ -1097,11 +1329,11 @@ class _StatefulIngestor:
             case _:
                 return None
 
-    def _edges_into(self, paths: set[str]) -> list[_RelTuple]:
+    def _edges_into(self, paths: set[str]) -> list[_EdgeKey]:
         # Every edge whose TARGET node lives at one of `paths`, through the
         # inbound index: the store answers a path-scoped query with an index
         # lookup, not a scan of every edge.
-        found: list[_RelTuple] = []
+        found: list[_EdgeKey] = []
         for node_id, props in self.nodes.items():
             if props.get(cs.KEY_PATH) in paths:
                 found.extend(self._in.get(node_id, ()))
@@ -1129,15 +1361,57 @@ class _StatefulIngestor:
             if node_label == label and props.get(key) == path
         }
 
-    def _delete_module_subtree(self, path: PropertyValue) -> None:
+    def _delete_module_subtree(
+        self,
+        path: PropertyValue,
+        project_name: str | None,
+        project_prefix: str | None,
+        nested_projects: PropertyValue = None,
+    ) -> None:
+        # Scoped like the real query: another project in the shared graph can
+        # hold the same relative path, and only a module whose qn is the
+        # project name or starts with its prefix goes (issue #2172). A missing
+        # scope matches nothing, as `= null` does in Cypher. A registered
+        # project whose name extends this one (`svc.v2` under `svc`) matches
+        # that prefix too, and its modules are excluded like the real query's
+        # `$nested_projects` clause does (issue #1985).
+        nested_names = (
+            [n for n in nested_projects if isinstance(n, str)]
+            if isinstance(nested_projects, list)
+            else []
+        )
+        # The real query also reads the nested projects from the graph's own
+        # Project nodes, so an empty parameter (registry unread) still spares
+        # them (CodeRabbit, PR #2125).
+        if project_prefix is not None:
+            nested_names += [
+                name
+                for label, name in self.nodes
+                if label == cs.NodeLabel.PROJECT.value
+                and isinstance(name, str)
+                and name.startswith(project_prefix)
+            ]
+
+        def in_scope(qn: str) -> bool:
+            if qn != project_name and not (
+                project_prefix is not None and qn.startswith(project_prefix)
+            ):
+                return False
+            return not any(qn == n or qn.startswith(f"{n}.") for n in nested_names)
+
         doomed: set[_NodeId] = set()
-        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        frontier = [
+            node
+            for node in self._nodes_at_path(_MODULE_LABEL, path)
+            if (qn := _text(self.nodes[node].get(cs.KEY_QUALIFIED_NAME)))
+            and in_scope(qn)
+        ]
         while frontier:
             node = frontier.pop()
             if node in doomed:
                 continue
             doomed.add(node)
-            for _fl, _fv, rel_type, to_label, to_val in self._out.get(node, ()):
+            for _fl, _fv, rel_type, to_label, to_val, _site in self._out.get(node, ()):
                 if rel_type in _MODULE_SUBTREE_RELS:
                     child = (to_label, to_val)
                     if child not in doomed:
@@ -1159,7 +1433,6 @@ class _StatefulIngestor:
             self.nodes.pop(node, None)
             touched = self._out.pop(node, set()) | self._in.pop(node, set())
             for edge in touched:
-                self.edges.discard(edge)
                 self.edge_props.pop(edge, None)
                 self._out.get((edge[0], edge[1]), set()).discard(edge)
                 self._in.get((edge[3], edge[4]), set()).discard(edge)
@@ -1301,9 +1574,9 @@ def extract_cgr_lang_graph(
                 # as a DUP_QN_MARKER variant (`ITtl@3`, issue #764); the oracle
                 # grades by the written name, so strip the marker.
                 flat = str(to_val).replace(cs.SEPARATOR_DOUBLE_COLON, cs.SEPARATOR_DOT)
-                target_name = flat.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(
-                    cs.DUP_QN_MARKER, 1
-                )[0]
+                target_name = qn_markers.strip_dup_marker(
+                    flat.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+                )
                 name_edges.add(NameEdge(rel_type, source, target_name))
     return GraphData(nodes=nodes, edges=edges, name_edges=name_edges)
 
@@ -1530,10 +1803,8 @@ def _to_graph_data(ingestor: _CapturingIngestor, project_name: str) -> GraphData
         if rel_type == cs.RelationshipType.INHERITS.value:
             # Same DUP_QN_MARKER strip as the multi-language reducer: a base
             # registered as a duplicate variant grades by its written name.
-            target = (
-                str(to_val)
-                .rsplit(cs.SEPARATOR_DOT, 1)[-1]
-                .split(cs.DUP_QN_MARKER, 1)[0]
+            target = qn_markers.strip_dup_marker(
+                str(to_val).rsplit(cs.SEPARATOR_DOT, 1)[-1]
             )
             name_edges.add(NameEdge(rel_type, source, target))
         elif rel_type == cs.RelationshipType.IMPORTS.value:

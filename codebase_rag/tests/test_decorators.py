@@ -8,6 +8,7 @@ import pytest
 
 from codebase_rag.decorators import (
     async_timing_decorator,
+    depth_guard,
     ensure_loaded,
     log_operation,
     mcp_try_except,
@@ -529,3 +530,30 @@ class TestMcpTryExcept:
         handler = handler_with_cancel()
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(handler)
+
+
+class TestDepthGuard:
+    def test_calls_past_the_limit_answer_none_and_the_counter_unwinds(self) -> None:
+        @depth_guard(max_depth=3, guard_name="_test_depth_guard_limit")
+        def descend(n: int) -> int | None:
+            if n == 0:
+                return 0
+            inner = descend(n - 1)
+            return None if inner is None else inner + 1
+
+        assert descend(2) == 2
+        assert descend(10) is None
+        # The counter unwinds after each call, so a later shallow call works.
+        assert descend(2) == 2
+
+    def test_functions_sharing_a_name_share_one_counter(self) -> None:
+        @depth_guard(max_depth=4, guard_name="_test_depth_guard_shared")
+        def ping(n: int) -> int | None:
+            return 0 if n == 0 else pong(n - 1)
+
+        @depth_guard(max_depth=4, guard_name="_test_depth_guard_shared")
+        def pong(n: int) -> int | None:
+            return 0 if n == 0 else ping(n - 1)
+
+        assert ping(3) == 0
+        assert ping(4) is None

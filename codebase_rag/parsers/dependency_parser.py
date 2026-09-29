@@ -1,9 +1,9 @@
 import json
 import re
+import tomllib
 from pathlib import Path
 
 import defusedxml.ElementTree as ET
-import toml
 from loguru import logger
 
 from .. import constants as cs
@@ -25,6 +25,11 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
     return name, spec
 
 
+def _load_toml(file_path: Path) -> dict:
+    with file_path.open("rb") as f:
+        return tomllib.load(f)
+
+
 class DependencyParser:
     __slots__ = ()
 
@@ -38,7 +43,7 @@ class PyProjectTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
-            data = toml.load(file_path)
+            data = _load_toml(file_path)
 
             if poetry_deps := (
                 data.get(cs.DEP_KEY_TOOL, {})
@@ -133,7 +138,7 @@ class CargoTomlParser(DependencyParser):
     def parse(self, file_path: Path) -> list[Dependency]:
         dependencies: list[Dependency] = []
         try:
-            data = toml.load(file_path)
+            data = _load_toml(file_path)
 
             deps = data.get(cs.DEP_KEY_DEPENDENCIES, {})
             for dep_name, dep_spec in deps.items():
@@ -171,30 +176,38 @@ class GoModParser(DependencyParser):
                     if line.startswith(cs.GOMOD_REQUIRE_BLOCK_START):
                         in_require_block = True
                         continue
-                    elif line == cs.GOMOD_BLOCK_END and in_require_block:
+                    if line == cs.GOMOD_BLOCK_END and in_require_block:
                         in_require_block = False
                         continue
-                    elif (
-                        line.startswith(cs.GOMOD_REQUIRE_LINE_PREFIX)
-                        and not in_require_block
-                    ):
-                        parts = line.split()[1:]
-                        if len(parts) >= 2:
-                            dependencies.append(Dependency(parts[0], parts[1]))
-                    elif (
-                        in_require_block
-                        and line
-                        and not line.startswith(cs.GOMOD_COMMENT_PREFIX)
-                    ):
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            dep_name = parts[0]
-                            version = parts[1]
-                            if not version.startswith(cs.GOMOD_COMMENT_PREFIX):
-                                dependencies.append(Dependency(dep_name, version))
+                    dep = (
+                        _gomod_block_entry(line)
+                        if in_require_block
+                        else _gomod_require_line(line)
+                    )
+                    if dep is not None:
+                        dependencies.append(dep)
         except Exception as e:
             logger.error(ls.DEP_PARSE_ERROR_GOMOD.format(path=file_path, error=e))
         return dependencies
+
+
+def _gomod_require_line(line: str) -> Dependency | None:
+    # A single-line `require module version`.
+    if not line.startswith(cs.GOMOD_REQUIRE_LINE_PREFIX):
+        return None
+    parts = line.split()[1:]
+    return Dependency(parts[0], parts[1]) if len(parts) >= 2 else None
+
+
+def _gomod_block_entry(line: str) -> Dependency | None:
+    # A `module version` line inside a `require ( ... )` block; comments and
+    # a comment in the version slot bind nothing.
+    if not line or line.startswith(cs.GOMOD_COMMENT_PREFIX):
+        return None
+    parts = line.split()
+    if len(parts) < 2 or parts[1].startswith(cs.GOMOD_COMMENT_PREFIX):
+        return None
+    return Dependency(parts[0], parts[1])
 
 
 class GemfileParser(DependencyParser):

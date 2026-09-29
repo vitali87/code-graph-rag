@@ -51,6 +51,10 @@ _GO_PARAMS = frozenset(
     {cs.TS_GO_PARAMETER_DECLARATION, cs.TS_GO_VARIADIC_PARAMETER_DECLARATION}
 )
 _JAVA_PARAMS = frozenset({cs.TS_FORMAL_PARAMETER, cs.TS_SPREAD_PARAMETER})
+# Inside a `spread_parameter` the element type is the named child that is
+# neither the `modifiers` (`final`, an annotation) nor the declarator that
+# carries the name (issue #1964: `final String... xs` read as `final...`).
+_JAVA_NOT_ELEMENT_TYPES = frozenset({cs.TS_MODIFIERS, cs.TS_VARIABLE_DECLARATOR})
 
 TYPE_NODE_TYPES = frozenset(
     {
@@ -142,8 +146,17 @@ def _extract_java_type_facts(node: Node) -> TypeFacts:
         if child.type not in _JAVA_PARAMS:
             continue
         if child.type == cs.TS_SPREAD_PARAMETER:
-            # `String... names`: the type is the first named child.
-            inner = next(iter(child.named_children), None)
+            # `String... names`: the element type is the named child that is
+            # not a modifier and not the declarator (`final String... xs`
+            # puts `modifiers` first).
+            inner = next(
+                (
+                    c
+                    for c in child.named_children
+                    if c.type not in _JAVA_NOT_ELEMENT_TYPES
+                ),
+                None,
+            )
             types.append(f"{_text(inner)}{cs.LANG_ELLIPSIS}")
         else:
             types.append(_field_type(child))
@@ -362,11 +375,14 @@ class TypeReferenceResolver:
                 found.setdefault(qn, None)
         return list(found)
 
+    def label_for(self, qn: str) -> str:
+        return str(self._registry[qn])
+
 
 def _target_spec(
     resolver: TypeReferenceResolver, target_qn: str
 ) -> tuple[str, str, str]:
-    return (str(resolver._registry[target_qn]), cs.KEY_QUALIFIED_NAME, target_qn)
+    return (resolver.label_for(target_qn), cs.KEY_QUALIFIED_NAME, target_qn)
 
 
 def _emit_returns(

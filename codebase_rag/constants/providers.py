@@ -41,6 +41,9 @@ class GoogleProviderType(StrEnum):
 # Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
 MINIMAX_DEFAULT_ENDPOINT = "https://api.minimax.io/v1"
+LITELLM_DEFAULT_ENDPOINT = "http://localhost:4000/v1"
+# pydantic-ai module whose presence decides whether the LiteLLM provider registers.
+PYDANTIC_AI_LITELLM_MODULE = "pydantic_ai.providers.litellm"
 MINIMAX_ANTHROPIC_SDK_PATH = "/anthropic"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
@@ -92,6 +95,14 @@ class EmbeddingDevice(StrEnum):
 class VectorStoreBackend(StrEnum):
     QDRANT = "qdrant"
     MILVUS = "milvus"
+
+
+# The setting that sizes each backend's collection, named in the error raised
+# when the embedding model's output does not match it.
+VECTOR_DIM_SETTINGS: dict[VectorStoreBackend, str] = {
+    VectorStoreBackend.QDRANT: "QDRANT_VECTOR_DIM",
+    VectorStoreBackend.MILVUS: "MILVUS_VECTOR_DIM",
+}
 
 
 # Batches between torch.mps.empty_cache() calls: dropping the Metal
@@ -161,6 +172,10 @@ MODULE_TORCH = "torch"
 MODULE_TRANSFORMERS = "transformers"
 MODULE_QDRANT_CLIENT = "qdrant_client"
 MODULE_PYMILVUS = "pymilvus"
+
+# qdrant-client sends the `api-key` header in the clear only when the URL
+# names this scheme; a URL without a scheme switches to https once a key is set.
+QDRANT_INSECURE_URL_SCHEME = "http"
 
 SEMANTIC_DEPENDENCIES = (
     MODULE_PYMILVUS,

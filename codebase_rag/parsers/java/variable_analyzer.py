@@ -8,7 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
-from ...decorators import recursion_guard
+from ...decorators import depth_exhausted, depth_guard, recursion_guard
 from ...types_defs import ASTNode
 from ..utils import safe_decode_text
 from .utils import (
@@ -16,6 +16,7 @@ from .utils import (
     extract_field_info,
     extract_method_call_info,
     get_root_node_from_module_qn,
+    spread_element_type_node,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +51,15 @@ def _java_literal_type(expr_node: ASTNode) -> str | None:
     return None
 
 
+def _first_type_identifier_text(parent: ASTNode) -> str | None:
+    for sibling in parent.children:
+        if sibling.type == cs.TS_TYPE_IDENTIFIER and (
+            text := safe_decode_text(sibling)
+        ):
+            return text
+    return None
+
+
 class JavaVariableAnalyzerMixin:
     __slots__ = ()
     ast_cache: ASTCacheProtocol
@@ -62,14 +72,10 @@ class JavaVariableAnalyzerMixin:
     # implementation and silently resolve every call to None.
     _do_resolve_java_method_call: Callable[..., tuple[str, str] | None]
     _declared_return_type_of: Callable[[str], str | None]
+    _resolve_java_method_return_type: Callable[[str, str], str | None]
 
     @abstractmethod
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
-
-    @abstractmethod
-    def _resolve_java_method_return_type(
-        self, method_call: str, module_qn: str
-    ) -> str | None: ...
 
     @abstractmethod
     def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
@@ -127,11 +133,14 @@ class JavaVariableAnalyzerMixin:
         param_name = None
         param_type = None
 
+        # The element type by shape, not by `type_identifier` alone: a
+        # generic, array or primitive varargs bound no local before
+        # (issue #1974).
+        element = spread_element_type_node(param_node)
+        if element is not None and (decoded_text := safe_decode_text(element)):
+            param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
         for subchild in param_node.children:
-            if subchild.type == cs.TS_TYPE_IDENTIFIER:
-                if decoded_text := safe_decode_text(subchild):
-                    param_type = f"{decoded_text}{cs.JAVA_ARRAY_SUFFIX}"
-            elif subchild.type == cs.TS_VARIABLE_DECLARATOR:
+            if subchild.type == cs.TS_VARIABLE_DECLARATOR:
                 if name_node := subchild.child_by_field_name(cs.FIELD_NAME):
                     param_name = safe_decode_text(name_node)
 
@@ -352,20 +361,19 @@ class JavaVariableAnalyzerMixin:
             if not (parent := child.parent):
                 continue
 
-            for sibling in parent.children:
-                if sibling.type == cs.TS_TYPE_IDENTIFIER:
-                    if var_type := safe_decode_text(sibling):
-                        resolved_type = self._resolve_java_type_name(
-                            var_type, module_qn
-                        )
-                        local_var_types[var_name] = resolved_type
-                        logger.debug(
-                            ls.JAVA_ENHANCED_FOR_VAR_ALT,
-                            name=var_name,
-                            type=resolved_type,
-                        )
-                        break
+            if var_type := _first_type_identifier_text(parent):
+                resolved_type = self._resolve_java_type_name(var_type, module_qn)
+                local_var_types[var_name] = resolved_type
+                logger.debug(
+                    ls.JAVA_ENHANCED_FOR_VAR_ALT,
+                    name=var_name,
+                    type=resolved_type,
+                )
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _infer_java_type_from_expression(
         self,
         expr_node: ASTNode,
@@ -441,6 +449,10 @@ class JavaVariableAnalyzerMixin:
             if object_ref
             else str(method_name)
         )
+        # A call refused for depth stays untyped: the name-based fallback walks
+        # the class AST recursively, which the depth limit exists to prevent.
+        if depth_exhausted(cs.GUARD_JAVA_INFERENCE_DEPTH, cs.JAVA_MAX_INFERENCE_DEPTH):
+            return None
         return self._resolve_java_method_return_type(call_string, module_qn)
 
     @recursion_guard(
@@ -458,6 +470,10 @@ class JavaVariableAnalyzerMixin:
         # recurse without a brake.
         return self._do_resolve_java_method_call(call_node, local_var_types, module_qn)
 
+    @depth_guard(
+        max_depth=cs.JAVA_MAX_INFERENCE_DEPTH,
+        guard_name=cs.GUARD_JAVA_INFERENCE_DEPTH,
+    )
     def _infer_java_field_access_type(
         self,
         field_access_node: ASTNode,
@@ -637,9 +653,11 @@ class JavaVariableAnalyzerMixin:
             return None
 
         for field_child in body.children:
-            if field_child.type == cs.TS_FIELD_DECLARATION:
-                field_info = extract_field_info(field_child)
-                if field_info.get(cs.FIELD_NAME) == field_name:
-                    if field_type := field_info.get(cs.FIELD_TYPE):
-                        return self._resolve_java_type_name(str(field_type), module_qn)
+            if field_child.type != cs.TS_FIELD_DECLARATION:
+                continue
+            field_info = extract_field_info(field_child)
+            if field_info.get(cs.FIELD_NAME) == field_name and (
+                field_type := field_info.get(cs.FIELD_TYPE)
+            ):
+                return self._resolve_java_type_name(str(field_type), module_qn)
         return None

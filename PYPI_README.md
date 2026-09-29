@@ -1,6 +1,6 @@
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 ## What It Does
 
@@ -57,11 +57,22 @@ uploads and GitHub Release binaries land on an every-50 cadence, so the tag on `
 usually runs ahead of the published version. A security fix is the exception: it
 ships immediately rather than waiting for the cadence.
 
-To run code newer than the latest release, install from git:
+To run code newer than the latest release, install from git with uv:
 
 ```bash
-pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
+uv tool install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
+
+Use uv for this: it applies the project's `[tool.uv.sources]`, which build the C
+and C++ grammars from forks that keep the declarations upstream drops after a
+`#define` whose value contains a block comment. `pip` ignores those sources and
+installs the upstream grammars.
+
+To upgrade, rerun the install with `--upgrade` and the extras you chose, for
+example `pip install --upgrade 'code-graph-rag[treesitter-full]'`. With uv or pipx,
+run `uv tool upgrade code-graph-rag` or `pipx upgrade code-graph-rag` instead; see the
+[installation guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#upgrade)
+for git installs and the other methods.
 
 ### Prerequisites
 
@@ -70,15 +81,12 @@ pip install "code-graph-rag[treesitter-full] @ git+https://github.com/vitali87/c
 - `cmake` (for building pymgclient)
 - `ripgrep` (`rg`) (for shell command text searching)
 
-The wheel is pure Python (`py3-none-any`), so the package itself installs on
-any platform with Python 3.12 or newer (dependencies may still need platform
-wheels or build tools, such as `cmake` for `pymgclient`). The piwheels build for Debian Bookworm shows as failed
-because Bookworm's system Python is 3.11, which is below our floor. On
-Raspberry Pi OS Bookworm, install into a Python 3.12 environment so the pip
-commands above actually run under 3.12: with [uv](https://docs.astral.sh/uv/)
-run `uv venv --python 3.12 --seed && source .venv/bin/activate` (uv downloads
-3.12 automatically; `--seed` puts pip in the environment), or install CPython 3.12 yourself and use
-`python3.12 -m pip install ...`.
+The wheel is pure Python (`py3-none-any`), so it installs on any platform with
+Python 3.12 or newer. Some distributions ship an older interpreter (Debian
+Bookworm, and so Raspberry Pi OS Bookworm, ships 3.11), which also explains the
+failed piwheels Bookworm build. On those systems, see the [installation
+guide](https://github.com/vitali87/code-graph-rag/blob/main/docs/getting-started/installation.md#older-system-interpreters)
+for the available interpreter-pinning alternatives.
 
 ## CLI Quick Start
 

@@ -50,3 +50,7 @@ SCALA_UNIT_TYPE = "Unit"
 # Every spelling of scala.Unit. A user-defined type merely ENDING in Unit
 # (`example.Unit`) is a real type whose return value must still compose.
 SCALA_UNIT_TYPES = frozenset({"Unit", "scala.Unit", "_root_.scala.Unit"})
+
+# A curried `def f(a: Int)(b: Int)` has one `parameters` child per list.
+TS_SCALA_PARAMETERS = "parameters"
+TS_SCALA_FIELD_DEFAULT_VALUE = "default_value"
