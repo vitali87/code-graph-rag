@@ -206,6 +206,10 @@ EXCLUSION_STATE_PROJECTS_KEY = "projects"
 # Recorded edit transactions for `cgr edits show|undo` (issue #1528).
 EDIT_HISTORY_FILENAME = ".cgr-edit-history.json"
 EDIT_LOCK_FILENAME = ".cgr-edit-lock"
+# Held by the one writer syncing the checkout (issue #2441).
+SYNC_LOCK_FILENAME = ".cgr-sync-lock"
+# How often a scoped reingest re-checks a lock a running sync holds.
+SYNC_LOCK_POLL_SECONDS = 0.2
 PLATFORM_WINDOWS = "win32"
 # Permission bits copied onto a replacement file (rwx for u/g/o, setuid etc.).
 EDIT_MODE_MASK = 0o7777
@@ -221,6 +225,7 @@ CGR_STATE_FILENAMES: frozenset[str] = frozenset(
         EXCLUSION_STATE_FILENAME,
         EDIT_HISTORY_FILENAME,
         EDIT_LOCK_FILENAME,
+        SYNC_LOCK_FILENAME,
     }
 )
 # Edit transactions (issue #1528).

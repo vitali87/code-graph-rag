@@ -7,7 +7,8 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import ExitStack, contextmanager
 from fnmatch import fnmatch
 from functools import partial
 from importlib.metadata import version as get_version
@@ -58,6 +59,7 @@ from .stack import StackManager
 from .stack.cli import cli as daemon_cli
 from .stack.constants import StackState
 from .stack.manager import StackError
+from .sync_lock import SyncInProgressError, repo_sync_lock
 from .tools.health_checker import HealthChecker
 from .tools.language import cli as language_cli
 from .trace.cli import cli as trace_cli
@@ -335,7 +337,10 @@ def _clean_database_only(
     # `--clean` without `--update-graph`: wipe the graph, the vector store and
     # the hash cache, then stop.
     _import_vector_store()
-    with connect_memgraph(batch_size) as ingestor:
+    with (
+        _sync_lock_or_exit(repo_to_clean, project_name),
+        connect_memgraph(batch_size) as ingestor,
+    ):
         _confirm_destructive_clean(ingestor, project_name, assume_yes)
         _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
         ingestor.clean_database()
@@ -620,6 +625,24 @@ def _clear_sync_incomplete(ingestor: MemgraphIngestor, project_name: str) -> Non
         )
 
 
+@contextmanager
+def _sync_lock_or_exit(repo: Path, project_name: str) -> Iterator[None]:
+    """Hold the checkout's sync lock for the whole sync, or stop first (#2441).
+
+    Taken before the `--clean` wipe and the `:IncompleteRun` marker, so a
+    run refused here has changed nothing: the running sync keeps its graph
+    and its marker, and no marker is left behind for a run that never began.
+    """
+    held = ExitStack()
+    try:
+        held.enter_context(repo_sync_lock(repo, project_name))
+    except SyncInProgressError as busy:
+        app_context.console.print(style(str(busy), cs.Color.RED))
+        raise typer.Exit(1) from None
+    with held:
+        yield
+
+
 def _run_graph_sync(
     repo: Path,
     project_name: str,
@@ -649,7 +672,10 @@ def _run_graph_sync(
         unignore_paths = cgrignore.unignore or None
 
     elapsed = time.monotonic()
-    with connect_memgraph(batch_size) as ingestor:
+    with (
+        _sync_lock_or_exit(repo, project_name),
+        connect_memgraph(batch_size) as ingestor,
+    ):
         if clean:
             _confirm_destructive_clean(ingestor, project_name, assume_yes)
             _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
@@ -1036,6 +1062,9 @@ def index(
         )
         _info(style(cs.CLI_MSG_INDEXING_DONE, cs.Color.GREEN))
 
+    except SyncInProgressError as busy:
+        app_context.console.print(style(str(busy), cs.Color.RED))
+        raise typer.Exit(1) from None
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_INDEXING.format(error=e), cs.Color.RED)

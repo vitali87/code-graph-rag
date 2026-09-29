@@ -154,3 +154,12 @@ class LLMGenerationError(Exception):
 
 class ReadOnlyQueryError(Exception):
     """An untrusted query would write, so it was never executed."""
+
+
+# Sync lock (issue #2441)
+SYNC_IN_PROGRESS = (
+    "Another sync of {repo} is running ({holder}). Two syncs of one checkout at "
+    "once leave the graph incomplete; wait for it to finish, then run this again."
+)
+SYNC_HOLDER = "pid {pid}, project '{project}'"
+SYNC_HOLDER_UNKNOWN = "holder unknown"
