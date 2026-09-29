@@ -169,6 +169,7 @@ CLI_STATS_PER_PROJECT_ROW = (
     "  {project}: {nodes:,} nodes / {relationships:,} relationships"
 )
 CLI_ERR_STATS_UNKNOWN_PROJECTS = "Not indexed: {missing}. Indexed projects: {projects}."
+CLI_ERR_STATS_BLANK_PROJECT = "--project-name must be a non-empty project name."
 # `cgr check` (issue #1525).
 CHECK_GIT_FAILED = "Cannot diff the working tree against {base}: {error}"
 CHECK_BAD_BASE = "--base must be a git revision, not an option: {base!r}"

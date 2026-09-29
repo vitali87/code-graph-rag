@@ -112,7 +112,9 @@ cgr stats [OPTIONS]
 | `--project-name`, `-n` | Count only this project: its containment tree, what it defines, and the relationships that start there. Repeatable. |
 | `--workspace` | Count only the projects of workspace NAME. |
 
-A name that is not indexed is an error that lists the projects that are.
+A name that is not indexed is an error that lists the projects that are. A
+scope that names no project, such as a blank `--project-name` or a workspace
+with no repos, is also an error rather than a fallback to every project.
 
 ### `cgr dead-code`
 

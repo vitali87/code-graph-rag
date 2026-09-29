@@ -1715,6 +1715,18 @@ def stats(
             + (workspace_config.project_names() if workspace_config else [])
         )
     )
+    # An empty `requested` means "whole graph" only when no scope was asked
+    # for; a blank -n or an empty workspace must not widen to every project.
+    if (project_name or workspace_config) and not requested:
+        app_context.console.print(
+            style(
+                cs.CLI_MSG_WORKSPACE_EMPTY.format(name=workspace_config.name)
+                if workspace_config
+                else cs.CLI_ERR_STATS_BLANK_PROJECT,
+                cs.Color.RED,
+            )
+        )
+        raise typer.Exit(1)
 
     app_context.console.print(style(cs.CLI_MSG_CONNECTING_STATS, cs.Color.CYAN))
 

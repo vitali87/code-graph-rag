@@ -125,6 +125,52 @@ def test_an_unknown_workspace_is_an_error(
     assert mock.fetch_all.call_count == 0
 
 
+def test_an_empty_workspace_is_an_error_not_the_whole_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "CGR_HOME", tmp_path)
+    save_workspace(WorkspaceConfig(name="empty"), home=tmp_path)
+    mock = _ingestor(["alpha", "beta"])
+
+    out = _run(["--workspace", "empty"], mock)
+
+    assert out.startswith("1\n"), out
+    assert "empty" in out
+    assert "has no repos" in out
+    assert not [q for q, _p in _queries(mock) if q in _COUNT_QUERIES]
+    assert "alpha: 5 nodes" not in out
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_project_name_is_an_error_not_the_whole_graph(blank: str) -> None:
+    mock = _ingestor(["alpha", "beta"])
+
+    out = _run(["-n", blank], mock)
+
+    assert out.startswith("1\n"), out
+    assert "--project-name" in out
+    assert not [q for q, _p in _queries(mock) if q in _COUNT_QUERIES]
+    assert "alpha: 5 nodes" not in out
+
+
+def test_a_project_alongside_an_empty_workspace_is_still_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative: the empty-scope error fires only when nothing at all is left
+    # to count, not whenever one of the two options contributes nothing.
+    monkeypatch.setattr(settings, "CGR_HOME", tmp_path)
+    save_workspace(WorkspaceConfig(name="empty"), home=tmp_path)
+    mock = _ingestor(["alpha", "beta"])
+
+    out = _run(["-n", "alpha", "--workspace", "empty"], mock)
+
+    assert out.startswith("0\n"), out
+    assert _queries(mock) == [
+        (cq.CYPHER_STATS_PROJECT_NODE_COUNTS, {"project_names": ["alpha"]}),
+        (cq.CYPHER_STATS_PROJECT_RELATIONSHIP_COUNTS, {"project_names": ["alpha"]}),
+    ]
+
+
 def test_unscoped_totals_over_several_projects_are_attributed() -> None:
     mock = _ingestor(["alpha", "beta"])
 
