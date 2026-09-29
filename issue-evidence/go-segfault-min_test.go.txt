@@ -1,0 +1,263 @@
+package cobra
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/spf13/pflag"
+)
+
+func TestUpdateName(t *testing.T) {
+	c := &Command{Use: "name xyz"}
+	originalName := c.Name()
+
+	c.Use = "changedName abc"
+	if originalName == c.Name() || c.Name() != "changedName" {
+		t.Error("c.Name() should be updated on changed c.Use")
+	}
+}
+
+type calledAsTestcase struct {
+	args []string
+	call string
+	want string
+	epm  bool
+}
+
+func (tc *calledAsTestcase) test(t *testing.T) {
+	defer func(ov bool) { EnablePrefixMatching = ov }(EnablePrefixMatching)
+	EnablePrefixMatching = tc.epm
+
+	var called *Command
+	run := func(c *Command, _ []string) { t.Logf("called: %q", c.Name()); called = c }
+
+	parent := &Command{Use: "parent", Run: run}
+	child1 := &Command{Use: "child1", Run: run, Aliases: []string{"this"}}
+	child2 := &Command{Use: "child2", Run: run, Aliases: []string{"that"}}
+
+	parent.AddCommand(child1)
+	parent.AddCommand(child2)
+	parent.SetArgs(tc.args)
+
+	output := new(bytes.Buffer)
+	parent.SetOut(output)
+	parent.SetErr(output)
+
+	_ = parent.Execute()
+
+	if called == nil {
+		if tc.call != "" {
+			t.Errorf("missing expected call to command: %s", tc.call)
+		}
+		return
+	}
+
+	if called.Name() != tc.call {
+		t.Errorf("called command == %q; Wanted %q", called.Name(), tc.call)
+	} else if got := called.CalledAs(); got != tc.want {
+		t.Errorf("%s.CalledAs() == %q; Wanted: %q", tc.call, got, tc.want)
+	}
+}
+
+func TestCalledAs(t *testing.T) {
+	tests := map[string]calledAsTestcase{
+		"find/no-args":            {nil, "parent", "parent", false},
+		"find/real-name":          {[]string{"child1"}, "child1", "child1", false},
+		"find/full-alias":         {[]string{"that"}, "child2", "that", false},
+		"find/part-no-prefix":     {[]string{"thi"}, "", "", false},
+		"find/part-alias":         {[]string{"thi"}, "child1", "this", true},
+		"find/conflict":           {[]string{"th"}, "", "", true},
+		"traverse/no-args":        {nil, "parent", "parent", false},
+		"traverse/real-name":      {[]string{"child1"}, "child1", "child1", false},
+		"traverse/full-alias":     {[]string{"that"}, "child2", "that", false},
+		"traverse/part-no-prefix": {[]string{"thi"}, "", "", false},
+		"traverse/part-alias":     {[]string{"thi"}, "child1", "this", true},
+		"traverse/conflict":       {[]string{"th"}, "", "", true},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, tc.test)
+	}
+}
+
+func TestFParseErrWhitelistBackwardCompatibility(t *testing.T) {
+	c := &Command{Use: "c", Run: emptyRun}
+	c.Flags().BoolP("boola", "a", false, "a boolean flag")
+
+	output, err := executeCommand(c, "c", "-a", "--unknown", "flag")
+	if err == nil {
+		t.Error("expected unknown flag error")
+	}
+	checkStringContains(t, output, "unknown flag: --unknown")
+}
+
+func TestFParseErrWhitelistSameCommand(t *testing.T) {
+	c := &Command{
+		Use: "c",
+		Run: emptyRun,
+		FParseErrWhitelist: FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+	}
+	c.Flags().BoolP("boola", "a", false, "a boolean flag")
+
+	_, err := executeCommand(c, "c", "-a", "--unknown", "flag")
+	if err != nil {
+		t.Error("unexpected error: ", err)
+	}
+}
+
+func TestFParseErrWhitelistParentCommand(t *testing.T) {
+	root := &Command{
+		Use: "root",
+		Run: emptyRun,
+		FParseErrWhitelist: FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+	}
+
+	c := &Command{
+		Use: "child",
+		Run: emptyRun,
+	}
+	c.Flags().BoolP("boola", "a", false, "a boolean flag")
+
+	root.AddCommand(c)
+
+	output, err := executeCommand(root, "child", "-a", "--unknown", "flag")
+	if err == nil {
+		t.Error("expected unknown flag error")
+	}
+	checkStringContains(t, output, "unknown flag: --unknown")
+}
+
+func TestFParseErrWhitelistChildCommand(t *testing.T) {
+	root := &Command{
+		Use: "root",
+		Run: emptyRun,
+	}
+
+	c := &Command{
+		Use: "child",
+		Run: emptyRun,
+		FParseErrWhitelist: FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+	}
+	c.Flags().BoolP("boola", "a", false, "a boolean flag")
+
+	root.AddCommand(c)
+
+	_, err := executeCommand(root, "child", "-a", "--unknown", "flag")
+	if err != nil {
+		t.Error("unexpected error: ", err.Error())
+	}
+}
+
+func TestFParseErrWhitelistSiblingCommand(t *testing.T) {
+	root := &Command{
+		Use: "root",
+		Run: emptyRun,
+	}
+
+	c := &Command{
+		Use: "child",
+		Run: emptyRun,
+		FParseErrWhitelist: FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+	}
+	c.Flags().BoolP("boola", "a", false, "a boolean flag")
+
+	s := &Command{
+		Use: "sibling",
+		Run: emptyRun,
+	}
+	s.Flags().BoolP("boolb", "b", false, "a boolean flag")
+
+	root.AddCommand(c)
+	root.AddCommand(s)
+
+	output, err := executeCommand(root, "sibling", "-b", "--unknown", "flag")
+	if err == nil {
+		t.Error("expected unknown flag error")
+	}
+	checkStringContains(t, output, "unknown flag: --unknown")
+}
+
+func TestSetContext(t *testing.T) {
+	type key struct{}
+	val := "foobar"
+	root := &Command{
+		Use: "root",
+		Run: func(cmd *Command, args []string) {
+			key := cmd.Context().Value(key{})
+			got, ok := key.(string)
+			if !ok {
+				t.Error("key not found in context")
+			}
+			if got != val {
+				t.Errorf("Expected value: \n %v\nGot:\n %v\n", val, got)
+			}
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), key{}, val)
+	root.SetContext(ctx)
+	err := root.Execute()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestSetContextPreRun(t *testing.T) {
+	type key struct{}
+	val := "barr"
+	root := &Command{
+		Use: "root",
+		PreRun: func(cmd *Command, args []string) {
+			ctx := context.WithValue(cmd.Context(), key{}, val)
+			cmd.SetContext(ctx)
+		},
+		Run: func(cmd *Command, args []string) {
+			val := cmd.Context().Value(key{})
+			got, ok := val.(string)
+			if !ok {
+				t.Error("key not found in context")
+			}
+			if got != val {
+				t.Errorf("Expected value: \n %v\nGot:\n %v\n", val, got)
+			}
+		},
+	}
+	err := root.Execute()
+	if err != nil {
+		t.Error(err)
+	}
+}
+
+func TestSetContextPreRunOverwrite(t *testing.T) {
+	type key struct{}
+	val := "blah"
+	root := &Command{
+		Use: "root",
+		Run: func(cmd *Command, args []string) {
+			key := cmd.Context().Value(key{})
+			_, ok := key.(string)
+			if ok {
+				t.Error("key found in context when not expected")
+			}
+		},
+	}
+	ctx := context.WithValue(context.Background(), key{}, val)
+	root.SetContext(ctx)
+	err := root.ExecuteContext(context.Background())
+	if err != nil {
+		t.Error(err)
+	}
+}
