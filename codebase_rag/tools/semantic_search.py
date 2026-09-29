@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -19,7 +18,8 @@ from ..taint import ReadContentRecord
 from ..types_defs import SemanticSearchResult
 from ..utils.dependencies import has_semantic_dependencies
 from ..utils.path_utils import (
-    absolute_path_within_project_root,
+    SourceMiss,
+    locate_node_source,
     project_roots_from_rows,
 )
 from . import tool_descriptions as td
@@ -69,9 +69,14 @@ def semantic_code_search(
             if node_id in results_map:
                 result = results_map[node_id]
                 result_type = result.get("type")
-                type_str = (
+                first_label = (
                     result_type[0]
                     if isinstance(result_type, list) and result_type
+                    else None
+                )
+                type_str = (
+                    first_label
+                    if isinstance(first_label, str)
                     else cs.SEMANTIC_TYPE_UNKNOWN
                 )
                 formatted_results.append(
@@ -127,6 +132,13 @@ def get_function_source_code(
         file_path = result.get("path")
         start_line = result.get("start_line")
         end_line = result.get("end_line")
+        if (
+            not isinstance(file_path, str)
+            or type(start_line) is not int
+            or type(end_line) is not int
+        ):
+            logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+            return None
 
         is_valid, file_path_obj = validate_source_location(
             file_path, start_line, end_line
@@ -137,17 +149,29 @@ def get_function_source_code(
 
         # The recorded absolute_path is authoritative: a same-named file in
         # the process CWD must not shadow the indexed node. The relative
-        # path covers repos moved since indexing and old graphs without the
-        # property (issue #425).
+        # path covers stale node paths and old graphs without the property
+        # (issue #425), but must satisfy the same known-project boundary.
+        qualified_name = str(result.get("qualified_name", ""))
+        project_roots = _resolve_project_roots(ingestor, roots_cache)
         absolute_path = result.get("absolute_path")
-        if absolute_path and not absolute_path_within_project_root(
-            str(result.get("qualified_name", "")),
-            absolute_path,
-            _resolve_project_roots(ingestor, roots_cache),
-        ):
-            absolute_path = None
-        if absolute_path and Path(absolute_path).is_file():
-            file_path_obj = Path(absolute_path)
+        located = locate_node_source(
+            qualified_name,
+            absolute_path if isinstance(absolute_path, str) else None,
+            file_path_obj,
+            project_roots,
+            None,
+        )
+        if located.path is None:
+            if located.miss == SourceMiss.STALE_ROOT:
+                logger.warning(
+                    ls.SEMANTIC_STALE_PROJECT_ROOT.format(
+                        id=node_id, project=located.project, root=located.root
+                    )
+                )
+            else:
+                logger.warning(ls.SEMANTIC_INVALID_LOCATION.format(id=node_id))
+            return None
+        file_path_obj = located.path
 
         return extract_source_lines(file_path_obj, start_line, end_line)
 

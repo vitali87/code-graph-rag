@@ -39,11 +39,49 @@ from scripts.check_pr_gated import (
     is_real_review,
     missing_aggregated_jobs,
     required_contexts_present,
+    review_anchor,
     review_execution_caveats,
+    stale_review_reason,
     unit_test_contexts,
     unresolved_in_page,
     validation_was_blocked,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gh_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail loudly on any `gh` call a test did not stub.
+
+    The tests stub `_gh_stdout_or_empty`, so a second I/O path reaches the
+    network unnoticed: `_gh_result` did, and 16 tests in this file ran a
+    real `gh api .../branches/main/protection` against github.com. They
+    passed only because `gh` is authenticated on the developer's machine,
+    and on a runner without auth each call burns its 60-second timeout.
+
+    Stubbing is not the point -- the failure is. A test reaching the
+    network must say so instead of quietly depending on the shell it runs
+    in, so this raises rather than returning a canned value: a canned
+    value would let the same drift happen again silently.
+    """
+
+    def _offline(*args: str) -> tuple[str, str, int]:
+        if len(args) >= 2 and args[0] == "api" and args[1].endswith("/protection"):
+            # "No classic layer" rather than the real payload, because the
+            # two are indistinguishable to these tests and the absent one
+            # needs no credentials: `classic_required_contexts` is [] under
+            # both, and `classic_review_count` differs (None vs 0) only
+            # where a ruleset approval count exists, which no fixture here
+            # sets. Not a claim that the endpoint 404s -- against this repo
+            # it answers 200.
+            return "", "gh: Not Found (HTTP 404)", 1
+        raise AssertionError(
+            f"unstubbed gh call reached the network: gh {' '.join(args)}. "
+            "Stub the seam this code path uses (`_gh_result`, which "
+            "`_gh_stdout_or_empty` delegates to) in the test."
+        )
+
+    monkeypatch.setattr(check_pr_gated, "_gh_result", _offline)
+
 
 REAL_STATUS_CONTEXT = {
     "__typename": "StatusContext",
@@ -1912,6 +1950,241 @@ class TestTheArmsAreOrderedMostSpecificFirst:
             )
 
             assert marker in reason, f"{marker!r} not in {reason!r}"
+
+
+class TestReviewAnchor:
+    """A review of an OLDER commit must not gate the head (issue #1936).
+
+    The script verified a review artifact positively -- a verdict marker
+    from a trusted bot -- but never compared the commit that review names
+    to `headRefOid`. A stale review and a fresh one were indistinguishable,
+    which is the trap `CLAUDE.md` warns about while also naming this script
+    as the source of truth.
+
+    The asymmetry is what made it dangerous rather than merely incomplete:
+    a MISSING review appends a reason, so it self-corrects, while a stale
+    one took the `else` branch and said nothing at all. Silence reads as
+    permission.
+
+    Three states need three answers, because they need different actions:
+    no artifact (wait for a review), an artifact whose anchor cannot be
+    parsed (fail closed and say so), and an artifact anchored to a
+    non-head commit (re-trigger the review).
+    """
+
+    HEAD = "7928c5ba8efe8af0f8d3f6b943171eb016deee72"
+    OLDER = "9aeb04f825538b27f0ff25fd31b56bbf08679000"
+
+    def test_an_anchor_naming_the_head_is_current(self) -> None:
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD) is None
+
+    def test_an_anchor_naming_an_older_commit_is_reported(self) -> None:
+        """The measured case from #1906: head two pushes past the review."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`"
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+        assert self.HEAD[:8] in reason
+
+    def test_an_artifact_with_no_parseable_anchor_fails_closed(self) -> None:
+        """A verdict with no commit named cannot be shown to be current, so
+        it must not pass. Failing open here would restore the bug for any
+        bot that changes its wording."""
+        body = "Confidence Score: 5/5\nLooks good to me."
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert "anchor" in reason.lower()
+
+    def test_the_freshest_anchor_decides_when_a_bot_re_reviews(self) -> None:
+        """Bots re-score in place and post repeatedly. One artifact naming
+        the head is enough, whatever earlier ones say, or every re-reviewed
+        PR would read as stale forever."""
+        stale = f"Confidence Score: 3/5\nLast reviewed commit: `{self.OLDER}`"
+        fresh = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+
+        reason = stale_review_reason(
+            [(stale, "greptile-apps[bot]"), (fresh, "greptile-apps[bot]")], self.HEAD
+        )
+
+        assert reason is None
+
+    def test_a_url_form_anchor_is_read(self) -> None:
+        """Greptile writes the anchor as a commit URL, which is the form
+        `CLAUDE.md`'s own extraction snippet greps for."""
+        body = (
+            f"Confidence Score: 5/5\n[link](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_a_bare_prose_anchor_is_read(self) -> None:
+        """The loosest pattern is the only reader for a body that names the
+        commit without a URL or a "last reviewed commit" label. Deleting it
+        left the suite green, so nothing pinned its existence
+        (greptile-local)."""
+        body = f"Confidence Score: 5/5\nI reviewed {self.HEAD} and found nothing."
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_an_uppercase_anchor_matches_a_lowercase_head(self) -> None:
+        """Both lowercasing rules exist to prevent a FALSE stale report,
+        which blocks a mergeable PR. The label pattern carries re.I, so an
+        uppercase sha reaches the group in uppercase (greptile-local)."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD.upper()}`"
+
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD) is None
+
+    def test_a_lowercase_anchor_matches_an_uppercase_head(self) -> None:
+        """The other direction: `headRefOid` itself may arrive uppercase."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.HEAD}`"
+
+        assert (
+            stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD.upper())
+            is None
+        )
+
+    def test_an_explicit_label_outranks_a_commit_url(self) -> None:
+        """A body carrying both forms must be read by the explicit one.
+
+        A bot that links the head's diff while stating an older reviewed
+        commit would otherwise read as fresh, which restores the exact bug
+        this check exists to catch, through pattern ordering alone
+        (CodeRabbit, #1936).
+        """
+        body = (
+            f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`\n"
+            f"[diff](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.OLDER
+
+        reason = stale_review_reason([(body, "greptile-apps[bot]")], self.HEAD)
+
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+
+    def test_a_url_only_body_still_reads_the_url(self) -> None:
+        """The control: reordering must not stop the URL form working when
+        it is the only anchor present, which is how Greptile writes it."""
+        body = (
+            f"Confidence Score: 5/5\n[diff](https://github.com/o/r/commit/{self.HEAD})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_an_uppercase_commit_url_is_read(self) -> None:
+        """The URL pattern needs re.I like the other two, or an uppercase
+        sha in a link reads as no anchor and blocks a current review
+        (CodeRabbit, Copilot, #1939)."""
+        body = (
+            "Confidence Score: 5/5\n"
+            f"[diff](https://github.com/o/r/commit/{self.HEAD.upper()})"
+        )
+
+        assert review_anchor(body) == self.HEAD
+
+    def test_a_clean_coderabbit_review_of_the_head_is_current(self) -> None:
+        """CodeRabbit names its range as "between <from> and <to>" in the
+        review details, with no label and no commit URL. Without a reader
+        for that form, a clean CodeRabbit review of the exact head failed
+        closed as anchor-absent (Greptile, #1939). The body is CodeRabbit's
+        own wording, taken from a review on this PR."""
+        body = (
+            "**Actionable comments posted: 0**\n\n"
+            "<details>\n<summary>📜 Review details</summary>\n\n"
+            "Reviewing files that changed from the base of the PR and "
+            f"between {self.OLDER} and {self.HEAD}.\n</details>"
+        )
+
+        assert review_anchor(body) == self.HEAD
+        assert stale_review_reason([(body, "coderabbitai[bot]")], self.HEAD) is None
+
+    def test_a_coderabbit_range_is_read_by_its_end_not_its_start(self) -> None:
+        """The range's END is the commit reviewed. Here the START is the
+        head, so reading the first sha would call a stale review fresh."""
+        body = (
+            "**Actionable comments posted: 0**\n\n"
+            "Reviewing files that changed from the base of the PR and "
+            f"between {self.HEAD} and {self.OLDER}."
+        )
+
+        assert review_anchor(body) == self.OLDER
+        reason = stale_review_reason([(body, "coderabbitai[bot]")], self.HEAD)
+        assert reason is not None
+        assert self.OLDER[:8] in reason
+
+    def test_an_unknown_head_does_not_manufacture_a_reason(self) -> None:
+        """If the head could not be read, staleness is unknown. Other
+        reasons already cover an unreadable PR; inventing one here would
+        report a stale review that may be current."""
+        body = f"Confidence Score: 5/5\nLast reviewed commit: `{self.OLDER}`"
+
+        assert stale_review_reason([(body, "greptile-apps[bot]")], "") is None
+
+
+class TestStaleReviewReachesTheGate:
+    """The anchor check must be WIRED IN, not merely defined.
+
+    Every other test in `TestReviewAnchor` calls `stale_review_reason`
+    directly, so all of them stay green if the gate never calls it --
+    which is precisely the bug of #1936, where the capability to detect a
+    stale review is useless unless `check()` consults it. Deleting the
+    call from the gate left 132 tests passing, so this one exists to fail
+    when that happens.
+    """
+
+    HEAD = "7928c5ba8efe8af0f8d3f6b943171eb016deee72"
+    OLDER = "9aeb04f825538b27f0ff25fd31b56bbf08679000"
+
+    def _view(self, anchor: str) -> str:
+        return json.dumps(
+            {
+                "headRefOid": self.HEAD,
+                "baseRefName": "main",
+                "statusCheckRollup": [],
+                "comments": [
+                    {
+                        "body": f"Confidence Score: 5/5\nLast reviewed commit: `{anchor}`",
+                        "author": {"login": "greptile-apps[bot]"},
+                    }
+                ],
+                "reviews": [],
+            }
+        )
+
+    def _reasons(self, monkeypatch: pytest.MonkeyPatch, anchor: str) -> list[str]:
+        def fake(*args: str) -> str:
+            # Only the PR view matters here; every other lookup returns
+            # empty, which makes the other gates complain harmlessly.
+            return self._view(anchor) if args[:2] == ("pr", "view") else ""
+
+        monkeypatch.setattr(check_pr_gated, "_gh_stdout_or_empty", fake)
+        reasons, _caveats = check_pr_gated.check("1")
+        return reasons
+
+    def test_the_gate_reports_a_stale_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reasons = self._reasons(monkeypatch, self.OLDER)
+
+        assert any("anchors to" in r for r in reasons), reasons
+
+    def test_the_gate_is_silent_about_a_current_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control: the gate must not object to a review of the head,
+        or the test above would pass against a gate that always complains.
+        """
+        reasons = self._reasons(monkeypatch, self.HEAD)
+
+        assert not any("anchors to" in r for r in reasons), reasons
 
 
 class TestAClosedPrsClearedRunAssociationIsNotAMissingOne:

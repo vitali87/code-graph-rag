@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.agent import AgentRetries
+from pydantic_ai.agent import AgentRetries, AgentRunResult
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -19,6 +19,7 @@ from ..prompts import (
     build_research_agent_prompt,
 )
 from ..providers.base import get_provider_from_config
+from .cypher_guard import is_allowed_procedure, mask_literals_and_comments
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -104,12 +105,20 @@ _CYPHER_DANGEROUS_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_VARLEN_PATTERN = re.compile(r"\[[^\]]*?\*([^\]]*)\]")
-_PROCEDURE_CALL_PATTERN = re.compile(r"\bCALL\s+([\w\.]+)", re.IGNORECASE)
+# A relationship bracket (`-[...]`) holding a variable-length `*`; group 1
+# is everything after the first `*`, which may carry a properties map after
+# the bounds (`*1..3 {w: 1}`), so only its leading bounds are inspected.
+_VARLEN_PATTERN = re.compile(r"-\s*\[[^\]*]*\*([^\]]*)\]")
+_VARLEN_BOUNDS = re.compile(r"\s*(\d*)\s*(\.\.\s*(\d*))?")
+# Runs on masked text, where comments are spaces and backtick identifiers
+# are bare, so `CALL /*x*/ `mg.x`()` is seen as `CALL mg.x()`. Whitespace
+# around the dots is legal Cypher and removed before the allowlist check.
+_PROCEDURE_CALL_PATTERN = re.compile(r"\bCALL\s+(\w+(?:\s*\.\s*\w+)*)", re.IGNORECASE)
+_WHITESPACE = re.compile(r"\s+")
 
 
 def _validate_cypher_read_only(query: str) -> None:
-    upper_query = query.upper()
+    upper_query = mask_literals_and_comments(query).upper()
     for keyword, pattern in _CYPHER_DANGEROUS_PATTERNS:
         if pattern.search(upper_query):
             raise ex.LLMGenerationError(
@@ -118,25 +127,32 @@ def _validate_cypher_read_only(query: str) -> None:
 
 
 def _validate_no_unbounded_paths(query: str) -> None:
-    for match in _VARLEN_PATTERN.finditer(query):
-        spec = match.group(1).strip()
-        if not spec:
+    # Masked text, so a `*` inside a string literal is never read as the
+    # operator. A bare `*`, an open range (`*1..`, `*..`) or a `*` followed
+    # only by a properties map (`*{w: 1}`) is unbounded; a lone hop count
+    # (`*5`) or a range with an upper bound (`*1..3`, `*..3`) is not.
+    for match in _VARLEN_PATTERN.finditer(mask_literals_and_comments(query)):
+        bounds = _VARLEN_BOUNDS.match(match.group(1))
+        if bounds is None or not (
+            bounds.group(3) if bounds.group(2) else bounds.group(1)
+        ):
             raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
-        if ".." in spec:
-            upper = spec.split("..", 1)[1].lstrip()
-            if not upper or not upper[0].isdigit():
-                raise ex.LLMGenerationError(ex.LLM_UNBOUNDED_PATH.format(query=query))
 
 
 def _validate_call_procedures(query: str) -> None:
-    for match in _PROCEDURE_CALL_PATTERN.finditer(query):
-        name = match.group(1)
-        if not any(
-            name.startswith(prefix) for prefix in cs.CYPHER_ALLOWED_PROCEDURE_PREFIXES
-        ):
+    for match in _PROCEDURE_CALL_PATTERN.finditer(mask_literals_and_comments(query)):
+        name = _WHITESPACE.sub("", match.group(1))
+        if not is_allowed_procedure(name):
             raise ex.LLMGenerationError(
                 ex.LLM_DISALLOWED_PROCEDURE.format(name=name, query=query)
             )
+
+
+class CypherAgent(Protocol):
+    """The one call CypherGenerator makes on its agent, so a wrapper can
+    stand in for it (the agentic QA eval meters its token spend)."""
+
+    async def run(self, user_prompt: str) -> AgentRunResult[str]: ...
 
 
 class CypherGenerator:
@@ -154,7 +170,7 @@ class CypherGenerator:
                 else build_cypher_system_prompt(active_projects)
             )
 
-            self.agent = Agent(
+            self.agent: CypherAgent = Agent(
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
@@ -211,11 +227,12 @@ def create_research_agent(tools: list[Tool]) -> Agent:
 
 
 def create_rag_orchestrator(
-    tools: list[Tool],
+    tools: list[Tool[None]],
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
-) -> tuple[Agent, str]:
+    backend: str | None = None,
+) -> tuple[Agent[None, str | DeferredToolRequests], str]:
     """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
@@ -228,9 +245,12 @@ def create_rag_orchestrator(
             tools,
             project_instructions=project_instructions,
             active_projects=active_projects,
+            backend=backend,
         )
 
-        agent = Agent(
+        # Specialised explicitly: the checker cannot infer the output type
+        # from a list of output types.
+        agent = Agent[None, str | DeferredToolRequests](
             model=llm,
             system_prompt=system_prompt,
             tools=tools,

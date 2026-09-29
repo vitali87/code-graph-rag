@@ -34,6 +34,8 @@ KEY_START_LINE = "start_line"
 KEY_START_COL = "start_col"
 # Parameter node properties (issue #1804).
 KEY_INDEX = "index"
+# An enum variant's discriminant as written (issue #1807).
+KEY_VALUE = "value"
 KEY_TYPE_NAME = "type_name"
 KEY_IS_STATIC = "is_static"
 KEY_IS_VARIADIC = "is_variadic"
@@ -110,6 +112,13 @@ KEY_PATH = "path"
 # target-side lookup to match, so the waiting importer is recorded here and
 # stays findable from the created file's path alone (issue #1714).
 KEY_UNRESOLVED_SPECIFIERS = "unresolved_specifiers"
+# Names this module referenced and could not resolve when it was parsed: an
+# import that named no module (the guessed qn and the written name), a quoted
+# include matching no file, a base class that resolved to nothing or to a
+# phantom, a call with no callee. A file ADDED later is matched against them
+# so the modules that waited for it are re-parsed (issue #1568). Written
+# unconditionally on every parse so a resolved name clears.
+KEY_UNRESOLVED_REFERENCES = "unresolved_references"
 KEY_ABSOLUTE_PATH = "absolute_path"
 # Whether flow analysis covered a Module: its language is in the source/sink
 # registry AND the FLOWS_TO capture group was enabled at indexing. Read by
@@ -134,9 +143,12 @@ KEY_FROM_PATH = "from_path"
 KEY_QNS = "qns"
 KEY_TO_PATH = "to_path"
 KEY_PROJECT_PREFIX = "project_prefix"
+KEY_LONGER_PROJECT_PREFIXES = "longer_project_prefixes"
 KEY_VERSION_SPEC = "version_spec"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
+# Registered projects whose names extend this one (`svc.v2` under `svc`).
+KEY_NESTED_PROJECTS = "nested_projects"
 # The incomplete-run marker's phase (#1705 review): whether the run it records
 # had reached its first graph write when the marker was last updated.
 KEY_WRITING = "writing"
@@ -189,6 +201,7 @@ ONEOF_SECURITY_ISSUE = "security_issue"
 ONEOF_GLOSS = "gloss"
 ONEOF_PARAMETER = "parameter"
 ONEOF_FIELD = "field"
+ONEOF_ENUM_VARIANT = "enum_variant"
 
 
 class UniqueKeyType(StrEnum):
@@ -237,6 +250,8 @@ class NodeLabel(StrEnum):
     # A declared formal parameter of a Function or Method (issue #1804).
     PARAMETER = "Parameter"
     FIELD = "Field"
+    # A variant an Enum declares (issue #1807).
+    ENUM_VARIANT = "EnumVariant"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -274,6 +289,7 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     # the parameter is an update of the same node, not a new one.
     NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.FIELD: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENUM_VARIANT: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -330,6 +346,8 @@ class RelationshipType(StrEnum):
     # Function|Method -> Parameter, carrying {index} (issue #1804).
     HAS_PARAMETER = "HAS_PARAMETER"
     HAS_FIELD = "HAS_FIELD"
+    # Enum -> EnumVariant, carrying {index} (issue #1807).
+    HAS_VARIANT = "HAS_VARIANT"
     # Parameter -> the project type its annotation resolves to.
     OF_TYPE = "OF_TYPE"
 
@@ -348,6 +366,7 @@ class CaptureGroup(StrEnum):
     GLOSSES = "glosses"
     PARAMETERS = "parameters"
     FIELDS = "fields"
+    ENUM_VARIANTS = "enum_variants"
 
 
 # Each relationship type belongs to exactly one capture group. The guard below
@@ -428,6 +447,8 @@ CAPTURE_GROUP_RELS: dict[CaptureGroup, frozenset[RelationshipType]] = {
     # whenever the `parameters` group is on -- one relationship, one switch --
     # and `fields` alone yields Field nodes and HAS_FIELD only.
     CaptureGroup.FIELDS: frozenset({RelationshipType.HAS_FIELD}),
+    # Opt-in like fields (issue #1807).
+    CaptureGroup.ENUM_VARIANTS: frozenset({RelationshipType.HAS_VARIANT}),
 }
 
 # Node labels a group exclusively owns; the label is captured only while the
@@ -485,6 +506,7 @@ CAPTURE_GROUP_NODE_LABELS: dict[CaptureGroup, frozenset[NodeLabel]] = {
     CaptureGroup.GLOSSES: frozenset({NodeLabel.GLOSS}),
     CaptureGroup.PARAMETERS: frozenset({NodeLabel.PARAMETER}),
     CaptureGroup.FIELDS: frozenset({NodeLabel.FIELD}),
+    CaptureGroup.ENUM_VARIANTS: frozenset({NodeLabel.ENUM_VARIANT}),
 }
 
 # Groups enabled when the user configures nothing. Add-ons (io) are opt-in.
@@ -580,6 +602,10 @@ KEY_POSITIONAL_PARAMS = "positional_params"
 KEY_RUST_CFG_TEST_MODS = "rust_cfg_test_mods"
 KEY_RUST_UNGATED_MODS = "rust_ungated_mods"
 KEY_MODIFIERS = "modifiers"
+# The namespace a C# type is declared in, kept apart from the qualified
+# name because the qn leaves out a namespace the module's directory already
+# spells (issue #1629).
+KEY_NAMESPACE = "namespace"
 # Depth of a document heading, 1-6 (issue #1426). Kept distinct from the
 # nesting a Section's CONTAINS_SECTION edges describe: skipped levels mean a
 # level-3 heading can be the direct child of a level-1 one.
@@ -637,9 +663,25 @@ CYPHER_DELETE_MODULE = (
     # module subtree with it. A repository-root __init__.py's module qn IS
     # the bare project name (no trailing dot), so the prefix test alone
     # would miss it.
+    # `svc.` also prefixes `svc.v2`'s modules, so a registered project whose
+    # name extends this one is excluded: a module belongs to the LONGEST
+    # registered name it sits under (issue #1985).
     "MATCH (m:Module {path: $path}) "
-    "WHERE m.qualified_name = $project_name "
-    "OR m.qualified_name STARTS WITH $project_prefix "
+    "WHERE (m.qualified_name = $project_name "
+    "OR m.qualified_name STARTS WITH $project_prefix) "
+    "AND NOT any(p IN $nested_projects WHERE m.qualified_name = p "
+    "OR m.qualified_name STARTS WITH (p + '.')) "
+    # The same exclusion read from the graph itself: `$nested_projects` comes
+    # from a registry read that can fail, and an empty list would let `svc.`
+    # take `svc.v2`'s module again. The delete must still run then (a full
+    # rebuild over an unreadable graph deletes before it re-parses), so the
+    # query rules those modules out on its own (CodeRabbit, PR #2125).
+    # OPTIONAL MATCH rather than an EXISTS subquery, which Memgraph rejects.
+    "OPTIONAL MATCH (nested:Project) "
+    "WHERE nested.name STARTS WITH $project_prefix "
+    "AND (m.qualified_name = nested.name "
+    "OR m.qualified_name STARTS WITH (nested.name + '.')) "
+    "WITH m, nested WHERE nested IS NULL "
     # CONTAINS_SECTION is in the walk because document headings hang off the
     # Module through it, not DEFINES; without it a re-indexed document keeps
     # every Section from its previous parse (issue #1426).
@@ -648,7 +690,7 @@ CYPHER_DELETE_MODULE = (
     # it a removed parameter or a deleted function left its nodes orphaned --
     # the shape of the Gloss leak (#1828), but the opposite remedy, because a
     # gloss is written into the graph and must survive a rebuild.
-    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD*0..]->(c) "
+    "OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD|CONTAINS_SECTION|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*0..]->(c) "
     "DETACH DELETE m, c"
 )
 # Keyed on absolute_path: the relative path is shared across same-layout
@@ -683,7 +725,7 @@ CYPHER_PROJECT_MODULE_PATHS = (
     # whose module qn is the project name itself.
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
     "OR m.qualified_name STARTS WITH $project_prefix "
-    "RETURN m.path AS path"
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
 CYPHER_COUNT_PROJECT_MODULES = (
     "MATCH (m:Module) WHERE m.qualified_name = $project_name "
@@ -703,6 +745,9 @@ CYPHER_FILE_CONTAINERS = (
     "RETURN labels(p) AS labels, p.name AS name, "
     "p.absolute_path AS absolute_path"
 )
+# The module names a project records, by file path, for the incremental
+# requeue's owner lookup (issue #1935). Scoped in the query: the shared graph
+# holds every project, and filtering in Python read them all (bot review).
 CYPHER_ALL_MODULE_PATHS_INTERNAL = (
     "MATCH (m:Module) RETURN m.path AS path, m.qualified_name AS qualified_name"
 )
@@ -746,7 +791,8 @@ CYPHER_ALL_DEFINITION_QNS = (
     "RETURN n.qualified_name AS qualified_name, head(labels(n)) AS label, "
     "n.is_property AS is_property, n.is_macro AS is_macro, n.path AS path, "
     "n.start_line AS start_line, n.end_line AS end_line, "
-    "n.return_type AS return_type, n.param_types AS param_types"
+    "n.return_type AS return_type, n.param_types AS param_types, "
+    "n.namespace AS namespace"
 )
 
 # Module-level qns (plus C++20 module interfaces) for incremental runs:
@@ -843,7 +889,7 @@ CYPHER_UNRESOLVED_IMPORTER_PATHS = (
     "AND importer.qualified_name STARTS WITH $project_prefix "
     "AND NOT target.qualified_name STARTS WITH $project_prefix "
     "AND ANY(name IN $module_names WHERE target.qualified_name = name "
-    "OR target.qualified_name STARTS WITH name + '.') "
+    "OR target.qualified_name STARTS WITH (name + '.')) "
     "RETURN DISTINCT importer.path AS caller_path"
 )
 # Modules carrying at least one unresolved relative specifier, with the
@@ -861,6 +907,36 @@ CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS = (
     "importer.unresolved_specifiers AS specifiers"
 )
 CYPHER_KEY_SPECIFIERS = "specifiers"
+# Modules whose recorded unresolved references name a file that now exists:
+# by one of its names exactly (its module qn, its import spellings, its path
+# suffixes, the simple names it defines) or under one of its qn prefixes (a
+# Rust `use crate::base::Base` records the whole path). Project-scoped on the
+# waiting side; self-selecting, since a re-parse that resolves the name
+# rewrites the list without it (issue #1568).
+CYPHER_UNRESOLVED_REFERENCE_WAITERS = (
+    "MATCH (m:Module) "
+    "WHERE m.path IS NOT NULL "
+    "AND (m.qualified_name STARTS WITH $project_prefix "
+    "OR m.qualified_name = $project_name) "
+    "AND m.unresolved_references IS NOT NULL "
+    "AND any(n IN m.unresolved_references WHERE n IN $names "
+    "OR any(p IN $prefixes WHERE n STARTS WITH p)) "
+    "RETURN DISTINCT m.path AS caller_path"
+)
+CYPHER_PARAM_NAMES = "names"
+CYPHER_PARAM_PREFIXES = "prefixes"
+# SET, not merge, so a name that now resolves is gone from the list (issue
+# #1568); after a flush, so the Module nodes of a first build exist to
+# match. Two shapes because a parameter value is a scalar or a list of
+# strings: the modules with nothing unresolved (most of them) in one
+# statement, and one statement per module that recorded names.
+CYPHER_CLEAR_UNRESOLVED_REFERENCES = (
+    "UNWIND $qns AS qn MATCH (m:Module {qualified_name: qn}) "
+    "SET m.unresolved_references = []"
+)
+CYPHER_SET_UNRESOLVED_REFERENCES = (
+    "MATCH (m:Module {qualified_name: $qn}) SET m.unresolved_references = $names"
+)
 CYPHER_ALL_INHERITS = (
     "MATCH (child)-[r:INHERITS]->(base) "
     "WHERE child.qualified_name IS NOT NULL AND base.qualified_name IS NOT NULL "
@@ -966,6 +1042,15 @@ KEY_HASHES = "hashes"
 # are not comparable, so grading is gated on the prefix and a legacy note is
 # left as it was rather than read as STALE. Bump when the hashing changes.
 ANCHOR_HASH_VERSION = "ah1:"
+# The text-quote anchor (issue #1808, stage five): digests of the subject's
+# own text with its name masked, and of the non-blank lines either side of
+# it. Versioned like the hash so a later format is never compared to this one.
+KEY_ANCHOR_QUOTE = "anchor_quote"
+KEY_ANCHOR_PREFIX = "anchor_prefix"
+KEY_ANCHOR_SUFFIX = "anchor_suffix"
+ANCHOR_QUOTE_VERSION = "aq1:"
+# Non-blank lines of context digested on each side of a definition.
+ANCHOR_CONTEXT_LINES = 3
 KEY_WRITE_ID = "write_id"
 KEY_CANDIDATES = "candidates"
 KEY_ORPHANED = "orphaned"

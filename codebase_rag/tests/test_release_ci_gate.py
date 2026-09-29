@@ -124,13 +124,8 @@ def _execute(
             "steps.check_manual.outputs.skip == 'false'",
             "steps.decide.outputs.release == 'true'",
         }
-        scripts.append(
-            "(\n"
-            + step["run"]
-            .replace("${{ steps.bump_version.outputs.new }}", "0.0.951")
-            .replace("${{ steps.decide.outputs.release }}", str(release).lower())
-            + "\n)\n"
-        )
+        assert "${{" not in step["run"]
+        scripts.append("(\n" + step["run"] + "\n)\n")
     return subprocess.run(
         [
             bash,
@@ -163,6 +158,8 @@ def _execute(
             "GH_RUNS_EXIT": "0",
             "GH_WORKFLOW_EXIT": "0",
             "GH_NEXT_PAGES": "",
+            "NEW_VERSION": "0.0.951",
+            "RELEASE": str(release).lower(),
             **(env or {}),
         },
         capture_output=True,

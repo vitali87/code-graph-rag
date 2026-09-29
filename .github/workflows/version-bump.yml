@@ -20,6 +20,7 @@ permissions: read-all
 
 env:
   RELEASE_EVERY: 50
+  VERSION_COMPONENT_CAP: 1000
 
 jobs:
   bump-version:
@@ -62,11 +63,10 @@ jobs:
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_type
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          BUMP_TYPE: ${{ github.event.inputs.bump_type }}
+          DISPATCH_BUMP_TYPE: ${{ github.event.inputs.bump_type }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "type=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "type=$DISPATCH_BUMP_TYPE" >> "$GITHUB_OUTPUT"
           else
             echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
@@ -74,31 +74,53 @@ jobs:
       - name: Bump version
         if: steps.check_manual.outputs.skip == 'false'
         id: bump_version
+        # Step outputs arrive through env, never `${{ }}` in the script:
+        # GitHub pastes an expression into the script text before bash runs,
+        # so a crafted version would execute before any check below saw it.
+        env:
+          CURRENT: ${{ steps.get_version.outputs.current }}
+          BUMP_TYPE: ${{ steps.bump_type.outputs.type }}
         run: |
-          CURRENT="${{ steps.get_version.outputs.current }}"
+          # Validated BEFORE any arithmetic: bash evaluates `$(( ))` operands
+          # as expressions, so a crafted component could run commands there.
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing malformed version '$CURRENT' from pyproject.toml"
+            exit 1
+          fi
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          MAJOR=$((10#$MAJOR)); MINOR=$((10#$MINOR)); PATCH=$((10#$PATCH))
 
-          case "${{ steps.bump_type.outputs.type }}" in
+          case "$BUMP_TYPE" in
             major)
-              NEW_MAJOR=$((MAJOR + 1))
-              NEW_VERSION="$NEW_MAJOR.0.0"
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
               ;;
             minor)
-              NEW_MINOR=$((MINOR + 1))
-              NEW_VERSION="$MAJOR.$NEW_MINOR.0"
+              MINOR=$((MINOR + 1)); PATCH=0
               ;;
             patch)
-              NEW_PATCH=$((PATCH + 1))
-              NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+              PATCH=$((PATCH + 1))
+              ;;
+            *)
+              echo "::error::unknown bump type '$BUMP_TYPE'"
+              exit 1
               ;;
           esac
 
-          # MAJOR and MINOR are carried through from pyproject.toml's version
-          # string unchanged (only PATCH passes through arithmetic), so a
-          # crafted value there reaches every downstream `sed` that
-          # interpolates this output into a shell command in this
-          # write-enabled job. Refuse anything that is not three plain
-          # numbers, once, here — rather than at each of the three use sites.
+          # PATCH and MINOR never reach VERSION_COMPONENT_CAP: hitting it (or
+          # starting above it, as 0.0.1006 did) carries into the next
+          # component and resets this one to 0, like an odometer.
+          if (( PATCH >= VERSION_COMPONENT_CAP )); then
+            MINOR=$((MINOR + 1)); PATCH=0
+          fi
+          if (( MINOR >= VERSION_COMPONENT_CAP )); then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          fi
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+
+          # NEW_VERSION reaches every downstream `sed` that interpolates this
+          # output into a shell command in this write-enabled job. Refuse
+          # anything that is not three plain numbers, once, here — rather
+          # than at each of the three use sites.
           # Bash pattern matching, not `grep -E`: grep anchors ^...$ per LINE,
           # so a value whose FIRST line is well-formed passes while carrying a
           # newline and a payload after it.
@@ -108,7 +130,7 @@ jobs:
           fi
 
           echo "new=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "Bumping version from $CURRENT to $NEW_VERSION (type: ${{ steps.bump_type.outputs.type }})"
+          echo "Bumping version from $CURRENT to $NEW_VERSION (type: $BUMP_TYPE)"
 
       - name: Decide whether this tag ships a release
         if: steps.check_manual.outputs.skip == 'false'
@@ -158,26 +180,28 @@ jobs:
         if: steps.decide.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          LATEST_TAG: ${{ steps.decide.outputs.latest }}
         run: |
           # target_commitish lets the API build notes for a tag that does not
           # exist yet, so the news can be folded into the commit that gets
           # tagged below (issue #1146).
           gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="v${{ steps.bump_version.outputs.new }}" \
+            -f tag_name="v${NEW_VERSION}" \
             -f target_commitish="${GITHUB_SHA}" \
-            -f previous_tag_name="${{ steps.decide.outputs.latest }}" \
+            -f previous_tag_name="${LATEST_TAG}" \
             --jq .body > /tmp/notes.md
 
       - name: Prepend security notice
         if: steps.decide.outputs.release == 'true' && steps.decide.outputs.security == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHSA: ${{ steps.decide.outputs.ghsa }}
         run: |
           # A security release must never ship silent notes: always prepend a
           # 🔒 Security section, enriched from the advisory when it is already
           # published, else a pointer to it. Guarantees the disclaimer even if
           # the advisory is published after the release is cut (issue #1149).
-          GHSA="${{ steps.decide.outputs.ghsa }}"
           DETAIL=""
           if [ -n "$GHSA" ]; then
             DETAIL=$(gh api "repos/${GITHUB_REPOSITORY}/security-advisories/${GHSA}" \
@@ -353,13 +377,17 @@ jobs:
 
       - name: Update pyproject.toml
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          sed -i 's/^version = ".*"/version = "${{ steps.bump_version.outputs.new }}"/' pyproject.toml
+          sed -i "s/^version = \".*\"/version = \"${NEW_VERSION}\"/" pyproject.toml
 
       - name: Update server.json
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          sed -i 's/"version": "[^"]*"/"version": "${{ steps.bump_version.outputs.new }}"/g' server.json
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${NEW_VERSION}\"/g" server.json
 
       # uv.lock carries its own copy of the project version. Left behind, it
       # disagrees with pyproject.toml on committed main (`uv lock --check`
@@ -429,11 +457,13 @@ jobs:
 
       - name: Commit version bump
         if: steps.check_manual.outputs.skip == 'false'
+        env:
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml server.json uv.lock NEWS.md README.md
-          git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new }}"
+          git commit -m "chore: bump version to ${NEW_VERSION}"
           git push
 
       - name: Require successful CI for the release source
@@ -512,20 +542,23 @@ jobs:
         if: steps.check_manual.outputs.skip == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
+          RELEASE: ${{ steps.decide.outputs.release }}
         run: |
-          git tag "v${{ steps.bump_version.outputs.new }}"
-          if [ "${{ steps.decide.outputs.release }}" = "true" ]; then
-            git push origin "v${{ steps.bump_version.outputs.new }}"
+          git tag "v${NEW_VERSION}"
+          if [ "$RELEASE" = "true" ]; then
+            git push origin "v${NEW_VERSION}"
           else
-            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${{ steps.bump_version.outputs.new }}"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "v${NEW_VERSION}"
           fi
 
       - name: Create release
         if: steps.decide.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_VERSION: ${{ steps.bump_version.outputs.new }}
         run: |
-          TAG="v${{ steps.bump_version.outputs.new }}"
+          TAG="v${NEW_VERSION}"
           : > /tmp/body.md
           # The 🔒 Security disclaimer must lead the release body, above the
           # AI highlights and the generated changelog (issue #1149).

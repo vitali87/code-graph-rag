@@ -8,6 +8,7 @@
 import re
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 
 from . import constants as cs
@@ -21,6 +22,7 @@ from .types_defs import (
     ResultRow,
     ResultValue,
 )
+from .utils import qn_markers
 
 _MODULE = cs.NodeLabel.MODULE.value
 _FUNCTION = cs.NodeLabel.FUNCTION.value
@@ -177,22 +179,13 @@ def _rust_test_modules_from_nodes(
     for (label, uid), props in nodes.items():
         if label != _MODULE:
             continue
-        declared_here = props.get(cs.KEY_RUST_CFG_TEST_MODS)
-        if isinstance(declared_here, list):
-            declared.extend(str(target) for target in declared_here)
-        ungated_here = props.get(cs.KEY_RUST_UNGATED_MODS)
-        if isinstance(ungated_here, list):
-            ungated.update(str(target) for target in ungated_here)
-        path = str(props.get(cs.KEY_PATH, ""))
-        if not (
-            path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
-        ):
+        declared.extend(_str_items(props.get(cs.KEY_RUST_CFG_TEST_MODS)))
+        ungated.update(_str_items(props.get(cs.KEY_RUST_UNGATED_MODS)))
+        if not _is_rust_module_path(str(props.get(cs.KEY_PATH, ""))):
             continue
         qn = str(uid)
         rust_modules.add(qn)
-        if qn.rsplit(cs.SEPARATOR_DOT, 1)[
-            -1
-        ] in cs.RUST_TEST_MODULE_SEGMENTS or _has_rust_cfg_test_gate(props):
+        if _is_rust_test_module(qn, props):
             modules.add(qn)
     # An ungated declaration from ANY target (src/main.rs compiling the
     # module for production) outweighs a gated sibling declaration.
@@ -202,6 +195,20 @@ def _rust_test_modules_from_nodes(
         if target in rust_modules and target not in ungated
     )
     return modules
+
+
+def _str_items(value: PropertyValue | None) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _is_rust_module_path(path: str) -> bool:
+    return path.endswith(cs.EXT_RS) or path.startswith(cs.INLINE_MODULE_PATH_PREFIX)
+
+
+def _is_rust_test_module(qn: str, props: PropertyDict) -> bool:
+    return qn.rsplit(cs.SEPARATOR_DOT, 1)[
+        -1
+    ] in cs.RUST_TEST_MODULE_SEGMENTS or _has_rust_cfg_test_gate(props)
 
 
 def _has_rust_cfg_test_gate(props: PropertyDict) -> bool:
@@ -569,7 +576,7 @@ def _is_root(
     # is a registration artifact, never part of the written name; strip it
     # so every name-scoped root rule sees the real leaf (kubernetes
     # pkg.apis.abac register.init@51 reported dead).
-    leaf = qn.rsplit(cs.SEPARATOR_DOT, 1)[-1].split(cs.DUP_QN_MARKER, 1)[0]
+    leaf = qn_markers.strip_dup_marker(qn.rsplit(cs.SEPARATOR_DOT, 1)[-1])
     path = str(props.get(cs.KEY_PATH, ""))
     is_method = qn in method_qns
     bare_leaf = leaf.split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -579,13 +586,15 @@ def _is_root(
         # site reaches the endpoint (issue #1603). Other decorators (a
         # fixture, a CLI command) keep rooting as before, on the same
         # definition too.
-        lambda: _has_root_decorator(props, config.root_decorators)
-        and (
-            config.endpoint_roots
-            or endpoint_links is None
-            or qn not in endpoint_links
-            or endpoint_links[qn] > 0
-            or _has_non_route_root_decorator(props, config.root_decorators)
+        lambda: (
+            _has_root_decorator(props, config.root_decorators)
+            and (
+                config.endpoint_roots
+                or endpoint_links is None
+                or qn not in endpoint_links
+                or endpoint_links[qn] > 0
+                or _has_non_route_root_decorator(props, config.root_decorators)
+            )
         ),
         lambda: props.get(cs.KEY_IS_EXPORTED) is True,
         # A method overriding an EXTERNAL stdlib base's method (click's
@@ -654,177 +663,201 @@ def _is_root(
     return any(rule() for rule in rules)
 
 
-def dead_code_from_graph(
-    nodes: dict[_NodeId, PropertyDict],
-    rels: list[_RelTuple],
-    project_prefix: str,
-    config: DeadCodeConfig,
-    endpoint_links: dict[str, int] | None = None,
-) -> set[str]:
-    """`endpoint_links` maps each exposing handler to the number of call
-    sites reaching its endpoint; consulted only with `endpoint_roots` off."""
-    labels = {_FUNCTION, _METHOD}
-    traversal = {_CALLS, _REFERENCES}
-    module_rels = {_CALLS, _REFERENCES}
-    if config.include_classes:
-        labels.add(_CLASS)
-        traversal |= {_INSTANTIATES, _INHERITS}
-        module_rels.add(_INSTANTIATES)
-
-    candidates: set[str] = set()
-    props_by_qn: dict[str, PropertyDict] = {}
-    method_qns: set[str] = set()
-    module_path: dict[str, str] = {}
-    rust_test_modules = _rust_test_modules_from_nodes(nodes)
-    # Both polarities need the spans: excluded test fns take their nested
-    # symbols with them, and INCLUDED ones must root those same symbols (a
-    # fn passed as a value, `filter(is_even)`, has no CALLS edge to revive
-    # it).
-    rust_test_spans = _rust_test_fn_spans(nodes)
+@dataclass
+class _CandidateScan:
+    candidates: set[str] = field(default_factory=set)
+    props_by_qn: dict[str, PropertyDict] = field(default_factory=dict)
+    method_qns: set[str] = field(default_factory=set)
+    module_path: dict[str, str] = field(default_factory=dict)
     # Normalized decorators per CLASS qn (collected for every class, not just
     # class candidates), so a method root rule can consult its class's
     # @Injectable/@Controller/@Module marker (NestJS DI roots, issue #973).
-    class_decorators_norm: dict[str, frozenset[str]] = {}
-    for (label, uid), props in nodes.items():
-        if label == _MODULE:
-            module_path[str(uid)] = str(props.get(cs.KEY_PATH, ""))
-        if label == _CLASS:
-            decorators = props.get(cs.KEY_DECORATORS)
-            if isinstance(decorators, list):
-                class_decorators_norm[str(uid)] = frozenset(
-                    _norm_decorator(str(d)) for d in decorators
-                )
-        if label in labels and str(uid).startswith(project_prefix):
-            # With tests excluded, a test symbol's only callers are excluded
-            # as roots, so reporting it is noise (test helpers and mocks are
-            # infrastructure, not dead production code). Rust test code lives
-            # INSIDE source files, so it is matched by attribute/module, not
-            # path (issue #1008).
-            if not config.include_tests and _is_test_symbol(
-                props,
-                str(uid),
-                str(props.get(cs.KEY_PATH) or ""),
-                config.test_patterns,
-                rust_test_modules,
-                rust_test_spans,
-            ):
-                continue
-            candidates.add(str(uid))
-            props_by_qn[str(uid)] = props
-            if label == _METHOD:
-                method_qns.add(str(uid))
+    class_decorators_norm: dict[str, frozenset[str]] = field(default_factory=dict)
 
-    roots: set[str] = set()
+
+@dataclass
+class _StructuralRels:
     # A method of a typing.Protocol subclass is an interface stub whose callers
     # resolve to the implementations; DEFINES edges from functions/methods feed
-    # the live-owner registration round below.
-    defines_pairs: list[tuple[str, str]] = []
-    protocol_classes: set[str] = set()
-    class_methods: list[tuple[str, str]] = []
-    nested_class_pairs: list[tuple[str, str]] = []
+    # the live-owner registration round.
+    defines_pairs: list[tuple[str, str]] = field(default_factory=list)
+    protocol_classes: set[str] = field(default_factory=set)
+    class_methods: list[tuple[str, str]] = field(default_factory=list)
+    nested_class_pairs: list[tuple[str, str]] = field(default_factory=list)
     # A class implementing an EXTERNAL NestJS `...OptionsFactory` interface (one
     # not defined in this project) has its factory method invoked by Nest, so its
     # methods are roots (issue #973). Restricted to that naming convention so an
     # unrelated third-party interface implementer is not force-rooted.
-    nest_factory_classes: set[str] = set()
+    nest_factory_classes: set[str] = field(default_factory=set)
     # A class that `extends` a React component base (directly or through a
     # first-party intermediate base) is a class component whose lifecycle methods
     # React drives at runtime (issue #978). Seeds are direct extenders; the
     # transitive closure over INHERITS is computed after the scan.
-    react_component_classes: set[str] = set()
-    inherits_subclasses: dict[str, set[str]] = defaultdict(set)
-    for from_label, from_val, rel_type, to_label, to_val in rels:
-        if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
-            defines_pairs.append((str(from_val), str(to_val)))
-            if to_label == _CLASS:
-                nested_class_pairs.append((str(from_val), str(to_val)))
-        elif rel_type == _INHERITS:
-            inherits_subclasses[str(to_val)].add(str(from_val))
-            if str(to_val) in cs.PROTOCOL_BASE_QNS:
-                protocol_classes.add(str(from_val))
-            elif _is_react_base_qn(str(to_val)):
-                react_component_classes.add(str(from_val))
-        elif rel_type == _DEFINES_METHOD:
-            class_methods.append((str(from_val), str(to_val)))
-        elif (
-            rel_type == _IMPLEMENTS
-            and not str(to_val).startswith(project_prefix)
-            and str(to_val)
-            .rsplit(cs.SEPARATOR_DOT, 1)[-1]
-            .endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
+    react_component_classes: set[str] = field(default_factory=set)
+    inherits_subclasses: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
+
+
+def _record_module_or_class(
+    scan: _CandidateScan, label: str, qn: str, props: PropertyDict
+) -> None:
+    if label == _MODULE:
+        scan.module_path[qn] = str(props.get(cs.KEY_PATH, ""))
+    elif label == _CLASS and isinstance(
+        decorators := props.get(cs.KEY_DECORATORS), list
+    ):
+        scan.class_decorators_norm[qn] = frozenset(
+            _norm_decorator(str(d)) for d in decorators
+        )
+
+
+def _scan_candidates(
+    nodes: dict[_NodeId, PropertyDict],
+    labels: set[str],
+    project_prefix: str,
+    config: DeadCodeConfig,
+    rust_test_modules: set[str],
+    rust_test_spans: dict[str, list[tuple[int, int]]],
+) -> _CandidateScan:
+    scan = _CandidateScan()
+    for (label, uid), props in nodes.items():
+        qn = str(uid)
+        _record_module_or_class(scan, label, qn, props)
+        if label not in labels or not qn.startswith(project_prefix):
+            continue
+        # With tests excluded, a test symbol's only callers are excluded as
+        # roots, so reporting it is noise (test helpers and mocks are
+        # infrastructure, not dead production code). Rust test code lives
+        # INSIDE source files, so it is matched by attribute/module, not path
+        # (issue #1008).
+        if not config.include_tests and _is_test_symbol(
+            props,
+            qn,
+            str(props.get(cs.KEY_PATH) or ""),
+            config.test_patterns,
+            rust_test_modules,
+            rust_test_spans,
         ):
-            nest_factory_classes.add(str(from_val))
+            continue
+        scan.candidates.add(qn)
+        scan.props_by_qn[qn] = props
+        if label == _METHOD:
+            scan.method_qns.add(qn)
+    return scan
+
+
+def _is_external_nest_options_factory(to_qn: str, project_prefix: str) -> bool:
+    return not to_qn.startswith(project_prefix) and to_qn.rsplit(cs.SEPARATOR_DOT, 1)[
+        -1
+    ].endswith(cs.NEST_OPTIONS_FACTORY_SUFFIX)
+
+
+def _scan_structural_rels(
+    rels: list[_RelTuple], project_prefix: str
+) -> _StructuralRels:
+    found = _StructuralRels()
+    for from_label, from_val, rel_type, to_label, to_val in rels:
+        from_qn, to_qn = str(from_val), str(to_val)
+        if rel_type == _DEFINES and from_label in (_FUNCTION, _METHOD):
+            found.defines_pairs.append((from_qn, to_qn))
+            if to_label == _CLASS:
+                found.nested_class_pairs.append((from_qn, to_qn))
+        elif rel_type == _INHERITS:
+            found.inherits_subclasses[to_qn].add(from_qn)
+            if to_qn in cs.PROTOCOL_BASE_QNS:
+                found.protocol_classes.add(from_qn)
+            elif _is_react_base_qn(to_qn):
+                found.react_component_classes.add(from_qn)
+        elif rel_type == _DEFINES_METHOD:
+            found.class_methods.append((from_qn, to_qn))
+        elif rel_type == _IMPLEMENTS and _is_external_nest_options_factory(
+            to_qn, project_prefix
+        ):
+            found.nest_factory_classes.add(from_qn)
+    return found
+
+
+def _module_roots(
+    rels: list[_RelTuple],
+    module_rels: set[str],
+    scan: _CandidateScan,
+    config: DeadCodeConfig,
+) -> set[str]:
+    roots: set[str] = set()
+    for from_label, from_val, rel_type, _to_label, to_val in rels:
         if from_label != _MODULE or rel_type not in module_rels:
             continue
         target_qn = str(to_val)
-        if target_qn not in candidates:
+        if target_qn not in scan.candidates:
             continue
-        path = module_path.get(str(from_val), "")
-        is_test = matches_test_path(path, config.test_patterns)
-        if config.include_tests or not is_test:
+        path = scan.module_path.get(str(from_val), "")
+        if config.include_tests or not matches_test_path(path, config.test_patterns):
             roots.add(target_qn)
-    protocol_stubs = {m for c, m in class_methods if c in protocol_classes}
-    method_to_class = {m: c for c, m in class_methods}
-    # Expand React components down the inheritance tree: a class extending a
-    # first-party base that (transitively) extends react.Component is itself a
-    # React component (a shared `BaseComponent extends React.Component` is common).
-    _walk(set(react_component_classes), inherits_subclasses, react_component_classes)
+    return roots
 
-    for qn in candidates:
-        if qn in roots:
-            continue
-        props = props_by_qn[qn]
-        # Every rule below makes `qn` a root; they are alternatives, not a
-        # priority order, so one membership test replaces a chain of
-        # identical branches (Sonar S1871, #1669). Each rule keeps its
-        # comment where it applies.
-        if _is_root(
-            qn,
-            props,
-            config,
-            method_qns,
-            protocol_stubs,
-            method_to_class,
-            class_decorators_norm,
-            nest_factory_classes,
-            react_component_classes,
-            rust_test_modules,
-            rust_test_spans,
-            project_prefix,
-            endpoint_links,
-        ):
-            roots.add(qn)
 
+def _traversal_maps(
+    rels: list[_RelTuple], traversal: set[str]
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     adjacency: dict[str, set[str]] = defaultdict(set)
     # OVERRIDES is recorded overrider -> overridden; keep the REVERSE mapping
-    # (overridden -> overriders) to expand virtual-dispatch targets below.
+    # (overridden -> overriders) to expand virtual-dispatch targets.
     override_rev: dict[str, set[str]] = defaultdict(set)
-    for from_label, from_val, rel_type, _to_label, to_val in rels:
+    for _from_label, from_val, rel_type, _to_label, to_val in rels:
         if rel_type in traversal:
             adjacency[str(from_val)].add(str(to_val))
         elif rel_type == _OVERRIDES:
             override_rev[str(to_val)].add(str(from_val))
+    return adjacency, override_rev
 
-    live = set(roots)
-    _walk(roots, adjacency, live)
 
-    # Second expansion: a decorated function DEFINED by a LIVE owner is
-    # framework-registered when the owner runs, so it and its callees are
-    # live; the closure of a DEAD owner never registers and stays in the
-    # reported cluster. ponytail: one round, so a registration chain nested
-    # two closures deep is missed; iterate to fixed point if real code ever
-    # registers closures from inside registered closures.
-    closure_roots = {
-        c
-        for o, c in defines_pairs
-        if o in live
-        and c not in live
-        and c in props_by_qn
-        and props_by_qn[c].get(cs.KEY_DECORATORS)
-    }
-    live |= closure_roots
-    _walk(closure_roots, adjacency, live)
+def _revive_factory_classes(
+    frontier: set[str],
+    classes_by_owner: dict[str, set[str]],
+    methods_by_class: dict[str, set[str]],
+    live: set[str],
+    adjacency: dict[str, set[str]],
+) -> set[str]:
+    added: set[str] = set()
+    factory_method_roots: set[str] = set()
+    for owner in frontier:
+        for cls in classes_by_owner.get(owner, ()):
+            if cls not in live:
+                live.add(cls)
+                added.add(cls)
+            factory_method_roots |= methods_by_class[cls] - live
+    live |= factory_method_roots
+    added |= factory_method_roots
+    _walk(factory_method_roots, adjacency, live, added=added)
+    return added
 
+
+def _revive_overriders(
+    seeds: set[str],
+    override_rev: dict[str, set[str]],
+    live: set[str],
+    adjacency: dict[str, set[str]],
+) -> set[str]:
+    override_roots: set[str] = set()
+    stack = list(seeds)
+    while stack:
+        for overrider in override_rev.get(stack.pop(), ()):
+            if overrider not in live and overrider not in override_roots:
+                override_roots.add(overrider)
+                stack.append(overrider)
+    live |= override_roots
+    added = set(override_roots)
+    _walk(override_roots, adjacency, live, added=added)
+    return added
+
+
+def _expand_factories_and_overrides(
+    live: set[str],
+    adjacency: dict[str, set[str]],
+    override_rev: dict[str, set[str]],
+    structural: _StructuralRels,
+) -> None:
     # Factory-class and override expansions, iterated together to a fixed
     # point because they feed each other (a factory revived only via an
     # override's callee still needs its class rooted, and vice versa).
@@ -845,54 +878,129 @@ def dead_code_from_graph(
     # override_rev are static, so a rescanned node yields nothing new),
     # keeping the loop O(live) total; a round that adds nothing ends it.
     classes_by_owner: dict[str, set[str]] = defaultdict(set)
-    for owner, cls in nested_class_pairs:
+    for owner, cls in structural.nested_class_pairs:
         classes_by_owner[owner].add(cls)
     methods_by_class: dict[str, set[str]] = defaultdict(set)
-    for cls, m in class_methods:
+    for cls, m in structural.class_methods:
         methods_by_class[cls].add(m)
 
     frontier = set(live)
     while frontier:
-        added: set[str] = set()
-
-        factory_method_roots: set[str] = set()
-        for owner in frontier:
-            for cls in classes_by_owner.get(owner, ()):
-                if cls not in live:
-                    live.add(cls)
-                    added.add(cls)
-                factory_method_roots |= methods_by_class[cls] - live
-        live |= factory_method_roots
-        added |= factory_method_roots
-        _walk(factory_method_roots, adjacency, live, added=added)
-
-        override_roots: set[str] = set()
-        stack = list(frontier | added)
-        while stack:
-            for overrider in override_rev.get(stack.pop(), ()):
-                if overrider not in live and overrider not in override_roots:
-                    override_roots.add(overrider)
-                    stack.append(overrider)
-        live |= override_roots
-        added |= override_roots
-        _walk(override_roots, adjacency, live, added=added)
-
+        added = _revive_factory_classes(
+            frontier, classes_by_owner, methods_by_class, live, adjacency
+        )
+        added |= _revive_overriders(frontier | added, override_rev, live, adjacency)
         frontier = added
 
-    dead = candidates - live
+
+def _drop_excluded_paths(
+    dead: set[str], props_by_qn: dict[str, PropertyDict], patterns: tuple[str, ...]
+) -> set[str]:
+    return {
+        qn
+        for qn in dead
+        if not any(
+            fnmatch(str(props_by_qn[qn].get(cs.KEY_PATH) or ""), pattern)
+            for pattern in patterns
+        )
+    }
+
+
+def dead_code_from_graph(
+    nodes: dict[_NodeId, PropertyDict],
+    rels: list[_RelTuple],
+    project_prefix: str,
+    config: DeadCodeConfig,
+    endpoint_links: dict[str, int] | None = None,
+) -> set[str]:
+    """`endpoint_links` maps each exposing handler to the number of call
+    sites reaching its endpoint; consulted only with `endpoint_roots` off."""
+    labels = {_FUNCTION, _METHOD}
+    traversal = {_CALLS, _REFERENCES}
+    module_rels = {_CALLS, _REFERENCES}
+    if config.include_classes:
+        labels.add(_CLASS)
+        traversal |= {_INSTANTIATES, _INHERITS}
+        module_rels.add(_INSTANTIATES)
+
+    rust_test_modules = _rust_test_modules_from_nodes(nodes)
+    # Both polarities need the spans: excluded test fns take their nested
+    # symbols with them, and INCLUDED ones must root those same symbols (a
+    # fn passed as a value, `filter(is_even)`, has no CALLS edge to revive
+    # it).
+    rust_test_spans = _rust_test_fn_spans(nodes)
+    scan = _scan_candidates(
+        nodes, labels, project_prefix, config, rust_test_modules, rust_test_spans
+    )
+    structural = _scan_structural_rels(rels, project_prefix)
+    roots = _module_roots(rels, module_rels, scan, config)
+
+    protocol_stubs = {
+        m for c, m in structural.class_methods if c in structural.protocol_classes
+    }
+    method_to_class = {m: c for c, m in structural.class_methods}
+    # Expand React components down the inheritance tree: a class extending a
+    # first-party base that (transitively) extends react.Component is itself a
+    # React component (a shared `BaseComponent extends React.Component` is common).
+    _walk(
+        set(structural.react_component_classes),
+        structural.inherits_subclasses,
+        structural.react_component_classes,
+    )
+
+    # Every rule in _is_root makes `qn` a root; they are alternatives, not a
+    # priority order, so one membership test replaces a chain of identical
+    # branches (Sonar S1871, #1669).
+    roots |= {
+        qn
+        for qn in scan.candidates - roots
+        if _is_root(
+            qn,
+            scan.props_by_qn[qn],
+            config,
+            scan.method_qns,
+            protocol_stubs,
+            method_to_class,
+            scan.class_decorators_norm,
+            structural.nest_factory_classes,
+            structural.react_component_classes,
+            rust_test_modules,
+            rust_test_spans,
+            project_prefix,
+            endpoint_links,
+        )
+    }
+
+    adjacency, override_rev = _traversal_maps(rels, traversal)
+    live = set(roots)
+    _walk(roots, adjacency, live)
+
+    # Second expansion: a decorated function DEFINED by a LIVE owner is
+    # framework-registered when the owner runs, so it and its callees are
+    # live; the closure of a DEAD owner never registers and stays in the
+    # reported cluster. ponytail: one round, so a registration chain nested
+    # two closures deep is missed; iterate to fixed point if real code ever
+    # registers closures from inside registered closures.
+    closure_roots = {
+        c
+        for o, c in structural.defines_pairs
+        if o in live
+        and c not in live
+        and c in scan.props_by_qn
+        and scan.props_by_qn[c].get(cs.KEY_DECORATORS)
+    }
+    live |= closure_roots
+    _walk(closure_roots, adjacency, live)
+
+    _expand_factories_and_overrides(live, adjacency, override_rev, structural)
+
+    dead = scan.candidates - live
     # Suppress generated files (openapi-ts client/core, routeTree.gen.ts) from
     # the REPORT only, after reachability: they stay full participants as roots
     # and callers, so a real function invoked only from generated glue is not
     # newly flagged; excluding earlier would drop those live edges.
     if config.exclude_patterns:
-        dead = {
-            qn
-            for qn in dead
-            if not any(
-                fnmatch(str(props_by_qn[qn].get(cs.KEY_PATH) or ""), pattern)
-                for pattern in config.exclude_patterns
-            )
-        }
+        dead = _drop_excluded_paths(dead, scan.props_by_qn, config.exclude_patterns)
     return dead
 
 

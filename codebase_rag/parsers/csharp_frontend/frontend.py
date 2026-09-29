@@ -18,7 +18,7 @@ import subprocess
 from pathlib import Path
 from typing import NamedTuple
 
-from defusedxml import ElementTree
+from defusedxml import DefusedXmlException, ElementTree
 from loguru import logger
 
 from ... import constants as cs
@@ -173,7 +173,7 @@ def _solution_member_projects(project: Path) -> set[Path]:
     if suffix == ".slnx":
         try:
             tree = ElementTree.parse(project)
-        except (ElementTree.ParseError, OSError):
+        except (ElementTree.ParseError, DefusedXmlException, OSError):
             return set()
         return {
             (base / path.replace("\\", "/")).resolve()

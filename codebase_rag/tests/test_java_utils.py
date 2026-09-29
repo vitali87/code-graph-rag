@@ -679,3 +679,35 @@ class TestFindJavaPackageStartIndex:
         parts: list[str] = []
         result = find_package_start_index(parts)
         assert result is None
+
+
+def test_varargs_element_types_of_every_shape_are_read() -> None:
+    """`List<String>... xs`, `String[]... xs` and `int... xs` yielded no
+    parameter: the reader matched `type_identifier` only (issue #1974).
+    `final` and an annotation put `modifiers` first and are skipped too.
+    One varargs per method, as Java requires."""
+    from codebase_rag import constants as cs
+    from codebase_rag.parser_loader import load_parsers
+
+    parsers, _ = load_parsers()
+
+    def parameters(method_source: str) -> list[str]:
+        tree = parsers[cs.SupportedLanguage.JAVA].parse(
+            f"class C {{ {method_source} }}".encode()
+        )
+
+        def walk(node):  # noqa: ANN001, ANN202
+            yield node
+            for child in node.children:
+                yield from walk(child)
+
+        method = next(n for n in walk(tree.root_node) if n.type == "method_declaration")
+        return extract_method_info(method)["parameters"]
+
+    assert parameters("void m(java.util.List<String>... xs) {}") == [
+        "java.util.List<String>..."
+    ]
+    assert parameters("void m(String[]... ys) {}") == ["String[]..."]
+    assert parameters("void m(int... zs) {}") == ["int..."]
+    assert parameters("void m(final @NonNull String... ws) {}") == ["String..."]
+    assert parameters("void m(final /* c */ String... vs) {}") == ["String..."]

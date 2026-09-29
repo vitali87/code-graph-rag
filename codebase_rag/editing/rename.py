@@ -26,7 +26,7 @@ rewritten: prose is not a graph edge.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -39,7 +39,7 @@ from .. import graph_query
 from ..graph_updater import ReingestAborted
 from ..language_spec import get_language_for_extension
 from ..parser_loader import load_parsers
-from ..types_defs import PropertyDict, ResultRow
+from ..types_defs import PropertyParams, ResultRow
 from ..utils.path_utils import base_module_qn
 from .contract import Reingest, Verdict, measure, rename_expectation, verify
 from .imports import ANY_MODULE, ImportRewriter, ImportSite, SymbolMove, _imported
@@ -53,7 +53,7 @@ from .transaction import (
     undo_transaction,
 )
 
-QueryFn = Callable[[str, PropertyDict | None], list[ResultRow]]
+QueryFn = Callable[[str, PropertyParams | None], list[ResultRow]]
 
 _AMBIGUOUS = frozenset(
     {
@@ -152,6 +152,17 @@ def _hierarchy(fetch_all: QueryFn, project: str, qn: str) -> list[str]:
     return seen
 
 
+def _longer_project_prefixes(fetch_all: QueryFn, project_name: str) -> tuple[str, ...]:
+    requested_prefix = f"{project_name}{cs.SEPARATOR_DOT}"
+    names = {
+        name
+        for row in fetch_all(cq.CYPHER_LIST_PROJECTS, None)
+        if isinstance(name := row.get(cs.KEY_NAME), str)
+        and name.startswith(requested_prefix)
+    }
+    return tuple(sorted(names))
+
+
 def _name_token(
     source: bytes,
     language: cs.SupportedLanguage | None,
@@ -204,26 +215,32 @@ def _best_call_at(
     outermost when no end was recorded.
 
     Extracted from `_callee_span` to keep it under the cognitive complexity
-    limit (S3776). This walk is where that complexity lives: a loop with
-    three levels of nested branching, and nesting multiplies the cost.
-    Extracting the straight-line setup around it would not have helped.
+    limit (S3776); the tree walk itself lives in `_calls_starting_at`.
     """
     best: Node | None = None
+    for node in _calls_starting_at(root, line, col):
+        if node.end_point == recorded_end:
+            return node
+        if best is None or node.end_byte > best.end_byte:
+            best = node
+    return best
+
+
+def _calls_starting_at(root: Node, line: int, col: int) -> Iterator[Node]:
+    """Yield, in walk order, every call node that starts at (line, col).
+
+    Only subtrees whose line span covers `line` are entered.
+    """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if node.start_point == (line - 1, col):
-            func = node.child_by_field_name(cs.FIELD_FUNCTION)
-            if func is not None:
-                if node.end_point == recorded_end:
-                    return node
-                if best is None or (
-                    best.end_point != recorded_end and node.end_byte > best.end_byte
-                ):
-                    best = node
+        if (
+            node.start_point == (line - 1, col)
+            and node.child_by_field_name(cs.FIELD_FUNCTION) is not None
+        ):
+            yield node
         if node.start_point[0] <= line - 1 <= node.end_point[0]:
             stack.extend(node.children)
-    return best
 
 
 def _callee_span(
@@ -300,6 +317,28 @@ def _chain_links(
     return sorted(found)
 
 
+def _chain_link_sites(
+    kind: str,
+    path: str,
+    source: bytes,
+    line: int,
+    col: int,
+    old_name: str,
+    owner: str,
+    token: tuple[int, int],
+) -> list[RenameSite]:
+    # `obj.helper(1).helper(2)`: a link of the chain the index has no row
+    # for (the receiver's type was not inferred) binds to nobody the graph
+    # knows. It is renamed only as a guess the caller opts into with
+    # allow_heuristic; `plan` drops it where a row covers it.
+    language = get_language_for_extension(Path(path).suffix)
+    return [
+        RenameSite(kind, path, link[0], link[1], owner, _CHAIN)
+        for link in _chain_links(source, language, line, col, old_name)
+        if link != token
+    ]
+
+
 def _last_identifier(
     source: bytes,
     line: int,
@@ -372,14 +411,49 @@ class Renamer:
         definition = graph_query.definition(
             self.fetch_all, self.project, qn, self.repo_root
         )
-        if not definition["found"] or not definition["path"]:
+        path = definition["path"]
+        if not definition["found"] or not path:
             raise RenameRefused(cs.RENAME_UNKNOWN.format(qn=qn), [], [])
         old_name = definition["name"] or qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        sites: list[RenameSite] = []
         unlocatable: list[str] = []
         patcher = Patcher(self.repo_root)
-        # Definition name token.
-        path = definition["path"]
+        sites: list[RenameSite] = [
+            self._definition_site(qn, definition, path, old_name, patcher)
+        ]
+        # Calls, references and constructions.
+        for row in graph_query.callers(self.fetch_all, self.project, qn):
+            self._add_site(sites, unlocatable, "call", row, old_name, patcher)
+        params = {
+            cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+            cs.KEY_QN: qn,
+        }
+        # Both reads below are prefix-scoped, and `foo.` selects `foo.bar`'s
+        # rows too: a site in a project whose name extends this one must not
+        # join this project's plan (issue #1989; the rule of #1982).
+        owns = graph_query._owner_check(self.fetch_all, self.project)
+        for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
+            if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
+                continue
+            self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
+        self._add_type_edge_sites(
+            sites,
+            unlocatable,
+            self.fetch_all(cq.CYPHER_GRAPH_TYPE_EDGES, params),
+            owns,
+            old_name,
+            patcher,
+        )
+        return sites, unlocatable, old_name, definition["label"]
+
+    def _definition_site(
+        self,
+        qn: str,
+        definition: graph_query.DefinitionRow,
+        path: str,
+        old_name: str,
+        patcher: Patcher,
+    ) -> RenameSite:
+        """The definition's own name token."""
         try:
             source = patcher.source(path)
         except PatcherError as error:
@@ -403,24 +477,25 @@ class Renamer:
             raise RenameRefused(
                 cs.RENAME_NO_DEFINITION_TOKEN.format(qn=qn, path=path), [], []
             )
-        sites.append(
-            RenameSite(
-                "definition", path, token[0], token[1], qn, cs.EdgeResolution.EXACT
-            )
+        return RenameSite(
+            "definition", path, token[0], token[1], qn, cs.EdgeResolution.EXACT
         )
-        # Calls, references and constructions.
-        for row in graph_query.callers(self.fetch_all, self.project, qn):
-            self._add_site(sites, unlocatable, "call", row, old_name, patcher)
-        params = {
-            cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
-            cs.KEY_QN: qn,
-        }
-        for row in self.fetch_all(cq.CYPHER_GRAPH_REFERENCES, params):
-            self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
+
+    def _add_type_edge_sites(
+        self,
+        sites: list[RenameSite],
+        unlocatable: list[str],
+        rows: list[ResultRow],
+        owns: Callable[[str], bool],
+        old_name: str,
+        patcher: Patcher,
+    ) -> None:
         # A base-class list or an annotation names the symbol without a
         # call; an edge without a site cannot be rewritten and must refuse,
         # or the applied rename would leave `class Circle(Base)` dangling.
-        for row in self.fetch_all(cq.CYPHER_GRAPH_TYPE_EDGES, params):
+        for row in rows:
+            if not owns(str(row.get(cs.KEY_QUALIFIED_NAME) or "")):
+                continue
             if not isinstance(row.get("path"), str) or not isinstance(
                 row.get("line"), int
             ):
@@ -436,7 +511,6 @@ class Renamer:
                 )
                 continue
             self._add_site(sites, unlocatable, "reference", row, old_name, patcher)
-        return sites, unlocatable, old_name, definition["label"]
 
     @staticmethod
     def _record_unlocatable(
@@ -528,16 +602,10 @@ class Renamer:
             # rewrite here.
             return
         sites.append(RenameSite(kind, path, token[0], token[1], owner, resolution_text))
-        if kind != "call":
-            return
-        # `obj.helper(1).helper(2)`: a link of the chain the index has no
-        # row for (the receiver's type was not inferred) binds to nobody
-        # the graph knows. It is renamed only as a guess the caller opts
-        # into with allow_heuristic; `plan` drops it where a row covers it.
-        language = get_language_for_extension(Path(path).suffix)
-        for link in _chain_links(source, language, line, col, old_name):
-            if link != token:
-                sites.append(RenameSite(kind, path, link[0], link[1], owner, _CHAIN))
+        if kind == "call":
+            sites.extend(
+                _chain_link_sites(kind, path, source, line, col, old_name, owner, token)
+            )
 
     def _import_sites(self, qn: str, old_name: str) -> list[tuple[ImportSite, str]]:
         module_qn, _path = self._module_of(qn)
@@ -1068,10 +1136,12 @@ class Renamer:
             for member in report.hierarchy
         ]
         pairs = list(parents)
+        longer_project_prefixes = _longer_project_prefixes(self.fetch_all, self.project)
         for row in self.fetch_all(
             cq.CYPHER_DELTA_DEFINITIONS,
             {
                 cs.KEY_PROJECT_PREFIX: f"{self.project}{cs.SEPARATOR_DOT}",
+                cs.KEY_LONGER_PROJECT_PREFIXES: list(longer_project_prefixes),
                 cs.CYPHER_PARAM_PATHS: list(report.files),
             },
         ):
