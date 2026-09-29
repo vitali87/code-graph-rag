@@ -23,7 +23,9 @@ cgr start --repo-path ~/services/order-service --update-graph
 Project names are derived from the directory name plus a short hash of the
 full path (for example `user-service__a1b2c3d4`), so two checkouts with the
 same folder name never overwrite each other. Pass `--project-name` to choose
-a name yourself.
+a name yourself. A chosen name cannot contain `.`: it separates the parts of
+a qualified name, so a project `acme.web` would share nodes with the `web`
+package of a project `acme`.
 
 Each `Project` node records the repository root it was indexed from
 (`root_path`), and every code node stores the absolute path of its source

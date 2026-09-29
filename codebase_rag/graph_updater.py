@@ -124,6 +124,7 @@ from .utils.path_utils import (
     cached_file_identity_posix,
     cached_relative_path,
     cached_resolve_posix,
+    separator_free_project_name,
     should_keep_dir,
     should_skip_path,
     should_skip_rel_file,
@@ -1226,9 +1227,11 @@ class GraphUpdater:
             if project_named is None
             else project_named
         )
+        # The directory-name default drops `.`: `acme.web/` must not write
+        # the nodes of project `acme`'s package `web` (issue #2412).
         self.project_name = (
             project_name and project_name.strip()
-        ) or repo_path.resolve().name
+        ) or separator_free_project_name(repo_path.resolve().name)
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
             simple_name_lookup=self.simple_name_lookup

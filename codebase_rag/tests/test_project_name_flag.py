@@ -168,7 +168,8 @@ class TestEdgeCases:
         )
         assert updater.project_name == "my-library"
         updater_default = _make_updater(ver_dir, mock_ingestor, parsers_and_queries)
-        assert updater_default.project_name == "v1.3.2"
+        # `.` separates qualified-name parts, so the default drops it (#2412).
+        assert updater_default.project_name == "v1_3_2"
 
     def test_nested_same_name_parent(
         self,

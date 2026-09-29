@@ -28,7 +28,7 @@ from .graph_updater import GraphUpdater, _load_exclusion_state, _load_project_st
 from .services import QueryingIngestorProtocol
 from .structural_delta import StructuralDelta, normalise_paths, observe
 from .types_defs import LanguageQueries
-from .utils.path_utils import derive_project_name
+from .utils.path_utils import derive_project_name, separator_free_project_name
 
 _GIT_DELETED = "D"
 
@@ -130,7 +130,14 @@ def _stamp_belongs_to(
     owner = stored.get("project")
     if _stamp_is_named(stored):
         return owner == project_name
-    default_names = {derive_project_name(repo_root), repo_root.resolve().name}
+    # The updater's default drops `.` from the directory name (#2412); a
+    # stamp written before that still carries the name verbatim.
+    directory = repo_root.resolve().name
+    default_names = {
+        derive_project_name(repo_root),
+        directory,
+        separator_free_project_name(directory),
+    }
     return not explicit and owner in default_names and project_name in default_names
 
 
