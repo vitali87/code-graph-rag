@@ -374,8 +374,12 @@ HELP_EXCLUDE_PATTERNS = (
 )
 HELP_INTERACTIVE_SETUP = "Choose which detected directories remain included."
 HELP_CAPTURE = (
-    "Capture GROUP (structure, calls, types, imports, io), all/none, or a +TYPE/-TYPE "
-    "override. Repeatable; later values override CGR_CAPTURE."
+    "Capture GROUP (structure, calls, types, imports, io, findings, glosses, "
+    "parameters, fields, enum_variants), all/none, or a +TYPE/-TYPE override. "
+    "A GROUP is added to the defaults (structure, calls, types, imports); use "
+    "none first to capture only what follows (none,structure) and -GROUP to drop "
+    "one. Repeatable or comma-separated; later values override CGR_CAPTURE. An "
+    "unknown group or type is an error."
 )
 
 HELP_ASK_AGENT = "Ask one question, write the answer to stdout, and exit."

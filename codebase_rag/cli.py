@@ -30,7 +30,7 @@ from . import cli_help as ch
 from . import constants as cs
 from . import cypher_queries as cq
 from . import logs as ls
-from .capture import CaptureSelection, resolve_capture, split_spec
+from .capture import CaptureSelection, resolve_capture, split_spec, unknown_tokens
 from .cli_runtime import app_context, connect_memgraph, style
 from .config import load_ignore_patterns, settings
 from .console_marks import status_mark
@@ -503,7 +503,25 @@ def _maybe_start_stack() -> None:
 def _capture_selection(capture: list[str] | None) -> CaptureSelection:
     # Env CGR_CAPTURE is the sticky baseline; --capture tokens are appended so
     # a single run can override it (later tokens win in the resolver).
-    return resolve_capture([*split_spec(settings.CGR_CAPTURE), *(capture or [])])
+    return resolve_capture(
+        [*split_spec(settings.CGR_CAPTURE), *_capture_tokens(capture)]
+    )
+
+
+def _capture_tokens(capture: list[str] | None) -> list[str]:
+    # A flag value splits like CGR_CAPTURE, so `--capture none,structure` works.
+    return [token for value in capture or [] for token in split_spec(value)]
+
+
+def _known_capture(capture: list[str] | None) -> list[str] | None:
+    if unknown := unknown_tokens(_capture_tokens(capture)):
+        raise typer.BadParameter(
+            cs.CLI_ERR_CAPTURE_UNKNOWN.format(
+                tokens=cs.SEPARATOR_COMMA_SPACE.join(unknown),
+                groups=cs.SEPARATOR_COMMA_SPACE.join(g.value for g in cs.CaptureGroup),
+            )
+        )
+    return capture
 
 
 def _stdin_is_interactive() -> bool:
@@ -825,6 +843,7 @@ def start(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,
@@ -982,6 +1001,7 @@ def index(
         None,
         "--capture",
         help=ch.HELP_CAPTURE,
+        callback=_known_capture,
     ),
     interactive_setup: bool = typer.Option(
         False,

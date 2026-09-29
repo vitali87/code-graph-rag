@@ -1114,6 +1114,11 @@ PROGRESS_FILES_PROCESSED = "{count} processed"
 
 # Capture selection logs
 CAPTURE_UNKNOWN_TOKEN = "Ignoring unknown capture token: {token}"
+CAPTURE_GROUP_ALREADY_ON = (
+    "Capture group '{group}' adds nothing: it is already captured. A group is "
+    "added to the defaults; use `--capture none --capture {group}` to capture "
+    "only it, or `-GROUP` to drop a group."
+)
 CAPTURE_DEPENDENCY_GAP = (
     "Capture selection keeps {rel} but its usual companion {missing} is disabled; "
     "obeying as requested (edges may be incomplete)"
