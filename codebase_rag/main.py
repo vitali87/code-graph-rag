@@ -443,6 +443,8 @@ def _setup_common_initialization(repo_path: str) -> Path:
         _rich_log_sink,
         format=cs.LOG_FORMAT,
         colorize=False,
+        backtrace=False,
+        diagnose=False,
         level=os.environ.get(cs.ENV_LOGURU_LEVEL, cs.LOG_LEVEL_INFO),
     )
 

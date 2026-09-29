@@ -252,7 +252,7 @@ def _default_log_level_to_info() -> None:
         logger.remove(cs.LOGURU_DEFAULT_HANDLER_ID)
     except ValueError:
         return
-    logger.add(sys.stderr, level=cs.LOG_LEVEL_INFO)
+    logger.add(sys.stderr, level=cs.LOG_LEVEL_INFO, backtrace=False, diagnose=False)
 
 
 def _info(msg: str) -> None:
