@@ -7,6 +7,7 @@ from tree_sitter import Node
 
 from ... import constants as cs
 from ...language_spec import LANGUAGE_FQN_SPECS
+from ...utils.fqn_resolver import scoped_name_parts
 from .. import export_detection
 from ..cpp import utils as cpp_utils
 from ..rs import utils as rs_utils
@@ -27,14 +28,10 @@ def resolve_class_identity(
         class_name = fqn_config.get_name(class_node)
         warn_if_name_truncated(class_node, class_name, file_path)
         if class_name:
-            parts = [class_name]
-            current = class_node.parent
-            while current:
-                if current.type in fqn_config.scope_node_types:
-                    if scope_name := fqn_config.get_name(current):
-                        parts.append(scope_name)
-                current = current.parent
-            parts.reverse()
+            parts = [
+                *scoped_name_parts(class_node.parent, fqn_config, module_qn, file_path),
+                class_name,
+            ]
 
             # Use the module's already-resolved (and collision-disambiguated)
             # qualified name as the prefix rather than recomputing from the path,

@@ -9,7 +9,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-import mgclient  # ty: ignore[unresolved-import]
+import mgclient
 from loguru import logger
 
 from codebase_rag.config import settings
@@ -19,6 +19,7 @@ from .. import exceptions as ex
 from .. import logs as ls
 from ..constants import (
     CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES,
+    CYPHER_EXPLAIN_PREFIX,
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
     KEY_CREATED,
@@ -63,11 +64,17 @@ from ..types_defs import (
     GraphMetadata,
     NodeBatchRow,
     PropertyDict,
+    PropertyParams,
     PropertyValue,
     RelBatchRow,
     ResultRow,
 )
 from ..utils.path_utils import project_roots_from_rows
+from .cypher_guard import (
+    check_plan,
+    memgraph_plan_operators,
+    neo4j_plan_operators,
+)
 from .resource_cleanup import prune_unanchored_resources
 
 if TYPE_CHECKING:
@@ -86,6 +93,49 @@ def _apply_memory_limit(
     return (dialect or get_dialect(settings.GRAPH_BACKEND)).apply_memory_limit(
         query, mb
     )
+
+
+def _group_by_merge_keys(
+    rel_type: str, params_list: list[RelBatchRow]
+) -> dict[tuple[str, ...], list[RelBatchRow]]:
+    # Bucket rows by which of the relationship's merge-key props they carry.
+    candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
+    by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
+    for row in params_list:
+        props = row[KEY_PROPS] or {}
+        by_keys[tuple(p for p in candidate if p in props)].append(row)
+    return by_keys
+
+
+def _created_count(results: Sequence[ResultRow]) -> int:
+    total = 0
+    for r in results:
+        created = r.get(KEY_CREATED, 0)
+        if isinstance(created, int):
+            total += created
+    return total
+
+
+def _log_failed_calls(
+    from_label: str,
+    to_label: str,
+    params_list: list[RelBatchRow],
+    batch_successful: int,
+) -> None:
+    failed = len(params_list) - batch_successful
+    if failed <= 0:
+        return
+    logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
+    for i, sample in enumerate(params_list[:3]):
+        logger.warning(
+            ls.MG_CALLS_SAMPLE.format(
+                index=i + 1,
+                from_label=from_label,
+                from_val=sample[KEY_FROM_VAL],
+                to_label=to_label,
+                to_val=sample[KEY_TO_VAL],
+            )
+        )
 
 
 class MemgraphIngestor:
@@ -374,7 +424,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_constraint(label, prop))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_CONSTRAINTS_DONE)
         self._ensure_indexes()
@@ -430,7 +480,7 @@ class MemgraphIngestor:
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
                 self._execute_query(self._dialect.create_index(label, prop))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         # The unique-key indexes serve MERGE at write time; generated Cypher
         # reads filter on bare `name`, which needs its own label+name index
@@ -438,7 +488,7 @@ class MemgraphIngestor:
         for label in NODE_NAME_INDEXES:
             try:
                 self._execute_query(self._dialect.create_index(label, KEY_NAME))
-            except Exception:
+            except Exception:  # noqa: S110 - _execute_query logged it; DDL failure must not stop ingestion
                 pass
         logger.info(ls.MG_INDEXES_DONE)
 
@@ -551,47 +601,11 @@ class MemgraphIngestor:
         for label, props in buffered_nodes:
             nodes_by_label[label].append(props)
 
-        flushed_total = 0
-        skipped_total = 0
-
-        first_error: Exception | None = None
-        failed_labels: set[str] = set()
-
         if self._executor and len(nodes_by_label) > 1:
-            logger.info(
-                ls.MG_PARALLEL_FLUSH_NODES.format(
-                    count=len(nodes_by_label),
-                    workers=settings.FLUSH_THREAD_POOL_SIZE,
-                )
-            )
-            futures = {
-                self._executor.submit(
-                    self._flush_node_group_with_own_conn, label, props_list
-                ): label
-                for label, props_list in nodes_by_label.items()
-            }
-            for future in as_completed(futures):
-                label = futures[future]
-                try:
-                    flushed, skipped = future.result()
-                    flushed_total += flushed
-                    skipped_total += skipped
-                except Exception as e:
-                    failed_labels.add(label)
-                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
-                    if first_error is None:
-                        first_error = e
+            outcome = self._flush_node_groups_parallel(self._executor, nodes_by_label)
         else:
-            for label, props_list in nodes_by_label.items():
-                try:
-                    flushed, skipped = self._flush_node_label_group(label, props_list)
-                    flushed_total += flushed
-                    skipped_total += skipped
-                except Exception as e:
-                    failed_labels.add(label)
-                    logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
-                    if first_error is None:
-                        first_error = e
+            outcome = self._flush_node_groups_serial(nodes_by_label)
+        flushed_total, skipped_total, failed_labels, first_error = outcome
 
         logger.info(
             ls.MG_NODES_FLUSHED.format(flushed=flushed_total, total=buffer_size)
@@ -605,6 +619,63 @@ class MemgraphIngestor:
         if first_error is not None:
             raise first_error
 
+    def _flush_node_groups_parallel(
+        self,
+        executor: ThreadPoolExecutor,
+        nodes_by_label: dict[str, list[dict[str, PropertyValue]]],
+    ) -> tuple[int, int, set[str], Exception | None]:
+        # Each label group on its own connection; a failed label keeps its
+        # buffered nodes for a retry, and the first failure is re-raised.
+        logger.info(
+            ls.MG_PARALLEL_FLUSH_NODES.format(
+                count=len(nodes_by_label),
+                workers=settings.FLUSH_THREAD_POOL_SIZE,
+            )
+        )
+        futures = {
+            executor.submit(
+                self._flush_node_group_with_own_conn, label, props_list
+            ): label
+            for label, props_list in nodes_by_label.items()
+        }
+        flushed_total = 0
+        skipped_total = 0
+        failed_labels: set[str] = set()
+        first_error: Exception | None = None
+        for future in as_completed(futures):
+            label = futures[future]
+            try:
+                flushed, skipped = future.result()
+            except Exception as e:
+                failed_labels.add(label)
+                logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            flushed_total += flushed
+            skipped_total += skipped
+        return flushed_total, skipped_total, failed_labels, first_error
+
+    def _flush_node_groups_serial(
+        self, nodes_by_label: dict[str, list[dict[str, PropertyValue]]]
+    ) -> tuple[int, int, set[str], Exception | None]:
+        flushed_total = 0
+        skipped_total = 0
+        failed_labels: set[str] = set()
+        first_error: Exception | None = None
+        for label, props_list in nodes_by_label.items():
+            try:
+                flushed, skipped = self._flush_node_label_group(label, props_list)
+            except Exception as e:
+                failed_labels.add(label)
+                logger.error(ls.MG_LABEL_FLUSH_ERROR.format(label=label, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            flushed_total += flushed
+            skipped_total += skipped
+        return flushed_total, skipped_total, failed_labels, first_error
+
     def _flush_rel_pattern_group(
         self,
         pattern: tuple[str, str, str, str, str],
@@ -614,11 +685,7 @@ class MemgraphIngestor:
         from_label, from_key, rel_type, to_label, to_key = pattern
         has_props = any(p[KEY_PROPS] for p in params_list)
         if self._use_merge:
-            candidate = MERGE_KEY_PROPS_BY_REL.get(rel_type, ())
-            by_keys: defaultdict[tuple[str, ...], list[RelBatchRow]] = defaultdict(list)
-            for row in params_list:
-                props = row[KEY_PROPS] or {}
-                by_keys[tuple(p for p in candidate if p in props)].append(row)
+            by_keys = _group_by_merge_keys(rel_type, params_list)
             if len(by_keys) > 1:
                 # Rows for the same endpoints may carry different distinguishing
                 # props (issue #722); flush each merge-key signature on its own so
@@ -644,7 +711,16 @@ class MemgraphIngestor:
             query = build_create_relationship_query(
                 from_label, from_key, rel_type, to_label, to_key, has_props
             )
+        return self._execute_rel_pattern_query(pattern, query, params_list, conn)
 
+    def _execute_rel_pattern_query(
+        self,
+        pattern: tuple[str, str, str, str, str],
+        query: str,
+        params_list: list[RelBatchRow],
+        conn: ConnectionProtocol | None,
+    ) -> tuple[int, int]:
+        from_label, _, rel_type, to_label, _ = pattern
         target_conn = conn or self.conn
         if not target_conn:
             logger.warning(ls.MG_NO_CONN_RELS.format(pattern=pattern))
@@ -654,26 +730,10 @@ class MemgraphIngestor:
             results = self._execute_batch_with_return_on(
                 target_conn, query, params_list
             )
-        batch_successful = 0
-        for r in results:
-            created = r.get(KEY_CREATED, 0)
-            if isinstance(created, int):
-                batch_successful += created
+        batch_successful = _created_count(results)
 
         if rel_type == REL_TYPE_CALLS:
-            failed = len(params_list) - batch_successful
-            if failed > 0:
-                logger.warning(ls.MG_CALLS_FAILED.format(count=failed))
-                for i, sample in enumerate(params_list[:3]):
-                    logger.warning(
-                        ls.MG_CALLS_SAMPLE.format(
-                            index=i + 1,
-                            from_label=from_label,
-                            from_val=sample[KEY_FROM_VAL],
-                            to_label=to_label,
-                            to_val=sample[KEY_TO_VAL],
-                        )
-                    )
+            _log_failed_calls(from_label, to_label, params_list, batch_successful)
 
         return len(params_list), batch_successful
 
@@ -681,45 +741,14 @@ class MemgraphIngestor:
         if not self._rel_count:
             return
 
-        total_attempted = 0
-        total_successful = 0
-        first_error: Exception | None = None
-
         if self._executor and len(self._rel_groups) > 1:
-            logger.info(
-                ls.MG_PARALLEL_FLUSH_RELS.format(
-                    count=len(self._rel_groups),
-                    workers=settings.FLUSH_THREAD_POOL_SIZE,
-                )
+            total_attempted, total_successful, first_error = (
+                self._flush_rel_groups_parallel(self._executor)
             )
-            futures = {
-                self._executor.submit(
-                    self._flush_rel_group_with_own_conn, pattern, params_list
-                ): pattern
-                for pattern, params_list in self._rel_groups.items()
-            }
-            for future in as_completed(futures):
-                pattern = futures[future]
-                try:
-                    attempted, successful = future.result()
-                    total_attempted += attempted
-                    total_successful += successful
-                except Exception as e:
-                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
-                    if first_error is None:
-                        first_error = e
         else:
-            for pattern, params_list in self._rel_groups.items():
-                try:
-                    attempted, successful = self._flush_rel_pattern_group(
-                        pattern, params_list
-                    )
-                    total_attempted += attempted
-                    total_successful += successful
-                except Exception as e:
-                    logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
-                    if first_error is None:
-                        first_error = e
+            total_attempted, total_successful, first_error = (
+                self._flush_rel_groups_serial()
+            )
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
@@ -734,6 +763,57 @@ class MemgraphIngestor:
         if first_error is not None:
             raise first_error
 
+    def _flush_rel_groups_parallel(
+        self, executor: ThreadPoolExecutor
+    ) -> tuple[int, int, Exception | None]:
+        # Each pattern group on its own connection; every group still runs
+        # when one fails, and the first failure is re-raised by the caller.
+        logger.info(
+            ls.MG_PARALLEL_FLUSH_RELS.format(
+                count=len(self._rel_groups),
+                workers=settings.FLUSH_THREAD_POOL_SIZE,
+            )
+        )
+        futures = {
+            executor.submit(
+                self._flush_rel_group_with_own_conn, pattern, params_list
+            ): pattern
+            for pattern, params_list in self._rel_groups.items()
+        }
+        total_attempted = 0
+        total_successful = 0
+        first_error: Exception | None = None
+        for future in as_completed(futures):
+            pattern = futures[future]
+            try:
+                attempted, successful = future.result()
+            except Exception as e:
+                logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            total_attempted += attempted
+            total_successful += successful
+        return total_attempted, total_successful, first_error
+
+    def _flush_rel_groups_serial(self) -> tuple[int, int, Exception | None]:
+        total_attempted = 0
+        total_successful = 0
+        first_error: Exception | None = None
+        for pattern, params_list in self._rel_groups.items():
+            try:
+                attempted, successful = self._flush_rel_pattern_group(
+                    pattern, params_list
+                )
+            except Exception as e:
+                logger.error(ls.MG_REL_FLUSH_ERROR.format(pattern=pattern, error=e))
+                if first_error is None:
+                    first_error = e
+                continue
+            total_attempted += attempted
+            total_successful += successful
+        return total_attempted, total_successful, first_error
+
     def flush_all(self) -> None:
         logger.info(ls.MG_FLUSH_START)
         self.flush_nodes()
@@ -741,19 +821,49 @@ class MemgraphIngestor:
         logger.info(ls.MG_FLUSH_COMPLETE)
 
     def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]:
         bounded_query = _apply_memory_limit(
             query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
         )
         logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=params)
-        return self._execute_query(bounded_query, params)
+        return self._execute_query(
+            bounded_query, dict(params) if params is not None else None
+        )
 
-    def execute_write(
-        self, query: str, params: dict[str, PropertyValue] | None = None
-    ) -> None:
+    def fetch_read_only(self, query: str) -> list[ResultRow]:
+        """Run an untrusted (LLM-generated) query so that it cannot write.
+
+        The text checks in `services.llm` are the first layer; this is the
+        one that does not depend on reading the query text correctly. On both
+        engines the query is planned with EXPLAIN and refused before it runs
+        unless every planned operator is a known read and every procedure is
+        allowed. Neo4j additionally runs it in a READ access-mode session,
+        which its driver documents as a routing hint rather than access
+        control, so it is not relied on.
+        """
+        bounded_query = _apply_memory_limit(
+            query, settings.QUERY_MEMORY_LIMIT_MB, self._dialect
+        )
+        logger.debug(ls.MG_FETCH_QUERY, query=bounded_query, params=None)
+        if self._dialect.name == DIALECT_NEO4J:
+            with self._neo4j_driver().connect(read_only=True) as conn:
+                check_plan(neo4j_plan_operators(conn.explain(bounded_query)), query)
+                cursor = conn.cursor()
+                cursor.execute(bounded_query)
+                return self._cursor_to_results(cursor)
+        plan = self._execute_query(CYPHER_EXPLAIN_PREFIX + bounded_query)
+        check_plan(
+            memgraph_plan_operators(
+                [str(next(iter(row.values()), "")) for row in plan]
+            ),
+            query,
+        )
+        return self._execute_query(bounded_query)
+
+    def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
-        self._execute_query(query, params)
+        self._execute_query(query, dict(params) if params is not None else None)
 
     def export_graph_to_dict(self) -> GraphData:
         logger.info(ls.MG_EXPORTING)

@@ -217,11 +217,13 @@ def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]
     """The executable path, load slide, and (caller, callee, count) edges.
 
     Raises ``TraceFormatError`` for an unparseable trace or one the shim
-    marked ``dropped`` (its edge table overflowed, so counts are incomplete).
+    marked ``dropped`` (edges were lost, so counts are incomplete) or
+    ``unwound`` (a skipped exit hook may have left a stale caller).
     """
     exe = ""
     slide = 0
     dropped = False
+    unwound = False
     pairs: list[tuple[int, int, int]] = []
     for line in addrs_path.read_text(encoding="utf-8").splitlines():
         # Header keys are single tokens; the value is the rest of the line so
@@ -233,6 +235,8 @@ def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]
             slide = int(rest)
         elif key == "dropped":
             dropped = True
+        elif key == "unwound":
+            unwound = True
         else:
             parts = line.split()
             if len(parts) == 3:
@@ -240,10 +244,12 @@ def _parse_addrs(addrs_path: Path) -> tuple[str, int, list[tuple[int, int, int]]
     if not exe or not pairs:
         raise TraceFormatError(cs.TRACE_ERR_BAD_ADDRS.format(path=addrs_path))
     if dropped:
-        # The shim's fixed table overflowed and lost caller/callee pairs, so
-        # the exact invocation-count contract can no longer hold. Refuse the
-        # trace rather than pass off an incomplete call graph as exact.
+        # The shim lost caller/callee pairs, so the exact invocation-count
+        # contract can no longer hold. Refuse the trace rather than pass off
+        # an incomplete call graph as exact; an unwound one likewise.
         raise TraceFormatError(cs.TRACE_ERR_ADDRS_DROPPED.format(path=addrs_path))
+    if unwound:
+        raise TraceFormatError(cs.TRACE_ERR_ADDRS_UNWOUND.format(path=addrs_path))
     return exe, slide, pairs
 
 

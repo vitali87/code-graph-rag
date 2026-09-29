@@ -225,9 +225,12 @@ def test_get_model_moves_to_mps_when_available(reset_model_cache: None) -> None:
                 "codebase_rag.embedder.torch.backends.mps.is_available",
                 return_value=True,
             ):
-                get_model()
+                with patch("codebase_rag.embedder.torch.mps.synchronize") as sync:
+                    get_model()
 
     mock_instance.to.assert_called_once_with("mps")
+    # The upload is drained before the first batch (issue #2218).
+    sync.assert_called_once()
 
 
 @needs_local_weights

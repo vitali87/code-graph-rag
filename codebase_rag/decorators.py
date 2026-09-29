@@ -11,6 +11,7 @@ from . import exceptions as ex
 from . import logs as ls
 from .types_defs import (
     LoadableProtocol,
+    PathResultFactory,
     PathValidatorProtocol,
 )
 
@@ -32,7 +33,9 @@ def timing_decorator[**P, T](func: Callable[P, T]) -> Callable[P, T]:
             return func(*args, **kwargs)
         finally:
             elapsed = (time.perf_counter() - start) * 1000
-            logger.info(ls.FUNC_TIMING.format(func=func.__qualname__, time=elapsed))
+            # `wraps` copied the qualified name onto the wrapper; a bare Callable
+            # is not known to carry one.
+            logger.info(ls.FUNC_TIMING.format(func=wrapper.__qualname__, time=elapsed))
 
     return wrapper
 
@@ -47,13 +50,15 @@ def async_timing_decorator[**P, T](
             return await func(*args, **kwargs)
         finally:
             elapsed = (time.perf_counter() - start) * 1000
-            logger.info(ls.FUNC_TIMING.format(func=func.__qualname__, time=elapsed))
+            # `wraps` copied the qualified name onto the wrapper; a bare Callable
+            # is not known to carry one.
+            logger.info(ls.FUNC_TIMING.format(func=wrapper.__qualname__, time=elapsed))
 
     return wrapper
 
 
 def validate_project_path[T](
-    result_factory: type[T],
+    result_factory: PathResultFactory[T],
     path_arg_name: str,
 ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
@@ -123,6 +128,53 @@ def recursion_guard[**P, T](
         return wrapper
 
     return decorator
+
+
+_DEPTH_REGISTRY: dict[str, ContextVar[int]] = {}
+
+
+def depth_guard[**P, T](
+    max_depth: int, guard_name: str
+) -> Callable[[Callable[P, T | None]], Callable[P, T | None]]:
+    """Answer None once `max_depth` guarded calls are already on the stack.
+
+    Every function decorated with the same `guard_name` shares one counter, so
+    mutually recursive functions are bounded together. It stops input-driven
+    recursion (a long call chain, deeply nested arguments) well before
+    Python's own limit, where a RecursionError would abort the whole caller.
+    """
+    context_var = _DEPTH_REGISTRY.get(guard_name)
+    if context_var is None:
+        context_var = _DEPTH_REGISTRY.setdefault(
+            guard_name, ContextVar[int](guard_name, default=0)
+        )
+
+    def decorator(func: Callable[P, T | None]) -> Callable[P, T | None]:
+        @wraps(func)
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
+            depth = context_var.get()
+            if depth >= max_depth:
+                return None
+            token = context_var.set(depth + 1)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                context_var.reset(token)
+
+        return wrapper
+
+    return decorator
+
+
+def depth_exhausted(guard_name: str, max_depth: int) -> bool:
+    """Whether a `depth_guard` with this name would refuse its next call.
+
+    For a caller holding a fallback: once the guarded call was refused for
+    depth, falling back would run the same unbounded work the guard exists
+    to stop.
+    """
+    context_var = _DEPTH_REGISTRY.get(guard_name)
+    return context_var is not None and context_var.get() >= max_depth
 
 
 def log_operation[T](

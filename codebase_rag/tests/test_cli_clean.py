@@ -113,7 +113,7 @@ class TestCleanWithoutUpdateGraph:
         mock_memgraph_connect: MagicMock,
         tmp_path: Path,
     ) -> None:
-        with patch("codebase_rag.cli.GraphUpdater") as mock_updater:
+        with patch("codebase_rag.graph_updater.GraphUpdater") as mock_updater:
             result = runner.invoke(
                 app,
                 ["start", "--clean", "--repo-path", str(tmp_path)],
@@ -151,7 +151,7 @@ class TestCleanWithoutUpdateGraph:
 
 
 class TestCleanWithUpdateGraph:
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_clean_with_update_deletes_hash_cache(
@@ -177,7 +177,7 @@ class TestCleanWithUpdateGraph:
         assert result.exit_code == 0, result.output
         assert not cache_path.exists()
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_clean_with_update_calls_clean_database(
@@ -201,7 +201,7 @@ class TestCleanWithUpdateGraph:
         ingestor = _get_ingestor(mock_memgraph_connect)
         ingestor.clean_database.assert_called_once()
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_clean_with_update_purges_vector_store(
@@ -225,7 +225,7 @@ class TestCleanWithUpdateGraph:
         assert result.exit_code == 0, result.output
         clear.assert_called_once()
 
-    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.graph_updater.GraphUpdater")
     @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
     @patch("codebase_rag.cli.load_ignore_patterns")
     def test_update_without_clean_preserves_hash_cache(
