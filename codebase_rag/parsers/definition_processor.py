@@ -580,9 +580,8 @@ class DefinitionProcessor(
         else:
             if source_bytes is None:
                 source_bytes = file_path.read_bytes()
-            lang_queries = queries[language]
-            parser = lang_queries.get(cs.KEY_PARSER)
-            if not parser:
+            parser = queries[language].get(cs.KEY_PARSER)
+            if parser is None:
                 logger.warning(ls.DEF_NO_PARSER.format(language=language))
                 return None
             tree = parse_with_preproc_recovery(parser, source_bytes, language)

@@ -347,6 +347,10 @@ class AstGrepTier:
         try:
             if rule.pattern is not None:
                 return root.find_all(pattern=rule.pattern)
+            # `_parse_rule` gives every rule exactly one selector; a rule built
+            # with neither matches nothing rather than failing the whole file.
+            if rule.kind is None:
+                return []
             matches = root.find_all(kind=rule.kind)
             if rule.has_child:
                 matches = [

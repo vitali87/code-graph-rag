@@ -316,3 +316,30 @@ class TestGenerate:
         preds = instance.generate(source_ids, beam_size=2, max_length=3)
 
         assert preds.shape == (2, 2, 3)
+
+
+class TestDecode:
+    def _make(self) -> UniXcoder:
+        instance = UniXcoder.__new__(UniXcoder)
+        nn.Module.__init__(instance)
+        instance.tokenizer = MagicMock()
+        instance.tokenizer.decode.side_effect = lambda ids, **_kw: " ".join(
+            str(int(i)) for i in ids
+        )
+        return instance
+
+    def test_each_beam_decodes_up_to_its_first_pad(self) -> None:
+        instance = self._make()
+        source_ids = torch.tensor([[[5, 6, 0, 7], [8, 0, 0, 0]]])
+
+        assert instance.decode(source_ids) == [["5 6", "8"]]
+
+    def test_a_batch_shaped_decode_is_rejected(self) -> None:
+        # Negative: a tokenizer answering a list for one sequence is not a
+        # prediction, and must not be passed off as one.
+        instance = self._make()
+        instance.tokenizer.decode.side_effect = lambda ids, **_kw: ["a", "b"]
+        source_ids = torch.tensor([[[5, 6]]])
+
+        with pytest.raises(AssertionError):
+            instance.decode(source_ids)

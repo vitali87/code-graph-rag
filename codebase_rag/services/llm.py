@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.agent import AgentRetries
+from pydantic_ai.agent import AgentRetries, AgentRunResult
 
 from .. import constants as cs
 from .. import exceptions as ex
@@ -148,6 +148,13 @@ def _validate_call_procedures(query: str) -> None:
             )
 
 
+class CypherAgent(Protocol):
+    """The one call CypherGenerator makes on its agent, so a wrapper can
+    stand in for it (the agentic QA eval meters its token spend)."""
+
+    async def run(self, user_prompt: str) -> AgentRunResult[str]: ...
+
+
 class CypherGenerator:
     __slots__ = ("agent",)
 
@@ -163,7 +170,7 @@ class CypherGenerator:
                 else build_cypher_system_prompt(active_projects)
             )
 
-            self.agent = Agent(
+            self.agent: CypherAgent = Agent(
                 model=llm,
                 system_prompt=system_prompt,
                 output_type=str,
@@ -220,12 +227,12 @@ def create_research_agent(tools: list[Tool]) -> Agent:
 
 
 def create_rag_orchestrator(
-    tools: list[Tool],
+    tools: list[Tool[None]],
     project_root: Path | None = None,
     load_instructions: bool = True,
     active_projects: list[str] | None = None,
     backend: str | None = None,
-) -> tuple[Agent, str]:
+) -> tuple[Agent[None, str | DeferredToolRequests], str]:
     """Build the main agent and return it with its system prompt."""
     try:
         config = settings.active_orchestrator_config
@@ -241,7 +248,9 @@ def create_rag_orchestrator(
             backend=backend,
         )
 
-        agent = Agent(
+        # Specialised explicitly: the checker cannot infer the output type
+        # from a list of output types.
+        agent = Agent[None, str | DeferredToolRequests](
             model=llm,
             system_prompt=system_prompt,
             tools=tools,

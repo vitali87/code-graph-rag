@@ -8,7 +8,7 @@ from collections import deque
 from typing import NamedTuple, Protocol
 
 from . import constants as cs
-from .types_defs import PropertyDict, ResultRow
+from .types_defs import PropertyParams, ResultRow
 
 FLOW_VERDICT_FOUND = "FOUND"
 FLOW_VERDICT_NO_FLOW = "NO_FLOW"
@@ -42,7 +42,7 @@ ORDER BY path
 
 class QueryFn(Protocol):
     def __call__(
-        self, query: str, params: PropertyDict | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]: ...
 
 

@@ -9,6 +9,7 @@ from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
     ResultRow,
+    ResultScalar,
     ResultValue,
 )
 from codebase_rag.utils import qn_markers
@@ -204,6 +205,15 @@ def _result(value: PropertyValue | None) -> ResultValue:
     if isinstance(value, float):
         return int(value) if value.is_integer() else str(value)
     return value
+
+
+def _result_props(
+    props: PropertyDict,
+) -> dict[str, ResultScalar | list[ResultScalar]]:
+    return {
+        key: list[ResultScalar](value) if isinstance(value, list) else value
+        for key, value in props.items()
+    }
 
 
 def _text(value: PropertyValue) -> str | None:
@@ -791,7 +801,7 @@ class _StatefulIngestor:
                             cs.KEY_CALLER_PATH: _text(caller_path),
                             # The restore re-emits the edge with its own
                             # properties (its site, issue #1522).
-                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
+                            cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound
@@ -857,7 +867,7 @@ class _StatefulIngestor:
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -874,7 +884,7 @@ class _StatefulIngestor:
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
                 # requeue for the same reason as the Parameter query above.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),

@@ -1441,12 +1441,12 @@ def rename_command(
     from .graph_cli import _project_and_fetch
 
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
-    with ingestor:  # type: ignore[attr-defined]
+    with ingestor:
         parsers, queries = load_parsers()
         from .graph_updater import GraphUpdater
 
         updater = GraphUpdater(
-            ingestor=ingestor,  # type: ignore[arg-type]
+            ingestor=ingestor,
             repo_path=repo_path.resolve(),
             parsers=parsers,
             queries=queries,
@@ -1635,6 +1635,15 @@ def doctor() -> None:
         raise typer.Exit(1)
 
 
+def _node_label(row: ResultRow) -> str:
+    labels = row.get("labels")
+    # A row with no label list (absent, or null from the engine) is shown as
+    # unknown instead of failing the whole table.
+    if not isinstance(labels, list):
+        return cs.CLI_STATS_UNKNOWN
+    return ":".join(str(label) for label in labels) or cs.CLI_STATS_UNKNOWN
+
+
 def _build_stats_table(
     title: str,
     col_label: str,
@@ -1687,7 +1696,7 @@ def stats() -> None:
                     cs.CLI_STATS_NODE_TITLE,
                     cs.CLI_STATS_COL_NODE_TYPE,
                     node_results,
-                    lambda r: ":".join(r.get("labels", [])) or cs.CLI_STATS_UNKNOWN,
+                    _node_label,
                     cs.CLI_STATS_TOTAL_NODES,
                 )
             )
