@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     NamedTuple,
+    NotRequired,
     Protocol,
     TypedDict,
     runtime_checkable,
@@ -254,6 +255,8 @@ class GraphMetadata(TypedDict):
     total_nodes: int
     total_relationships: int
     exported_at: str
+    # Only on a scoped export (`cgr export -n`, issue #2410).
+    projects: NotRequired[list[str]]
 
 
 class NodeData(TypedDict):

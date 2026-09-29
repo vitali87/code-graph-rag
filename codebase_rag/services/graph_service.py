@@ -26,6 +26,7 @@ from ..constants import (
     KEY_FROM_VAL,
     KEY_NAME,
     KEY_PROJECT_NAME,
+    KEY_PROJECT_NAMES,
     KEY_PROPS,
     KEY_PURGED,
     KEY_TO_VAL,
@@ -41,6 +42,8 @@ from ..cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_DELETE_PROJECT,
     CYPHER_EXPORT_NODES,
+    CYPHER_EXPORT_PROJECT_NODES,
+    CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_RELATIONSHIPS,
     CYPHER_LIST_PROJECTS,
     CYPHER_PURGE_CROSS_PROJECT_STRUCTURE,
@@ -865,17 +868,31 @@ class MemgraphIngestor:
         logger.debug(ls.MG_WRITE_QUERY, query=query, params=params)
         self._execute_query(query, dict(params) if params is not None else None)
 
-    def export_graph_to_dict(self) -> GraphData:
+    def export_graph_to_dict(self, project_names: Sequence[str] = ()) -> GraphData:
+        """The whole shared graph, or what `project_names` own when given.
+
+        A scoped file records its projects in the metadata, so a reader can
+        tell it from a whole-graph export with the same shape.
+        """
         logger.info(ls.MG_EXPORTING)
 
-        nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
-        relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
+        if project_names:
+            params: PropertyParams = {KEY_PROJECT_NAMES: list(project_names)}
+            nodes_data = self.fetch_all(CYPHER_EXPORT_PROJECT_NODES, params)
+            relationships_data = self.fetch_all(
+                CYPHER_EXPORT_PROJECT_RELATIONSHIPS, params
+            )
+        else:
+            nodes_data = self.fetch_all(CYPHER_EXPORT_NODES)
+            relationships_data = self.fetch_all(CYPHER_EXPORT_RELATIONSHIPS)
 
         metadata = GraphMetadata(
             total_nodes=len(nodes_data),
             total_relationships=len(relationships_data),
             exported_at=self._get_current_timestamp(),
         )
+        if project_names:
+            metadata["projects"] = list(project_names)
 
         logger.info(
             ls.MG_EXPORTED.format(nodes=len(nodes_data), rels=len(relationships_data))

@@ -306,6 +306,39 @@ MATCH (a)-[r]->(b)
 RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 
+# What a project owns is what deleting it removes: its containment tree and
+# everything the containers define (the walk of CYPHER_DELETE_PROJECT). Walking
+# from the Project node rather than matching a qualified-name prefix keeps
+# `foo.bar`'s nodes out of `foo`, and takes File and Folder nodes, which have
+# no qualified name. `cgr stats -n` (#2391) counts the same set.
+_CYPHER_PROJECT_OWNED_NODES = """
+MATCH (p:Project) WHERE p.name IN $project_names
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE|CONTAINS_SECTION*]->(container)
+OPTIONAL MATCH (container)-[:DEFINES|DEFINES_METHOD|HAS_PARAMETER|HAS_FIELD|HAS_VARIANT*]->(defined)
+WITH collect(DISTINCT p) + collect(DISTINCT container) + collect(DISTINCT defined) AS owned
+UNWIND owned AS n
+WITH DISTINCT n
+"""
+# A project's export is what it owns, the relationships that start there, and
+# the nodes those relationships reach (a shared ExternalModule, another
+# project's callee), so every relationship in the file has both of its ends
+# in it (issue #2410).
+CYPHER_EXPORT_PROJECT_NODES = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """OPTIONAL MATCH (n)-->(reached)
+WITH collect(DISTINCT n) + collect(DISTINCT reached) AS exported
+UNWIND exported AS node
+WITH DISTINCT node
+RETURN id(node) as node_id, labels(node) as labels, properties(node) as properties
+"""
+)
+CYPHER_EXPORT_PROJECT_RELATIONSHIPS = (
+    _CYPHER_PROJECT_OWNED_NODES
+    + """MATCH (n)-[r]->(b)
+RETURN id(n) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
+"""
+)
+
 CYPHER_RETURN_COUNT = "RETURN count(r) as created"
 CYPHER_SET_PROPS_RETURN_COUNT = "SET r += row.props\nRETURN count(r) as created"
 
