@@ -53,11 +53,13 @@ def test_other_failures_are_not_query_rejections(error: BaseException) -> None:
     assert not is_query_rejection(error)
 
 
-def test_neo4j_client_errors_are_rejections_but_auth_is_not() -> None:
+def test_neo4j_client_errors_are_rejections_but_access_failures_are_not() -> None:
     exceptions = pytest.importorskip("neo4j.exceptions")
     assert is_query_rejection(exceptions.CypherTypeError())
     assert is_query_rejection(exceptions.CypherSyntaxError())
     assert not is_query_rejection(exceptions.AuthError())
+    assert not is_query_rejection(exceptions.TokenExpired())
+    assert not is_query_rejection(exceptions.Forbidden())
     assert not is_query_rejection(exceptions.ServiceUnavailable())
 
 

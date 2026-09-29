@@ -121,9 +121,10 @@ def is_query_rejection(error: BaseException) -> bool:
 
     A rejected query (a syntax or type error such as sorting on a list) can
     be fixed by asking for a different query; an unreachable server or a
-    failed login cannot, so those must not trigger a regeneration. In
-    mgclient, `OperationalError` (connection) subclasses `DatabaseError`;
-    in neo4j, `AuthError` subclasses `ClientError` (issue #2361).
+    failed login or a missing permission cannot, so those must not trigger a
+    regeneration. In mgclient, `OperationalError` (connection) subclasses
+    `DatabaseError`; in neo4j, `AuthError` and `Forbidden` subclass
+    `ClientError` (issue #2361).
     """
     if isinstance(error, mgclient.DatabaseError):
         return not isinstance(error, mgclient.OperationalError)
@@ -131,10 +132,13 @@ def is_query_rejection(error: BaseException) -> bool:
         from neo4j.exceptions import (  # ty: ignore[unresolved-import]
             AuthError,
             ClientError,
+            Forbidden,
         )
     except ImportError:
         return False
-    return isinstance(error, ClientError) and not isinstance(error, AuthError)
+    return isinstance(error, ClientError) and not isinstance(
+        error, (AuthError, Forbidden)
+    )
 
 
 def _log_failed_calls(
