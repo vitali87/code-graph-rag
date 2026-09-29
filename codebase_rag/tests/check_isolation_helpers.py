@@ -27,6 +27,7 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.structural_check import run_check
 from codebase_rag.structural_delta import StructuralDelta
+from codebase_rag.tests.conftest import git_env
 from evals.cgr_graph import _StatefulIngestor
 
 PROJECT = "iso_fixture"
@@ -51,6 +52,9 @@ def _git(root: Path, *args: str) -> None:
         cwd=root,
         check=True,
         capture_output=True,
+        # An inherited GIT_DIR or GIT_WORK_TREE would point these commands
+        # at another repository.
+        env=git_env(),
     )
 
 
