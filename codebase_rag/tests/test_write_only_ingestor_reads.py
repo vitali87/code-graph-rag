@@ -10,7 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.types_defs import PropertyDict, PropertyValue, ResultRow
+from codebase_rag.types_defs import (
+    PropertyDict,
+    PropertyParams,
+    PropertyValue,
+    ResultRow,
+)
 
 
 class _WriteOnlyIngestor:
@@ -34,10 +39,12 @@ class _ReadableIngestor(_WriteOnlyIngestor):
     def __init__(self, rows: list[ResultRow]) -> None:
         self.rows = rows
 
-    def fetch_all(self, query: str, params: object = None) -> list[ResultRow]:
+    def fetch_all(
+        self, query: str, params: PropertyParams | None = None
+    ) -> list[ResultRow]:
         return self.rows
 
-    def execute_write(self, query: str, params: object = None) -> None:
+    def execute_write(self, query: str, params: PropertyParams | None = None) -> None:
         pass
 
 
