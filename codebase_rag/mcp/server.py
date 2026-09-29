@@ -23,6 +23,7 @@ from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.types_defs import MCPToolArguments
 from codebase_rag.utils.path_utils import derive_project_name
 from codebase_rag.vector_store import close_qdrant_client
+from codebase_rag.workspaces import WorkspaceConfig, WorkspaceError, load_workspace
 
 if TYPE_CHECKING:
     # starlette is a lazy dependency of the HTTP path only; its ASGI
@@ -67,12 +68,34 @@ def get_project_root() -> Path:
     return project_root
 
 
-def create_server() -> tuple[Server, MemgraphIngestor]:
+def get_workspace(name: str | None = None) -> WorkspaceConfig | None:
+    """The workspace the server scopes to, from the flag or the environment.
+
+    Issue #1494: the CLI could already query a workspace, the server could
+    not load one, so its notion of which projects exist was never
+    workspace-backed. A workspace that does not exist is a configuration
+    error at start-up, the same class as a missing root.
+    """
+    chosen = name or os.environ.get(cs.MCPEnvVar.MCP_WORKSPACE)
+    if not chosen:
+        return None
+    try:
+        config = load_workspace(chosen)
+    except WorkspaceError as e:
+        raise ValueError(str(e)) from e
+    logger.info(
+        lg.MCP_SERVER_WORKSPACE.format(name=config.name, count=len(config.repos))
+    )
+    return config
+
+
+def create_server(workspace: str | None = None) -> tuple[Server, MemgraphIngestor]:
     setup_logging()
 
     try:
         project_root = get_project_root()
         logger.info(lg.MCP_SERVER_USING_ROOT.format(path=project_root))
+        workspace_config = get_workspace(workspace)
     except ValueError as e:
         logger.error(lg.MCP_SERVER_CONFIG_ERROR.format(error=e))
         raise
@@ -101,14 +124,19 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     # Scope Cypher generation to this server's project (named exactly as
     # indexing names it) so queries don't bleed into other projects sharing
     # the database (issue #425).
-    cypher_generator = CypherGenerator(
-        active_projects=[derive_project_name(project_root)]
+    # A workspace names every project the server serves (issue #1494).
+    active_projects = (
+        workspace_config.project_names()
+        if workspace_config is not None
+        else [derive_project_name(project_root)]
     )
+    cypher_generator = CypherGenerator(active_projects=active_projects)
 
     tools = create_mcp_tools_registry(
         project_root=str(project_root),
         ingestor=ingestor,
         cypher_gen=cypher_generator,
+        workspace=workspace_config,
     )
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
@@ -185,10 +213,10 @@ def _service_lifecycle(ingestor: MemgraphIngestor) -> Iterator[None]:
         close_qdrant_client()
 
 
-async def serve_stdio() -> None:
+async def serve_stdio(workspace: str | None = None) -> None:
     logger.info(lg.MCP_SERVER_STARTING)
 
-    server, ingestor = create_server()
+    server, ingestor = create_server(workspace)
     logger.info(lg.MCP_SERVER_CREATED)
 
     with _service_lifecycle(ingestor):
@@ -258,6 +286,7 @@ def _require_bearer_auth(app: ASGIApp, auth_token: str) -> ASGIApp:
 async def serve_http(
     host: str = settings.MCP_HTTP_HOST,
     port: int = settings.MCP_HTTP_PORT,
+    workspace: str | None = None,
 ) -> None:
     import uvicorn
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -269,7 +298,7 @@ async def serve_http(
 
     logger.info(lg.MCP_HTTP_SERVER_STARTING.format(host=host, port=port))
 
-    server, ingestor = create_server()
+    server, ingestor = create_server(workspace)
 
     session_manager = StreamableHTTPSessionManager(
         app=server,

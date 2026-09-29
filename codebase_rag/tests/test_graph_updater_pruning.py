@@ -10,6 +10,13 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.parser_loader import load_parsers
 
 
+def _rows_by_query(rows: dict[str, list[dict[str, str]]]):  # noqa: ANN202
+    """Rows keyed by query, not by call order: the prune also reads the
+    registered projects (issue #1985), and a positional side_effect list
+    shifts every later read by one."""
+    return lambda query, params=None: rows.get(query, [])
+
+
 @pytest.fixture
 def updater(temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpdater:
     parsers, queries = load_parsers()
@@ -46,21 +53,20 @@ class TestPruneOrphanNodes:
         )
         project_name = py_project.resolve().name
 
-        mock_ingestor.fetch_all.side_effect = [
-            [],
-            [
-                {
-                    "path": "old_project/main.py",
-                    "qualified_name": f"{project_name}.old_project.main",
-                },
-                {
-                    "path": "module_a.py",
-                    "qualified_name": f"{project_name}.module_a",
-                },
-            ],
-            [],
-            [],
-        ]
+        mock_ingestor.fetch_all.side_effect = _rows_by_query(
+            {
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                    {
+                        "path": "old_project/main.py",
+                        "qualified_name": f"{project_name}.old_project.main",
+                    },
+                    {
+                        "path": "module_a.py",
+                        "qualified_name": f"{project_name}.module_a",
+                    },
+                ],
+            }
+        )
         updater._prune_orphan_nodes()
 
         delete_calls = [
@@ -73,6 +79,7 @@ class TestPruneOrphanNodes:
             cs.KEY_PATH: "old_project/main.py",
             cs.KEY_PROJECT_NAME: project_name,
             cs.KEY_PROJECT_PREFIX: f"{project_name}.",
+            cs.KEY_NESTED_PROJECTS: [],
         }
 
     def test_prune_removes_orphan_external_module_nodes(
@@ -239,27 +246,28 @@ class TestPruneOrphanNodes:
 
         project_name = py_project.resolve().name
         repo_abs = py_project.resolve().as_posix()
-        mock_ingestor.fetch_all.side_effect = [
-            [
-                {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
-                {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
-            ],
-            [
-                {
-                    "path": "deleted.py",
-                    "qualified_name": f"{project_name}.deleted",
-                },
-                {
-                    "path": "module_a.py",
-                    "qualified_name": f"{project_name}.module_a",
-                },
-            ],
-            [
-                {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
-                {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
-            ],
-            [],
-        ]
+        mock_ingestor.fetch_all.side_effect = _rows_by_query(
+            {
+                cs.CYPHER_ALL_FILE_PATHS: [
+                    {"path": "gone.py", "absolute_path": f"{repo_abs}/gone.py"},
+                    {"path": "module_a.py", "absolute_path": f"{repo_abs}/module_a.py"},
+                ],
+                cs.CYPHER_ALL_MODULE_PATHS_INTERNAL: [
+                    {
+                        "path": "deleted.py",
+                        "qualified_name": f"{project_name}.deleted",
+                    },
+                    {
+                        "path": "module_a.py",
+                        "qualified_name": f"{project_name}.module_a",
+                    },
+                ],
+                cs.CYPHER_ALL_FOLDER_PATHS: [
+                    {"path": "old_dir", "absolute_path": f"{repo_abs}/old_dir"},
+                    {"path": "subpkg", "absolute_path": f"{repo_abs}/subpkg"},
+                ],
+            }
+        )
         updater._prune_orphan_nodes()
 
         path_deletes = [
@@ -311,6 +319,67 @@ class TestPruneOrphanNodes:
             if c.args[0] == cs.CYPHER_DELETE_MODULE
         ]
         assert delete_module_calls == []
+
+    def test_prune_tells_a_real_inline_named_file_from_a_nested_synthetic_one(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The synthetic test is the basename with no extension (#1967).
+
+        A whole-path prefix test kept a deleted real `inline_module_widget.py`
+        forever and pruned a nested synthetic `pkg/inline_module_data` as an
+        absent file (CodeRabbit, PR #1967)."""
+        parsers, queries = load_parsers()
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers=parsers,
+            queries=queries,
+        )
+        project_name = py_project.resolve().name
+        mock_ingestor.fetch_all.side_effect = [
+            [],
+            [
+                {
+                    "path": "inline_module_widget.py",
+                    "qualified_name": f"{project_name}.inline_module_widget",
+                },
+                {
+                    "path": "pkg/inline_module_data",
+                    "qualified_name": f"{project_name}.pkg.lib.data",
+                },
+            ],
+            [],
+            [],
+        ]
+        updater._prune_orphan_nodes()
+
+        deleted = [
+            c.args[1]["path"]
+            for c in mock_ingestor.execute_write.call_args_list
+            if c.args[0] == cs.CYPHER_DELETE_MODULE
+        ]
+        assert deleted == ["inline_module_widget.py"]
+
+    def test_existing_module_paths_keep_a_real_inline_named_file(
+        self, py_project: Path, mock_ingestor: MagicMock
+    ) -> None:
+        """The delete-before-reingest probe uses the same basename test
+        (CodeRabbit, PR #1967)."""
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=py_project,
+            parsers={},
+            queries={},
+        )
+        mock_ingestor.fetch_all.side_effect = None
+        mock_ingestor.fetch_all.return_value = [
+            {cs.KEY_PATH: "inline_module_widget.py"},
+            {cs.KEY_PATH: "pkg/inline_module_data"},
+            {cs.KEY_PATH: "module_a.py"},
+        ]
+        assert updater._existing_module_paths() == frozenset(
+            {"inline_module_widget.py", "module_a.py"}
+        )
 
 
 class TestCypherDeleteModuleQuery:

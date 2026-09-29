@@ -1,4 +1,3 @@
-import json
 import os
 import posixpath
 import re
@@ -23,9 +22,16 @@ from ..types_defs import (
     LanguageQueries,
     PropertyDict,
 )
+from ..utils.json_io import loads_json
 from ..utils.path_utils import should_keep_dir, should_skip_rel_file
 from .cpp_frontend.qn import build_module_qn_map
-from .dart import dart_extract_uri, dart_local_name, dart_resolve_import
+from .dart import (
+    dart_binding_spans,
+    dart_extract_uri,
+    dart_import_prefix,
+    dart_local_name,
+    dart_resolve_import,
+)
 from .go import discover_go_module_paths, resolve_go_import_path
 from .js_ts.module_paths import (
     discover_js_workspace_packages,
@@ -122,80 +128,115 @@ def _rs_strip_comments_and_strings(source: str) -> str:
     out: list[str] = []
     i, n = 0, len(source)
     while i < n:
-        c = source[i]
-        nxt = source[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            j = source.find("\n", i)
-            i = n if j == -1 else j
-            continue
-        if c == "/" and nxt == "*":
-            depth = 1
-            i += 2
-            while i < n and depth:
-                if source.startswith("/*", i):
-                    depth += 1
-                    i += 2
-                elif source.startswith("*/", i):
-                    depth -= 1
-                    i += 2
-                else:
-                    if source[i] == "\n":
-                        out.append("\n")
-                    i += 1
-            continue
-        if c == "r" and nxt in ('"', "#"):
-            j = i + 1
-            hashes = 0
-            while j < n and source[j] == "#":
-                hashes += 1
-                j += 1
-            if j < n and source[j] == '"':
-                end_marker = '"' + "#" * hashes
-                k = source.find(end_marker, j + 1)
-                i = n if k == -1 else k + len(end_marker)
-                out.append('""')
-                continue
-        if c == '"':
-            start = i
+        token_end = _rs_scan_token(source, i, out)
+        if token_end is None:
+            out.append(source[i])
             i += 1
-            while i < n:
-                if source[i] == "\\":
-                    i += 2
-                    continue
-                if source[i] == '"':
-                    i += 1
-                    break
-                i += 1
-            literal = source[start:i]
-            keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
-            out.append(literal if keep and "\n" not in literal else '""')
-            continue
-        if c == "'":
-            # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
-            # closing quote and passes through untouched. The escape must be
-            # honoured: pairing '\'' at its FIRST following quote leaves an
-            # orphan quote that swallows the rest of the file.
-            j = i + 1
-            if j < n and source[j] == "\\":
-                k = j + 1
-                if source.startswith("u{", k):
-                    brace = source.find("}", k + 2)
-                    k = k + 2 if brace == -1 else brace + 1
-                elif k < n and source[k] == "x":
-                    k += 3
-                else:
-                    k += 1
-                if k < n and source[k] == "'":
-                    out.append("''")
-                    i = k + 1
-                    continue
-            elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
-                out.append("''")
-                i = j + 2
-                continue
-        out.append(c)
-        i += 1
+        else:
+            i = token_end
     return "".join(out)
+
+
+def _rs_scan_token(source: str, i: int, out: list[str]) -> int | None:
+    """Consume the comment or literal starting at `i`, appending what it
+    leaves behind to `out` and returning the index just past it; None when
+    `source[i]` opens neither and passes through as plain code."""
+    n = len(source)
+    c = source[i]
+    nxt = source[i + 1] if i + 1 < n else ""
+    if c == "/" and nxt == "/":
+        j = source.find("\n", i)
+        return n if j == -1 else j
+    if c == "/" and nxt == "*":
+        return _rs_skip_block_comment(source, i + 2, out)
+    if c == "r" and nxt in ('"', "#"):
+        raw_end = _rs_raw_string_end(source, i)
+        if raw_end is not None:
+            out.append('""')
+            return raw_end
+    if c == '"':
+        return _rs_scan_string(source, i, out)
+    if c == "'":
+        char_end = _rs_char_literal_end(source, i)
+        if char_end is not None:
+            out.append("''")
+            return char_end
+    return None
+
+
+def _rs_skip_block_comment(source: str, i: int, out: list[str]) -> int:
+    n = len(source)
+    depth = 1
+    while i < n and depth:
+        if source.startswith("/*", i):
+            depth += 1
+            i += 2
+        elif source.startswith("*/", i):
+            depth -= 1
+            i += 2
+        else:
+            if source[i] == "\n":
+                out.append("\n")
+            i += 1
+    return i
+
+
+def _rs_raw_string_end(source: str, i: int) -> int | None:
+    n = len(source)
+    j = i + 1
+    hashes = 0
+    while j < n and source[j] == "#":
+        hashes += 1
+        j += 1
+    if j < n and source[j] == '"':
+        end_marker = '"' + "#" * hashes
+        k = source.find(end_marker, j + 1)
+        return n if k == -1 else k + len(end_marker)
+    return None
+
+
+def _rs_scan_string(source: str, i: int, out: list[str]) -> int:
+    n = len(source)
+    start = i
+    i += 1
+    while i < n:
+        if source[i] == "\\":
+            i += 2
+            continue
+        if source[i] == '"':
+            i += 1
+            break
+        i += 1
+    literal = source[start:i]
+    keep = _RS_PATH_ATTRIBUTE_OPEN.search("".join(out[-80:])) is not None
+    out.append(literal if keep and "\n" not in literal else '""')
+    return i
+
+
+def _rs_char_literal_end(source: str, i: int) -> int | None:
+    # A char literal ('x', '\n', '\u{7f}'); a lifetime ('a) has no
+    # closing quote and passes through untouched. The escape must be
+    # honoured: pairing '\'' at its FIRST following quote leaves an
+    # orphan quote that swallows the rest of the file.
+    n = len(source)
+    j = i + 1
+    if j < n and source[j] == "\\":
+        k = _rs_char_escape_end(source, j + 1)
+        if k < n and source[k] == "'":
+            return k + 1
+    elif j + 1 < n and source[j] not in ("'", "\n") and source[j + 1] == "'":
+        return j + 2
+    return None
+
+
+def _rs_char_escape_end(source: str, k: int) -> int:
+    n = len(source)
+    if source.startswith("u{", k):
+        brace = source.find("}", k + 2)
+        return k + 2 if brace == -1 else brace + 1
+    if k < n and source[k] == "x":
+        return k + 3
+    return k + 1
 
 
 class RustEntryDecls(NamedTuple):
@@ -273,28 +314,38 @@ def _rs_top_level_only(stripped: str) -> str:
     in_macro = False
     for c in stripped:
         if c == "{":
-            if depth == 0:
-                in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
-                out.append(c)
-                if in_macro:
-                    out.append("\n")
-            elif in_macro:
-                out.append("\n")
+            in_macro = _rs_open_brace(out, depth, in_macro)
             depth += 1
         elif c == "}":
             depth = max(depth - 1, 0)
-            if depth == 0:
+            if depth == 0 or in_macro:
                 out.append("\n")
-                in_macro = False
-            elif in_macro:
-                out.append("\n")
-        elif depth == 0 or c == "\n":
-            out.append(c)
-        elif in_macro:
-            out.append(c)
-            if c == ";":
-                out.append("\n")
+            in_macro = in_macro and depth > 0
+        else:
+            out.extend(_rs_top_level_char(c, depth, in_macro))
     return "".join(out)
+
+
+def _rs_open_brace(out: list[str], depth: int, in_macro: bool) -> bool:
+    # A depth-0 `{` is kept and decides whether a macro body opens (its
+    # braces then become newlines); returns the new in-macro state.
+    if depth == 0:
+        in_macro = bool(_RS_MACRO_OPEN_RE.search("".join(out[-80:])))
+        out.append("{")
+    if in_macro:
+        out.append("\n")
+    return in_macro
+
+
+def _rs_top_level_char(c: str, depth: int, in_macro: bool) -> str:
+    # What a non-brace character contributes: depth-0 text and newlines pass
+    # through; inside a depth-0 macro body it passes too, with each `;`
+    # followed by a newline so emitted declarations stay line-anchored.
+    if depth == 0 or c == "\n":
+        return c
+    if not in_macro:
+        return ""
+    return c + "\n" if c == ";" else c
 
 
 _JSONC_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -310,15 +361,23 @@ def _js_destructured_names(pattern: Node) -> list[tuple[str, str]]:
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if name := safe_decode_text(child):
                 out.append((name, name))
-        elif child.type == cs.TS_PAIR_PATTERN:
-            key = child.child_by_field_name(cs.FIELD_KEY)
-            value = child.child_by_field_name(cs.FIELD_VALUE)
-            if key is not None and value is not None and value.type == cs.TS_IDENTIFIER:
-                imported = safe_decode_text(key)
-                local = safe_decode_text(value)
-                if imported and local:
-                    out.append((local, imported))
+        elif child.type == cs.TS_PAIR_PATTERN and (pair := _js_pair_binding(child)):
+            out.append(pair)
     return out
+
+
+def _js_pair_binding(pair: Node) -> tuple[str, str] | None:
+    # `{ x: y }` binds local `y` to imported `x`; any other value shape
+    # (a nested pattern, a default) binds nothing this reader tracks.
+    key = pair.child_by_field_name(cs.FIELD_KEY)
+    value = pair.child_by_field_name(cs.FIELD_VALUE)
+    if key is None or value is None or value.type != cs.TS_IDENTIFIER:
+        return None
+    imported = safe_decode_text(key)
+    local = safe_decode_text(value)
+    if imported and local:
+        return local, imported
+    return None
 
 
 def _load_jsonc(path: Path) -> dict | None:
@@ -337,8 +396,8 @@ def _load_jsonc(path: Path) -> dict | None:
             source = _JSONC_LINE_COMMENT_RE.sub("", source)
             source = _JSONC_TRAILING_COMMA_RE.sub(r"\1", source)
         try:
-            parsed = json.loads(source)
-        except (json.JSONDecodeError, ValueError):
+            parsed = loads_json(source)
+        except ValueError:
             continue
         return parsed if isinstance(parsed, dict) else None
     return None
@@ -481,6 +540,18 @@ def _cpp_include_spec(include_node: Node) -> tuple[str, bool] | None:
     return spec if spec is not None and spec[0] else None
 
 
+def _include_path_suffix(include_path: str) -> str:
+    """A written include path as the repository path suffix it names:
+    normalised, with every `.` and `..` segment dropped wherever it falls
+    (after `normpath`, only leading `..` segments can remain)."""
+    parts = [
+        part
+        for part in posixpath.normpath(include_path.replace("\\", "/")).split("/")
+        if part not in ("", ".", "..")
+    ]
+    return "/".join(parts)
+
+
 def _dotted_include_path(include_path: str) -> str:
     """An include path as dotted module segments: `sys/types.h` -> `sys.types.h`.
 
@@ -548,6 +619,160 @@ def _cpp_include_local_name(include_path: str) -> str:
     return header_name
 
 
+def _php_use_clause_binding(clause: Node) -> tuple[str, str] | None:
+    """Return (imported dotted path, local name) for one `use` clause."""
+    qn_node = next(
+        (c for c in clause.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
+        None,
+    )
+    if not qn_node:
+        return None
+    imported_path = safe_decode_with_fallback(qn_node)
+    if not imported_path:
+        return None
+    imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
+    alias_node = clause.child_by_field_name(cs.FIELD_ALIAS)
+    if alias_node and alias_node.text:
+        return imported_path, safe_decode_with_fallback(alias_node)
+    parts = imported_path.split(cs.SEPARATOR_DOT)
+    return imported_path, parts[-1] if parts else imported_path
+
+
+def _ts_alias_candidates(
+    import_path: str, aliases: Sequence[tuple[str, str, bool]]
+) -> list[tuple[int, str]]:
+    # (prefix length, raw target) for every tsconfig alias matching the path.
+    candidates: list[tuple[int, str]] = []
+    for prefix, target_prefix, is_wildcard in aliases:
+        if is_wildcard and import_path.startswith(prefix):
+            candidates.append((len(prefix), target_prefix + import_path[len(prefix) :]))
+        elif not is_wildcard and import_path == prefix:
+            candidates.append((len(prefix), target_prefix))
+    return candidates
+
+
+def _ts_alias_target(raw_path: str) -> str | None:
+    # The alias target without its module extension, normalised; None when it
+    # is empty or escapes the project root.
+    path = raw_path
+    for ext in cs.JS_TS_MODULE_EXTENSIONS:
+        if path.endswith(ext):
+            path = path[: -len(ext)]
+            break
+    # normpath collapses `.`/`..` so the qn is clean and an escaping alias
+    # (`../x`) is rejected here.
+    normalized = posixpath.normpath(path)
+    if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
+        cs.PATH_PARENT_DIR
+    ):
+        return None
+    return normalized
+
+
+def _lua_relative_module(import_path: str, current_module: str) -> str:
+    # Resolve `./x` / `../x` against the importing module's package.
+    parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
+    for p in import_path.replace("\\", cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH):
+        if p == cs.PATH_PARENT_DIR:
+            if parts:
+                parts.pop()
+        elif p and p != cs.PATH_CURRENT_DIR:
+            parts.append(p)
+    return cs.SEPARATOR_DOT.join(parts)
+
+
+def _rust_auto_location(
+    dir_parts: list[str],
+) -> tuple[tuple[str, ...], str | None, bool] | None:
+    """Where `dir_parts` sits among cargo's auto target locations.
+
+    Returns (package dir parts, the manifest auto-discovery key governing it,
+    whether it is a multi-file target's own subdirectory), with key None for
+    a package's src/ (governed by autolib and autobins both); None when the
+    directory is not an auto location.
+    """
+    if not dir_parts:
+        return None
+    last = dir_parts[-1]
+    if last == cs.LANG_SRC_DIR:
+        return tuple(dir_parts[:-1]), None, False
+    if (
+        len(dir_parts) >= 2
+        and last == cs.RS_BIN_DIR
+        and dir_parts[-2] == cs.LANG_SRC_DIR
+    ):
+        return tuple(dir_parts[:-2]), cs.RS_MANIFEST_AUTOBINS_KEY, False
+    if last in cs.RS_AUTO_TARGET_DIRS:
+        return tuple(dir_parts[:-1]), cs.RS_AUTO_DIR_KEYS[last], False
+    if (
+        len(dir_parts) >= 3
+        and dir_parts[-2] == cs.RS_BIN_DIR
+        and dir_parts[-3] == cs.LANG_SRC_DIR
+    ):
+        return tuple(dir_parts[:-3]), cs.RS_MANIFEST_AUTOBINS_KEY, True
+    if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
+        return tuple(dir_parts[:-2]), cs.RS_AUTO_DIR_KEYS[dir_parts[-2]], True
+    return None
+
+
+def _rust_manifest_section_tables(manifest: dict, section: str) -> list[dict]:
+    # A manifest target section's tables: `[lib]` is one table, `[[bin]]` an
+    # array of them; anything malformed contributes nothing.
+    entries = manifest.get(section)
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _java_import_shape(import_node: Node) -> tuple[str | None, bool, bool]:
+    # (imported path, is static, is wildcard) of a Java import declaration.
+    imported_path = None
+    is_static = False
+    is_wildcard = False
+    for child in import_node.children:
+        if child.type == cs.TS_STATIC:
+            is_static = True
+        elif child.type == cs.TS_SCOPED_IDENTIFIER:
+            imported_path = safe_decode_with_fallback(child)
+        elif child.type == cs.TS_ASTERISK:
+            is_wildcard = True
+    return imported_path, is_static, is_wildcard
+
+
+def _cpp_import_module_name(template_args: Node) -> str | None:
+    # The module a C++ `import<...>` names; the last type identifier wins,
+    # reading a type_descriptor's first type identifier.
+    module_name = None
+    for child in template_args.children:
+        if child.type == cs.TS_TYPE_DESCRIPTOR:
+            inner = next(
+                (c for c in child.children if c.type == cs.TS_TYPE_IDENTIFIER), None
+            )
+            if inner is not None:
+                module_name = safe_decode_with_fallback(inner)
+        elif child.type == cs.TS_TYPE_IDENTIFIER:
+            module_name = safe_decode_with_fallback(child)
+    return module_name
+
+
+def _kept_mod_scope_writers(
+    writers: list[tuple[str, bool, dict[str, str]]],
+    owner_path: str | None,
+    known_module_paths: Mapping[str, str],
+) -> list[tuple[str, bool, dict[str, str]]]:
+    # An owned key keeps only writers from its owning file. An unowned one
+    # lets pure module chains oust fn-/block-local forgeries, and drops the
+    # key entirely when writers from several files survive (cfg/macro twins).
+    if owner_path:
+        return [w for w in writers if known_module_paths.get(w[0]) == owner_path]
+    kept = writers
+    if any(w[1] for w in writers) and not all(w[1] for w in writers):
+        kept = [w for w in writers if w[1]]
+    return [] if len({w[0] for w in kept}) > 1 else kept
+
+
 class ImportProcessor:
     __slots__ = (
         "repo_path",
@@ -557,6 +782,8 @@ class ImportProcessor:
         "exclude_paths",
         "unignore_paths",
         "import_mapping",
+        "csharp_static_imports",
+        "csharp_global_static_imports",
         "commonjs_direct_exports",
         "conditional_imports",
         "php_function_imports",
@@ -576,6 +803,7 @@ class ImportProcessor:
         "_cpp_qn_to_rel",
         "_deferred_import_edges",
         "unresolved_specifiers",
+        "unresolved_references",
         "_import_sites",
         "_import_site_owners",
         "_import_site_writers",
@@ -599,6 +827,8 @@ class ImportProcessor:
         "rust_fn_scope_mod_imports",
         "rust_block_items",
         "rust_block_item_qns",
+        "dart_prefix_shadows",
+        "dart_import_aliases",
         "rust_block_scope_imports",
         "rust_self_module_imports",
         "_rust_fn_scope_keys",
@@ -625,6 +855,17 @@ class ImportProcessor:
         self.exclude_paths = exclude_paths
         self.unignore_paths = unignore_paths
         self.import_mapping: dict[str, dict[str, str]] = {}
+        # `using static N.T;` brings T's MEMBERS into bare-call scope, which
+        # import_mapping cannot express: it maps the TYPE name (T -> N.T), so a
+        # bare `Member()` has no entry to resolve through. Module qn -> the set
+        # of (enclosing namespace, statically imported type path), probed as an
+        # extra bare-call scope (issue #2005). The namespace is "" for a
+        # file-level directive; one inside `namespace N { ... }` scopes only N.
+        self.csharp_static_imports: dict[str, set[tuple[str, str]]] = {}
+        # `global using static N.T;` is in scope in EVERY file of the
+        # compilation. Keyed by the DECLARING module, so a re-parse or a
+        # removal of that file drops exactly its own directives.
+        self.csharp_global_static_imports: dict[str, set[str]] = {}
         # CommonJS modules whose ENTIRE export is one function
         # (`module.exports = function (...) {...}`): module qn -> the
         # exported function's qn, so a whole-module require alias called
@@ -650,6 +891,13 @@ class ImportProcessor:
         # never re-parsed when the file is finally created (issue #1714).
         # Recorded here so the importer stays findable from the path alone.
         self.unresolved_specifiers: dict[str, set[str]] = {}
+        # Per module qn: every name the module referenced and could not
+        # resolve, from any pass (a dropped import, an include naming no
+        # file, a base class resolved nowhere, a call with no callee). The
+        # class and call processors record into the same dict; the updater
+        # writes it onto the Module node after Pass 3, and matches an added
+        # file against it to find the modules that waited (issue #1568).
+        self.unresolved_references: dict[str, set[str]] = {}
         # Per scope qn: the site props of each bound import name (#1522),
         # attached to the IMPORTS edge when the deferred edge flushes.
         self._import_sites: dict[str, dict[str, PropertyDict]] = {}
@@ -739,6 +987,15 @@ class ImportProcessor:
         # from reaching them from outside their block (issue #1061).
         self.rust_block_items: dict[str, list[tuple[int, int, dict[str, str]]]] = {}
         self.rust_block_item_qns: set[str] = set()
+        # Dart: {module qn: {import prefix: [byte spans where a local or
+        # parameter of that name shadows it]}} (issue #2033).
+        self.dart_prefix_shadows: dict[str, dict[str, list[tuple[int, int]]]] = {}
+        # `import 'other.dart' as helper;` binds `helper` to other.dart even
+        # when an unprefixed `import 'helper.dart';` already owns that key in
+        # import_mapping. Kept separately so BOTH imports keep their IMPORTS
+        # edge (those come from import_mapping's values) while the name the
+        # source writes resolves to the aliased library (Greptile, #2033).
+        self.dart_import_aliases: dict[str, dict[str, list[str]]] = {}
         # Uses inside const/static initializer blocks, keyed by file
         # module qn: (block start byte, block end byte, imports, nested
         # mod spans, nested fn spans, nested item scopes with their
@@ -947,7 +1204,7 @@ class ImportProcessor:
     def __del__(self) -> None:
         try:
             save_persistent_cache()
-        except Exception:
+        except Exception:  # noqa: S110 - a destructor must not raise
             pass
 
     @staticmethod
@@ -971,6 +1228,8 @@ class ImportProcessor:
         nothing the edited file no longer says.
         """
         self.import_mapping[module_qn] = {}
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
         # Cleared with the mapping it shadows: these entries ADD edges, so a
         # stale one would resurrect an include the edited file has removed
         # (issue #1758).
@@ -989,6 +1248,14 @@ class ImportProcessor:
         self._cpp_declaration_mappings = {
             entry for entry in self._cpp_declaration_mappings if entry[0] != module_qn
         }
+        # The Dart prefix maps share the same invariant. Both are written
+        # only when the file HAS prefixed imports, so removing the last one
+        # left the previous parse's entries in place: a stale alias kept
+        # resolving a name the file no longer binds, and a stale shadow span
+        # kept suppressing a fold at a line that had moved (Copilot,
+        # PR #2040).
+        self.dart_prefix_shadows.pop(module_qn, None)
+        self.dart_import_aliases.pop(module_qn, None)
         self._retract_import_sites(module_qn)
 
     def _defer_module_import_edges(
@@ -1088,6 +1355,7 @@ class ImportProcessor:
         # whose target now exists, would otherwise keep nominating this file
         # for ever (issue #1714).
         self.unresolved_specifiers.pop(module_qn, None)
+        self.unresolved_references.pop(module_qn, None)
 
         try:
             if pre_captures is not None:
@@ -1124,11 +1392,11 @@ class ImportProcessor:
                 case cs.SupportedLanguage.CSHARP:
                     self._parse_csharp_imports(captures, module_qn)
                 case cs.SupportedLanguage.DART:
-                    self._parse_dart_imports(captures, module_qn)
+                    self._parse_dart_imports(captures, module_qn, root_node)
                 case cs.SupportedLanguage.SCALA:
                     self._parse_scala_imports(captures, module_qn)
                 case _:
-                    self._parse_generic_imports(captures, module_qn, lang_config)
+                    self._parse_generic_imports(captures, lang_config)
 
             logger.debug(
                 ls.IMP_PARSED_COUNT,
@@ -1334,6 +1602,8 @@ class ImportProcessor:
         self._csharp_module_identifiers.pop(module_qn, None)
         self._inferred_module_imports.pop(module_qn, None)
         self.import_mapping.pop(module_qn, None)
+        self.csharp_static_imports.pop(module_qn, None)
+        self.csharp_global_static_imports.pop(module_qn, None)
 
     def requeue_csharp_import_edges(self) -> None:
         """Re-queue every parsed C# module's using entries for a fresh flush.
@@ -1363,6 +1633,17 @@ class ImportProcessor:
             for namespace, declared_types in namespaces.items():
                 namespace_modules.setdefault(namespace, {})[module_qn] = declared_types
         return namespace_modules
+
+    def recover_unparsed_csharp_state(self, known_module_paths: dict[str, str]) -> None:
+        """Rebuild the per-file C# scans for modules this run did not parse.
+
+        An incremental run re-parses only CHANGED files, so an unchanged
+        file's declared namespaces, identifiers and `global using static`
+        directives are recovered here from a targeted parse of its source.
+        Run before Pass 3: a global static import in an unchanged file scopes
+        the bare calls of every re-parsed one (CodeRabbit, PR #2036).
+        """
+        self._recover_unparsed_csharp_namespaces(known_module_paths)
 
     def _recover_unparsed_csharp_namespaces(
         self, known_module_paths: dict[str, str]
@@ -1395,6 +1676,7 @@ class ImportProcessor:
             self._csharp_module_identifiers[module_qn] = (
                 self._collect_csharp_identifiers(tree.root_node)
             )
+            self._collect_csharp_global_static_imports(tree.root_node, module_qn)
 
     def _emit_csharp_internal_imports(
         self,
@@ -1520,42 +1802,10 @@ class ImportProcessor:
                 self._emit_import_edge(entry, cs.NodeLabel.MODULE, full_target)
                 emitted += 1
                 continue
-            if entry.language == cs.SupportedLanguage.RUST and (
-                entry.full_name == self.project_name
-                or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
-            ):
-                # A crate::/super::/self:: use path was rewritten to a project
-                # qn at parse time. The module target is the longest prefix
-                # that verifies: the full path for a module import, minus the
-                # item for item imports, further for enum variants and
-                # associated items (use crate::color::Color::Red). Never
-                # externalise a local path (the phantom ExternalModule would
-                # orphan; issue #1007).
-                candidate = entry.full_name
-                target = None
-                while True:
-                    target = self._verify_internal_import_target(
-                        candidate, known_module_paths, module_aliases, entry.language
-                    )
-                    if target is not None:
-                        break
-                    trimmed = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
-                    if trimmed in (candidate, self.project_name):
-                        break
-                    candidate = trimmed
-                if target == entry.module_qn:
-                    # `use super::*` in an inline mod resolves to the file's
-                    # own module; a self-import edge is meaningless.
-                    continue
-                if target is None:
-                    logger.debug(
-                        ls.IMP_DROPPED_PHANTOM_TARGET,
-                        from_module=entry.module_qn,
-                        to_module=entry.full_name,
-                    )
-                    continue
-                self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
-                emitted += 1
+            if self._is_rust_project_import(entry):
+                emitted += self._flush_rust_project_import(
+                    entry, known_module_paths, module_aliases
+                )
                 continue
             if entry.language == cs.SupportedLanguage.CSHARP and (
                 declaring := csharp_namespace_modules.get(entry.full_name)
@@ -1564,44 +1814,102 @@ class ImportProcessor:
                     entry, declaring, known_module_qns
                 )
                 continue
-            module_path = self._resolve_module_path(entry.full_name, entry.language)
-            target_label = self._module_label(module_path)
-            if target_label == cs.NodeLabel.EXTERNAL_MODULE:
-                # An external import target has no file pass to create its
-                # node; without one here the IMPORTS edge MERGEs against
-                # nothing and is silently dropped (issue #652).
-                self._ensure_external_module_node(module_path, entry.full_name)
-            else:
-                verified = self._verify_internal_import_target(
-                    module_path, known_module_paths, module_aliases, entry.language
-                )
-                if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
-                    # A package-anchored guess that names no sibling module is an
-                    # ABSOLUTE import in Python semantics (`import sys` inside a
-                    # package); re-resolve it as one.
-                    if absolute := self._python_absolute_fallback(
-                        module_path, entry.module_qn
-                    ):
-                        self._ensure_external_module_node(absolute, entry.full_name)
-                        target_label = cs.NodeLabel.EXTERNAL_MODULE
-                        verified = absolute
-                if verified is None:
-                    logger.debug(
-                        ls.IMP_DROPPED_PHANTOM_TARGET,
-                        from_module=entry.module_qn,
-                        to_module=module_path,
-                    )
-                    continue
-                module_path = verified
-            self._emit_import_edge(entry, target_label, module_path)
-            emitted += 1
-            logger.debug(
-                ls.IMP_CREATED_RELATIONSHIP,
-                from_module=entry.module_qn,
-                to_module=module_path,
-                full_name=entry.full_name,
+            emitted += self._flush_resolved_import(
+                entry, known_module_paths, module_aliases
             )
         return emitted
+
+    def _is_rust_project_import(self, entry: DeferredImportEdge) -> bool:
+        return entry.language == cs.SupportedLanguage.RUST and (
+            entry.full_name == self.project_name
+            or entry.full_name.startswith(f"{self.project_name}{cs.SEPARATOR_DOT}")
+        )
+
+    def _flush_rust_project_import(
+        self,
+        entry: DeferredImportEdge,
+        known_module_paths: dict[str, str],
+        module_aliases: dict[str, str],
+    ) -> int:
+        # A crate::/super::/self:: use path was rewritten to a project
+        # qn at parse time. The module target is the longest prefix
+        # that verifies: the full path for a module import, minus the
+        # item for item imports, further for enum variants and
+        # associated items (use crate::color::Color::Red). Never
+        # externalise a local path (the phantom ExternalModule would
+        # orphan; issue #1007).
+        candidate = entry.full_name
+        target = None
+        while True:
+            target = self._verify_internal_import_target(
+                candidate, known_module_paths, module_aliases, entry.language
+            )
+            if target is not None:
+                break
+            trimmed = candidate.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if trimmed in (candidate, self.project_name):
+                break
+            candidate = trimmed
+        if target == entry.module_qn:
+            # `use super::*` in an inline mod resolves to the file's
+            # own module; a self-import edge is meaningless.
+            return 0
+        if target is None:
+            logger.debug(
+                ls.IMP_DROPPED_PHANTOM_TARGET,
+                from_module=entry.module_qn,
+                to_module=entry.full_name,
+            )
+            self.note_unresolved(entry.module_qn, entry.full_name)
+            return 0
+        self._emit_import_edge(entry, cs.NodeLabel.MODULE, target)
+        return 1
+
+    def _flush_resolved_import(
+        self,
+        entry: DeferredImportEdge,
+        known_module_paths: dict[str, str],
+        module_aliases: dict[str, str],
+    ) -> int:
+        module_path = self._resolve_module_path(entry.full_name, entry.language)
+        target_label = self._module_label(module_path)
+        if target_label == cs.NodeLabel.EXTERNAL_MODULE:
+            # An external import target has no file pass to create its
+            # node; without one here the IMPORTS edge MERGEs against
+            # nothing and is silently dropped (issue #652).
+            self._ensure_external_module_node(module_path, entry.full_name)
+        else:
+            verified = self._verify_internal_import_target(
+                module_path, known_module_paths, module_aliases, entry.language
+            )
+            if verified is None and entry.language == cs.SupportedLanguage.PYTHON:
+                # A package-anchored guess that names no sibling module is an
+                # ABSOLUTE import in Python semantics (`import sys` inside a
+                # package); re-resolve it as one.
+                if absolute := self._python_absolute_fallback(
+                    module_path, entry.module_qn
+                ):
+                    self._ensure_external_module_node(absolute, entry.full_name)
+                    target_label = cs.NodeLabel.EXTERNAL_MODULE
+                    verified = absolute
+            if verified is None:
+                logger.debug(
+                    ls.IMP_DROPPED_PHANTOM_TARGET,
+                    from_module=entry.module_qn,
+                    to_module=module_path,
+                )
+                self.note_unresolved(entry.module_qn, module_path)
+                self.note_unresolved(entry.module_qn, entry.full_name)
+                return 0
+            module_path = verified
+        self._emit_import_edge(entry, target_label, module_path)
+        logger.debug(
+            ls.IMP_CREATED_RELATIONSHIP,
+            from_module=entry.module_qn,
+            to_module=module_path,
+            full_name=entry.full_name,
+        )
+        return 1
 
     def _module_alias_map(self, known_module_qns: set[str]) -> dict[str, str]:
         # A module reached through its container's name: pkg/__init__.py,
@@ -1963,72 +2271,26 @@ class ImportProcessor:
         # main.rs is the kind's target — src/bin/<name>/ (autobins) and
         # <kind>/<name>/ for examples/tests/benches. Elsewhere both stay
         # enabled.
-        if not dir_parts:
+        location = _rust_auto_location(dir_parts)
+        if location is None:
             return True, True
-        if dir_parts[-1] == cs.LANG_SRC_DIR:
-            pkg_parts = tuple(dir_parts[:-1])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return (
-                    self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
-                    self._rust_auto_kind_enabled(
-                        pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                    ),
-                )
-            return True, True
-        if (
-            len(dir_parts) >= 2
-            and dir_parts[-1] == cs.RS_BIN_DIR
-            and dir_parts[-2] == cs.LANG_SRC_DIR
+        pkg_parts, key, nested = location
+        if cs.PKG_CARGO_TOML not in self._rust_dir_entries(
+            self.repo_path.joinpath(*pkg_parts)
         ):
-            # Every .rs directly in src/bin — main.rs and lib.rs alike — is
-            # a bin auto target, so both entry stems follow autobins.
-            pkg_parts = tuple(dir_parts[:-2])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                enabled = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                )
-                return enabled, enabled
             return True, True
-        if dir_parts[-1] in cs.RS_AUTO_TARGET_DIRS:
-            # Every .rs directly in a kind dir is that kind's auto target,
-            # so both entry stems follow the kind's flag.
-            pkg_parts = tuple(dir_parts[:-1])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                enabled = self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-1]]
-                )
-                return enabled, enabled
-            return True, True
-        if (
-            len(dir_parts) >= 3
-            and dir_parts[-2] == cs.RS_BIN_DIR
-            and dir_parts[-3] == cs.LANG_SRC_DIR
-        ):
-            # A multi-file target compiles <name>/main.rs; a lib.rs there is
-            # never a cargo target, so the lib flag is off in nested dirs.
-            pkg_parts = tuple(dir_parts[:-3])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return False, self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY
-                )
-            return True, True
-        if len(dir_parts) >= 2 and dir_parts[-2] in cs.RS_AUTO_TARGET_DIRS:
-            pkg_parts = tuple(dir_parts[:-2])
-            if cs.PKG_CARGO_TOML in self._rust_dir_entries(
-                self.repo_path.joinpath(*pkg_parts)
-            ):
-                return False, self._rust_auto_kind_enabled(
-                    pkg_parts, cs.RS_AUTO_DIR_KEYS[dir_parts[-2]]
-                )
-        return True, True
+        if key is None:
+            # A package's src/: lib.rs follows autolib, main.rs autobins.
+            return (
+                self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOLIB_KEY),
+                self._rust_auto_kind_enabled(pkg_parts, cs.RS_MANIFEST_AUTOBINS_KEY),
+            )
+        enabled = self._rust_auto_kind_enabled(pkg_parts, key)
+        # A multi-file target compiles <name>/main.rs; a lib.rs there is never
+        # a cargo target, so the lib flag is off in nested dirs. Directly in a
+        # kind dir (or src/bin) every .rs is that kind's target, so both entry
+        # stems follow the kind's flag.
+        return (False, enabled) if nested else (enabled, enabled)
 
     def _rust_auto_kind_enabled(self, pkg_parts: tuple[str, ...], key: str) -> bool:
         # Cargo's per-kind discovery opt-outs (`autobins = false` and
@@ -2065,14 +2327,7 @@ class ImportProcessor:
         paths: set[str] = set()
         manifest = self._rust_read_manifest(self.repo_path.joinpath(*pkg_parts))
         for section in cs.RS_MANIFEST_TARGET_SECTIONS:
-            entries = manifest.get(section)
-            if isinstance(entries, dict):
-                entries = [entries]
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
+            for entry in _rust_manifest_section_tables(manifest, section):
                 if isinstance(path := entry.get(cs.RS_MANIFEST_PATH_KEY), str):
                     paths.add(_rust_norm_manifest_path(path))
                 elif default := self._rust_default_target_path(
@@ -2083,16 +2338,14 @@ class ImportProcessor:
                     # explicit target must survive its kind's auto-discovery
                     # opt-out (issue #1030 review).
                     paths.add(default)
+        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
+        if not isinstance(package, dict):
+            package = {}
         # `[package] build = "..."` overrides the build script location;
         # the named file is a crate root like any explicit target.
-        package = manifest.get(cs.RS_MANIFEST_PACKAGE_KEY)
-        if isinstance(package, dict) and isinstance(
-            build := package.get(cs.RS_MANIFEST_BUILD_KEY), str
-        ):
-            paths.add(_rust_norm_manifest_path(build))
-        build_value = (
-            package.get(cs.RS_MANIFEST_BUILD_KEY) if isinstance(package, dict) else None
-        )
+        build_value = package.get(cs.RS_MANIFEST_BUILD_KEY)
+        if isinstance(build_value, str):
+            paths.add(_rust_norm_manifest_path(build_value))
         # Unset AND `build = true` both mean auto-detection
         # (cargo-verified: `build = true` compiles build.rs exactly like
         # unset); a string names the script explicitly, false disables.
@@ -2100,9 +2353,7 @@ class ImportProcessor:
             build_value is None or build_value is True
         )
         self._rust_auto_discovery_flags[pkg_parts] = {
-            key: False
-            for key in cs.RS_MANIFEST_AUTO_KEYS
-            if isinstance(package, dict) and package.get(key) is False
+            key: False for key in cs.RS_MANIFEST_AUTO_KEYS if package.get(key) is False
         }
         result = frozenset(paths)
         self._rust_explicit_targets[pkg_parts] = result
@@ -2351,33 +2602,8 @@ class ImportProcessor:
                 return "dir_file", []
             return None
         dir_parts, stem = qn_parts[:-1], qn_parts[-1]
-        if (
-            stem not in cs.RS_ENTRY_STEMS
-            and f"{stem}{cs.EXT_RS}"
-            in self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
-        ):
-            if self._rust_is_auto_target_dir(dir_parts, stem):
-                return "file", qn_parts
-            if self._rust_is_explicit_target(dir_parts, stem):
-                # An explicit manifest target is a crate root like any
-                # entry file: its `mod` declarations resolve in the
-                # CONTAINING directory (the tests/common.rs idiom,
-                # cargo-verified), so it attaches classically with
-                # itself as the definitive entry stem.
-                return "entry", qn_parts
-        if stem in cs.RS_ENTRY_STEMS and f"{stem}{cs.EXT_RS}" in self._rust_dir_entries(
-            self.repo_path.joinpath(*dir_parts)
-        ):
-            # An entry-stem FILE that is a target in its own right — by
-            # auto location (src/bin/main.rs beside src/bin/mod.rs) or by
-            # explicit manifest path — keeps its own crate: its qn carries
-            # the stem only when a sibling claimed the dir qn, and the
-            # ancestor mod.rs check below must not swallow it
-            # (issue #1031 review).
-            if self._rust_is_auto_target_dir(dir_parts, stem):
-                return "file", qn_parts
-            if self._rust_is_explicit_target(dir_parts, stem):
-                return "entry", qn_parts
+        if (own_kind := self._rust_own_target_kind(dir_parts, stem)) is not None:
+            return own_kind, qn_parts
         if self._rust_is_mod_rs_target(qn_parts):
             # Cargo compiles src/bin/mod.rs (or an explicit target whose
             # path ends in mod.rs) as a target named `mod` whose crate root
@@ -2387,6 +2613,34 @@ class ImportProcessor:
             # come from mod.rs, not a sibling `<dir>.rs` shadow
             # (issue #1031).
             return "dir_file", qn_parts
+        return self._rust_ancestor_crate_root(dir_parts)
+
+    def _rust_own_target_kind(self, dir_parts: list[str], stem: str) -> str | None:
+        """ "file"/"entry" when the file `<stem>.rs` is a target of its own.
+
+        An explicit manifest target is a crate root like any entry file:
+        its `mod` declarations resolve in the CONTAINING directory (the
+        tests/common.rs idiom, cargo-verified), so it attaches classically
+        with itself as the definitive entry stem. The same holds for an
+        entry-stem FILE that is a target in its own right — by auto
+        location (src/bin/main.rs beside src/bin/mod.rs) or by explicit
+        manifest path — it keeps its own crate: its qn carries the stem
+        only when a sibling claimed the dir qn, and the ancestor mod.rs
+        check must not swallow it (issue #1031 review).
+        """
+        if f"{stem}{cs.EXT_RS}" not in self._rust_dir_entries(
+            self.repo_path.joinpath(*dir_parts)
+        ):
+            return None
+        if self._rust_is_auto_target_dir(dir_parts, stem):
+            return "file"
+        if self._rust_is_explicit_target(dir_parts, stem):
+            return "entry"
+        return None
+
+    def _rust_ancestor_crate_root(
+        self, dir_parts: list[str]
+    ) -> tuple[str, list[str]] | None:
         for i in range(len(dir_parts), -1, -1):
             if i >= 1:
                 name = dir_parts[i - 1]
@@ -2484,6 +2738,13 @@ class ImportProcessor:
         for stem in ("lib", "main"):
             if stem in decls:
                 return stem, False
+        if (lone := self._rust_lone_explicit_stem(dir_parts, decls)) is not None:
+            return lone, True
+        return "lib", False
+
+    def _rust_lone_explicit_stem(
+        self, dir_parts: list[str], decls: dict[str, RustEntryDecls]
+    ) -> str | None:
         entries = self._rust_dir_entries(self.repo_path.joinpath(*dir_parts))
         if (
             cs.LIB_RS not in entries
@@ -2534,8 +2795,8 @@ class ImportProcessor:
                 # dangling phantom revives nothing; a definitive wrong
                 # stem suppresses the tie-break too). Multi-target
                 # no-declarer stays genuine ambiguity, likewise phantom.
-                return stem, True
-        return "lib", False
+                return stem
+        return None
 
     def _rust_entry_decls(self, dir_parts: list[str]) -> dict[str, RustEntryDecls]:
         """Per entry stem: mod declarations, item names, `#[path]` targets."""
@@ -2865,29 +3126,13 @@ class ImportProcessor:
         directory = self.repo_path.joinpath(*dir_parts)
         entries = self._rust_dir_entries(directory)
         chosen = self._rust_entry_decls(dir_parts).get(stem)
-        if rest and chosen is not None:
-            file_mods, items = chosen.mods, chosen.items
-            if redirect := chosen.redirects.get(rest[0]):
-                # The declaration names its backing file outright, and the
-                # module keys under that file, so the declared name never
-                # appears in the qn at all (issue #1035). A target the qn
-                # scheme cannot key names a file outside the indexed tree:
-                # decline rather than fall through to the name-derived
-                # sibling shadow below (issue #1082).
-                target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
-                if target is None:
-                    return cs.RUST_UNRESOLVABLE_QN
-                return self._rust_join_mods(
-                    target,
-                    rest[1:],
-                    redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
-                )
-            if rest[0] in file_mods:
-                return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
-            if rest[0] in items:
-                return cs.SEPARATOR_DOT.join(
-                    [self.project_name, *dir_parts, stem, *rest]
-                )
+        if (
+            rest
+            and chosen is not None
+            and (declared := self._rust_attach_declared(dir_parts, stem, rest, chosen))
+            is not None
+        ):
+            return declared
         if rest and (
             f"{rest[0]}{cs.EXT_RS}" in entries
             or (rest[0] in entries and (directory / rest[0]).is_dir())
@@ -2897,11 +3142,44 @@ class ImportProcessor:
             # When a file compiles into BOTH crates (lib.rs and main.rs each
             # declare its module), the path can only mean the entry that
             # DECLARES the item; the chosen entry declaring it returned above.
-            for other, other_decls in self._rust_entry_decls(dir_parts).items():
-                if other != stem and rest[0] in other_decls.items:
-                    stem = other
-                    break
+            stem = next(
+                (
+                    other
+                    for other, other_decls in self._rust_entry_decls(dir_parts).items()
+                    if other != stem and rest[0] in other_decls.items
+                ),
+                stem,
+            )
         return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
+
+    def _rust_attach_declared(
+        self,
+        dir_parts: list[str],
+        stem: str,
+        rest: list[str],
+        chosen: RustEntryDecls,
+    ) -> str | None:
+        """Attach through the chosen entry's own declarations, if any match."""
+        if redirect := chosen.redirects.get(rest[0]):
+            # The declaration names its backing file outright, and the
+            # module keys under that file, so the declared name never
+            # appears in the qn at all (issue #1035). A target the qn
+            # scheme cannot key names a file outside the indexed tree:
+            # decline rather than fall through to the name-derived
+            # sibling shadow below (issue #1082).
+            target = rs_utils.path_attribute_qn_parts(dir_parts, redirect)
+            if target is None:
+                return cs.RUST_UNRESOLVABLE_QN
+            return self._rust_join_mods(
+                target,
+                rest[1:],
+                redirect.rsplit(cs.SEPARATOR_SLASH, 1)[-1] == cs.MOD_RS,
+            )
+        if rest[0] in chosen.mods:
+            return self._rust_join_mods([*dir_parts, rest[0]], rest[1:])
+        if rest[0] in chosen.items:
+            return cs.SEPARATOR_DOT.join([self.project_name, *dir_parts, stem, *rest])
+        return None
 
     def _rust_resolve_relative(
         self, base_qn: str, rest: list[str], importer_qn: str
@@ -3239,26 +3517,7 @@ class ImportProcessor:
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
-                source_module = None
-                is_aliased_scheme = False
-                for child in import_node.children:
-                    if child.type == cs.TS_STRING:
-                        source_text = safe_decode_with_fallback(child).strip("'\"")
-                        is_aliased_scheme = _has_aliased_scheme(source_text)
-                        source_module = self._resolve_js_module_path(
-                            source_text, module_qn
-                        )
-                        self._note_unresolved_js_specifier(module_qn, source_text)
-                        break
-
-                if not source_module:
-                    continue
-
-                for child in import_node.children:
-                    if child.type == cs.TS_IMPORT_CLAUSE:
-                        self._parse_js_import_clause(
-                            child, source_module, module_qn, is_aliased_scheme
-                        )
+                self._parse_js_import_statement(import_node, module_qn)
 
             elif import_node.type in (
                 cs.TS_LEXICAL_DECLARATION,
@@ -3280,28 +3539,14 @@ class ImportProcessor:
         # disk check both disambiguates siblings and blocks a catch-all alias
         # (`"*": ["src/*"]`) from capturing bare package imports (`lodash` ->
         # `proj.src.lodash`) and rebinding them to same-named locals (#580).
-        candidates: list[tuple[int, str]] = []
-        for prefix, target_prefix, is_wildcard in self.js_path_aliases:
-            if is_wildcard:
-                if import_path.startswith(prefix):
-                    candidates.append(
-                        (len(prefix), target_prefix + import_path[len(prefix) :])
-                    )
-            elif import_path == prefix:
-                candidates.append((len(prefix), target_prefix))
-        candidates.sort(key=lambda c: c[0], reverse=True)
+        candidates = sorted(
+            _ts_alias_candidates(import_path, self.js_path_aliases),
+            key=lambda c: c[0],
+            reverse=True,
+        )
         for _prefix_len, raw_path in candidates:
-            path = raw_path
-            for ext in cs.JS_TS_MODULE_EXTENSIONS:
-                if path.endswith(ext):
-                    path = path[: -len(ext)]
-                    break
-            # normpath collapses `.`/`..` so the qn is clean and an escaping alias
-            # (`../x`) is rejected below.
-            normalized = posixpath.normpath(path)
-            if normalized in (cs.PATH_CURRENT_DIR, "") or normalized.startswith(
-                cs.PATH_PARENT_DIR
-            ):
+            normalized = _ts_alias_target(raw_path)
+            if normalized is None:
                 continue
             module_rel = self._js_module_rel_on_disk(normalized)
             if module_rel is None:
@@ -3342,6 +3587,13 @@ class ImportProcessor:
         ):
             return f"{normalized}{cs.SEPARATOR_SLASH}{cs.JS_INDEX_STEM}"
         return None
+
+    def note_unresolved(self, module_qn: str, name: str) -> None:
+        """Record that `module_qn` referenced `name` and could not resolve it
+        (issue #1568). Any pass may call this; the set is cleared when the
+        module is parsed again, so it always describes the current source."""
+        if name:
+            self.unresolved_references.setdefault(module_qn, set()).add(name)
 
     def _note_unresolved_js_specifier(self, module_qn: str, specifier: str) -> None:
         """Record a RELATIVE specifier that names nothing on disk (issue #1714).
@@ -3401,12 +3653,6 @@ class ImportProcessor:
         current_module: str,
         is_aliased_scheme: bool = False,
     ) -> None:
-        def _note_bare(local_name: str) -> None:
-            if is_aliased_scheme:
-                self.js_ts_bare_imports.setdefault(current_module, set()).add(
-                    local_name
-                )
-
         # The clause's parent is the import statement whose span the edge
         # records; the clause alone would drop the `from '...'` half.
         statement = clause_node.parent or clause_node
@@ -3419,7 +3665,9 @@ class ImportProcessor:
                 self._record_import_site(
                     current_module, imported_name, statement, cs.TS_EXPORT_DEFAULT
                 )
-                _note_bare(imported_name)
+                self._note_js_bare_import(
+                    current_module, imported_name, is_aliased_scheme
+                )
                 logger.debug(
                     ls.IMP_JS_DEFAULT, name=imported_name, module=source_module
                 )
@@ -3427,48 +3675,78 @@ class ImportProcessor:
             elif child.type == cs.TS_NAMED_IMPORTS:
                 for grandchild in child.children:
                     if grandchild.type == cs.TS_IMPORT_SPECIFIER:
-                        name_node = grandchild.child_by_field_name(cs.FIELD_NAME)
-                        alias_node = grandchild.child_by_field_name(cs.FIELD_ALIAS)
-                        if name_node:
-                            imported_name = safe_decode_with_fallback(name_node)
-                            local_name = (
-                                safe_decode_with_fallback(alias_node)
-                                if alias_node
-                                else imported_name
-                            )
-                            self.import_mapping[current_module][local_name] = (
-                                f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
-                            )
-                            self._record_import_site(
-                                current_module, local_name, statement, imported_name
-                            )
-                            _note_bare(local_name)
-                            logger.debug(
-                                ls.IMP_JS_NAMED,
-                                local=local_name,
-                                module=source_module,
-                                name=imported_name,
-                            )
+                        self._record_js_named_import(
+                            grandchild,
+                            source_module,
+                            current_module,
+                            statement,
+                            is_aliased_scheme,
+                        )
 
             elif child.type == cs.TS_NAMESPACE_IMPORT:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_IDENTIFIER:
-                        namespace_name = safe_decode_with_fallback(grandchild)
-                        self.import_mapping[current_module][namespace_name] = (
-                            source_module
-                        )
-                        self._record_import_site(
-                            current_module,
-                            namespace_name,
-                            statement,
-                            cs.IMPORTED_NAME_WILDCARD,
-                        )
-                        logger.debug(
-                            ls.IMP_JS_NAMESPACE,
-                            name=namespace_name,
-                            module=source_module,
-                        )
-                        break
+                self._record_js_namespace_import(
+                    child, source_module, current_module, statement
+                )
+
+    def _note_js_bare_import(
+        self, current_module: str, local_name: str, is_aliased_scheme: bool
+    ) -> None:
+        if is_aliased_scheme:
+            self.js_ts_bare_imports.setdefault(current_module, set()).add(local_name)
+
+    def _record_js_named_import(
+        self,
+        specifier: Node,
+        source_module: str,
+        current_module: str,
+        statement: Node,
+        is_aliased_scheme: bool,
+    ) -> None:
+        name_node = specifier.child_by_field_name(cs.FIELD_NAME)
+        if not name_node:
+            return
+        alias_node = specifier.child_by_field_name(cs.FIELD_ALIAS)
+        imported_name = safe_decode_with_fallback(name_node)
+        local_name = (
+            safe_decode_with_fallback(alias_node) if alias_node else imported_name
+        )
+        self.import_mapping[current_module][local_name] = (
+            f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
+        )
+        self._record_import_site(current_module, local_name, statement, imported_name)
+        self._note_js_bare_import(current_module, local_name, is_aliased_scheme)
+        logger.debug(
+            ls.IMP_JS_NAMED,
+            local=local_name,
+            module=source_module,
+            name=imported_name,
+        )
+
+    def _record_js_namespace_import(
+        self,
+        namespace_node: Node,
+        source_module: str,
+        current_module: str,
+        statement: Node,
+    ) -> None:
+        identifier = next(
+            (c for c in namespace_node.children if c.type == cs.TS_IDENTIFIER), None
+        )
+        if identifier is None:
+            return
+        namespace_name = safe_decode_with_fallback(identifier)
+        self.import_mapping[current_module][namespace_name] = source_module
+        self._record_import_site(
+            current_module,
+            namespace_name,
+            statement,
+            cs.IMPORTED_NAME_WILDCARD,
+        )
+        logger.debug(
+            ls.IMP_JS_NAMESPACE,
+            name=namespace_name,
+            module=source_module,
+        )
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
         for declarator in decl_node.children:
@@ -3492,41 +3770,64 @@ class ImportProcessor:
             ):
                 continue
             arg = next((a for a in args_node.children if a.type == cs.TS_STRING), None)
-            if arg is None:
-                continue
-            # A CommonJS `require()` reads a dual-package exports map from
-            # the require side.
-            require_text = safe_decode_with_fallback(arg).strip("'\"")
-            resolved_module = self._resolve_js_module_path(
-                require_text, current_module, True
-            )
-            self._note_unresolved_js_specifier(current_module, require_text)
-            if name_node.type == cs.TS_IDENTIFIER:
-                # `const fs = require('fs')`: bind the whole module.
-                var_name = safe_decode_with_fallback(name_node)
-                self.import_mapping[current_module][var_name] = resolved_module
-                self._record_import_site(current_module, var_name, decl_node)
-                logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
-            elif name_node.type == cs.TS_OBJECT_PATTERN:
-                # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
-                # local to module.imported, mirroring how ESM named imports resolve.
-                for local, imported in _js_destructured_names(name_node):
-                    full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
-                    self.import_mapping[current_module][local] = full
-                    self._record_import_site(current_module, local, decl_node, imported)
-                    logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
+            if arg is not None:
+                self._bind_js_require(name_node, arg, decl_node, current_module)
 
-    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
-        source_module = None
-        for child in export_node.children:
+    def _bind_js_require(
+        self, name_node: Node, arg: Node, decl_node: Node, current_module: str
+    ) -> None:
+        # A CommonJS `require()` reads a dual-package exports map from the
+        # require side.
+        require_text = safe_decode_with_fallback(arg).strip("'\"")
+        resolved_module = self._resolve_js_module_path(
+            require_text, current_module, True
+        )
+        self._note_unresolved_js_specifier(current_module, require_text)
+        if name_node.type == cs.TS_IDENTIFIER:
+            # `const fs = require('fs')`: bind the whole module.
+            var_name = safe_decode_with_fallback(name_node)
+            self.import_mapping[current_module][var_name] = resolved_module
+            self._record_import_site(current_module, var_name, decl_node)
+            logger.debug(ls.IMP_JS_REQUIRE, var=var_name, module=resolved_module)
+        elif name_node.type == cs.TS_OBJECT_PATTERN:
+            # `const { writeFileSync } = require('fs')` / `{ x: y }`: bind each
+            # local to module.imported, mirroring how ESM named imports resolve.
+            for local, imported in _js_destructured_names(name_node):
+                full = f"{resolved_module}{cs.SEPARATOR_DOT}{imported}"
+                self.import_mapping[current_module][local] = full
+                self._record_import_site(current_module, local, decl_node, imported)
+                logger.debug(ls.IMP_JS_REQUIRE, var=local, module=full)
+
+    def _js_statement_source(
+        self, statement: Node, module_qn: str
+    ) -> tuple[str, str | None] | None:
+        # The statement's source string (`from './x'`) and its resolved
+        # module; None when the statement names no source at all.
+        for child in statement.children:
             if child.type == cs.TS_STRING:
                 source_text = safe_decode_with_fallback(child).strip("'\"")
-                source_module = self._resolve_js_module_path(
-                    source_text, current_module
-                )
-                self._note_unresolved_js_specifier(current_module, source_text)
-                break
+                source_module = self._resolve_js_module_path(source_text, module_qn)
+                self._note_unresolved_js_specifier(module_qn, source_text)
+                return source_text, source_module
+        return None
 
+    def _parse_js_import_statement(self, import_node: Node, module_qn: str) -> None:
+        source = self._js_statement_source(import_node, module_qn)
+        if source is None:
+            return
+        source_text, source_module = source
+        if not source_module:
+            return
+        is_aliased_scheme = _has_aliased_scheme(source_text)
+        for child in import_node.children:
+            if child.type == cs.TS_IMPORT_CLAUSE:
+                self._parse_js_import_clause(
+                    child, source_module, module_qn, is_aliased_scheme
+                )
+
+    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
+        source = self._js_statement_source(export_node, current_module)
+        source_module = source[1] if source is not None else None
         if not source_module:
             return
 
@@ -3541,102 +3842,170 @@ class ImportProcessor:
             elif child.type == cs.TS_EXPORT_CLAUSE:
                 for grandchild in child.children:
                     if grandchild.type == cs.TS_EXPORT_SPECIFIER:
-                        name_node = grandchild.child_by_field_name(cs.FIELD_NAME)
-                        alias_node = grandchild.child_by_field_name(cs.FIELD_ALIAS)
-                        if name_node:
-                            original_name = safe_decode_with_fallback(name_node)
-                            exported_name = (
-                                safe_decode_with_fallback(alias_node)
-                                if alias_node
-                                else original_name
-                            )
-                            self.import_mapping[current_module][exported_name] = (
-                                f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
-                            )
-                            self._record_import_site(
-                                current_module,
-                                exported_name,
-                                export_node,
-                                original_name,
-                            )
-                            logger.debug(
-                                ls.IMP_JS_REEXPORT,
-                                exported=exported_name,
-                                module=source_module,
-                                original=original_name,
-                            )
+                        self._record_js_reexport_specifier(
+                            grandchild, export_node, current_module, source_module
+                        )
+
+    def _record_js_reexport_specifier(
+        self,
+        specifier: Node,
+        export_node: Node,
+        current_module: str,
+        source_module: str,
+    ) -> None:
+        name_node = specifier.child_by_field_name(cs.FIELD_NAME)
+        if not name_node:
+            return
+        alias_node = specifier.child_by_field_name(cs.FIELD_ALIAS)
+        original_name = safe_decode_with_fallback(name_node)
+        exported_name = (
+            safe_decode_with_fallback(alias_node) if alias_node else original_name
+        )
+        self.import_mapping[current_module][exported_name] = (
+            f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
+        )
+        self._record_import_site(
+            current_module,
+            exported_name,
+            export_node,
+            original_name,
+        )
+        logger.debug(
+            ls.IMP_JS_REEXPORT,
+            exported=exported_name,
+            module=source_module,
+            original=original_name,
+        )
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_IMPORT_DECLARATION:
-                is_static = False
-                imported_path = None
-                is_wildcard = False
+            if import_node.type != cs.TS_IMPORT_DECLARATION:
+                continue
+            imported_path, is_static, is_wildcard = _java_import_shape(import_node)
+            if imported_path:
+                self._record_java_import(
+                    import_node,
+                    module_qn,
+                    self._resolve_java_import_path(imported_path),
+                    is_static,
+                    is_wildcard,
+                )
 
-                for child in import_node.children:
-                    if child.type == cs.TS_STATIC:
-                        is_static = True
-                    elif child.type == cs.TS_SCOPED_IDENTIFIER:
-                        imported_path = safe_decode_with_fallback(child)
-                    elif child.type == cs.TS_ASTERISK:
-                        is_wildcard = True
+    def _record_java_import(
+        self,
+        import_node: Node,
+        module_qn: str,
+        resolved_path: str,
+        is_static: bool,
+        is_wildcard: bool,
+    ) -> None:
+        if is_wildcard:
+            logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
+            self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
+            self._record_import_site(
+                module_qn,
+                f"*{resolved_path}",
+                import_node,
+                cs.IMPORTED_NAME_WILDCARD,
+            )
+            return
+        imported_name = resolved_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
+        self.import_mapping[module_qn][imported_name] = resolved_path
+        self._record_import_site(module_qn, imported_name, import_node, imported_name)
+        logger.debug(
+            ls.IMP_JAVA_STATIC if is_static else ls.IMP_JAVA_IMPORT,
+            name=imported_name,
+            path=resolved_path,
+        )
 
-                if not imported_path:
-                    continue
+    @staticmethod
+    def _csharp_using_target(import_node: Node) -> tuple[str, Node | None] | None:
+        # `using Alias = Target;` marks the alias with a `name` field; the
+        # imported path is then the OTHER name node. Plain/static/global
+        # forms have no `name` field, so the sole name node is the path.
+        name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
+        alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+        target = None
+        for child in import_node.children:
+            if child.type in name_types and child != alias_node:
+                target = child
+        if target is None:
+            return None
+        imported_path = safe_decode_with_fallback(target)
+        if not imported_path:
+            return None
+        return imported_path, alias_node
 
-                resolved_path = self._resolve_java_import_path(imported_path)
+    def _record_csharp_static_import(
+        self,
+        import_node: Node,
+        module_qn: str,
+        imported_path: str,
+        alias_node: Node | None,
+        global_only: bool = False,
+    ) -> None:
+        # `using static` is marked by a literal `static` child; an alias
+        # form (`using static X = N.T;`) is not a member import.
+        modifiers = {child.type for child in import_node.children}
+        if alias_node is not None or cs.TS_CSHARP_STATIC not in modifiers:
+            return
+        is_global = cs.TS_CSHARP_GLOBAL in modifiers
+        if global_only and not is_global:
+            return
+        if is_global:
+            self.csharp_global_static_imports.setdefault(module_qn, set()).add(
+                imported_path
+            )
+        else:
+            self.csharp_static_imports.setdefault(module_qn, set()).add(
+                (self._csharp_enclosing_namespace(import_node), imported_path)
+            )
 
-                if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD, path=resolved_path)
-                    self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-                    self._record_import_site(
-                        module_qn,
-                        f"*{resolved_path}",
-                        import_node,
-                        cs.IMPORTED_NAME_WILDCARD,
-                    )
-                elif parts := resolved_path.split(cs.SEPARATOR_DOT):
-                    imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = resolved_path
-                    self._record_import_site(
-                        module_qn, imported_name, import_node, imported_name
-                    )
-                    if is_static:
-                        logger.debug(
-                            ls.IMP_JAVA_STATIC,
-                            name=imported_name,
-                            path=resolved_path,
-                        )
-                    else:
-                        logger.debug(
-                            ls.IMP_JAVA_IMPORT,
-                            name=imported_name,
-                            path=resolved_path,
-                        )
+    @staticmethod
+    def _csharp_enclosing_namespace(node: Node) -> str:
+        # The dotted name of the `namespace N { ... }` blocks around `node`,
+        # outermost first. A file-scoped `namespace N;` covers the whole file,
+        # so a directive under it is file-level and is not counted.
+        parts: list[str] = []
+        parent = node.parent
+        while parent is not None:
+            if parent.type == cs.TS_CSHARP_NAMESPACE_DECLARATION:
+                name = safe_decode_with_fallback(
+                    parent.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
+                )
+                if name:
+                    parts.append(name)
+            parent = parent.parent
+        return cs.SEPARATOR_DOT.join(reversed(parts))
+
+    def _collect_csharp_global_static_imports(self, root: Node, module_qn: str) -> None:
+        # A `global using` must precede every other member of the file, so
+        # the directives are direct children of the compilation unit.
+        for import_node in root.children:
+            if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
+                continue
+            if parsed := self._csharp_using_target(import_node):
+                imported_path, alias_node = parsed
+                self._record_csharp_static_import(
+                    import_node, module_qn, imported_path, alias_node, global_only=True
+                )
 
     def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
-        name_types = (cs.TS_CSHARP_QUALIFIED_NAME, cs.TS_CSHARP_IDENTIFIER)
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type != cs.TS_CSHARP_USING_DIRECTIVE:
                 continue
-            # `using Alias = Target;` marks the alias with a `name` field; the
-            # imported path is then the OTHER name node. Plain/static/global
-            # forms have no `name` field, so the sole name node is the path.
-            alias_node = import_node.child_by_field_name(cs.TS_CSHARP_FIELD_NAME)
-            target = None
-            for child in import_node.children:
-                if child.type in name_types and child != alias_node:
-                    target = child
-            if target is None:
+            parsed = self._csharp_using_target(import_node)
+            if parsed is None:
                 continue
-            imported_path = safe_decode_with_fallback(target)
-            if not imported_path:
-                continue
+            imported_path, alias_node = parsed
             if alias_node is not None and alias_node.text:
                 local_name = safe_decode_with_fallback(alias_node)
             else:
                 local_name = imported_path.split(cs.SEPARATOR_DOT)[-1]
             self.import_mapping[module_qn][local_name] = imported_path
+            self._record_csharp_static_import(
+                import_node, module_qn, imported_path, alias_node
+            )
             self._record_import_site(
                 module_qn,
                 local_name,
@@ -3677,6 +4046,20 @@ class ImportProcessor:
         # converges on the file's return or the next full run, exactly
         # as before the watcher refreshed at all).
         directory = file_path.parent
+        self._note_rust_listing_delta(file_path, created)
+        try:
+            dir_parts = directory.relative_to(self.repo_path).parts
+        except ValueError:
+            return
+        if file_path.suffix == cs.EXT_RS:
+            self._evict_rust_module_decls(file_path, dir_parts)
+        if self._is_rust_entry_file(file_path, dir_parts):
+            self._refresh_rust_entry_decls(file_path, dir_parts)
+        if file_path.name == cs.PKG_CARGO_TOML:
+            self._rebuild_rust_manifest_caches()
+
+    def _note_rust_listing_delta(self, file_path: Path, created: bool) -> None:
+        directory = file_path.parent
         if (cached := self._rust_dir_listing.get(str(directory))) is not None and (
             created or (file_path.name not in cached and file_path.is_file())
         ):
@@ -3690,29 +4073,29 @@ class ImportProcessor:
             # while the file is observably present, so a MODIFY processed
             # after the file's deletion never bakes in a dead name.
             self._rust_dir_listing[str(directory)] = cached | {file_path.name}
-        try:
-            dir_parts = directory.relative_to(self.repo_path).parts
-        except ValueError:
-            return
-        if file_path.suffix == cs.EXT_RS:
-            # Any .rs file may back a module and declare a redirect, so its
-            # own entry is evicted rather than replaced: an unreadable file
-            # then re-reads on the next access instead of caching a hole.
-            module = (
-                dir_parts
-                if file_path.stem == cs.INDEX_MOD
-                else (*dir_parts, file_path.stem)
-            )
-            for dir_backed in (False, True):
-                for want_mods in (False, True):
-                    self._rust_module_mod_decls.pop(
-                        (module, dir_backed, want_mods), None
-                    )
-            # Whole-map, because the edit may have added or removed a
-            # redirect naming any file at all, and a stale declarer keeps
-            # `super::` in a file it no longer moves pointing at it.
-            self._rust_redirect_parents = None
-        if (
+
+    def _evict_rust_module_decls(
+        self, file_path: Path, dir_parts: tuple[str, ...]
+    ) -> None:
+        # Any .rs file may back a module and declare a redirect, so its
+        # own entry is evicted rather than replaced: an unreadable file
+        # then re-reads on the next access instead of caching a hole.
+        module = (
+            dir_parts
+            if file_path.stem == cs.INDEX_MOD
+            else (*dir_parts, file_path.stem)
+        )
+        for dir_backed in (False, True):
+            for want_mods in (False, True):
+                self._rust_module_mod_decls.pop((module, dir_backed, want_mods), None)
+        # Whole-map, because the edit may have added or removed a
+        # redirect naming any file at all, and a stale declarer keeps
+        # `super::` in a file it no longer moves pointing at it.
+        self._rust_redirect_parents = None
+
+    def _is_rust_entry_file(self, file_path: Path, dir_parts: tuple[str, ...]) -> bool:
+        directory = file_path.parent
+        return (
             file_path.name in (cs.LIB_RS, cs.MAIN_RS)
             or file_path.name in self._rust_explicit_entry_files(tuple(dir_parts))
             or (
@@ -3720,61 +4103,63 @@ class ImportProcessor:
                 and cs.PKG_CARGO_TOML in self._rust_dir_entries(directory)
                 and self._rust_has_auto_build(tuple(dir_parts))
             )
+        )
+
+    def _refresh_rust_entry_decls(
+        self, file_path: Path, dir_parts: tuple[str, ...]
+    ) -> None:
+        # File-scoped like the event itself, and REPLACED only on a
+        # successful read: a storm can modify the entry and delete it
+        # before a sibling re-parses, and an absent stem would send
+        # _rust_entry_stem to its non-definitive fallback, letting the
+        # item tie-break flip a definitive crate attribution.
+        stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
+        # The watcher's own relevance filter only knows the built-in
+        # ignores, so an `--exclude`d entry file still reaches here. Its
+        # declarations must not enter the cache: `_rust_entry_decls`
+        # gates its OWN reads, but returns whatever this path cached
+        # before that gate ever runs (issue #1100).
+        if stems is not None and self._rust_file_is_indexed(
+            [*dir_parts, file_path.name]
         ):
-            # File-scoped like the event itself, and REPLACED only on a
-            # successful read: a storm can modify the entry and delete it
-            # before a sibling re-parses, and an absent stem would send
-            # _rust_entry_stem to its non-definitive fallback, letting the
-            # item tie-break flip a definitive crate attribution.
-            stems = self._rust_entry_mod_decls.get(tuple(dir_parts))
-            # The watcher's own relevance filter only knows the built-in
-            # ignores, so an `--exclude`d entry file still reaches here. Its
-            # declarations must not enter the cache: `_rust_entry_decls`
-            # gates its OWN reads, but returns whatever this path cached
-            # before that gate ever runs (issue #1100).
-            if stems is not None and self._rust_file_is_indexed(
-                [*dir_parts, file_path.name]
-            ):
-                try:
-                    source = file_path.read_text(
-                        encoding=cs.RS_ENCODING_UTF8, errors="ignore"
-                    )
-                except OSError:
-                    pass
-                else:
-                    top_level = _rs_top_level_only(
-                        _rs_strip_comments_and_strings(source)
-                    )
-                    stems[file_path.stem] = _rs_entry_decls_of(top_level)
-        if file_path.name == cs.PKG_CARGO_TOML:
-            # A manifest edit can add, remove, or repoint explicit targets
-            # anywhere in its package, and a CREATED manifest moves the
-            # package boundary for every file below it, so the whole
-            # target cache rebuilds. The entry-declaration map is DERIVED
-            # from the target set: evict exactly the stems the fresh
-            # manifests no longer back. lib/main keep their declarations
-            # (and their storm protection) only while their kind's
-            # discovery opt-out permits them — an edit flipping autolib or
-            # autobins to false must leave the map exactly as a clean
-            # index would (issue #1030 review).
-            self._rust_explicit_targets.clear()
-            self._rust_auto_build_flags.clear()
-            self._rust_auto_discovery_flags.clear()
-            self._rust_workspace_crates = None
-            self._rust_pkg_deps.clear()
-            for key, stems in self._rust_entry_mod_decls.items():
-                allowed = {
-                    name[: -len(cs.EXT_RS)]
-                    for name in self._rust_explicit_entry_files(key)
-                }
-                auto_lib, auto_bins = self._rust_src_auto_entry_flags(list(key))
-                if auto_lib:
-                    allowed.add(cs.LIB_RS[: -len(cs.EXT_RS)])
-                if auto_bins:
-                    allowed.add(cs.MAIN_RS[: -len(cs.EXT_RS)])
-                for stem in list(stems):
-                    if stem not in allowed:
-                        stems.pop(stem, None)
+            try:
+                source = file_path.read_text(
+                    encoding=cs.RS_ENCODING_UTF8, errors="ignore"
+                )
+            except OSError:
+                pass
+            else:
+                top_level = _rs_top_level_only(_rs_strip_comments_and_strings(source))
+                stems[file_path.stem] = _rs_entry_decls_of(top_level)
+
+    def _rebuild_rust_manifest_caches(self) -> None:
+        # A manifest edit can add, remove, or repoint explicit targets
+        # anywhere in its package, and a CREATED manifest moves the
+        # package boundary for every file below it, so the whole
+        # target cache rebuilds. The entry-declaration map is DERIVED
+        # from the target set: evict exactly the stems the fresh
+        # manifests no longer back. lib/main keep their declarations
+        # (and their storm protection) only while their kind's
+        # discovery opt-out permits them — an edit flipping autolib or
+        # autobins to false must leave the map exactly as a clean
+        # index would (issue #1030 review).
+        self._rust_explicit_targets.clear()
+        self._rust_auto_build_flags.clear()
+        self._rust_auto_discovery_flags.clear()
+        self._rust_workspace_crates = None
+        self._rust_pkg_deps.clear()
+        for key, stems in self._rust_entry_mod_decls.items():
+            allowed = {
+                name[: -len(cs.EXT_RS)] for name in self._rust_explicit_entry_files(key)
+            }
+            auto_lib, auto_bins = self._rust_src_auto_entry_flags(list(key))
+            if auto_lib:
+                allowed.add(cs.LIB_RS[: -len(cs.EXT_RS)])
+            if auto_bins:
+                allowed.add(cs.MAIN_RS[: -len(cs.EXT_RS)])
+            for stem in list(stems):
+                if stem not in allowed:
+                    stems.pop(stem, None)
 
     def drop_rust_module_import_state(self, module_qn: str) -> None:
         # Everything a file's parse contributed to the Rust import maps,
@@ -3864,33 +4249,7 @@ class ImportProcessor:
                 )
             logger.debug(ls.IMP_RUST, name=imported_name, path=resolved)
         if scope_node is not None:
-            if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
-                self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
-                    (
-                        scope_node.start_point[0] + 1,
-                        scope_node.start_point[1],
-                        resolved_imports,
-                        False,
-                    )
-                )
-            else:
-                # A const/static initializer block: no qn scope, so the
-                # entry is span-gated and answers only calls written
-                # inside the block, with nested mod/fn/item-scope spans
-                # recorded so inner scopes' own bindings keep precedence.
-                mod_holes, fn_holes, item_scopes = rs_utils.rust_block_scope_holes(
-                    scope_node
-                )
-                self.rust_block_scope_imports.setdefault(module_qn, []).append(
-                    (
-                        scope_node.start_byte,
-                        scope_node.end_byte,
-                        resolved_imports,
-                        mod_holes,
-                        fn_holes,
-                        item_scopes,
-                    )
-                )
+            self._record_rust_body_scope_use(scope_node, module_qn, resolved_imports)
             return
         if scope_parts is None:
             # No enclosing block could be attributed (defensive): no qn
@@ -3900,6 +4259,47 @@ class ImportProcessor:
         if not scope_parts:
             self.import_mapping.setdefault(effective_qn, {}).update(resolved_imports)
             return
+        self._commit_rust_mod_scope_use(
+            use_node, module_qn, effective_qn, pure_chain, resolved_imports
+        )
+
+    def _record_rust_body_scope_use(
+        self, scope_node: Node, module_qn: str, resolved_imports: dict[str, str]
+    ) -> None:
+        if scope_node.type == cs.TS_RS_FUNCTION_ITEM:
+            self._rust_pending_fn_scope_uses.setdefault(module_qn, []).append(
+                (
+                    scope_node.start_point[0] + 1,
+                    scope_node.start_point[1],
+                    resolved_imports,
+                    False,
+                )
+            )
+            return
+        # A const/static initializer block: no qn scope, so the entry is
+        # span-gated and answers only calls written inside the block, with
+        # nested mod/fn/item-scope spans recorded so inner scopes' own
+        # bindings keep precedence.
+        mod_holes, fn_holes, item_scopes = rs_utils.rust_block_scope_holes(scope_node)
+        self.rust_block_scope_imports.setdefault(module_qn, []).append(
+            (
+                scope_node.start_byte,
+                scope_node.end_byte,
+                resolved_imports,
+                mod_holes,
+                fn_holes,
+                item_scopes,
+            )
+        )
+
+    def _commit_rust_mod_scope_use(
+        self,
+        use_node: Node,
+        module_qn: str,
+        effective_qn: str,
+        pure_chain: bool,
+        resolved_imports: dict[str, str],
+    ) -> None:
         # A sub-scope key may collide with a module the INDEXER registered
         # (a fn-local or cfg-twin Rust module file, or a same-named module
         # of another language, since the qn scheme is language-agnostic):
@@ -3945,6 +4345,21 @@ class ImportProcessor:
             else:
                 target[name] = old
 
+    def _retract_rust_inline_scope_keys(
+        self, known_module_paths: Mapping[str, str]
+    ) -> None:
+        for keys in self._rust_inline_scope_keys.values():
+            for key in keys:
+                if known_module_paths.get(key):
+                    # The key has since become an indexed file's own module
+                    # qn (a watch CREATE of the cfg twin's file form): the
+                    # map is that file's parse output now, not this
+                    # arbitration's to retract. The owner branch keeps no
+                    # inline writers for it, so the claim lapses.
+                    continue
+                self.import_mapping.pop(key, None)
+        self._rust_inline_scope_keys = {}
+
     def finalise_rust_mod_scope_uses(
         self, known_module_paths: Mapping[str, str]
     ) -> None:
@@ -3966,33 +4381,15 @@ class ImportProcessor:
         self._rust_pending_mod_scope_uses = {}
         for writer_qn, entries in pending.items():
             self._rust_mod_scope_registry[writer_qn] = entries
-        for keys in self._rust_inline_scope_keys.values():
-            for key in keys:
-                if known_module_paths.get(key):
-                    # The key has since become an indexed file's own module
-                    # qn (a watch CREATE of the cfg twin's file form): the
-                    # map is that file's parse output now, not this
-                    # arbitration's to retract. The owner branch below
-                    # keeps no inline writers for it, so the claim lapses.
-                    continue
-                self.import_mapping.pop(key, None)
-        self._rust_inline_scope_keys = {}
+        self._retract_rust_inline_scope_keys(known_module_paths)
         by_key: dict[str, list[tuple[str, bool, dict[str, str]]]] = {}
         for writer_qn, entries in self._rust_mod_scope_registry.items():
             for key, pure, imports in entries:
                 by_key.setdefault(key, []).append((writer_qn, pure, imports))
         for key, writers in by_key.items():
-            owner_path = known_module_paths.get(key)
-            kept = writers
-            if owner_path:
-                kept = [
-                    w for w in writers if known_module_paths.get(w[0]) == owner_path
-                ]
-            else:
-                if any(w[1] for w in writers) and not all(w[1] for w in writers):
-                    kept = [w for w in writers if w[1]]
-                if len({w[0] for w in kept}) > 1:
-                    kept = []
+            kept = _kept_mod_scope_writers(
+                writers, known_module_paths.get(key), known_module_paths
+            )
             for writer_qn, _pure, imports in kept:
                 self.import_mapping.setdefault(key, {}).update(imports)
                 self._rust_inline_scope_keys.setdefault(writer_qn, set()).add(key)
@@ -4374,7 +4771,11 @@ class ImportProcessor:
             return resolved
         # A quoted include matching no repo file is a third-party header; a
         # project-rooted qn would be a phantom. Segmented like the system
-        # branch above, for the same reason (issue #1758).
+        # branch above, for the same reason (issue #1758). Recorded for the
+        # day the header is added (issue #1568), normalised to the repo path
+        # suffix an added file offers: `./include/base.h` and
+        # `../include/base.h` both wait on `include/base.h` (bot review).
+        self.note_unresolved(module_qn, _include_path_suffix(include_path))
         return f"{cs.IMPORT_STD_PREFIX}{_dotted_include_path(include_path)}"
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
@@ -4387,30 +4788,18 @@ class ImportProcessor:
             elif child.type == cs.TS_TEMPLATE_ARGUMENT_LIST:
                 template_args_child = child
 
-        if (
+        if not (
             identifier_child
             and safe_decode_text(identifier_child) == cs.IMPORT_IMPORT
             and template_args_child
         ):
-            module_name = None
-            for child in template_args_child.children:
-                if child.type == cs.TS_TYPE_DESCRIPTOR:
-                    for desc_child in child.children:
-                        if desc_child.type == cs.TS_TYPE_IDENTIFIER:
-                            module_name = safe_decode_with_fallback(desc_child)
-                            break
-                elif child.type == cs.TS_TYPE_IDENTIFIER:
-                    module_name = safe_decode_with_fallback(child)
-
-            if module_name:
-                local_name = module_name
-                full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
-
-                self.import_mapping[module_qn][local_name] = full_name
-                self._record_import_site(
-                    module_qn, local_name, import_node, module_name
-                )
-                logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
+            return
+        if module_name := _cpp_import_module_name(template_args_child):
+            local_name = module_name
+            full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
+            self.import_mapping[module_qn][local_name] = full_name
+            self._record_import_site(module_qn, local_name, import_node, module_name)
+            logger.debug(ls.IMP_CPP_MODULE, local=local_name, full=full_name)
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
         decoded_text = safe_decode_text(decl_node)
@@ -4545,22 +4934,10 @@ class ImportProcessor:
         for child in use_node.named_children:
             if child.type != cs.TS_PHP_NAMESPACE_USE_CLAUSE:
                 continue
-            qn_node = next(
-                (c for c in child.named_children if c.type == cs.TS_PHP_QUALIFIED_NAME),
-                None,
-            )
-            if not qn_node:
+            binding = _php_use_clause_binding(child)
+            if binding is None:
                 continue
-            imported_path = safe_decode_with_fallback(qn_node)
-            if not imported_path:
-                continue
-            imported_path = imported_path.replace("\\", cs.SEPARATOR_DOT)
-            alias_node = child.child_by_field_name("alias")
-            if alias_node and alias_node.text:
-                local_name = safe_decode_with_fallback(alias_node)
-            else:
-                parts = imported_path.split(cs.SEPARATOR_DOT)
-                local_name = parts[-1] if parts else imported_path
+            imported_path, local_name = binding
             self.import_mapping[module_qn][local_name] = imported_path
             self._record_import_site(
                 module_qn,
@@ -4591,9 +4968,7 @@ class ImportProcessor:
                 self._record_import_site(module_qn, local_name, node, path_str)
                 return
 
-    def _parse_generic_imports(
-        self, captures: dict, module_qn: str, lang_config: LanguageSpec
-    ) -> None:
+    def _parse_generic_imports(self, captures: dict, lang_config: LanguageSpec) -> None:
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
                 ls.IMP_GENERIC,
@@ -4601,44 +4976,96 @@ class ImportProcessor:
                 node_type=import_node.type,
             )
 
-    def _parse_dart_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_dart_imports(
+        self, captures: dict, module_qn: str, root_node: Node | None = None
+    ) -> None:
         # Dart import/export/part directives carry a URI string. `dart:` and
         # `package:` targets are external (kept verbatim); relative paths and part
         # files resolve to a project-internal module qn. A `part of my.library;`
         # directive names a dotted library, not a file, so it has no URI and is
         # skipped.
+        prefixes: set[str] = set()
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             uri = dart_extract_uri(import_node)
             if not uri:
                 continue
-            if full_name := dart_resolve_import(uri, module_qn, self.project_name):
+            if full_name := dart_resolve_import(uri, module_qn):
                 local_name = dart_local_name(uri)
                 self.import_mapping[module_qn][local_name] = full_name
                 self._record_import_site(module_qn, local_name, import_node, uri)
+                # `import 'lib.dart' as p;` binds the library's names under
+                # `p`, and the file-derived key never appears in the source,
+                # so a prefixed reference (`p.Box`) resolves only once the
+                # PREFIX is a key too (issue #2033). Both keys are kept: the
+                # file-derived one still serves an unprefixed import of the
+                # same file elsewhere in the module.
+                # An alias must not clobber a key another import already
+                # owns: `import 'helper.dart'; import 'other.dart' as helper;`
+                # would otherwise drop the first import entirely, since the
+                # file-derived key and the alias collide. The prefix is the
+                # name the source uses for THIS import, so it is only added
+                # where it is free.
+                prefix = dart_import_prefix(import_node)
+                if prefix:
+                    # An explicit `as` prefix is the name the SOURCE uses for
+                    # this import, so it owns that name outright. Recorded in
+                    # its own map rather than overwriting import_mapping,
+                    # whose values carry the IMPORTS edges: writing it there
+                    # dropped the colliding unprefixed import entirely.
+                    # Several imports may SHARE a prefix (`import 'a.dart' as
+                    # p; import 'b.dart' as p;`), so every library is kept and
+                    # the fold picks the one defining the name (CodeRabbit,
+                    # PR #2040).
+                    self.dart_import_aliases.setdefault(module_qn, {}).setdefault(
+                        prefix, []
+                    ).append(full_name)
+                    if prefix not in self.import_mapping[module_qn]:
+                        self.import_mapping[module_qn][prefix] = full_name
+                        # Its IMPORTS edge carries a span and alias like every
+                        # other binding (Copilot, PR #2040).
+                        self._record_import_site(module_qn, prefix, import_node, uri)
+                    prefixes.add(prefix)
+        # A local or parameter of the same name SHADOWS the prefix inside its
+        # scope, and an UNTYPED one (`var p = 1`) never reaches the resolver's
+        # local_var_types, so the type map cannot answer this. The binding is
+        # syntactic, so record its span here and let the fold check the call
+        # site against it (issue #2033).
+        if root_node is not None and prefixes:
+            self.dart_prefix_shadows[module_qn] = dart_binding_spans(
+                root_node, frozenset(prefixes)
+            )
+
+    def _record_lua_require(
+        self,
+        module_qn: str,
+        call_node: Node,
+        module_path: str,
+        assigned_name: str | None,
+    ) -> None:
+        local_name = (
+            assigned_name or module_path.rsplit(cs.SEPARATOR_DOT, maxsplit=1)[-1]
+        )
+        resolved = self._resolve_lua_module_path(module_path, module_qn)
+        self.import_mapping[module_qn][local_name] = resolved
+        self._record_import_site(module_qn, local_name, call_node, module_path)
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
-                    local_name = (
-                        self._lua_extract_assignment_lhs(call_node)
-                        or module_path.split(cs.SEPARATOR_DOT)[-1]
-                    )
-                    resolved = self._resolve_lua_module_path(module_path, module_qn)
-                    self.import_mapping[module_qn][local_name] = resolved
-                    self._record_import_site(
-                        module_qn, local_name, call_node, module_path
+                    self._record_lua_require(
+                        module_qn,
+                        call_node,
+                        module_path,
+                        self._lua_extract_assignment_lhs(call_node),
                     )
             elif self._lua_is_pcall_require(call_node):
                 if module_path := self._lua_extract_pcall_require_arg(call_node):
-                    local_name = (
-                        self._lua_extract_pcall_assignment_lhs(call_node)
-                        or module_path.split(cs.SEPARATOR_DOT)[-1]
-                    )
-                    resolved = self._resolve_lua_module_path(module_path, module_qn)
-                    self.import_mapping[module_qn][local_name] = resolved
-                    self._record_import_site(
-                        module_qn, local_name, call_node, module_path
+                    self._record_lua_require(
+                        module_qn,
+                        call_node,
+                        module_path,
+                        self._lua_extract_pcall_assignment_lhs(call_node),
                     )
 
             elif self._lua_is_stdlib_call(call_node):
@@ -4719,19 +5146,7 @@ class ImportProcessor:
         if import_path.startswith(cs.PATH_RELATIVE_PREFIX) or import_path.startswith(
             cs.PATH_PARENT_PREFIX
         ):
-            parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
-            rel_parts = list(
-                import_path.replace("\\", cs.SEPARATOR_SLASH).split(cs.SEPARATOR_SLASH)
-            )
-            for p in rel_parts:
-                if p == cs.PATH_CURRENT_DIR:
-                    continue
-                if p == cs.PATH_PARENT_DIR:
-                    if parts:
-                        parts.pop()
-                elif p:
-                    parts.append(p)
-            return cs.SEPARATOR_DOT.join(parts)
+            return _lua_relative_module(import_path, current_module)
         dotted = import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
 
         try:

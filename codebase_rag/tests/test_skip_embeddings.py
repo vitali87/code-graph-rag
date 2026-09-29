@@ -99,7 +99,7 @@ class TestGraphUpdaterSkipEmbeddings:
 class TestCliNoEmbeddingsFlag:
     def _invoke_start(self, tmp_path: Path, *extra: str) -> MagicMock:
         with (
-            patch("codebase_rag.cli.GraphUpdater") as mock_updater_cls,
+            patch("codebase_rag.graph_updater.GraphUpdater") as mock_updater_cls,
             patch("codebase_rag.cli.connect_memgraph") as mock_connect,
             patch("codebase_rag.cli.load_parsers", return_value=({}, {})),
             patch("codebase_rag.cli.cgr_state"),

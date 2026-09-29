@@ -666,7 +666,7 @@ class DocumentTier:
         # An empty list overwrites; omission cannot. That makes "no
         # front-matter" a value the re-ingest can actually store, rather than
         # the absence of one.
-        front_matter = {
+        front_matter: PropertyDict = {
             cs.KEY_FRONT_MATTER: [f"{k}={v}" for k, v in sorted(declared.items())]
         }
         module_qn = self._emit_module(file_path, structural_elements, front_matter)
