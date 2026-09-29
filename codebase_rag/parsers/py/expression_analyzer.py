@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node
@@ -38,7 +38,10 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
     from .variable_analyzer import _Alias
 
-    class _ExpressionAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _ExpressionAnalyzerDeps:
         def _analyze_self_assignments(
             self, node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...

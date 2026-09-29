@@ -961,6 +961,14 @@ const userInfo = user.toString();
     assert len(inheritance_relationships) >= 2, (
         f"Expected at least 2 inheritance relationships from mixins, found {len(inheritance_relationships)}"
     )
+    # `Swimmable(Flyable(Animal))`: Animal is reached only by recursing into
+    # the nested mixin call.
+    duck_parents = {
+        str(call[0][2][2])
+        for call in inheritance_relationships
+        if str(call[0][0][2]).endswith(".Duck")
+    }
+    assert any(parent.endswith("Animal") for parent in duck_parents), duck_parents
 
 
 def test_class_comprehensive(

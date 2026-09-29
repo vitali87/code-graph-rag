@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from codebase_rag.tests.conftest import (
     get_nodes,
     get_qualified_names,
@@ -160,8 +162,6 @@ LIB_SCOPE_END
 
 
 def test_marker_retry_guard_shapes() -> None:
-    import pytest as _pytest
-
     from codebase_rag.parser_loader import load_parsers
     from codebase_rag.parsers.cpp.preproc_recovery import (
         _retry_without_macro_markers,
@@ -169,7 +169,7 @@ def test_marker_retry_guard_shapes() -> None:
 
     parsers, _ = load_parsers()
     if "cpp" not in parsers:
-        _pytest.skip("cpp parser not available")
+        pytest.skip("cpp parser not available")
     cpp = parsers["cpp"]
 
     # a clean tree is returned untouched

@@ -42,19 +42,26 @@
 
 # Code-Graph-RAG
 
-Code-Graph-RAG parses a multi-language codebase with Tree-sitter, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
+Code-Graph-RAG parses a multi-language codebase with Tree-sitter, sharpened by compiler-grade frontends and runtime traces where available, builds a knowledge graph of its structure in Memgraph, and lets you query, edit, and optimise that code in plain English. It works across a monorepo of mixed languages under one unified graph schema.
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="demo">
+  <b>1. Index:</b> <code>cgr start --update-graph</code> parses a repository into a knowledge graph (sped up)
+</p>
+<p align="center">
+  <img src="./assets/demo-indexing.gif" alt="cgr parsing the code-graph-rag repository into a Memgraph knowledge graph, then printing node and relationship counts">
+</p>
+
+<p align="center">
+  <b>2. Ask:</b> <code>cgr start</code> answers questions and edits code, grounded in that graph
+</p>
+<p align="center">
+  <img src="./assets/demo.gif" alt="cgr agent answering questions about the indexed repository">
 </p>
 
 ## Latest News 🔥
 
 <!-- SECTION:latest_news -->
-- **Cross-Service Consumers**: `endpoints`, `endpoint_callers` and `remote_dependencies` MCP tools read the EXPOSES / RESOLVES_TO edges, and `cgr dead-code --no-endpoint-roots` reports an endpoint no indexed call site reaches.
-- **UTF-8 Handling**: Improved handling of invalid UTF-8 bytes prevents file definitions from being dropped.
-- **Neo4j Backend Support**: Added support for Neo4j as a graph backend through a pluggable dialect seam.
-- **Gloss Node & Notes**: Introduced the Gloss node for agent-authored notes and enabled writing and reading Gloss notes via the MCP server.
+- **Incremental Indexing**: Improved handling of same-stem sibling matches and skipped EXPOSES cleanups during incremental updates.
 <!-- /SECTION:latest_news -->
 
 See [NEWS.md](NEWS.md) for the full history.
@@ -75,7 +82,7 @@ Point Code-Graph-RAG at a repository and it reads every source file, extracts fu
 
 The system has two components:
 
-1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema.
+1. **Multi-language parser.** A Tree-sitter based parser reads the codebase and ingests functions, classes, methods, modules, and their relationships into Memgraph under a single language-agnostic schema. Where a toolchain is available, compiler-grade frontends layer exact facts on top (libclang for C/C++, `go/types` for Go, and opt-in Roslyn, `javac` and Jedi for C#, Java and Python), and [dynamic tracing](docs/guide/dynamic-tracing.md) merges calls observed at runtime. Tree-sitter stays the backbone: a trace only sees code that ran, and a compiler frontend only covers what its toolchain can build.
 2. **RAG system** (`codebase_rag/`). An interactive CLI that turns natural language into Cypher queries, retrieves matching code, and drives AI-powered editing and optimisation.
 
 ```
@@ -126,6 +133,8 @@ To run code newer than the latest release, install from git:
 ```bash
 uv tool install "code-graph-rag[treesitter-full,semantic] @ git+https://github.com/vitali87/code-graph-rag@main"
 ```
+
+To upgrade an existing install, run `uv tool upgrade code-graph-rag` (with pipx, `pipx upgrade code-graph-rag`, or `pipx reinstall code-graph-rag` for a git install). [Upgrade](docs/getting-started/installation.md#upgrade) covers the other install methods.
 
 You also need Python 3.12+, Docker (for Memgraph), `cmake`, and `ripgrep`. Full prerequisites, source installs, and environment setup are in the [Installation](docs/getting-started/installation.md) guide.
 
@@ -213,3 +222,5 @@ For issues or questions, check the [Troubleshooting](docs/advanced/troubleshooti
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Third-party components and their licences are credited on the [Credits page](https://docs.code-graph-rag.com/credits/).
