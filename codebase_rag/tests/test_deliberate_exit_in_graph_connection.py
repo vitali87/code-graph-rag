@@ -113,7 +113,9 @@ def _exit_code(error: BaseException) -> int | str | None:
     match error:
         case SystemExit():
             return error.code
-        case click.exceptions.Exit() | click.ClickException():
+        # typer's own Exit is listed: a typer that vendors click raises a type
+        # that is not click's (review of PR 2496).
+        case typer.Exit() | click.exceptions.Exit() | click.ClickException():
             return error.exit_code
         case _:
             return None
@@ -140,7 +142,7 @@ class TestDeliberateExitInsideTheConnection:
         self, conn: MagicMock, logged: list[_Logged]
     ) -> None:
         # `cgr start` holds its connection with `async with`.
-        with pytest.raises(click.exceptions.Exit) as raised:
+        with pytest.raises(typer.Exit) as raised:
             async with _ingestor():
                 raise typer.Exit(1)
 
@@ -154,7 +156,7 @@ class TestDeliberateExitInsideTheConnection:
         # (the sync marker write does); the cause must stay reachable with
         # LOGURU_LEVEL=DEBUG rather than vanish.
         cause = ConnectionError("marker write failed")
-        with pytest.raises(click.exceptions.Exit), _ingestor():
+        with pytest.raises(typer.Exit), _ingestor():
             raise typer.Exit(1) from cause
 
         debug = [r for r in logged if r.level == "DEBUG" and r.error is not None]
@@ -221,7 +223,7 @@ class TestWhatMustNotChange:
         lost = RuntimeError("write lost")
         with (
             patch.object(MemgraphIngestor, "flush_all", side_effect=lost),
-            pytest.raises(click.exceptions.Exit) as raised,
+            pytest.raises(typer.Exit) as raised,
             _ingestor(),
         ):
             raise typer.Exit(3)
