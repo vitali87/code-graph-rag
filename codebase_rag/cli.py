@@ -1721,10 +1721,12 @@ def change_signature_command(
         typer.echo(str(refused), err=True)
         raise typer.Exit(code=1) from refused
     name, fetch_all, ingestor = _project_and_fetch(project, repo_path)
-    with ingestor:  # type: ignore[attr-defined]
+    with ingestor:
         parsers, queries = load_parsers()
+        from .graph_updater import GraphUpdater
+
         updater = GraphUpdater(
-            ingestor=ingestor,  # type: ignore[arg-type]
+            ingestor=ingestor,
             repo_path=repo_path.resolve(),
             parsers=parsers,
             queries=queries,
