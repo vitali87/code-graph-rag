@@ -10,7 +10,6 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.tools import ToolFuncPlain
-from rich.console import Console
 
 from codebase_rag import constants as cs
 from codebase_rag import cypher_queries as cq
@@ -67,6 +66,7 @@ from codebase_rag.types_defs import (
 )
 from codebase_rag.utils.dependencies import has_ast_grep, has_semantic_dependencies
 from codebase_rag.utils.path_utils import derive_project_name
+from codebase_rag.utils.terminal_console import terminal_aware_console
 from codebase_rag.vector_store import clear_all_embeddings, delete_project_embeddings
 from codebase_rag.workspaces import WorkspaceConfig
 
@@ -296,7 +296,7 @@ class MCPToolsRegistry:
 
         # Kept on self: a scoped request builds its own query tool per call,
         # and that tool must print to the same console as the pre-built one.
-        self._stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
+        self._stderr_console = terminal_aware_console(file=sys.stderr)
         self._query_tool = create_query_tool(
             ingestor=ingestor, cypher_gen=cypher_gen, console=self._stderr_console
         )
