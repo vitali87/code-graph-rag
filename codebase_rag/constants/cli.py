@@ -771,6 +771,10 @@ SIGNATURE_UNUSUAL_RECEIVER = (
     "it to self or cls first"
 )
 SIGNATURE_STAGE_FAILED = "Cannot stage the signature change: {error}"
+SIGNATURE_SOURCE_CHANGED = (
+    "Cannot stage the signature change: {files} changed on disk after the "
+    "change was planned; retry once the tree is settled"
+)
 SIGNATURE_BAD_PARAM = (
     "Not a parameter: `{text}` (expected `name`, `name: type`, `name = default` "
     "or `name: type = default`)"
@@ -835,6 +839,10 @@ SIGNATURE_SITE_TOO_MANY = (
 )
 SIGNATURE_SITE_NO_VALUE = "no value for `{name}`; map it or give it a default"
 SIGNATURE_SITE_OVERLAPS = "its arguments overlap another edit of this change"
+SIGNATURE_SITE_EXPLICIT_RECEIVER = (
+    "reaches the method through its class and passes the receiver as an "
+    "argument (`{text}`); rewrite it by hand"
+)
 SIGNATURE_PLANNED = "{count} site(s) would be rewritten, {skipped} left unmapped"
 SIGNATURE_PARSE_FAILED = "Signature change rolled back: {files} would no longer parse"
 SIGNATURE_CONTRACT_FAILED = (
