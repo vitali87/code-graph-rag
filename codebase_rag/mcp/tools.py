@@ -3221,6 +3221,38 @@ class MCPToolsRegistry:
             ),
         )
 
+    def _signature_reingest(
+        self, project_name: str
+    ) -> tuple[Callable[[list[str]], ReingestReport] | None, Callable[[], None]]:
+        """The guarded re-ingest callback for an applied signature change, and
+        a release to run once the change returns.
+
+        Built before planning, as for `rename`, so a graph left partial by an
+        earlier run refuses the change before any file is written. Hydrating
+        a cold updater marks the project mid-update, and only the callback
+        clears that mark; a change refused before it re-ingests (a bad
+        parameter list, an unmapped hierarchy) would otherwise leave the
+        project marked and every later read refusing. The release clears the
+        mark this call made when the callback never ran. A retained updater
+        marks nothing up front, so there is nothing to release.
+        """
+        before = self._live_updater
+        guarded = self._guarded_rename_reingest(project_name)
+        hydrated = guarded is not None and self._live_updater is not before
+        ran = False
+
+        def reingest(paths: list[str]) -> ReingestReport:
+            nonlocal ran
+            ran = True
+            assert guarded is not None
+            return guarded(paths)
+
+        def release() -> None:
+            if hydrated and not ran:
+                self._require_marker_cleared(project_name)
+
+        return (reingest if guarded is not None else None), release
+
     def _run_change_signature(
         self,
         project_name: str,
@@ -3246,6 +3278,12 @@ class MCPToolsRegistry:
             return {
                 cs.DICT_KEY_ERROR: cs.RENAME_WRONG_ROOT.format(project=project_name)
             }
+        # A preview never re-ingests, so it gets no callback: building one
+        # hydrates an updater and marks the project mid-update, and only the
+        # callback itself clears that mark.
+        reingest, release = (
+            (None, None) if dry_run else self._signature_reingest(project_name)
+        )
         try:
             report = change_signature(
                 root,
@@ -3256,10 +3294,13 @@ class MCPToolsRegistry:
                 mapping,
                 allow_heuristic=allow_heuristic,
                 dry_run=dry_run,
-                reingest=self._guarded_rename_reingest(project_name),
+                reingest=reingest,
             )
         except SignatureRefused as refused:
             return {cs.DICT_KEY_ERROR: str(refused)}
+        finally:
+            if release is not None:
+                release()
         payload_marker_error: str | None = None
         if report.graph_incomplete:
             # The rollback's re-ingest failed: the same invalidation, in

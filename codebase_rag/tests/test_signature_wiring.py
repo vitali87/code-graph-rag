@@ -270,3 +270,89 @@ def test_mcp_rollback_without_reingest_invalidates_the_graph(
     assert registry._live_updater is None
     assert payload["graph_incomplete"] is True
     assert payload.get(cs.DICT_KEY_ERROR) == marker_error
+
+
+# --- a cold registry: no retained updater (CodeRabbit, #2164) -------------------
+
+
+def _cold_registry(repo: Indexed) -> MCPToolsRegistry:
+    root, store, _updater = repo
+    store.list_projects = lambda: [PROJECT]  # type: ignore[attr-defined]
+    store.ensure_constraints = lambda: None  # type: ignore[attr-defined]
+    registry = MCPToolsRegistry(
+        project_root=str(root), ingestor=store, cypher_gen=MagicMock()
+    )
+    # The in-memory store does not model the incomplete-run marker, so the
+    # registry's durable marker is kept here: set by a mark, dropped by a clear.
+    marked: dict[str, bool] = {}
+
+    def persist(project_name: str, incomplete: bool, *, writing: bool = True) -> bool:
+        marked[project_name] = incomplete
+        return True
+
+    registry._persist_incomplete = persist  # type: ignore[method-assign]
+    registry._persisted_incomplete = lambda name: marked.get(name, False)  # type: ignore[method-assign]
+    assert registry._live_updater is None
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_mcp_dry_run_leaves_no_incomplete_marker(repo: Indexed) -> None:
+    # A preview never re-ingests, so it must not hydrate an updater or mark
+    # the project mid-update: nothing would ever clear that marker.
+    registry = _cold_registry(repo)
+    payload = await registry.change_signature(
+        qualified_name=HELPER,
+        new_params=["a", "n: int", "b"],
+        mapping={"n": "=1"},
+        dry_run=True,
+        project=PROJECT,
+    )
+    assert isinstance(payload, dict) and payload["applied"] is False, payload
+    assert "+    return helper(2, 1)" in payload["diff"]
+    assert registry._live_updater is None
+    assert not registry._persisted_incomplete(PROJECT)
+
+
+@pytest.mark.asyncio
+async def test_mcp_refused_change_leaves_no_incomplete_marker(repo: Indexed) -> None:
+    registry = _cold_registry(repo)
+    payload = await registry.change_signature(
+        qualified_name=HELPER, new_params=["a", "a"], project=PROJECT
+    )
+    assert payload == {cs.DICT_KEY_ERROR: cs.SIGNATURE_DUPLICATE_NEW.format(name="a")}
+    assert not registry._persisted_incomplete(PROJECT)
+
+
+def test_mcp_apply_without_a_listed_project_skips_the_contract(
+    repo: Indexed,
+) -> None:
+    root, store, _updater = repo
+    registry = _cold_registry(repo)
+    store.list_projects = lambda: []  # type: ignore[attr-defined]
+    payload = registry._run_change_signature(
+        PROJECT, HELPER, ["a", "b", "c=None"], None, False, False
+    )
+    assert isinstance(payload, dict) and payload["applied"] is True, payload
+    assert payload[cs.KEY_VERDICT] is None
+    assert registry._live_updater is None
+    assert not registry._persisted_incomplete(PROJECT)
+    assert "c=None" in _read(root, UTIL)
+
+
+@pytest.mark.asyncio
+async def test_mcp_cold_apply_is_measured_and_clears_its_marker(repo: Indexed) -> None:
+    root = repo[0]
+    registry = _cold_registry(repo)
+    payload = await registry.change_signature(
+        qualified_name=HELPER,
+        new_params=["a", "n: int", "b"],
+        mapping={"n": "=1"},
+        project=PROJECT,
+    )
+    assert isinstance(payload, dict) and payload["applied"] is True, payload
+    assert payload[cs.KEY_VERDICT]["ok"] is True
+    assert "return helper(3, 1, 'z')" in _read(root, APP)
+    assert registry._live_updater is not None
+    assert Path(registry._live_updater.repo_path).resolve() == root.resolve()
+    assert not registry._persisted_incomplete(PROJECT)
