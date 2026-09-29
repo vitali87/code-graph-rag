@@ -54,7 +54,9 @@ def call_node_at(
     calls = calls_starting_at(root, line - 1, col)
     if recorded_end is not None:
         return next((call for call in calls if call.end_point == recorded_end), None)
-    return max(calls, key=lambda call: call.end_byte, default=None)
+    if not calls:
+        return None
+    return max(calls, key=lambda call: call.end_byte)
 
 
 def calls_starting_at(root: Node, row: int, col: int) -> list[Node]:
