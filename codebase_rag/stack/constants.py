@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 
 COMPOSE_PROJECT_NAME = "cgr"
@@ -15,6 +16,19 @@ DEFAULT_STATUS_TIMEOUT_S = 10.0
 SERVICE_MEMGRAPH = "memgraph"
 SERVICE_QDRANT = "qdrant"
 SERVICE_LAB = "lab"
+SERVICE_DISPLAY_NAMES = {
+    SERVICE_MEMGRAPH: "Memgraph",
+    SERVICE_QDRANT: "Qdrant",
+    SERVICE_LAB: "Memgraph Lab",
+}
+# The compose file's host-port variables, per service.
+SERVICE_PORT_VARIABLES = {
+    SERVICE_MEMGRAPH: ("MEMGRAPH_PORT", "MEMGRAPH_HTTP_PORT"),
+    SERVICE_QDRANT: ("QDRANT_HTTP_PORT", "QDRANT_GRPC_PORT"),
+    SERVICE_LAB: ("LAB_PORT",),
+}
+# The services the app needs; Lab is only a UI.
+CORE_SERVICES = (SERVICE_MEMGRAPH, SERVICE_QDRANT)
 
 LOOPBACK_HOST = "127.0.0.1"
 
@@ -42,6 +56,30 @@ ERR_DOCKER_DAEMON_DOWN = (
 )
 ERR_COMPOSE_NOT_AVAILABLE = "`docker compose` plugin not available. Install Docker Desktop v2+ or the compose plugin."
 ERR_STACK_START_FAILED = "Failed to bring stack up: {detail}"
+# What a failed `docker compose up` printed, in full: its progress lines
+# ("Container cgr-lab-1 Started", "<layer> Extracting 1B") buried the cause
+# in the error, so they are kept for DEBUG and the error names the cause
+# (issue #2407).
+MSG_COMPOSE_UP_OUTPUT = "docker compose up output:\n{output}"
+COMPOSE_ERROR_LINE = re.compile(r"\berror\b", re.IGNORECASE)
+# The failing container, named by the daemon's error ("endpoint cgr-lab-1")
+# or by Compose's own state line ("Container cgr-lab-1 Error"); the progress
+# lines name every container and must not count.
+COMPOSE_FAILED_SERVICE = re.compile(
+    rf"endpoint {COMPOSE_PROJECT_NAME}[-_](?P<endpoint>[a-z]+)[-_]\d+"
+    rf"|Container {COMPOSE_PROJECT_NAME}[-_](?P<container>[a-z]+)[-_]\d+ Error"
+)
+COMPOSE_PORT_IN_USE = re.compile(
+    r"failed to bind host port (?P<address>\S+?)/(?:tcp|udp): address already in use"
+)
+ERR_PORT_IN_USE = "{address} is already in use (set {variables} to move it)"
+ERR_SERVICE_NOT_STARTED = "{service} could not start: {detail}"
+# Lab is an optional UI: with Memgraph and Qdrant up the stack is usable, and
+# `cgr daemon status` already says "running" (issue #2407).
+WARN_LAB_NOT_STARTED = (
+    "Memgraph Lab could not start: {detail}. Memgraph and Qdrant are up; "
+    "Lab is an optional UI."
+)
 ERR_STACK_STOP_FAILED = "Failed to bring stack down: {detail}"
 COMPOSE_STOP_COMMAND = "stop"
 WARN_START_LEFT_STACK_OPEN = (
