@@ -1319,6 +1319,9 @@ def has_findings(delta: StructuralDelta) -> bool:
             for change in delta["signature_changes"]
             for site in change["sites"]
         )
+        # A changed handler reached from another service is a contract
+        # change no local CALLS edge shows (issue #1603).
+        or any(change["remote_callers"] for change in delta["signature_changes"])
         or delta["arity_findings"]
         or delta["new_duplicates"]
         or delta["new_import_cycles"]

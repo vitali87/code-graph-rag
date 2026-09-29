@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -415,6 +416,36 @@ def test_a_caller_both_query_shapes_return_is_listed_once() -> None:
     }
     found = _remote_callers(lambda query, params=None: [dict(row)], "svc", ["svc.h"])
     assert [c["qualified_name"] for c in found["svc.h"]] == ["client.app.call"]
+
+
+def test_remote_callers_alone_are_a_finding(
+    indexed: tuple[Path, _StatefulIngestor, GraphUpdater],
+) -> None:
+    """A signature change whose only impact is a remote caller still fails
+    --fail-on-found: no local site would flag it (issue #1603)."""
+    root, store, updater = indexed
+    _write(
+        root,
+        "pkg/util.py",
+        FIXTURE["pkg/util.py"].replace("def helper(a):", "def helper(a, b):"),
+    )
+
+    def apply() -> None:
+        updater.reingest(["pkg/util.py"], deleted=[])
+        _link_remote_callers(store)
+
+    delta = observe(store.fetch_all, PROJECT, ["pkg/util.py"], apply, repo_root=root)
+
+    (change,) = delta["signature_changes"]
+    assert change["remote_callers"]
+    # Drop the local site so the remote callers are the only impact left.
+    remote_only = {**delta, "signature_changes": [{**change, "sites": []}]}
+    nothing = {
+        **delta,
+        "signature_changes": [{**change, "sites": [], "remote_callers": []}],
+    }
+    assert has_findings(cast(StructuralDelta, remote_only))
+    assert not has_findings(cast(StructuralDelta, nothing))
 
 
 def test_a_signature_change_with_no_endpoint_has_no_remote_callers(
