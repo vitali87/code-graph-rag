@@ -57,6 +57,7 @@ from ..graph_dialects import (
     GraphDialect,
     get_dialect,
 )
+from ..stack.constants import MEMGRAPH_AUTH_FAILURE
 from ..types_defs import (
     BatchParams,
     BatchWrapper,
@@ -138,6 +139,19 @@ def _log_failed_calls(
         )
 
 
+class GraphUnavailableError(ConnectionError):
+    """The graph engine refused the connection or never answered it.
+
+    Raised at connect time with a message that says what to do, so every
+    command prints one line instead of mgclient's traceback (#2443).
+    """
+
+
+# pymgclient re-exports its C extension through `import *`, which a type
+# checker cannot see into, so the exception type is bound once here.
+_MgclientError: type[Exception] = mgclient.Error  # ty: ignore[unresolved-attribute]
+
+
 class MemgraphIngestor:
     __slots__ = (
         "_conn_lock",
@@ -202,10 +216,21 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = self._create_connection()
+        try:
+            self.conn = self._create_connection()
+        except _MgclientError as e:
+            raise GraphUnavailableError(self._unavailable_message(e)) from e
         self._executor = ThreadPoolExecutor(max_workers=settings.FLUSH_THREAD_POOL_SIZE)
         logger.info(ls.MG_CONNECTED)
         return self
+
+    def _unavailable_message(self, error: Exception) -> str:
+        # Memgraph refuses a login with the same exception type as a refused
+        # connection, so only the message tells the two apart.
+        address = f"{self._host}:{self._port}"
+        if MEMGRAPH_AUTH_FAILURE in str(error):
+            return ex.GRAPH_CREDENTIALS_REFUSED.format(address=address, error=error)
+        return ex.GRAPH_UNREACHABLE.format(address=address, error=error)
 
     def __exit__(
         self,

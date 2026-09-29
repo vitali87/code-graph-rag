@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from typer.core import TyperGroup
 
 from . import (
     _cli_env,  # noqa: F401  (must run before settings load)
@@ -46,7 +47,7 @@ from .editor_links import (
 from .graph_cli import cli as graph_cli
 from .parser_loader import load_parsers
 from .services.graph_diff import DiffError, diff_indexes, diff_is_empty
-from .services.graph_service import MemgraphIngestor
+from .services.graph_service import GraphUnavailableError, MemgraphIngestor
 from .services.protobuf_service import ProtobufFileIngestor
 from .services.provenance import (
     capture_description,
@@ -159,12 +160,25 @@ def main_optimize_async(*args: Any, **kwargs: Any) -> Coroutine[Any, Any, None]:
     return impl(*args, **kwargs)
 
 
+class _CgrGroup(TyperGroup):
+    def invoke(self, ctx: click.Context) -> object:
+        # Every command reaches the graph through the ingestor, which raises
+        # this at connect time with the fix in its message; printing it here
+        # covers them all, the delegated groups and the chat included (#2443).
+        try:
+            return super().invoke(ctx)
+        except GraphUnavailableError as e:
+            app_context.console.print(style(str(e), cs.Color.RED))
+            raise typer.Exit(1) from e
+
+
 app = typer.Typer(
     name=cs.PACKAGE_NAME,
     help=ch.APP_DESCRIPTION,
     epilog=ch.APP_EPILOG,
     no_args_is_help=True,
     add_completion=False,
+    cls=_CgrGroup,
 )
 
 
@@ -1124,6 +1138,8 @@ def export(
             if not export_graph_to_file(ingestor, output):
                 raise typer.Exit(1)
 
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_EXPORT_FAILED.format(error=e), cs.Color.RED)
@@ -1724,6 +1740,8 @@ def stats() -> None:
                 )
             )
 
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_STATS_FAILED.format(error=e), cs.Color.RED)
@@ -1988,6 +2006,8 @@ def dead_code(
                 )
                 if not endpoint_roots and len(projects) <= 1:
                     _notice_single_project_endpoint_roots(show_progress)
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DEADCODE_FAILED.format(error=e), cs.Color.RED)
@@ -2338,6 +2358,8 @@ def duplicates(
                         exclude_patterns=tuple(exclude),
                     ),
                 )
+    except GraphUnavailableError:
+        raise
     except Exception as e:
         app_context.console.print(
             style(cs.CLI_ERR_DUPLICATES_FAILED.format(error=e), cs.Color.RED)
@@ -2439,6 +2461,8 @@ def delete_project(
             _cleanup_project_embeddings(ingestor, project_name)
             ingestor.delete_project(project_name)
     except typer.Exit:
+        raise
+    except GraphUnavailableError:
         raise
     except Exception as e:
         app_context.console.print(
