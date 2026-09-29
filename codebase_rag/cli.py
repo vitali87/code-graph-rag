@@ -1892,6 +1892,7 @@ def context_command(
     ),
     project: str | None = typer.Option(None, "--project", help=ch.HELP_GRAPH_PROJECT),
 ) -> None:
+    from . import graph_query
     from .context_slice import context as build_context
     from .graph_cli import _project_and_fetch
     from .tools.semantic_search import semantic_code_search
@@ -1903,7 +1904,7 @@ def context_command(
             name,
             target,
             budget,
-            repo_path.resolve(),
+            graph_query.source_root_for(fetch_all, name, repo_path),
             search=lambda text: semantic_code_search(ingestor, text, project=name),  # type: ignore[arg-type]
         )
     typer.echo(json.dumps(payload, indent=cs.MCP_JSON_INDENT))

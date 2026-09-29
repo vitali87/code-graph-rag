@@ -2989,7 +2989,7 @@ class MCPToolsRegistry:
             project_name,
             target,
             budget_tokens,
-            Path(self.project_root),
+            self._source_root_for(project_name),
             search=search if self._semantic_search_tool is not None else None,
         )
 
