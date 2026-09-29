@@ -9,6 +9,7 @@ from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
     ResultRow,
+    ResultScalar,
     ResultValue,
 )
 from codebase_rag.utils import qn_markers
@@ -204,6 +205,15 @@ def _result(value: PropertyValue | None) -> ResultValue:
     if isinstance(value, float):
         return int(value) if value.is_integer() else str(value)
     return value
+
+
+def _result_props(
+    props: PropertyDict,
+) -> dict[str, ResultScalar | list[ResultScalar]]:
+    return {
+        key: list[ResultScalar](value) if isinstance(value, list) else value
+        for key, value in props.items()
+    }
 
 
 def _text(value: PropertyValue) -> str | None:
@@ -791,7 +801,7 @@ class _StatefulIngestor:
                             cs.KEY_CALLER_PATH: _text(caller_path),
                             # The restore re-emits the edge with its own
                             # properties (its site, issue #1522).
-                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
+                            cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound
@@ -857,7 +867,7 @@ class _StatefulIngestor:
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -874,7 +884,7 @@ class _StatefulIngestor:
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
                 # requeue for the same reason as the Parameter query above.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -1052,6 +1062,44 @@ class _StatefulIngestor:
                             seen_paths.add(importer_path)
                             importer_rows.append({cs.KEY_CALLER_PATH: importer_path})
                 return importer_rows
+            case cs.CYPHER_UNRESOLVED_REFERENCE_WAITERS:
+                # Modules whose recorded unresolved references an added file
+                # satisfies, by an exact name or under a qn prefix (issue
+                # #1568). Emulated for the same reason as the specifier
+                # lookup below: an unanswered query reads as "no waiters".
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                own_name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                raw_names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                raw_prefixes = params.get(cs.CYPHER_PARAM_PREFIXES) if params else None
+                wanted = (
+                    {n for n in raw_names if isinstance(n, str)}
+                    if isinstance(raw_names, list)
+                    else set()
+                )
+                wanted_prefixes = (
+                    [p for p in raw_prefixes if isinstance(p, str)]
+                    if isinstance(raw_prefixes, list)
+                    else []
+                )
+                waiting: set[str] = set()
+                for (label, _uid), props in self.nodes.items():
+                    if label != _MODULE_LABEL:
+                        continue
+                    path = _text(props.get(cs.KEY_PATH))
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME)) or ""
+                    recorded = props.get(cs.KEY_UNRESOLVED_REFERENCES)
+                    in_project = (prefix and qn.startswith(prefix)) or qn == own_name
+                    if not path or not in_project:
+                        continue
+                    if not isinstance(recorded, list):
+                        continue
+                    if any(
+                        n in wanted
+                        or any(str(n).startswith(p) for p in wanted_prefixes)
+                        for n in recorded
+                    ):
+                        waiting.add(path)
+                return [{cs.KEY_CALLER_PATH: p} for p in sorted(waiting)]
             case cs.CYPHER_UNRESOLVED_SPECIFIER_IMPORTERS:
                 # Modules carrying a dropped relative specifier (issue #1714).
                 # Emulated rather than left to fall through: an unanswered
@@ -1224,8 +1272,27 @@ class _StatefulIngestor:
     def execute_write(self, query: str, params: PropertyDict | None = None) -> None:
         path = params.get(cs.KEY_PATH) if params else None
         match query:
+            case cs.CYPHER_CLEAR_UNRESOLVED_REFERENCES:
+                # Modules with nothing unresolved this parse (issue #1568).
+                raw_qns = params.get(cs.KEY_QNS) if params else None
+                for qn in raw_qns if isinstance(raw_qns, list) else []:
+                    node = self.nodes.get((_MODULE_LABEL, qn))
+                    if node is not None:
+                        node[cs.KEY_UNRESOLVED_REFERENCES] = []
+            case cs.CYPHER_SET_UNRESOLVED_REFERENCES:
+                # One module's list, replaced so a resolved name leaves it.
+                qn = params.get(cs.KEY_QN) if params else None
+                names = params.get(cs.CYPHER_PARAM_NAMES) if params else None
+                node = self.nodes.get((_MODULE_LABEL, qn))
+                if node is not None and isinstance(names, list):
+                    node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
-                self._delete_module_subtree(path)
+                self._delete_module_subtree(
+                    path,
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                    params.get(cs.KEY_NESTED_PROJECTS) if params else None,
+                )
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
                 # absolute path (issue #897).
@@ -1277,9 +1344,51 @@ class _StatefulIngestor:
             if node_label == label and props.get(key) == path
         }
 
-    def _delete_module_subtree(self, path: PropertyValue) -> None:
+    def _delete_module_subtree(
+        self,
+        path: PropertyValue,
+        project_name: str | None,
+        project_prefix: str | None,
+        nested_projects: PropertyValue = None,
+    ) -> None:
+        # Scoped like the real query: another project in the shared graph can
+        # hold the same relative path, and only a module whose qn is the
+        # project name or starts with its prefix goes (issue #2172). A missing
+        # scope matches nothing, as `= null` does in Cypher. A registered
+        # project whose name extends this one (`svc.v2` under `svc`) matches
+        # that prefix too, and its modules are excluded like the real query's
+        # `$nested_projects` clause does (issue #1985).
+        nested_names = (
+            [n for n in nested_projects if isinstance(n, str)]
+            if isinstance(nested_projects, list)
+            else []
+        )
+        # The real query also reads the nested projects from the graph's own
+        # Project nodes, so an empty parameter (registry unread) still spares
+        # them (CodeRabbit, PR #2125).
+        if project_prefix is not None:
+            nested_names += [
+                name
+                for label, name in self.nodes
+                if label == cs.NodeLabel.PROJECT.value
+                and isinstance(name, str)
+                and name.startswith(project_prefix)
+            ]
+
+        def in_scope(qn: str) -> bool:
+            if qn != project_name and not (
+                project_prefix is not None and qn.startswith(project_prefix)
+            ):
+                return False
+            return not any(qn == n or qn.startswith(f"{n}.") for n in nested_names)
+
         doomed: set[_NodeId] = set()
-        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        frontier = [
+            node
+            for node in self._nodes_at_path(_MODULE_LABEL, path)
+            if (qn := _text(self.nodes[node].get(cs.KEY_QUALIFIED_NAME)))
+            and in_scope(qn)
+        ]
         while frontier:
             node = frontier.pop()
             if node in doomed:

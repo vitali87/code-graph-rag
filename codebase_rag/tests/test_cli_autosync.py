@@ -122,6 +122,7 @@ def test_start_auto_sync_uses_derived_project_name_when_none_provided(
     project_name = call.kwargs["project_name"]
     assert "__" in project_name
     assert len(project_name.rsplit("__", 1)[1]) == 8
+    assert call.kwargs["project_named"] is False
 
 
 def test_start_auto_sync_respects_explicit_project_name(
@@ -146,3 +147,4 @@ def test_start_auto_sync_respects_explicit_project_name(
     assert result.exit_code == 0, result.output
     call = mock_sync_path.call_args
     assert call.kwargs["project_name"] == "my-project"
+    assert call.kwargs["project_named"] is True

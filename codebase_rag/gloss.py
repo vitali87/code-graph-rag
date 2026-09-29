@@ -36,7 +36,7 @@ import hashlib
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import NamedTuple, TypedDict
+from typing import TYPE_CHECKING, NamedTuple, TypedDict
 
 from . import constants as cs
 from . import cypher_queries as cq
@@ -44,6 +44,11 @@ from . import graph_query
 from .gloss_anchor import SourceReader, TextAnchor, text_anchor
 from .graph_query import QueryFn, SymbolRow
 from .types_defs import PropertyDict, ResultRow
+
+if TYPE_CHECKING:
+    # Annotation-only: TypeIs reaches `typing` in 3.13, and the checker reads
+    # typing_extensions from its bundled stubs, so nothing imports it at runtime.
+    from typing_extensions import TypeIs
 
 WriteFn = Callable[[str, PropertyDict | None], None]
 
@@ -122,7 +127,7 @@ def resolve_one(
         natural = resolve_one(fetch_all, project_name, base)
         if _is_refusal(natural):
             return natural
-        natural_row: SymbolRow = natural  # type: ignore[assignment]
+        natural_row: SymbolRow = natural
         return _resolve_descriptor(
             fetch_all, project_name, target, natural_row, descriptor
         )
@@ -221,7 +226,7 @@ def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[Glo
     base, descriptor = _split_descriptor(target)
     natural = resolve_one(fetch_all, project_name, base) if descriptor else None
     if natural is not None and not _is_refusal(natural):
-        natural_row: SymbolRow = natural  # type: ignore[assignment]
+        natural_row: SymbolRow = natural
         qn = natural_row["qualified_name"].split(cs.DUP_QN_MARKER, 1)[0]
         params[cs.KEY_QN] = qn
         params[cs.KEY_VARIANT_PREFIX] = _variant_prefix(qn)
@@ -231,7 +236,7 @@ def _orphaned_on(fetch_all: QueryFn, project_name: str, target: str) -> list[Glo
     return _sort_gloss_rows(fetch_all(cq.CYPHER_GLOSSES_ORPHANED_ON, params))
 
 
-def _is_refusal(value: object) -> bool:
+def _is_refusal(value: SymbolRow | GlossRefusal) -> TypeIs[GlossRefusal]:
     return isinstance(value, dict) and cs.DICT_KEY_ERROR in value
 
 
@@ -370,18 +375,18 @@ def write_gloss(
         )
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
-        return subject  # type: ignore[return-value]
-    subject_row: SymbolRow = subject  # type: ignore[assignment]
+        return subject
+    subject_row: SymbolRow = subject
     mentioned: list[SymbolRow] = []
     for name in _split_mentions(mentions):
         found = resolve_one(fetch_all, project_name, name)
         if _is_refusal(found):
-            refusal: GlossRefusal = found  # type: ignore[assignment]
+            refusal: GlossRefusal = found
             refusal[cs.DICT_KEY_ERROR] = cs.MCP_GLOSS_MENTION_REFUSED.format(
                 name=name, error=refusal[cs.DICT_KEY_ERROR]
             )
             return refusal
-        mentioned.append(found)  # type: ignore[arg-type]
+        mentioned.append(found)
 
     target_qn = subject_row["qualified_name"]
     key = gloss_id(target_qn, kind, text)
@@ -436,7 +441,7 @@ def glosses_for(
     """
     subject = resolve_one(fetch_all, project_name, target)
     if _is_refusal(subject):
-        refusal: GlossRefusal = subject  # type: ignore[assignment]
+        refusal: GlossRefusal = subject
         # A name that matches nothing may still be one notes were written
         # against: the definition is gone and the notes are LOST or
         # AMBIGUOUS. They are returned with the refusal so the orphaning is
@@ -447,7 +452,7 @@ def glosses_for(
             if orphaned:
                 refusal[cs.KEY_ORPHANED] = orphaned
         return refusal
-    subject_row: SymbolRow = subject  # type: ignore[assignment]
+    subject_row: SymbolRow = subject
     params: PropertyDict = {cs.KEY_QN: subject_row["qualified_name"]}
     return GlossesResult(
         target=subject_row,
