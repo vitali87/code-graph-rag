@@ -905,17 +905,3 @@ int main() {
     assert len(component_inheritance) >= 2, (
         f"Expected at least 2 component inheritance relationships, found {len(component_inheritance)}"
     )
-
-
-def test_cpp_comprehensive_complete() -> None:
-    """Mark comprehensive C++ testing as complete."""
-    print("Coverage includes:")
-    print("   - Basic syntax (classes, functions, namespaces)")
-    print("   - Include directives and header relationships")
-    print("   - Complex inheritance hierarchies")
-    print("   - Template programming and metaprogramming")
-    print("   - Namespace management and qualified names")
-    print("   - Modern C++ features integration")
-    print("   - Real-world multi-file scenarios")
-    print("   - Cross-namespace and cross-file relationships")
-    assert True

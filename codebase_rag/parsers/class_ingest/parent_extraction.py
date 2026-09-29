@@ -198,18 +198,16 @@ def extract_parent_classes(
     # PHP `extends` (a class's superclass or an interface's superinterfaces)
     # is a base_clause listing `name` nodes; both are inheritance.
     if base_clause := find_child_by_type(class_node, cs.TS_PHP_BASE_CLAUSE):
-        for child in base_clause.children:
-            if parent_name := php_base_simple_name(child):
-                parent_classes.append(resolve_to_qn(parent_name, module_qn))
+        parent_classes.extend(
+            resolve_to_qn(parent_name, module_qn)
+            for child in base_clause.children
+            if (parent_name := php_base_simple_name(child))
+        )
 
-    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
     if class_node.type == cs.TS_RS_TRAIT_ITEM:
-        if bounds := class_node.child_by_field_name(cs.FIELD_BOUNDS):
-            for child in bounds.children:
-                base = java_base_type_identifier(child)
-                if base is not None and base.text:
-                    if name := safe_decode_text(base):
-                        parent_classes.append(resolve_to_qn(name, module_qn))
+        parent_classes.extend(
+            _rust_supertrait_parents(class_node, module_qn, resolve_to_qn)
+        )
 
     if class_node.type in (
         cs.TS_DART_CLASS_DEFINITION,
@@ -225,6 +223,21 @@ def extract_parent_classes(
         )
 
     return parent_classes
+
+
+def _rust_supertrait_parents(
+    trait_node: Node, module_qn: str, resolve_to_qn: Callable[[str, str], str]
+) -> list[str]:
+    # Rust supertrait bound (`trait Sub: Super`) is inheritance between traits.
+    bounds = trait_node.child_by_field_name(cs.FIELD_BOUNDS)
+    if bounds is None:
+        return []
+    parents: list[str] = []
+    for child in bounds.children:
+        base = java_base_type_identifier(child)
+        if base is not None and base.text and (name := safe_decode_text(base)):
+            parents.append(resolve_to_qn(name, module_qn))
+    return parents
 
 
 # Only these wrappers are descended; see the constants module for why
@@ -335,26 +348,29 @@ def extract_dart_parent_classes(
     # the `with` types (a mixin contributes members like a base), and a
     # `mixin M on Base` states a required superclass as a bare type_identifier
     # child. `implements` targets are IMPLEMENTS (extract_implemented_interfaces).
-    parents: list[str] = []
+    names: list[str] = []
     if superclass := find_child_by_type(class_node, cs.TS_DART_SUPERCLASS):
         for child in superclass.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(name, module_qn))
-            elif child.type == cs.TS_DART_MIXINS:
-                for mixin in child.named_children:
-                    if mixin.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                        mixin_name := safe_decode_text(mixin)
-                    ):
-                        parents.append(resolve_to_qn(mixin_name, module_qn))
+            if child.type == cs.TS_DART_MIXINS:
+                names.extend(_dart_type_identifier_names(child))
+            else:
+                names.extend(_dart_type_identifier_names_of([child]))
     if class_node.type == cs.TS_DART_MIXIN_DECLARATION:
-        for child in class_node.named_children:
-            if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
-                on_name := safe_decode_text(child)
-            ):
-                parents.append(resolve_to_qn(on_name, module_qn))
-    return parents
+        names.extend(_dart_type_identifier_names(class_node))
+    return [resolve_to_qn(name, module_qn) for name in names]
+
+
+def _dart_type_identifier_names(node: Node) -> list[str]:
+    return _dart_type_identifier_names_of(node.named_children)
+
+
+def _dart_type_identifier_names_of(nodes: list[Node]) -> list[str]:
+    # The decoded names of the plain `type_identifier` nodes among `nodes`.
+    return [
+        name
+        for node in nodes
+        if node.type == cs.TS_DART_TYPE_IDENTIFIER and (name := safe_decode_text(node))
+    ]
 
 
 def extract_dart_extends_type_args(
@@ -541,36 +557,43 @@ def extract_python_superclasses(
     if not superclasses_node:
         return []
 
-    parent_classes: list[str] = []
     import_map = import_processor.import_mapping.get(module_qn)
+    return [
+        _resolve_python_base(parent_name, module_qn, import_map, resolve_to_qn)
+        for child in superclasses_node.children
+        if (parent_name := _python_base_name(child))
+    ]
 
-    for child in superclasses_node.children:
-        # A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
-        # int])`, click) is a `subscript` node; the base name is its `value`
-        # field. Skipping it dropped the INHERITS edge and with it every
-        # OVERRIDES/dispatch relationship of the subclass.
-        if child.type == cs.TS_PY_SUBSCRIPT:
-            value = child.child_by_field_name(cs.FIELD_VALUE)
-            if value is not None and value.type in (
-                cs.TS_IDENTIFIER,
-                cs.TS_PY_ATTRIBUTE,
-            ):
-                child = value
-        if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
-            continue
-        if not (parent_name := safe_decode_text(child)):
-            continue
 
-        head, sep, tail = parent_name.partition(cs.SEPARATOR_DOT)
-        if import_map and head in import_map:
-            resolved_head = import_map[head]
-        elif import_map:
-            resolved_head = resolve_to_qn(head, module_qn)
-        else:
-            resolved_head = f"{module_qn}.{head}"
-        parent_classes.append(f"{resolved_head}{sep}{tail}")
+def _python_base_name(child: Node) -> str | None:
+    """The dotted name a Python base-list entry names, if it names one."""
+    # A SUBSCRIPTED generic base (`class IntRange(_NumberRangeBase[int,
+    # int])`, click) is a `subscript` node; the base name is its `value`
+    # field. Skipping it dropped the INHERITS edge and with it every
+    # OVERRIDES/dispatch relationship of the subclass.
+    if child.type == cs.TS_PY_SUBSCRIPT:
+        value = child.child_by_field_name(cs.FIELD_VALUE)
+        if value is not None and value.type in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE):
+            child = value
+    if child.type not in (cs.TS_IDENTIFIER, cs.TS_PY_ATTRIBUTE) or not child.text:
+        return None
+    return safe_decode_text(child) or None
 
-    return parent_classes
+
+def _resolve_python_base(
+    parent_name: str,
+    module_qn: str,
+    import_map: dict[str, str] | None,
+    resolve_to_qn: Callable[[str, str], str],
+) -> str:
+    head, sep, tail = parent_name.partition(cs.SEPARATOR_DOT)
+    if import_map and head in import_map:
+        resolved_head = import_map[head]
+    elif import_map:
+        resolved_head = resolve_to_qn(head, module_qn)
+    else:
+        resolved_head = f"{module_qn}.{head}"
+    return f"{resolved_head}{sep}{tail}"
 
 
 def extract_js_ts_heritage_parents(
@@ -589,21 +612,21 @@ def extract_js_ts_heritage_parents(
                 )
             )
             break
+        if not is_preceded_by_extends(child, class_heritage_node):
+            continue
         if child.type in cs.JS_TS_PARENT_REF_TYPES:
-            if is_preceded_by_extends(child, class_heritage_node):
-                if parent_name := safe_decode_text(child):
-                    parent_classes.append(
-                        resolve_js_ts_parent_class(
-                            parent_name, module_qn, import_processor, resolve_to_qn
-                        )
-                    )
-        elif child.type == cs.TS_CALL_EXPRESSION:
-            if is_preceded_by_extends(child, class_heritage_node):
-                parent_classes.extend(
-                    extract_mixin_parent_classes(
-                        child, module_qn, import_processor, resolve_to_qn
+            if parent_name := safe_decode_text(child):
+                parent_classes.append(
+                    resolve_js_ts_parent_class(
+                        parent_name, module_qn, import_processor, resolve_to_qn
                     )
                 )
+        elif child.type == cs.TS_CALL_EXPRESSION:
+            parent_classes.extend(
+                extract_mixin_parent_classes(
+                    child, module_qn, import_processor, resolve_to_qn
+                )
+            )
 
     return parent_classes
 
@@ -667,26 +690,27 @@ def extract_mixin_parent_classes(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
+    arguments = find_child_by_type(call_expr_node, cs.TS_ARGUMENTS)
+    if arguments is None:
+        return []
     parent_classes: list[str] = []
-
-    for child in call_expr_node.children:
-        if child.type == cs.TS_ARGUMENTS:
-            for arg_child in child.children:
-                if arg_child.type == cs.TS_IDENTIFIER and arg_child.text:
-                    if parent_name := safe_decode_text(arg_child):
-                        parent_classes.append(
-                            resolve_js_ts_parent_class(
-                                parent_name, module_qn, import_processor, resolve_to_qn
-                            )
-                        )
-                elif arg_child.type == cs.TS_CALL_EXPRESSION:
-                    parent_classes.extend(
-                        extract_mixin_parent_classes(
-                            arg_child, module_qn, import_processor, resolve_to_qn
-                        )
-                    )
-            break
-
+    for arg_child in arguments.children:
+        if arg_child.type == cs.TS_CALL_EXPRESSION:
+            parent_classes.extend(
+                extract_mixin_parent_classes(
+                    arg_child, module_qn, import_processor, resolve_to_qn
+                )
+            )
+        elif (
+            arg_child.type == cs.TS_IDENTIFIER
+            and arg_child.text
+            and (parent_name := safe_decode_text(arg_child))
+        ):
+            parent_classes.append(
+                resolve_js_ts_parent_class(
+                    parent_name, module_qn, import_processor, resolve_to_qn
+                )
+            )
     return parent_classes
 
 
@@ -729,30 +753,65 @@ def extract_implemented_interfaces(
 
     # TypeScript `class C implements I, J` lives in class_heritage >
     # implements_clause (no `interfaces` field), holding type_identifiers.
-    if class_heritage := find_child_by_type(class_node, cs.TS_CLASS_HERITAGE):
-        if implements_clause := find_child_by_type(
-            class_heritage, cs.TS_IMPLEMENTS_CLAUSE
-        ):
-            for child in implements_clause.children:
-                if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
-                    if name := safe_decode_text(child):
-                        implemented_interfaces.append(resolve_to_qn(name, module_qn))
+    _extend_ts_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
 
     # PHP `class C implements I, J` is a class_interface_clause of `name` nodes.
+    _extend_php_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+    _extend_dart_implemented_interfaces(
+        class_node, implemented_interfaces, module_qn, resolve_to_qn
+    )
+
+    return implemented_interfaces
+
+
+def _extend_ts_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
+    class_heritage = find_child_by_type(class_node, cs.TS_CLASS_HERITAGE)
+    if not class_heritage:
+        return
+    implements_clause = find_child_by_type(class_heritage, cs.TS_IMPLEMENTS_CLAUSE)
+    if not implements_clause:
+        return
+    for child in implements_clause.children:
+        if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
+            if name := safe_decode_text(child):
+                interface_list.append(resolve_to_qn(name, module_qn))
+
+
+def _extend_php_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if php_impl := find_child_by_type(class_node, cs.TS_PHP_CLASS_INTERFACE_CLAUSE):
         for child in php_impl.children:
             if name := php_base_simple_name(child):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
+                interface_list.append(resolve_to_qn(name, module_qn))
 
-    # Dart `class C implements I, J` is an `interfaces` node of type_identifiers.
+
+def _extend_dart_implemented_interfaces(
+    class_node: Node,
+    interface_list: list[str],
+    module_qn: str,
+    resolve_to_qn: Callable[[str, str], str],
+) -> None:
     if dart_impl := find_child_by_type(class_node, cs.TS_DART_INTERFACES):
         for child in dart_impl.named_children:
             if child.type == cs.TS_DART_TYPE_IDENTIFIER and (
                 name := safe_decode_text(child)
             ):
-                implemented_interfaces.append(resolve_to_qn(name, module_qn))
-
-    return implemented_interfaces
+                interface_list.append(resolve_to_qn(name, module_qn))
 
 
 def extract_java_interface_names(
@@ -762,12 +821,16 @@ def extract_java_interface_names(
     resolve_to_qn: Callable[[str, str], str],
 ) -> None:
     for child in interfaces_node.children:
-        if child.type == cs.TS_TYPE_LIST:
-            for type_child in child.children:
-                # Unwrap generic/qualified bases (`TBase<T>`, `pkg.IScheme`) to
-                # the base type_identifier; plain identifiers pass straight
-                # through. Skips list punctuation (commas).
-                base = java_base_type_identifier(type_child)
-                if base is not None and base.text:
-                    if interface_name := safe_decode_text(base):
-                        interface_list.append(resolve_to_qn(interface_name, module_qn))
+        if child.type != cs.TS_TYPE_LIST:
+            continue
+        for type_child in child.children:
+            # Unwrap generic/qualified bases (`TBase<T>`, `pkg.IScheme`) to
+            # the base type_identifier; plain identifiers pass straight
+            # through. Skips list punctuation (commas).
+            base = java_base_type_identifier(type_child)
+            if (
+                base is not None
+                and base.text
+                and (interface_name := safe_decode_text(base))
+            ):
+                interface_list.append(resolve_to_qn(interface_name, module_qn))

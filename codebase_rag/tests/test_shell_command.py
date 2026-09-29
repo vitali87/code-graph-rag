@@ -1905,6 +1905,176 @@ def test_git_ordinary_subcommands_still_run(segment: str) -> None:
     )
 
 
+# Spellings of the program-running options that the exact long-name match
+# missed. Each one marked "verified" ran a program in a scratch repo under
+# git 2.43; git's parsers accept short letters, attached values, clustered
+# short flags and unambiguous long-option abbreviations alike.
+_GIT_EXEC_OPTION_SPELLINGS = (
+    "git rebase -x id HEAD~1",  # verified
+    "git rebase -xid HEAD~1",  # verified
+    "git rebase -ix id HEAD~1",  # verified
+    "git rebase -ixid HEAD~1",  # verified
+    "git rebase -mx id HEAD~1",
+    "git rebase --ex id HEAD~1",  # verified
+    "git rebase --exe=id HEAD~1",  # verified
+    "git -C . rebase -x id HEAD~1",
+    "git difftool -x id",  # verified
+    "git difftool -yxid",  # verified
+    "git difftool --extc id",
+    "git difftool -t x",
+    "git difftool -tx",
+    "git difftool --to=x",
+    "git mergetool -t x",
+    "git mergetool --toolx=id",
+    "git grep -Oecho hello",  # verified
+    # A value-taking option claims the `--`, so git still parses what follows.
+    "git grep -e -- -Oecho",  # verified
+    "git grep -n -e -- -Oecho",
+    "git grep --regexp -- -Oecho",
+    "git clone --branch -- -ccore.hooksPath=x https://x/y",
+    "git grep -O hello",
+    "git grep -nOid x",  # verified
+    "git grep --open=id x",  # verified
+    "git grep --open-files-in-pager x",
+    "git clone -u id x",  # verified
+    "git clone -quid x",
+    "git clone --upload=id x",  # verified
+    "git fetch --upl=id .",  # verified
+    "git pull --upload-pack=id .",  # verified
+    "git ls-remote --upload=id .",  # verified
+    "git ls-remote --exec=id .",
+    "git fetch-pack --exec=id .",  # verified
+    "git archive --remote=. --exe=id HEAD",
+    "git push --exe=id . HEAD",
+    "git send-pack --receive=id . HEAD",
+    "git send-email --smtp-serv=id x.patch",
+    "git instaweb -d id",
+    "git instaweb --httpd=id",
+    "git instaweb -b id",
+    "git web--browse -b id x",
+    "git web--browse --browser=id x",
+)
+
+
+@pytest.mark.parametrize("segment", _GIT_EXEC_OPTION_SPELLINGS)
+def test_git_exec_option_spellings_are_blocked(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a program-running git option spelling was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize("segment", _GIT_EXEC_OPTION_SPELLINGS)
+async def test_git_exec_option_spellings_are_blocked_under_yolo(
+    segment: str, temp_project_root: Path
+) -> None:
+    # yolo skips the allowlist, not the dangerous-command checks; the
+    # reported reproduction came through exactly this entry point.
+    commander = ShellCommander(str(temp_project_root), timeout=5, is_yolo=lambda: True)
+    result = await commander.execute(segment)
+    assert result.return_code != 0, result.stdout
+    assert "names a program git will run" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # The same letters mean nothing dangerous elsewhere, or sit inside a
+        # value where git reads them as data, and ordinary use must survive.
+        "git grep -n foo",
+        "git grep -eOops",
+        "git grep --or -e a -e b",
+        "git grep -- -O",
+        "git grep foo -- -Oname",
+        "git log -x",
+        "git diff -x",
+        "git fetch -u origin",
+        "git rebase -Xours HEAD~1",
+        "git rebase -Xsubtree=x HEAD~1",
+        # -r takes an optional attached mode, so `x` here is that mode.
+        "git rebase -rx HEAD~1",
+        "git rebase -i HEAD~3",
+        "git rebase --no-exec HEAD~1",
+        "git clone -b ubuntu https://x/y",
+        "git difftool --tool-help",
+        "git mergetool --tool-help",
+        "git send-email --to=a@b --cc=c@d x.patch",
+        "git instaweb --stop",
+    ),
+)
+def test_git_exec_option_lookalikes_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary git was blocked: {segment}"
+    )
+
+
+# Subcommand-level config and template options. Those marked "verified" ran a
+# marker-touching hook or program in a scratch dir under git 2.43.
+_GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE = (
+    "git clone -c core.hooksPath=/tmp/h src d",  # verified
+    "git clone --config core.hooksPath=/tmp/h src d",  # verified
+    "git clone --config=core.hooksPath=/tmp/h src d",  # verified
+    "git clone -ccore.hooksPath=/tmp/h src d",  # verified
+    "git clone --conf=core.hooksPath=/tmp/h src d",  # verified
+    "git clone -qc core.hooksPath=/tmp/h src d",  # verified
+    "git clone -qccore.hooksPath=/tmp/h src d",
+    "git clone -c core.sshCommand=id ssh://h/x d",  # verified
+    "git clone -c protocol.allow=always ext::id d",  # verified
+    "git clone -c protocol.ext.allow=always ext::id d",
+    "git clone -c include.path=/tmp/x src d",
+    "git clone -c core.fsmonitor=id src d",
+    "git -C . clone --co core.hooksPath=/tmp/h src d",
+    "git clone --template=/tmp/t src d",  # verified
+    "git clone --template /tmp/t src d",  # verified
+    "git clone --temp=/tmp/t src d",  # verified
+    "git init --template=/tmp/t d",  # verified, hook ran on the next commit
+    "git init --temp /tmp/t d",  # verified
+)
+
+
+@pytest.mark.parametrize("segment", _GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE)
+def test_git_subcommand_config_and_template_are_blocked(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is not None, (
+        f"a program-running git clone/init option was allowed: {segment}"
+    )
+
+
+@pytest.mark.parametrize("segment", _GIT_SUBCOMMAND_CONFIG_AND_TEMPLATE)
+async def test_git_subcommand_config_and_template_are_blocked_under_yolo(
+    segment: str, temp_project_root: Path
+) -> None:
+    commander = ShellCommander(str(temp_project_root), timeout=5, is_yolo=lambda: True)
+    result = await commander.execute(segment)
+    assert result.return_code != 0, result.stdout
+    assert "names a program git will run" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(
+    "segment",
+    (
+        # Ordinary clone/init, and config keys git never runs, must survive.
+        "git clone https://x/y",
+        "git clone https://x/y dir",
+        "git clone --depth 1 https://x/y",
+        "git clone -c core.autocrlf=false https://x/y",
+        "git clone --config=http.sslVerify=true https://x/y",
+        "git clone -qc core.autocrlf=false https://x/y",
+        "git clone -c protocol.file.allow=always https://x/y",
+        "git clone --checkout https://x/y",
+        "git clone --no-template https://x/y",
+        "git clone -- -c core.hooksPath=x",
+        "git init",
+        "git init -q --bare d",
+        "git init -b main d",
+        "git commit -c HEAD",
+        "git fetch --tags origin",
+    ),
+)
+def test_git_subcommand_config_lookalikes_still_run(segment: str) -> None:
+    assert _validate_segment(segment, "", True) is None, (
+        f"ordinary git was blocked: {segment}"
+    )
+
+
 @pytest.mark.parametrize(
     "key",
     (

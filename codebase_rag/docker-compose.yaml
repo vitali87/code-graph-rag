@@ -1,7 +1,8 @@
 # Ports publish on loopback by default: Memgraph Bolt, Memgraph Lab, and
-# Qdrant are unauthenticated, so a bare "host:container" mapping (which Docker
-# binds to 0.0.0.0) puts the whole code graph on the local network (issue
-# #1012). Set CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
+# Qdrant are unauthenticated unless credentials are set (see `environment`
+# below), so a bare "host:container" mapping (which Docker binds to 0.0.0.0)
+# puts the whole code graph on the local network (issue #1012). Set
+# CGR_STACK_BIND_HOST=0.0.0.0 to expose the stack deliberately.
 services:
   memgraph:
     # Pinned by digest: engine upgrades change accepted Cypher syntax (issue
@@ -15,6 +16,14 @@ services:
     volumes:
       - memgraph_data:/var/lib/memgraph
       - memgraph_log:/var/log/memgraph
+    # Listed without values, so each is set only when the environment
+    # `docker compose` runs in provides it; `cgr daemon up` fills them from
+    # MEMGRAPH_USERNAME and MEMGRAPH_PASSWORD. Memgraph creates this user on
+    # its next start and requires it from then on, even if the variables are
+    # later unset, and never changes an existing user's password from them.
+    environment:
+      - MEMGRAPH_USER
+      - MEMGRAPH_PASSWORD
   lab:
     image: memgraph/lab
     ports:
@@ -28,6 +37,9 @@ services:
       - "${CGR_STACK_BIND_HOST:-127.0.0.1}:${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
+    # Filled from QDRANT_API_KEY by `cgr daemon up`; unset leaves Qdrant open.
+    environment:
+      - QDRANT__SERVICE__API_KEY
 
 volumes:
   qdrant_storage:
