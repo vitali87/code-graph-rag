@@ -468,7 +468,10 @@ class Renamer:
                 [],
                 [],
             ) from error
-        start = definition["start_line"] or 1
+        # From the `def`/`class` line, not the decorated start: a decorator
+        # may spell the old name (`@register(fetch=1)`) and is not the
+        # definition's name token (issue #2428).
+        start = definition["name_line"] or definition["start_line"] or 1
         end = definition["end_line"] or start
         token = _name_token(
             source, get_language_for_extension(Path(path).suffix), start, end, old_name

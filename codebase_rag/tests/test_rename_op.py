@@ -55,6 +55,8 @@ class RecordedGraph:
             cs.KEY_DOCSTRING: n.get(cs.KEY_DOCSTRING),
             cs.KEY_NAME_START_LINE: n.get(cs.KEY_NAME_START_LINE),
             cs.KEY_NAME_START_COL: n.get(cs.KEY_NAME_START_COL),
+            cs.KEY_DECORATED_START_LINE: n.get(cs.KEY_DECORATED_START_LINE),
+            cs.KEY_DECORATORS: n.get(cs.KEY_DECORATORS),
         }
 
     def fetch_all(
@@ -188,6 +190,46 @@ def _smoke(root: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+DECORATED = (
+    "def register(**kw):\n"
+    "    def deco(fn):\n"
+    "        return fn\n"
+    "\n"
+    "    return deco\n"
+    "\n"
+    "\n"
+    "@register(fetch=1)\n"
+    "def fetch(url):\n"
+    "    return url\n"
+)
+
+
+@pytest.mark.parametrize("grammar", [True, False])
+def test_a_decorated_definition_renames_its_def_token_not_the_decorator(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    grammar: bool,
+) -> None:
+    """The definition span opens at the first decorator (issue #2428), and a
+    decorator can spell the old name; the name token is still the one on the
+    `def` line, with a grammar or through the whole-word fallback."""
+    _write(temp_repo, "mod.py", DECORATED)
+    graph = _index(temp_repo, mock_ingestor)
+    if not grammar:
+        monkeypatch.setattr(
+            "codebase_rag.editing.rename.get_language_for_extension",
+            lambda _suffix: None,
+        )
+    report = rename(
+        temp_repo, graph.fetch_all, graph.project, f"{graph.project}.mod.fetch", "load"
+    )
+    assert report.applied, report.message
+    assert (temp_repo / "mod.py").read_text(encoding="utf-8") == DECORATED.replace(
+        "def fetch(url):", "def load(url):"
+    )
 
 
 def test_markdown_mentions_of_the_old_name_are_reported(
