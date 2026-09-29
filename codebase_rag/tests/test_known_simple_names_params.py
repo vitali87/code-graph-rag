@@ -120,3 +120,22 @@ def test_an_incremental_sync_logs_no_failed_known_definitions_read(
 
     failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions")
     assert not [w for w in warnings if failed in w]
+
+
+def test_a_reingest_logs_no_failed_known_definitions_read(tmp_path: Path) -> None:
+    # `cgr check` and the MCP edit tools go through `reingest`, which runs
+    # the same known-definitions read (issue #2392, comment).
+    store = _StatefulIngestor()
+    repo = _indexed(tmp_path, store, "proj")
+    (repo / "mod.py").write_text(
+        "def a():\n    return 2\n\ndef b():\n    return a()\n\nclass Box:\n    pass\n"
+    )
+    warnings: list[str] = []
+    sink = logger.add(warnings.append, level="WARNING", format="{message}")
+    try:
+        _updater(store, repo, "proj").reingest([repo / "mod.py"])
+    finally:
+        logger.remove(sink)
+
+    failed = ls.PRUNE_QUERY_FAILED.format(label="known definitions")
+    assert not [w for w in warnings if failed in w]
