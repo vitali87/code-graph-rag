@@ -344,3 +344,49 @@ def test_function_source_rejects_non_file_fallback(
         ls.SEMANTIC_INVALID_LOCATION.format(id=1)
     )
     mock_logger.error.assert_not_called()
+
+
+class TestAStaleProjectRootSaysSo:
+    """A project's recorded root that no longer exists used to read as a
+    missing file; both readers now name the project and its stale root and
+    say to re-index (issue #2123)."""
+
+    @staticmethod
+    def _stale_setup(tmp_path: Path) -> tuple[Path, Path, MagicMock]:
+        stale_root = tmp_path / "moved-away"
+        current_repo = tmp_path / "current"
+        (current_repo / "src").mkdir(parents=True)
+        # The same relative file exists in the active repo: falling back to
+        # it would read another project's code (#1881), so it must not.
+        (current_repo / RELATIVE_PATH).write_text(SOURCE)
+        ingestor = _make_source_ingestor(
+            stale_root / RELATIVE_PATH, {"service.users": str(stale_root)}
+        )
+        return stale_root, current_repo, ingestor
+
+    @pytest.mark.asyncio
+    async def test_the_snippet_reader_names_the_stale_root(
+        self, tmp_path: Path
+    ) -> None:
+        stale_root, current_repo, ingestor = self._stale_setup(tmp_path)
+
+        result = await CodeRetriever(str(current_repo), ingestor).find_code_snippet(
+            QUALIFIED_NAME
+        )
+
+        assert not result.found
+        assert result.error_message is not None
+        assert "service.users" in result.error_message
+        assert str(stale_root) in result.error_message
+        assert "re-index" in result.error_message
+
+    def test_the_semantic_reader_logs_the_stale_root(self, tmp_path: Path) -> None:
+        stale_root, _current_repo, ingestor = self._stale_setup(tmp_path)
+
+        with patch("codebase_rag.tools.semantic_search.logger") as logger:
+            assert get_function_source_code(ingestor, node_id=1) is None
+
+        logged = " ".join(str(call.args[0]) for call in logger.warning.call_args_list)
+        assert "service.users" in logged
+        assert str(stale_root) in logged
+        assert "re-index" in logged

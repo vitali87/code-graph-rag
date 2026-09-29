@@ -16,7 +16,7 @@ from .manager import StackError, StackManager
     no_args_is_help=True,
 )
 def cli() -> None:
-    # A click group: its subcommands do the work.
+    # A click group: the subcommands registered on it do the work.
     pass
 
 

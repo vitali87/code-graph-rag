@@ -4,6 +4,7 @@ import re
 from collections import defaultdict, deque
 from collections.abc import Iterator
 from pathlib import PurePath
+from typing import NamedTuple
 
 from loguru import logger
 from tree_sitter import Node
@@ -21,6 +22,17 @@ from .type_inference import TypeInferenceEngine
 from .utils import follow_reexports, safe_decode_text
 
 _SEPARATOR_PATTERN = re.compile(r"[.:]|::")
+# One initializer block's scope record, as held per module by
+# `ImportProcessor.rust_block_scope_imports`: (start, end, imports,
+# mod_holes, fn_holes, item_scopes).
+_RustBlockScope = tuple[
+    int,
+    int,
+    dict[str, str],
+    list[tuple[int, int]],
+    list[tuple[int, int]],
+    list[tuple[int, int, dict[str, tuple[int, int]]]],
+]
 _SEARCH_NAME_CACHE: dict[str, str] = {}
 _CHAINED_METHOD_PATTERN = re.compile(r"\.([^.()]+)$")
 _QN_SPLIT_CACHE: dict[str, tuple[list[str], int]] = {}
@@ -30,6 +42,12 @@ _CHAIN_CLOSE_BRACKETS = ")]}"
 # enum, a type alias, or a trait (Interface, when the receiver is typed to a
 # `dyn`/`impl` trait or a trait-returning factory); all can carry methods.
 _RS_TYPE_NODE_TYPES = frozenset(
+    {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
+)
+# Registry kinds a CONSTRUCTION hop may name. Same members as the Rust set
+# above, kept separate because that one is about Rust receiver types while
+# this gates the import-prefix fold for every language (issue #2033).
+_CONSTRUCTIBLE_NODE_TYPES = frozenset(
     {NodeType.CLASS, NodeType.ENUM, NodeType.TYPE, NodeType.INTERFACE}
 )
 # A definition nested inside one of these is scoped to that body, so the
@@ -46,10 +64,26 @@ _CALLABLE_LANGUAGE_FAMILIES: tuple[frozenset[cs.SupportedLanguage], ...] = (
 )
 
 
-def _split_receiver_chain(expr: str) -> list[str]:
+class _CallSite(NamedTuple):
+    """One `_resolve_function_call` request, handed whole to its phases."""
+
+    call_name: str
+    module_qn: str
+    local_var_types: dict[str, str] | None
+    class_context: str | None
+    caller_qn: str | None
+    language: cs.SupportedLanguage | None
+    call_point: int | None
+    constructing: bool
+
+
+def _split_receiver_chain(expr: str) -> list[str] | None:
     # Split a receiver chain (`c.Find(1.5).Root`) on the `.` separators between
     # hops only, never on a `.` inside call arguments, an index, or a generic
     # (`1.5`, `x.y` args, `List<A.B>`), which a naive str.split would mangle.
+    # None for a chain of more than MAX_RECEIVER_CHAIN_HOPS hops, found without
+    # scanning past them: each call in a chain splits its own receiver, so an
+    # unbounded split made one long chain quadratic (#2262).
     parts: list[str] = []
     depth = 0
     current: list[str] = []
@@ -60,6 +94,8 @@ def _split_receiver_chain(expr: str) -> list[str]:
             depth = max(0, depth - 1)
         if char == cs.SEPARATOR_DOT and depth == 0:
             parts.append("".join(current))
+            if len(parts) >= cs.MAX_RECEIVER_CHAIN_HOPS:
+                return None
             current = []
         else:
             current.append(char)
@@ -512,7 +548,11 @@ class CallResolver:
         than a licence to guess; not handled when nothing can be inferred.
         """
         parts = _split_receiver_chain(call_name)
-        if len(parts) < 2 or not parts[0].startswith(cs.CHAR_PAREN_OPEN):
+        if (
+            parts is None
+            or len(parts) < 2
+            or not parts[0].startswith(cs.CHAR_PAREN_OPEN)
+        ):
             return False, None
         receiver = cs.SEPARATOR_DOT.join(parts[:-1])
         method = parts[-1].split(cs.CHAR_PAREN_OPEN, 1)[0]
@@ -1160,7 +1200,7 @@ class CallResolver:
             return set()
         targets: set[tuple[str, str]] = set()
         for qn in self.function_registry.find_ending_with(method_name):
-            definer, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
+            _, dot, name = qn.rpartition(cs.SEPARATOR_DOT)
             if (
                 dot
                 and name == method_name
@@ -1234,12 +1274,67 @@ class CallResolver:
         call_point: int | None = None,
         constructing: bool = False,
     ) -> tuple[str, str] | None:
-        if language == cs.SupportedLanguage.PYTHON:
+        call = _CallSite(
+            call_name,
+            module_qn,
+            local_var_types,
+            class_context,
+            caller_qn,
+            language,
+            call_point,
+            constructing,
+        )
+        handled, result = self._resolve_receiver_shadow(call)
+        if handled:
+            return result
+        handled, result = self._resolve_rust_block_scope(call)
+        if handled:
+            return result
+        handled, result = self._resolve_caller_scope(call)
+        if handled:
+            return result
+
+        cache_key = self._resolution_cache_key(call)
+        if cache_key is not None and cache_key in self._simple_resolution_cache:
+            self.last_resolution = self._resolution_labels.get(
+                cache_key, cs.EdgeResolution.EXACT
+            )
+            return self._simple_resolution_cache[cache_key]
+
+        handled, result = self._resolve_structural_call(call)
+        if handled:
+            return result
+        handled, result = self._resolve_rust_prefixed_or_local(call, cache_key)
+        if handled:
+            return result
+        handled, result = self._resolve_typed_receiver_or_csharp(call)
+        if handled:
+            return result
+        handled, result = self._resolve_imported_or_module_member(call, cache_key)
+        if handled:
+            return result
+        handled, result = self._resolve_external_target(call, cache_key)
+        if handled:
+            return result
+        handled, result = self._resolve_untyped_member_or_unresolvable(call, cache_key)
+        if handled:
+            return result
+
+        result = self._try_resolve_via_trie(
+            call_name, module_qn, language, call_point, constructing
+        )
+        self._remember_cacheable(cache_key, result)
+        return result
+
+    def _resolve_receiver_shadow(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        if call.language == cs.SupportedLanguage.PYTHON:
             handled, inline = self._resolve_inline_receiver_call(
-                call_name, module_qn, local_var_types
+                call.call_name, call.module_qn, call.local_var_types
             )
             if handled:
-                return inline
+                return True, inline
             # `helpers.make_pair()` where the caller binds `helpers` itself:
             # the receiver is a local the type map could not type, so the
             # call is on an unknown value. It must not reach the import probe
@@ -1248,8 +1343,25 @@ class CallResolver:
             # poisoning theirs), and the bare-name trie must not guess
             # either (issue #1907). A typed shadow (`helpers: W = ...`)
             # resolves through its type as any local does.
-            if self._receiver_is_untyped_shadow(call_name, caller_qn, local_var_types):
-                return None
+            if self._receiver_is_untyped_shadow(
+                call.call_name, call.caller_qn, call.local_var_types
+            ):
+                return True, None
+        # Dart's counterpart: a local or parameter named like an import
+        # prefix makes `p.Box(1)` a call on that value, so the import map
+        # must not answer for it (issue #2088). The binding spans are
+        # syntactic, so `var p = 1`, which inference leaves untyped, counts.
+        # A shadow the type map holds resolves through its type as usual.
+        if call.language == cs.SupportedLanguage.DART and self._dart_call_on_shadow(
+            call.call_name, call.module_qn, call.local_var_types, call.call_point
+        ):
+            return True, None
+        return False, None
+
+    def _resolve_rust_block_scope(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn, caller_qn = call.call_name, call.module_qn, call.caller_qn
         # A Rust call sited inside a const/static initializer block binds
         # the block's own use before ANY other probe, including the
         # enclosing-scope and same-module ones below: a use shadows outer
@@ -1263,60 +1375,77 @@ class CallResolver:
         # first segment
         # bound by the block (`T::assoc()` under `use crate::beta::T`)
         # resolves through a map holding just that binding.
-        if (
-            language == cs.SupportedLanguage.RUST
+        if not (
+            call.language == cs.SupportedLanguage.RUST
             and caller_qn
             and cs.SEPARATOR_DOT not in call_name
         ):
-            if cs.SEPARATOR_DOUBLE_COLON not in call_name and (
-                item_qn := self._rust_block_item_at(module_qn, call_name, call_point)
-            ):
-                return self.function_registry[item_qn], item_qn
-            first = call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
-            if block_hit := self._rust_block_import_at(module_qn, first, call_point):
-                block_target, defers = block_hit
-                # A nested fn's own body use outranks the block for BOTH
-                # shapes: the bare call and the `First::rest` path whose
-                # first segment it binds (`use crate::delta::T; T::assoc()`).
-                if defers and (
-                    strong := self.import_processor.rust_fn_scope_imports.get(
-                        caller_qn, {}
-                    ).get(first)
-                ):
-                    block_target = strong
-                if first != call_name:
-                    return self._try_resolve_qualified_call(
-                        call_name,
-                        {first: block_target},
-                        module_qn,
-                        local_var_types,
-                        language,
-                    )
-                return self._follow_rust_scope_target(block_target)
+            return False, None
+        if cs.SEPARATOR_DOUBLE_COLON not in call_name and (
+            item_qn := self._rust_block_item_at(module_qn, call_name, call.call_point)
+        ):
+            return True, (self.function_registry[item_qn], item_qn)
+        first = call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
+        block_hit = self._rust_block_import_at(module_qn, first, call.call_point)
+        if not block_hit:
+            return False, None
+        block_target, defers = block_hit
+        # A nested fn's own body use outranks the block for BOTH
+        # shapes: the bare call and the `First::rest` path whose
+        # first segment it binds (`use crate::delta::T; T::assoc()`).
+        if defers and (
+            strong := self.import_processor.rust_fn_scope_imports.get(
+                caller_qn, {}
+            ).get(first)
+        ):
+            block_target = strong
+        if first != call_name:
+            return True, self._try_resolve_qualified_call(
+                call_name,
+                {first: block_target},
+                module_qn,
+                call.local_var_types,
+                call.language,
+            )
+        return True, self._follow_rust_scope_target(block_target)
 
+    def _resolve_caller_scope(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
         # Enclosing-scope (nested def) lookup is caller-specific, so it must run
         # before the module-keyed cache/trie, which would otherwise return a sibling
         # scope's same-named nested function.
-        if result := self._resolve_enclosing_scope(
-            call_name, caller_qn, module_qn, language
-        ):
-            return result
+        # `new X(...)` names a type, so an enclosing scope answers it only
+        # with a class: a static factory named like the class it constructs
+        # (`Some.LogEventProperty()` building `new LogEventProperty()`) is the
+        # enclosing member, and taking it bound nothing at all (issue #1997).
+        if (
+            result := self._resolve_enclosing_scope(
+                call.call_name, call.caller_qn, call.module_qn, call.language
+            )
+        ) and (not call.constructing or result[0] == cs.NodeLabel.CLASS.value):
+            return True, result
 
         # `this.m()` inside a prototype-assigned function dispatches to a sibling
         # method of the same prototype target (Date.prototype.strftime calling
         # this.getTwoDigitMonth()); the caller's parent scope names that target.
         # Caller-specific, so it too must run before the module-keyed cache; the
         # CommonJS module-receiver fallback still applies when no sibling exists.
-        if result := self._resolve_js_prototype_sibling(call_name, caller_qn, language):
-            return result
+        if result := self._resolve_js_prototype_sibling(
+            call.call_name, call.caller_qn, call.language
+        ):
+            return True, result
+        return False, None
 
+    def _resolution_cache_key(self, call: _CallSite) -> tuple[str, str, bool] | None:
+        module_qn, caller_qn = call.module_qn, call.caller_qn
         # The cache is keyed by (call_name, module_qn) only, so a caller whose
         # class carries extends-clause type arguments must bypass it: its
         # member resolution is class-context-dependent (#875) and a sibling
         # class's cached answer for the same name would be wrong.
-        use_cache = not local_var_types and not (
-            language == cs.SupportedLanguage.DART
-            and class_context in self.type_inference.dart_extends_type_args
+        use_cache = not call.local_var_types and not (
+            call.language == cs.SupportedLanguage.DART
+            and call.class_context in self.type_inference.dart_extends_type_args
         )
         # A Rust caller nested below the file module (an inline `mod` block)
         # or holding function-body `use` declarations of its own resolves
@@ -1326,7 +1455,7 @@ class CallResolver:
         # block's use answers only calls inside its span), so no caller in
         # it may share cached answers either.
         if (
-            language == cs.SupportedLanguage.RUST
+            call.language == cs.SupportedLanguage.RUST
             and caller_qn
             and (
                 module_qn in self.import_processor.rust_block_scope_imports
@@ -1341,21 +1470,21 @@ class CallResolver:
             )
         ):
             use_cache = False
-        if use_cache:
-            # `new X()` and a bare `X()` in one module are different
-            # questions with different answers, so they never share a slot.
-            cache_key = (call_name, module_qn, constructing)
-            if cache_key in self._simple_resolution_cache:
-                self.last_resolution = self._resolution_labels.get(
-                    cache_key, cs.EdgeResolution.EXACT
-                )
-                return self._simple_resolution_cache[cache_key]
+        if not use_cache:
+            return None
+        # `new X()` and a bare `X()` in one module are different
+        # questions with different answers, so they never share a slot.
+        return (call.call_name, module_qn, call.constructing)
 
+    def _resolve_structural_call(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn = call.call_name, call.module_qn
         if result := self._try_resolve_iife(call_name, module_qn):
-            return result
+            return True, result
 
         if self._is_super_call(call_name):
-            return self._resolve_super_call(call_name, class_context)
+            return True, self._resolve_super_call(call_name, call.class_context)
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             # A chained call resolves via return-type inference only; it does NOT
@@ -1366,27 +1495,32 @@ class CallResolver:
             # (`auto`/trailing/decltype, e.g. fmt's get_container(out).append) fell to
             # the bare-method trie before chained typing existed, so preserve that
             # fallback for C++ to avoid dropping edges the typing can't yet recover.
-            return self._resolve_chained_call(
+            return True, self._resolve_chained_call(
                 call_name,
                 module_qn,
-                local_var_types,
-                class_context,
-                caller_qn,
-                language,
-                call_point,
+                call.local_var_types,
+                call.class_context,
+                call.caller_qn,
+                call.language,
+                call.call_point,
             )
 
         # A Rust caller INSIDE an inline `mod` block sees that module's own
         # items and imports first (its `use` shadows the enclosing file's
         # items for code within the block). Caller-dependent, so never
         # cached under the file-scoped key.
-        if language == cs.SupportedLanguage.RUST and caller_qn:
+        if call.language == cs.SupportedLanguage.RUST and call.caller_qn:
             scoped = self._try_resolve_rust_inline_scope(
-                call_name, module_qn, caller_qn, call_point
+                call_name, module_qn, call.caller_qn, call.call_point
             )
             if scoped is not None:
-                return scoped[0]
+                return True, scoped[0]
+        return False, None
 
+    def _resolve_rust_prefixed_or_local(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn = call.call_name, call.module_qn
         # A `crate::`/`self::`/`super::` path says outright which module holds
         # the item, so it must not reach the probes that answer by NAME. Both
         # the same-module and the import probe ignore the prefix and hand back
@@ -1394,18 +1528,17 @@ class CallResolver:
         # too low (issue #1093). Undecided here means the path names nothing
         # first-party, so the ordinary fallbacks still run.
         if (
-            language == cs.SupportedLanguage.RUST
+            call.language == cs.SupportedLanguage.RUST
             and cs.SEPARATOR_DOUBLE_COLON in call_name
             and call_name.split(cs.SEPARATOR_DOUBLE_COLON, 1)[0]
             in (cs.RUST_CRATE_KEYWORD, cs.KEYWORD_SELF, cs.KEYWORD_SUPER)
         ):
             prefixed, decided = self._try_resolve_rust_module_qualified(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, call.caller_qn
             )
             if decided:
-                if use_cache:
-                    self._remember(cache_key, prefixed)
-                return prefixed
+                self._remember_cacheable(cache_key, prefixed)
+                return True, prefixed
 
         # Rust name resolution prefers items defined in the module itself: a
         # glob import NEVER shadows a local item, and a MODULE-scoped named
@@ -1414,13 +1547,19 @@ class CallResolver:
         # function's qn and already answered by the scope walk above, so at
         # this point same-module wins. Elsewhere imports shadow module-level
         # definitions.
-        if language == cs.SupportedLanguage.RUST and (
-            result := self._try_resolve_same_module(call_name, module_qn, call_point)
+        if call.language == cs.SupportedLanguage.RUST and (
+            result := self._try_resolve_same_module(
+                call_name, module_qn, call.call_point
+            )
         ):
-            if use_cache:
-                self._remember(cache_key, result)
-            return result
+            self._remember_cacheable(cache_key, result)
+            return True, result
+        return False, None
 
+    def _resolve_typed_receiver_or_csharp(
+        self, call: _CallSite
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn = call.call_name, call.module_qn
         # A member call whose receiver has a known FIRST-PARTY class type that
         # defines no such method (own or inherited) is a known non-edge, not an
         # unknown one. The chained and inline receiver paths already drop this
@@ -1431,44 +1570,50 @@ class CallResolver:
         # reason; never cached, because it can only fire with a non-empty local
         # type map and `use_cache` is already False then.
         if self._typed_receiver_lacks_method(
-            call_name, module_qn, local_var_types, language
+            call_name, module_qn, call.local_var_types, call.language
         ):
-            return None
+            return True, None
 
-        if language == cs.SupportedLanguage.CSHARP and (
+        if call.language == cs.SupportedLanguage.CSHARP and (
             cs.SEPARATOR_DOUBLE_COLON in call_name or cs.SEPARATOR_DOT in call_name
         ):
             result, decided = self._resolve_csharp_qualified_call(
-                call_name, module_qn, local_var_types
+                call_name, module_qn, call.local_var_types
             )
             if result is not None:
-                return result
+                return True, result
             if decided or cs.SEPARATOR_DOUBLE_COLON in call_name:
-                return None
+                return True, None
         # `new W(1)` under `using W = Zeta.Widget;` names no registered type
         # by its written name, so the trie has no `W` to offer; the type
         # lookup expands the alias to its target (issue #2002).
         if (
-            language == cs.SupportedLanguage.CSHARP
-            and constructing
+            call.language == cs.SupportedLanguage.CSHARP
+            and call.constructing
             and (
                 type_qn := self.type_inference.csharp_type_inference._type_name_to_qn(
                     call_name, module_qn
                 )
             )
         ):
-            return self.function_registry[type_qn], type_qn
-        if result := self._try_resolve_via_imports(
-            call_name, module_qn, local_var_types, language
-        ):
-            if use_cache:
-                self._remember(cache_key, result)
-            return result
+            return True, (self.function_registry[type_qn], type_qn)
+        return False, None
 
-        if result := self._try_resolve_same_module(call_name, module_qn, call_point):
-            if use_cache:
-                self._remember(cache_key, result)
-            return result
+    def _resolve_imported_or_module_member(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn = call.call_name, call.module_qn
+        if result := self._try_resolve_via_imports(
+            call_name, module_qn, call.local_var_types, call.language
+        ):
+            self._remember_cacheable(cache_key, result)
+            return True, result
+
+        if result := self._try_resolve_same_module(
+            call_name, module_qn, call.call_point
+        ):
+            self._remember_cacheable(cache_key, result)
+            return True, result
 
         # A Rust `module::item` call names its function through the module
         # path, so it binds inside that module: a direct item, or the
@@ -1479,22 +1624,26 @@ class CallResolver:
         # module does not hold is a drop, never a bare-name trie guess at
         # an unrelated same-named function (issue #1009).
         if (
-            language == cs.SupportedLanguage.RUST
+            call.language == cs.SupportedLanguage.RUST
             and cs.SEPARATOR_DOUBLE_COLON in call_name
         ):
             result, decided = self._try_resolve_rust_module_qualified(
-                call_name, module_qn, caller_qn
+                call_name, module_qn, call.caller_qn
             )
             if decided:
-                if use_cache:
-                    self._remember(cache_key, result)
-                return result
+                self._remember_cacheable(cache_key, result)
+                return True, result
 
-        if class_context and (
-            result := self._resolve_self_sibling_method(call_name, class_context)
+        if call.class_context and (
+            result := self._resolve_self_sibling_method(call_name, call.class_context)
         ):
-            return result
+            return True, result
+        return False, None
 
+    def _resolve_external_target(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn = call.call_name, call.module_qn
         # A bare name explicitly imported from outside the project binds to that
         # external symbol. Since precise import / same-module resolution above
         # already failed, the symbol is unindexed; do NOT let the simple-name
@@ -1504,9 +1653,8 @@ class CallResolver:
         if cs.SEPARATOR_DOT not in call_name and self._is_external_import(
             call_name, module_qn
         ):
-            if use_cache:
-                self._remember(cache_key, None)
-            return None
+            self._remember_cacheable(cache_key, None)
+            return True, None
 
         # A dotted call on an import whose target still holds a raw
         # slash-separated module path (github.com/x/y) is a call into an
@@ -1515,9 +1663,8 @@ class CallResolver:
         # the repo. The symbol is unindexed; do not let the last-segment trie
         # fallback rebind it to an unrelated first-party function.
         if self._is_external_path_import(call_name, module_qn):
-            if use_cache:
-                self._remember(cache_key, None)
-            return None
+            self._remember_cacheable(cache_key, None)
+            return True, None
 
         # A member call `obj.method` whose receiver has a KNOWN inferred type that is
         # not a first-party class is a call on an external object (e.g. a
@@ -1525,11 +1672,15 @@ class CallResolver:
         # method lives on the external type; do NOT let the simple-name trie fallback
         # rebind it to an unrelated first-party method of the same name. Untyped
         # receivers keep the fallback (their type is unknown, not known-external).
-        if self._receiver_type_is_external(call_name, module_qn, local_var_types):
-            if use_cache:
-                self._remember(cache_key, None)
-            return None
+        if self._receiver_type_is_external(call_name, module_qn, call.local_var_types):
+            self._remember_cacheable(cache_key, None)
+            return True, None
+        return False, None
 
+    def _resolve_untyped_member_or_unresolvable(
+        self, call: _CallSite, cache_key: tuple[str, str, bool] | None
+    ) -> tuple[bool, tuple[str, str] | None]:
+        call_name, module_qn, language = call.call_name, call.module_qn, call.language
         # A JS/TS/Dart member call on an UNTYPED receiver (`view.render(...)`
         # where `view` is a param constructed in the caller) targets a MEMBER:
         # the bare-name trie would rebind it to an arbitrary same-named
@@ -1543,14 +1694,13 @@ class CallResolver:
         ) and cs.SEPARATOR_DOT in call_name:
             if language == cs.SupportedLanguage.DART and (
                 result := self._resolve_dart_external_base_arg_member(
-                    call_name, class_context, local_var_types
+                    call_name, call.class_context, call.local_var_types
                 )
             ):
-                return result
+                return True, result
             result = self._resolve_js_member_call_unique(call_name, module_qn)
-            if use_cache:
-                self._remember(cache_key, result)
-            return result
+            self._remember_cacheable(cache_key, result)
+            return True, result
 
         # A bare name imported from an unrepresentable #[path] module is
         # spoken for by that (unresolvable) import: the precise probes above
@@ -1559,18 +1709,17 @@ class CallResolver:
         if (
             language == cs.SupportedLanguage.RUST
             and cs.SEPARATOR_DOT not in call_name
-            and self._rust_name_maps_unresolvable(call_name, module_qn, caller_qn)
+            and self._rust_name_maps_unresolvable(call_name, module_qn, call.caller_qn)
         ):
-            if use_cache:
-                self._remember(cache_key, None)
-            return None
+            self._remember_cacheable(cache_key, None)
+            return True, None
+        return False, None
 
-        result = self._try_resolve_via_trie(
-            call_name, module_qn, language, call_point, constructing
-        )
-        if use_cache:
+    def _remember_cacheable(
+        self, cache_key: tuple[str, str, bool] | None, result: tuple[str, str] | None
+    ) -> None:
+        if cache_key is not None:
             self._remember(cache_key, result)
-        return result
 
     def _remember(
         self, cache_key: tuple[str, str, bool], result: tuple[str, str] | None
@@ -2242,18 +2391,9 @@ class CallResolver:
                 continue
             if cut == len(parts):
                 return (cs.NodeLabel.CLASS, class_qn), True
-            member_name = cs.SEPARATOR_DOT.join(parts[cut:]).split(
-                cs.CHAR_ANGLE_OPEN, 1
-            )[0]
-            method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
-            if method_qn in self.function_registry:
-                return (self.function_registry[method_qn], method_qn), True
-            if cs.SEPARATOR_DOT not in member_name:
-                if inherited := self._resolve_inherited_method(class_qn, member_name):
-                    return inherited, True
             # A namespace-qualified type owns the path even when the member is
             # missing; an unqualified value receiver may still be a field chain.
-            return None, True
+            return self._csharp_type_member(class_qn, parts[cut:]), True
         if (
             not is_global
             and cs.SEPARATOR_DOUBLE_COLON not in call_name
@@ -2261,6 +2401,21 @@ class CallResolver:
         ):
             return None, True
         return None, False
+
+    def _csharp_type_member(
+        self, class_qn: str, member_parts: list[str]
+    ) -> tuple[str, str] | None:
+        # The member a qualified path names on a resolved type: a registered
+        # method directly, else a single-segment name inherited from a base.
+        member_name = cs.SEPARATOR_DOT.join(member_parts).split(cs.CHAR_ANGLE_OPEN, 1)[
+            0
+        ]
+        method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{member_name}"
+        if method_qn in self.function_registry:
+            return self.function_registry[method_qn], method_qn
+        if cs.SEPARATOR_DOT not in member_name:
+            return self._resolve_inherited_method(class_qn, member_name)
+        return None
 
     def _csharp_path_starts_with_imported_namespace(
         self, parts: list[str], module_qn: str
@@ -2748,15 +2903,10 @@ class CallResolver:
             return None
         best_size: int | None = None
         result: tuple[str, bool] | None = None
-        for start, end, imports, mod_holes, fn_holes, item_scopes in blocks:
-            if not (start <= call_point < end) or name not in imports:
+        for block in blocks:
+            if not self._rust_block_serves_site(block, name, call_point):
                 continue
-            if any(s <= call_point < e for s, e in mod_holes):
-                continue
-            if any(
-                s <= call_point < e and name in items for s, e, items in item_scopes
-            ):
-                continue
+            start, end, imports, _mod_holes, fn_holes, _item_scopes = block
             size = end - start
             if best_size is None or size < best_size:
                 best_size = size
@@ -2765,6 +2915,19 @@ class CallResolver:
                     any(s <= call_point < e for s, e in fn_holes),
                 )
         return result
+
+    @staticmethod
+    def _rust_block_serves_site(
+        block: _RustBlockScope, name: str, call_point: int
+    ) -> bool:
+        start, end, imports, mod_holes, _fn_holes, item_scopes = block
+        if not (start <= call_point < end) or name not in imports:
+            return False
+        if any(s <= call_point < e for s, e in mod_holes):
+            return False
+        return not any(
+            s <= call_point < e and name in items for s, e, items in item_scopes
+        )
 
     def _try_resolve_same_module(
         self, call_name: str, module_qn: str, call_point: int | None = None
@@ -2893,33 +3056,127 @@ class CallResolver:
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED, call_name=call_name)
             return None
+        if language == cs.SupportedLanguage.CSHARP and len(possible_matches) > 1:
+            possible_matches = self._csharp_prefer_imported(
+                possible_matches, module_qn, call_name
+            )
 
-        if len(possible_matches) == 1:
-            best_candidate_qn = possible_matches[0]
-        else:
-            caller_parts = module_qn.split(cs.SEPARATOR_DOT)
-            caller_len = len(caller_parts)
-            caller_parent_prefix = (
-                cs.SEPARATOR_DOT.join(caller_parts[:-1]) + cs.SEPARATOR_DOT
-                if caller_len > 1
-                else ""
-            )
-            best_candidate_qn = min(
-                possible_matches,
-                key=lambda qn: (
-                    # An @abstractmethod stub never runs when a concrete override
-                    # exists, so prefer concrete candidates over abstract ones
-                    # even when the abstract stub is closer by import distance.
-                    self.function_registry.is_abstract(qn),
-                    self._import_distance_fast(
-                        qn, caller_parts, caller_len, caller_parent_prefix
-                    ),
-                    qn,
-                ),
-            )
+        best_candidate_qn = self._best_trie_candidate(possible_matches, module_qn)
         logger.debug(ls.CALL_TRIE_FALLBACK, call_name=call_name, qn=best_candidate_qn)
         self.last_resolution = cs.EdgeResolution.HEURISTIC
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _best_trie_candidate(self, possible_matches: list[str], module_qn: str) -> str:
+        if len(possible_matches) == 1:
+            return possible_matches[0]
+        caller_parts = module_qn.split(cs.SEPARATOR_DOT)
+        caller_len = len(caller_parts)
+        caller_parent_prefix = (
+            cs.SEPARATOR_DOT.join(caller_parts[:-1]) + cs.SEPARATOR_DOT
+            if caller_len > 1
+            else ""
+        )
+        return min(
+            possible_matches,
+            key=lambda qn: (
+                # An @abstractmethod stub never runs when a concrete override
+                # exists, so prefer concrete candidates over abstract ones
+                # even when the abstract stub is closer by import distance.
+                self.function_registry.is_abstract(qn),
+                self._import_distance_fast(
+                    qn, caller_parts, caller_len, caller_parent_prefix
+                ),
+                qn,
+            ),
+        )
+
+    def _csharp_prefer_imported(
+        self, candidates: list[str], module_qn: str, call_name: str
+    ) -> list[str]:
+        # Same-named C# types in two namespaces tied on import distance and
+        # broke on qn order, so `using Zeta;` + `new Widget()` bound
+        # `Other.Widget` (issue #2001). C# name lookup searches the caller's
+        # own namespace, innermost first, before any `using`, so a candidate
+        # there wins outright (bot review); otherwise the candidates whose
+        # owning type sits DIRECTLY in a namespace (or, for `using static`,
+        # a type) the file imports: C# does not import nested namespaces.
+        containers, import_keys, bare_members = self._csharp_import_keys(
+            candidates, call_name
+        )
+        enclosing = self._csharp_enclosing_namespaces(module_qn)
+        # A namespace holds types, not members: the caller's namespace makes
+        # `App.Widget` nameable, never `App.Widget.S` callable bare. Only a
+        # `using static` does that, which the import preference below checks
+        # (bot review).
+        local = [
+            qn
+            for qn in candidates
+            if containers.get(qn) in enclosing and qn not in bare_members
+        ]
+        if local:
+            innermost = max(len(containers[qn]) for qn in local)
+            return [qn for qn in local if len(containers[qn]) == innermost]
+        # Only a directive whose local name is its target's own last segment
+        # makes names available unqualified (`using Zeta;`, `using static
+        # Zeta.Widget;`); an alias (`using Alias = Other;`) does not.
+        imported = {
+            target
+            for local_name, target in self.import_processor.import_mapping.get(
+                module_qn, {}
+            ).items()
+            if local_name == target.rpartition(cs.SEPARATOR_DOT)[2]
+        }
+        preferred = [qn for qn in candidates if import_keys.get(qn) in imported]
+        return preferred or candidates
+
+    def _csharp_import_keys(
+        self, candidates: list[str], call_name: str
+    ) -> tuple[dict[str, str], dict[str, str], set[str]]:
+        """(candidate -> namespace holding its type, candidate -> what an
+        import must name to make it available, the bare-called members).
+
+        A type, or a member reached through its type (`Widget.S()`), is
+        imported by a namespace directive naming the type's namespace; a BARE
+        member (`S()`) only by a `using static` naming its declaring type
+        (bot review).
+        """
+        declared = self.type_inference.csharp_class_namespaced
+        bare = cs.SEPARATOR_DOT not in call_name
+        containers: dict[str, str] = {}
+        import_keys: dict[str, str] = {}
+        bare_members: set[str] = set()
+        for qn in candidates:
+            owner = qn
+            while owner and owner not in declared:
+                owner = owner.rpartition(cs.SEPARATOR_DOT)[0]
+            if not owner:
+                continue
+            containers[qn] = declared[owner].rpartition(cs.SEPARATOR_DOT)[0]
+            if bare and owner != qn:
+                bare_members.add(qn)
+            import_keys[qn] = declared[owner] if qn in bare_members else containers[qn]
+        return containers, import_keys, bare_members
+
+    def _csharp_enclosing_namespaces(self, module_qn: str) -> set[str]:
+        """Every namespace enclosing the file's call sites, innermost included.
+
+        Only known when the file declares ONE nested chain; with sibling
+        namespaces (`App` and `Other` in one file) neither is local to every
+        call site, so no local precedence applies rather than a guessed one
+        (bot review).
+        """
+        declared_here = sorted(
+            self.import_processor._csharp_module_namespaces.get(module_qn, {}),
+            key=len,
+        )
+        if not declared_here or not all(
+            declared_here[-1] == ns
+            or declared_here[-1].startswith(f"{ns}{cs.SEPARATOR_DOT}")
+            for ns in declared_here
+        ):
+            return set()
+        parts = declared_here[-1].split(cs.SEPARATOR_DOT)
+        return {cs.SEPARATOR_DOT.join(parts[:cut]) for cut in range(1, len(parts) + 1)}
 
     def _resolve_two_part_call(
         self,
@@ -3367,16 +3624,21 @@ class CallResolver:
         }
         result: set[str] = set()
         if protocol_methods:
-            protocols = self._protocol_classes()
-            for candidate in self.class_inheritance:
-                if candidate in protocols:
-                    continue
-                if all(
-                    self._try_resolve_method(candidate, method)
-                    for method in protocol_methods
-                ):
-                    result.add(candidate)
+            result = self._classes_defining_all(protocol_methods)
         self._struct_impl_cache[protocol_qn] = result
+        return result
+
+    def _classes_defining_all(self, protocol_methods: set[str]) -> set[str]:
+        result: set[str] = set()
+        protocols = self._protocol_classes()
+        for candidate in self.class_inheritance:
+            if candidate in protocols:
+                continue
+            if all(
+                self._try_resolve_method(candidate, method)
+                for method in protocol_methods
+            ):
+                result.add(candidate)
         return result
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
@@ -3487,6 +3749,8 @@ class CallResolver:
         # constructor-temporary base (`Reader<T>(...).m()`) types itself from the
         # class registry alone.
         parts = _split_receiver_chain(object_expr)
+        if parts is None:
+            return None
         base = parts[0]
         if not base:
             return None
@@ -3507,6 +3771,16 @@ class CallResolver:
                 language,
                 call_point,
             )
+        elif (
+            folded := self._fold_import_prefix_hop(
+                parts, module_qn, local_var_types, call_point, language
+            )
+        ) is not None:
+            # `p.Box(1).height` under `import '...' as p;`: the base names an
+            # IMPORT, not a local, so the local lookup below would end the
+            # chain before the construction hop is seen (issue #2033). Fold
+            # the prefix into the next hop and type that hop instead.
+            current_type, parts = folded
         elif local_var_types:
             current_type = local_var_types.get(base)
         else:
@@ -3520,6 +3794,196 @@ class CallResolver:
                 f"{class_qn}{cs.SEPARATOR_DOT}{method}"
             )
         return current_type
+
+    def _drop_named_constructor(self, name: str, target: str) -> str:
+        """`Box.named` -> `Box` when the dotted name is not a definition but
+        its head is: the tail is a named constructor, not part of the type
+        (issue #2033). Any other name is returned unchanged."""
+        if cs.SEPARATOR_DOT not in name:
+            return name
+        head = name.split(cs.SEPARATOR_DOT, 1)[0]
+        full_qn = f"{target}{cs.SEPARATOR_DOT}{name}"
+        head_qn = f"{target}{cs.SEPARATOR_DOT}{head}"
+        if (
+            self.function_registry.get(full_qn) is None
+            and self.function_registry.get(head_qn) is not None
+        ):
+            return head
+        return name
+
+    def _names_own_constructible(self, name: str, module_qn: str) -> bool:
+        """Does `name` resolve, from this module, to something constructible?
+
+        `new X.named(1).m` splits to base `X` + hop `named()`, so the base is
+        the CLASS and the hop its named constructor (issue #2033). Asked
+        before the import map, since a class in this module is not an import.
+        """
+        own = self._resolve_class_qn_from_type(
+            name,
+            self.import_processor.import_mapping.get(module_qn, {}),
+            module_qn,
+        )
+        return bool(own) and self.function_registry.get(own) in (
+            _CONSTRUCTIBLE_NODE_TYPES
+        )
+
+    def _dart_call_on_shadow(
+        self,
+        call_name: str,
+        module_qn: str,
+        local_var_types: dict[str, str] | None,
+        call_point: int | None,
+    ) -> bool:
+        """Is `call_name`'s first segment an import prefix a binding at this
+        site shadows, with no type to resolve the call through instead?"""
+        if cs.SEPARATOR_DOT not in call_name:
+            return False
+        prefix = call_name.split(cs.SEPARATOR_DOT, 1)[0]
+        typed = local_var_types.get(prefix) if local_var_types else None
+        if typed and typed != cs.DART_DYNAMIC_TYPE:
+            return False
+        return bool(
+            self._dart_prefix_targets(prefix, module_qn)
+        ) and self._dart_prefix_is_shadowed(prefix, module_qn, call_point)
+
+    def _dart_prefix_is_shadowed(
+        self, prefix: str, module_qn: str, call_point: int | None
+    ) -> bool:
+        """Does a local or parameter named `prefix` bind it at this site?
+
+        The resolver's `local_var_types` only holds names it could infer a
+        TYPE for, so `var p = 1` is absent from it and an inferred-type check
+        cannot see the shadow. The import processor records the syntactic
+        binding spans instead, which are independent of inference.
+
+        A site with no recorded position cannot be placed against a span, so
+        it is treated as unshadowed: flow and taint passes resolve without a
+        position, and losing the fold there would drop real edges.
+        """
+        if call_point is None:
+            return False
+        spans = self.import_processor.dart_prefix_shadows.get(module_qn, {})
+        return any(lo <= call_point < hi for lo, hi in spans.get(prefix, ()))
+
+    def _fold_import_prefix_hop(
+        self,
+        parts: list[str],
+        module_qn: str,
+        local_var_types: dict[str, str] | None = None,
+        call_point: int | None = None,
+        language: cs.SupportedLanguage | None = None,
+    ) -> tuple[str, list[str]] | None:
+        # An import prefix followed by a CONSTRUCTION hop (`p`, `Box()`, ...)
+        # collapses to that class: the prefix carries no type of its own, and
+        # the class is what the rest of the chain hangs off. Returns the
+        # constructed type and the remaining chain with the prefix removed, or
+        # None when the base is not a prefix or the next hop is not a
+        # construction the registry knows.
+        if len(parts) < 2:
+            return None
+        # The bare `p.Box.named(1)` (no `new`) has no construction node, so
+        # the class and its named constructor arrive as two hops; rejoined,
+        # they take the path `new p.Box.named(1)` takes (issue #2084).
+        if (
+            language == cs.SupportedLanguage.DART
+            and len(parts) >= 3
+            and cs.CHAR_PAREN_OPEN not in parts[1]
+            and cs.CHAR_PAREN_OPEN in parts[2]
+        ):
+            parts = [parts[0], f"{parts[1]}{cs.SEPARATOR_DOT}{parts[2]}", *parts[3:]]
+        prefix, hop = parts[0], parts[1]
+        if cs.CHAR_PAREN_OPEN in prefix or cs.CHAR_PAREN_OPEN not in hop:
+            return None
+        # A binding of that name at this site shadows the import, whether or
+        # not a type could be inferred for it (issue #2033).
+        if self._dart_prefix_is_shadowed(prefix, module_qn, call_point):
+            return None
+        # `new X.named(1).m` splits to base `X` + hop `named()`: the base is
+        # the CLASS itself and the hop is its named constructor, so the
+        # receiver's type is the base (issue #2033). Checked before the
+        # import map, since a class in this module is not an import.
+        # Dart only: elsewhere `Foo.create()` is a static FACTORY whose
+        # recorded return type the chain must keep, and folding it to `Foo`
+        # dropped that hop (bot review).
+        if (
+            language == cs.SupportedLanguage.DART
+            and not (local_var_types and prefix in local_var_types)
+            and self._names_own_constructible(prefix, module_qn)
+        ):
+            return prefix, parts[1:]
+        # A local or parameter of that name SHADOWS the import prefix, so the
+        # base is that variable and the chain is not a prefixed construction
+        # at all. Without this a `dynamic p` parameter still resolved
+        # `p.Box(1).height` through `import ... as p`, emitting an edge where
+        # the resolver had emitted none.
+        if local_var_types and prefix in local_var_types:
+            return None
+        name = hop.split(cs.CHAR_PAREN_OPEN, 1)[0]
+        hit = self._unique_prefixed_definition(
+            self._dart_prefix_targets(prefix, module_qn), name
+        )
+        if hit is None:
+            return None
+        target, qn, kind = hit
+        # The hop must be a CONSTRUCTION, so the imported module must define
+        # that name as a CLASS. Accepting any registry entry bound a
+        # `mod.factory()` whose factory is a FUNCTION to a same-named class in
+        # an unrelated module: a confidently wrong edge where the resolver
+        # previously emitted none.
+        if kind in _CONSTRUCTIBLE_NODE_TYPES:
+            # The QUALIFIED name, not the bare one: `qn` is the exact class
+            # the prefix names, and returning `name` sent the rest of the
+            # chain back through a suffix lookup that another module's
+            # same-named class could win (Copilot, PR #2040).
+            return qn, parts[1:]
+        # A function hop types the chain by its RECORDED return type instead;
+        # with none recorded the chain stays unresolved rather than guessing.
+        # The type is a BARE name, qualified in the factory's OWN module: in
+        # the caller another import's same-named class could win (Copilot,
+        # PR #2040).
+        returned = self.type_inference.method_return_types.get(qn)
+        return (self._chain_class_qn(returned, target), parts[1:]) if returned else None
+
+    def _dart_prefix_targets(self, prefix: str, module_qn: str) -> list[str]:
+        # An explicit `as` alias wins over the file-derived key: with
+        # `import 'helper.dart'; import 'other.dart' as helper;` the name
+        # `helper` in the source is other.dart, while import_mapping still
+        # holds helper.dart under that key so both IMPORTS edges survive
+        # (Greptile, PR #2040).
+        aliases = self.import_processor.dart_import_aliases.get(module_qn, {})
+        import_map = self.import_processor.import_mapping.get(module_qn, {})
+        return aliases.get(prefix) or (
+            [import_map[prefix]] if import_map.get(prefix) else []
+        )
+
+    def _unique_prefixed_definition(
+        self, targets: list[str], name: str
+    ) -> tuple[str, str, NodeType] | None:
+        # Imports sharing a prefix are searched together, and `p.Box` names
+        # the ONE library defining `Box`; a name several of them define is
+        # an ambiguous import, so neither is guessed (CodeRabbit, PR #2040).
+        if not targets or not name:
+            return None
+        hits = [
+            (target, qn, kind)
+            for target in targets
+            if (
+                kind := self.function_registry.get(
+                    qn := self._prefixed_qn(target, name)
+                )
+            )
+            is not None
+        ]
+        return hits[0] if len(hits) == 1 else None
+
+    def _prefixed_qn(self, target: str, name: str) -> str:
+        # `p.Box.named()` reaches the fold as prefix `p` and hop `Box.named`:
+        # the parser cannot tell a named CONSTRUCTOR from a class, because
+        # both are a trailing identifier (issue #2033). The import map can: if
+        # the full dotted name is not a definition but its head is, the tail
+        # is a constructor and the receiver's type is the head.
+        member = self._drop_named_constructor(name, target)
+        return f"{target}{cs.SEPARATOR_DOT}{member}"
 
     def _chain_class_qn(self, type_name: str, module_qn: str) -> str:
         # Resolve a bare type name from a chained-call hop to its class qn, honoring

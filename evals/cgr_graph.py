@@ -9,6 +9,7 @@ from codebase_rag.types_defs import (
     PropertyDict,
     PropertyValue,
     ResultRow,
+    ResultScalar,
     ResultValue,
 )
 from codebase_rag.utils import qn_markers
@@ -204,6 +205,15 @@ def _result(value: PropertyValue | None) -> ResultValue:
     if isinstance(value, float):
         return int(value) if value.is_integer() else str(value)
     return value
+
+
+def _result_props(
+    props: PropertyDict,
+) -> dict[str, ResultScalar | list[ResultScalar]]:
+    return {
+        key: list[ResultScalar](value) if isinstance(value, list) else value
+        for key, value in props.items()
+    }
 
 
 def _text(value: PropertyValue) -> str | None:
@@ -791,7 +801,7 @@ class _StatefulIngestor:
                             cs.KEY_CALLER_PATH: _text(caller_path),
                             # The restore re-emits the edge with its own
                             # properties (its site, issue #1522).
-                            cs.KEY_PROPS: dict(self.edge_props.get(edge, {})),
+                            cs.KEY_PROPS: _result_props(self.edge_props.get(edge, {})),
                         }
                     )
                 return inbound
@@ -857,7 +867,7 @@ class _StatefulIngestor:
                     defs.append(row)
                 return defs
             case cs.CYPHER_PROJECT_PARAMETER_TYPES:
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -874,7 +884,7 @@ class _StatefulIngestor:
             case cs.CYPHER_PROJECT_FIELD_TYPES:
                 # The Field counterpart (issue #1805), read by the incremental
                 # requeue for the same reason as the Parameter query above.
-                prefix = _text((params or {}).get(cs.KEY_PROJECT_PREFIX))
+                prefix = _str((params or {}).get(cs.KEY_PROJECT_PREFIX))
                 return [
                     {
                         cs.KEY_QUALIFIED_NAME: _text(props.get(cs.KEY_QUALIFIED_NAME)),
@@ -1277,7 +1287,12 @@ class _StatefulIngestor:
                 if node is not None and isinstance(names, list):
                     node[cs.KEY_UNRESOLVED_REFERENCES] = list(names)
             case cs.CYPHER_DELETE_MODULE:
-                self._delete_module_subtree(path)
+                self._delete_module_subtree(
+                    path,
+                    _text(params.get(cs.KEY_PROJECT_NAME)) if params else None,
+                    _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None,
+                    params.get(cs.KEY_NESTED_PROJECTS) if params else None,
+                )
             case cs.CYPHER_DELETE_FILE:
                 # Mirrors the real query: File/Folder delete keys on the
                 # absolute path (issue #897).
@@ -1329,9 +1344,51 @@ class _StatefulIngestor:
             if node_label == label and props.get(key) == path
         }
 
-    def _delete_module_subtree(self, path: PropertyValue) -> None:
+    def _delete_module_subtree(
+        self,
+        path: PropertyValue,
+        project_name: str | None,
+        project_prefix: str | None,
+        nested_projects: PropertyValue = None,
+    ) -> None:
+        # Scoped like the real query: another project in the shared graph can
+        # hold the same relative path, and only a module whose qn is the
+        # project name or starts with its prefix goes (issue #2172). A missing
+        # scope matches nothing, as `= null` does in Cypher. A registered
+        # project whose name extends this one (`svc.v2` under `svc`) matches
+        # that prefix too, and its modules are excluded like the real query's
+        # `$nested_projects` clause does (issue #1985).
+        nested_names = (
+            [n for n in nested_projects if isinstance(n, str)]
+            if isinstance(nested_projects, list)
+            else []
+        )
+        # The real query also reads the nested projects from the graph's own
+        # Project nodes, so an empty parameter (registry unread) still spares
+        # them (CodeRabbit, PR #2125).
+        if project_prefix is not None:
+            nested_names += [
+                name
+                for label, name in self.nodes
+                if label == cs.NodeLabel.PROJECT.value
+                and isinstance(name, str)
+                and name.startswith(project_prefix)
+            ]
+
+        def in_scope(qn: str) -> bool:
+            if qn != project_name and not (
+                project_prefix is not None and qn.startswith(project_prefix)
+            ):
+                return False
+            return not any(qn == n or qn.startswith(f"{n}.") for n in nested_names)
+
         doomed: set[_NodeId] = set()
-        frontier = list(self._nodes_at_path(_MODULE_LABEL, path))
+        frontier = [
+            node
+            for node in self._nodes_at_path(_MODULE_LABEL, path)
+            if (qn := _text(self.nodes[node].get(cs.KEY_QUALIFIED_NAME)))
+            and in_scope(qn)
+        ]
         while frontier:
             node = frontier.pop()
             if node in doomed:

@@ -182,6 +182,7 @@ class ProcessorFactory:
                 csharp_external_sites=self.definition_processor.csharp_external_sites,
                 csharp_local_functions=self.definition_processor.csharp_local_functions,
                 csharp_generic_methods=self.definition_processor.csharp_generic_methods,
+                csharp_call_shapes=self.definition_processor.csharp_call_shapes,
                 csharp_class_generic_arity=self.definition_processor.csharp_class_generic_arity,
                 csharp_class_owner_module=self.definition_processor.csharp_class_owner_module,
                 csharp_class_namespaced=self.definition_processor.csharp_class_namespaced,

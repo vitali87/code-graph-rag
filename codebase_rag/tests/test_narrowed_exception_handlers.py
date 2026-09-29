@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.graph_updater import _load_dir_mtimes
+from codebase_rag.stack import health
 from codebase_rag.stack.health import _http_reachable
 
 
@@ -38,7 +39,7 @@ def test_load_dir_mtimes_treats_an_unreadable_cache_as_empty(
 def test_http_reachable_true_for_a_live_endpoint() -> None:
     resp = MagicMock(status=200)
     resp.__enter__.return_value = resp
-    with patch("urllib.request.urlopen", return_value=resp):
+    with patch.object(health._DIRECT_OPENER, "open", return_value=resp):
         assert _http_reachable("http://localhost:6333") is True
 
 
@@ -52,5 +53,5 @@ def test_http_reachable_true_for_a_live_endpoint() -> None:
 )
 def test_http_reachable_false_when_the_request_fails(error: Exception) -> None:
     # URLError and TimeoutError reach the handler only as OSError subclasses.
-    with patch("urllib.request.urlopen", side_effect=error):
+    with patch.object(health._DIRECT_OPENER, "open", side_effect=error):
         assert _http_reachable("http://localhost:6333") is False

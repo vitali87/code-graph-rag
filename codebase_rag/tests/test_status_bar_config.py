@@ -223,7 +223,8 @@ def test_git_state_uses_target_repo_cwd(
 
 
 def test_git_state_returns_none_when_target_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         main_mod.app_context.session, "target_repo", tmp_path / "does-not-exist"

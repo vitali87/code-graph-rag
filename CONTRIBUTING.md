@@ -57,7 +57,7 @@ Labels are automatically synced from [`.github/labels.yml`](.github/labels.yml).
    - Follow the existing code style and patterns
    - Add tests: this is project policy, not a suggestion. New functionality must come with tests that exercise it, and bug fixes must include a regression test that fails without the fix
    - Update documentation if needed
-   - Do not add inline comments (see Comment Policy below)
+   - Add a comment only where it explains why, not what (see Comment Policy below)
 
 4. **Test Your Changes**:
    - Run the existing tests to ensure nothing is broken
@@ -92,9 +92,10 @@ A pull request that changes something a user can see must show it working, in th
 
 All pull requests are automatically validated by our CI workflow, which runs in parallel for faster feedback:
 
-1. **Lint & Format** - Code style validation:
+1. **Lint & Format** - Code style and security validation:
    - `ruff check` with GitHub annotations
    - `ruff format --check`
+   - Bandit, through the same pre-commit hook you run locally (high-severity findings fail the job)
 
 2. **Type Check** - Static type analysis:
    - `ty check` on production code (excludes tests)

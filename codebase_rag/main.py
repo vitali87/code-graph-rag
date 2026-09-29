@@ -29,6 +29,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 from pydantic_ai import (
     BinaryContent,
     DeferredToolRequests,
@@ -53,7 +54,13 @@ from rich.text import Text
 from . import constants as cs
 from . import exceptions as ex
 from . import logs as ls
-from .config import ModelConfig, load_ignore_patterns, settings
+from .cli_runtime import app_context, connect_memgraph, dim, style
+from .config import (
+    ModelConfig,
+    load_ignore_patterns,
+    provider_env_api_key,
+    settings,
+)
 from .context_pruning import describe_prune, prune_old_tool_results
 from .models import AppContext
 from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
@@ -86,7 +93,6 @@ from .tools.web_search import create_web_search_tool, make_web_searcher
 from .types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
-    ORANGE_STYLE,
     AgentLoopUI,
     CancelledResult,
     ConfirmationToolNames,
@@ -109,20 +115,16 @@ if TYPE_CHECKING:
     from pydantic_ai.models import Model
     from pydantic_ai.usage import RunUsage
 
-
-def style(
-    text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
-) -> str:
-    if modifier == cs.StyleModifier.NONE:
-        return f"[{color}]{text}[/{color}]"
-    return f"[{modifier} {color}]{text}[/{modifier} {color}]"
-
-
-def dim(text: str) -> str:
-    return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
-
-
-app_context = AppContext()
+# The chat UI's prompt style. It lives here rather than in types_defs because
+# building it imports prompt_toolkit, which only the interactive loop needs
+# (issue #2253).
+ORANGE_STYLE = Style.from_dict(
+    {
+        "": "#ff8c00",
+        "bottom-toolbar": "noreverse fg:#888888",
+        "bottom-toolbar.text": "noreverse fg:#888888",
+    }
+)
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -152,45 +154,41 @@ def get_session_context() -> str:
 def _autowrap_diff_blocks(text: str) -> str:
     if cs.DIFF_GIT_HEADER not in text:
         return text
-    lines = text.split("\n")
     out: list[str] = []
     in_fence = False
     in_diff = False
-
-    def is_diff_continuation(line: str) -> bool:
-        if line == "":
-            return True
-        return line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
-
-    for line in lines:
-        if line.startswith(cs.MARKDOWN_FENCE):
-            if in_diff:
-                out.append(cs.MARKDOWN_FENCE)
-                in_diff = False
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence:
-            out.append(line)
-            continue
-        if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
-            out.append(cs.MARKDOWN_FENCE_DIFF)
-            in_diff = True
-            out.append(line)
-            continue
-        if in_diff:
-            if is_diff_continuation(line):
-                out.append(line)
-            else:
-                out.append(cs.MARKDOWN_FENCE)
-                in_diff = False
-                out.append(line)
-            continue
-        out.append(line)
+    for line in text.split("\n"):
+        emitted, in_fence, in_diff = _autowrap_line(line, in_fence, in_diff)
+        out.extend(emitted)
 
     if in_diff:
         out.append(cs.MARKDOWN_FENCE)
     return "\n".join(out)
+
+
+def _autowrap_line(
+    line: str, in_fence: bool, in_diff: bool
+) -> tuple[list[str], bool, bool]:
+    """One line of `_autowrap_diff_blocks`: (lines to emit, in_fence, in_diff).
+
+    An existing fence toggles fencing (closing an open diff first); a
+    `diff --git` header outside any fence opens a ```diff block, which stays
+    open until a line that cannot continue a diff.
+    """
+    if line.startswith(cs.MARKDOWN_FENCE):
+        emitted = [cs.MARKDOWN_FENCE, line] if in_diff else [line]
+        return emitted, not in_fence, False
+    if in_fence:
+        return [line], in_fence, in_diff
+    if not in_diff and line.startswith(cs.DIFF_GIT_HEADER):
+        return [cs.MARKDOWN_FENCE_DIFF, line], in_fence, True
+    if in_diff and not _is_diff_continuation(line):
+        return [cs.MARKDOWN_FENCE, line], in_fence, False
+    return [line], in_fence, in_diff
+
+
+def _is_diff_continuation(line: str) -> bool:
+    return line == "" or line.startswith(cs.DIFF_CONTINUATION_PREFIXES)
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
@@ -441,7 +439,14 @@ def _rich_log_sink(message: object) -> None:
 
 def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
-    logger.add(_rich_log_sink, format=cs.LOG_FORMAT, colorize=False)
+    logger.add(
+        _rich_log_sink,
+        format=cs.LOG_FORMAT,
+        colorize=False,
+        backtrace=False,
+        diagnose=False,
+        level=os.environ.get(cs.ENV_LOGURU_LEVEL, cs.LOG_LEVEL_INFO),
+    )
 
     project_root = Path(repo_path).resolve()
     tmp_dir = project_root / cs.TMP_DIR
@@ -547,19 +552,12 @@ async def run_optimization_loop(
 
 
 async def run_with_cancellation[T](
-    coro: Coroutine[None, None, T], timeout: float | None = None
+    coro: Coroutine[None, None, T],
 ) -> T | CancelledResult:
     task = asyncio.create_task(coro)
 
     try:
-        return await asyncio.wait_for(task, timeout=timeout) if timeout else await task
-    except TimeoutError:
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        app_context.console.print(
-            f"\n{style(cs.MSG_TIMEOUT_FORMAT.format(timeout=timeout), cs.Color.YELLOW)}"
-        )
-        return CancelledResult(cancelled=True)
+        return await task
     except (asyncio.CancelledError, KeyboardInterrupt):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -603,7 +601,7 @@ def _price_current_run(
     if model_config is None:
         try:
             model_config = settings.active_orchestrator_config
-        except Exception:  # noqa: BLE001 - pricing is display-only, never fatal
+        except Exception:  # noqa: BLE001  # pricing is display-only, never fatal
             return None
     from .services.usage_cost import price_run
 
@@ -913,7 +911,7 @@ def _git_state() -> tuple[str, bool] | None:
     header = lines[0][3:].split("...", 1)[0].split(" ", 1)[0]
     if header in ("HEAD", "No"):
         return None
-    is_dirty = any(line for line in lines[1:])
+    is_dirty = any(lines[1:])
     return header, is_dirty
 
 
@@ -1380,7 +1378,7 @@ def _shift_tab_listener():
         finally:
             try:
                 loop.remove_reader(fd)
-            except Exception:
+            except Exception:  # noqa: S110 - best-effort; the terminal restore below must still run
                 pass
     finally:
         try:
@@ -1546,6 +1544,31 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
     return stripped
 
 
+def _switched_model_config(
+    base_config: ModelConfig, provider_name: str, model_id: str
+) -> ModelConfig:
+    if provider_name == base_config.provider:
+        config = replace(base_config, model_id=model_id)
+    else:
+        # The endpoint, key and project settings belong to the previous
+        # provider: carried across, an OpenAI model would be sent to a local
+        # Ollama endpoint, so a new provider starts from its own defaults.
+        # The key is the one the provider itself falls back to, so the token
+        # counter, which reads `api_key` directly, sends that same key rather
+        # than none (issue #2195).
+        config = ModelConfig(
+            provider=provider_name,
+            model_id=model_id,
+            api_key=provider_env_api_key(provider_name),
+        )
+    # An env-configured Ollama role may leave its endpoint unset.
+    if provider_name == cs.Provider.OLLAMA and not config.endpoint:
+        config = replace(
+            config, endpoint=settings.ollama_endpoint, api_key=cs.DEFAULT_API_KEY
+        )
+    return config
+
+
 def _create_model_from_string(
     model_string: str, current_override_config: ModelConfig | None = None
 ) -> tuple[Model, str, ModelConfig]:
@@ -1561,17 +1584,7 @@ def _create_model_from_string(
     if not provider_name:
         raise ValueError(ex.PROVIDER_EMPTY)
 
-    if provider_name == base_config.provider:
-        config = replace(base_config, model_id=model_id)
-    elif provider_name == cs.Provider.OLLAMA:
-        config = ModelConfig(
-            provider=provider_name,
-            model_id=model_id,
-            endpoint=settings.ollama_endpoint,
-            api_key=cs.DEFAULT_API_KEY,
-        )
-    else:
-        config = ModelConfig(provider=provider_name, model_id=model_id)
+    config = _switched_model_config(base_config, provider_name, model_id)
 
     canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
     provider = get_provider_from_config(config)
@@ -1615,6 +1628,28 @@ def _handle_model_command(
         return current_model, current_model_string, current_config
 
 
+def _dispatch_local_command(
+    stripped_question: str,
+    command: str,
+    current: tuple[Model | None, str | None, ModelConfig | None],
+) -> tuple[Model | None, str | None, ModelConfig | None] | None:
+    """Run a slash command handled in-process; None means not a local command."""
+    if command == cs.MODEL_COMMAND_PREFIX:
+        return _handle_model_command(stripped_question, *current)
+    if command == cs.HELP_COMMAND:
+        app_context.console.print(cs.UI_HELP_COMMANDS)
+        return current
+    return None
+
+
+def _session_question_text(question: str) -> str:
+    if not app_context.session.cancelled:
+        return question
+    question_text = question + get_session_context()
+    app_context.session.reset_cancelled()
+    return question_text
+
+
 async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -1645,32 +1680,21 @@ async def _run_interactive_loop(
                 initial_question = None
                 continue
 
-            command_parts = stripped_lower.split(maxsplit=1)
-            if command_parts[0] == cs.MODEL_COMMAND_PREFIX:
-                model_override, model_override_string, model_override_config = (
-                    _handle_model_command(
-                        stripped_question,
-                        model_override,
-                        model_override_string,
-                        model_override_config,
-                    )
-                )
-                initial_question = None
-                continue
-            if command_parts[0] == cs.HELP_COMMAND:
-                app_context.console.print(cs.UI_HELP_COMMANDS)
+            handled = _dispatch_local_command(
+                stripped_question,
+                stripped_lower.split(maxsplit=1)[0],
+                (model_override, model_override_string, model_override_config),
+            )
+            if handled is not None:
+                model_override, model_override_string, model_override_config = handled
                 initial_question = None
                 continue
 
             log_session_event(f"{cs.SESSION_PREFIX_USER}{question}")
 
-            if app_context.session.cancelled:
-                question_text = question + get_session_context()
-                app_context.session.reset_cancelled()
-            else:
-                question_text = question
-
-            user_prompt: str | list[UserContent] = _build_user_prompt(question_text)
+            user_prompt: str | list[UserContent] = _build_user_prompt(
+                _session_question_text(question)
+            )
 
             await _run_agent_response_loop(
                 rag_agent,
@@ -1718,13 +1742,8 @@ def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
             current_config = settings.active_cypher_config
             set_method = settings.set_cypher
 
-    kwargs = current_config.to_update_kwargs()
-
-    if provider == cs.Provider.OLLAMA and not kwargs[cs.FIELD_ENDPOINT]:
-        kwargs[cs.FIELD_ENDPOINT] = settings.ollama_endpoint
-        kwargs[cs.FIELD_API_KEY] = cs.DEFAULT_API_KEY
-
-    set_method(provider, model, **kwargs)
+    config = _switched_model_config(current_config, provider, model)
+    set_method(config.provider, config.model_id, **config.to_update_kwargs())
 
 
 def update_model_settings(
@@ -1745,16 +1764,6 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
         json.dump(graph_data, f, indent=cs.JSON_INDENT, ensure_ascii=False)
 
     return graph_data
-
-
-def connect_memgraph(batch_size: int) -> MemgraphIngestor:
-    return MemgraphIngestor(
-        host=settings.MEMGRAPH_HOST,
-        port=settings.MEMGRAPH_PORT,
-        batch_size=batch_size,
-        username=settings.MEMGRAPH_USERNAME,
-        password=settings.MEMGRAPH_PASSWORD,
-    )
 
 
 def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
@@ -1899,6 +1908,36 @@ def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
     return selected
 
 
+def _parse_keep_selection(response: str) -> tuple[list[int], list[int]]:
+    """Split a keep-prompt answer into zero-based expand and plain indices."""
+    expand_requests: list[int] = []
+    regular_selections: list[int] = []
+
+    for raw_part in response.split(","):
+        part = raw_part.strip().lower()
+        if not part:
+            continue
+
+        if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
+            expand_requests.append(int(part[:-1]) - 1)
+        elif part.isdigit():
+            regular_selections.append(int(part) - 1)
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
+
+    return expand_requests, regular_selections
+
+
+def _selected_roots(indices: list[int], sorted_roots: list[str]) -> list[str]:
+    roots: list[str] = []
+    for idx in indices:
+        if 0 <= idx < len(sorted_roots):
+            roots.append(sorted_roots[idx])
+        else:
+            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+    return roots
+
+
 def prompt_for_unignored_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
@@ -1926,36 +1965,14 @@ def prompt_for_unignored_directories(
     if response.lower() == cs.INTERACTIVE_KEEP_NONE:
         return cgrignore.unignore
 
+    expand_requests, regular_selections = _parse_keep_selection(response)
     selected: set[str] = set()
-    expand_requests: list[int] = []
-    regular_selections: list[int] = []
 
-    for part in response.split(","):
-        part = part.strip().lower()
-        if not part:
-            continue
+    for root in _selected_roots(expand_requests, sorted_roots):
+        selected.update(_prompt_nested_selection(root, groups[root]))
 
-        if part.endswith(cs.INTERACTIVE_EXPAND_SUFFIX) and part[:-1].isdigit():
-            expand_requests.append(int(part[:-1]) - 1)
-        elif part.isdigit():
-            regular_selections.append(int(part) - 1)
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INPUT.format(input=part))
-
-    for idx in expand_requests:
-        if 0 <= idx < len(sorted_roots):
-            root = sorted_roots[idx]
-            nested_selected = _prompt_nested_selection(root, groups[root])
-            selected.update(nested_selected)
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
-
-    for idx in regular_selections:
-        if 0 <= idx < len(sorted_roots):
-            root = sorted_roots[idx]
-            selected.update(groups[root])
-        else:
-            logger.warning(ls.EXCLUDE_INVALID_INDEX.format(index=idx + 1))
+    for root in _selected_roots(regular_selections, sorted_roots):
+        selected.update(groups[root])
 
     return frozenset(selected) | cgrignore.unignore
 

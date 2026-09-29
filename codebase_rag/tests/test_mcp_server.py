@@ -32,7 +32,6 @@ class TestGetProjectRoot:
         test_path.mkdir()
 
         monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
-
         with patch("codebase_rag.mcp.server.settings") as mock_settings:
             mock_settings.TARGET_REPO_PATH = str(test_path)
             result = get_project_root()
@@ -166,7 +165,6 @@ class TestGetProjectRoot:
         actual_cwd = Path.cwd()
 
         monkeypatch.delenv("TARGET_REPO_PATH", raising=False)
-
         with patch("codebase_rag.mcp.server.settings") as mock_settings:
             mock_settings.TARGET_REPO_PATH = None
             result = get_project_root()

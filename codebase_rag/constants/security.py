@@ -150,6 +150,13 @@ NEO4J_PLAN_OPERATOR_TYPE = "operatorType"
 NEO4J_PLAN_ARGS = "args"
 NEO4J_PLAN_DETAILS = "Details"
 NEO4J_PLAN_CHILDREN = "children"
+# The optional `neo4j` package, imported by name (issue #2191): its typed
+# surface declares every statement `LiteralString`, which a runtime-built
+# statement can never be, so `services.neo4j_driver` types what it uses
+# with its own protocols instead. Declared `str` rather than left a literal,
+# which a checker would resolve to the package itself.
+NEO4J_MODULE: str = "neo4j"
+NEO4J_EXCEPTIONS_MODULE: str = "neo4j.exceptions"
 # An untrusted query is planned with EXPLAIN and runs only if every plan
 # operator is known to read. An allowlist, not a list of writes, so an
 # operator this list has never seen (a new write, or a write under a new
@@ -701,6 +708,88 @@ SHELL_GIT_EXEC_FLAGS = frozenset(
     }
 )
 
+# The same program-running options per subcommand, in every spelling git's
+# parsers accept. The exact long names above are not enough on their own:
+# parse-options, `rev-parse --parseopt` and Getopt::Long all resolve an
+# unambiguous ABBREVIATION (`rebase --ex`, `grep --open`, `fetch --upl` were
+# each verified running a program), and the short letters were never listed
+# at all (`rebase -x`, `grep -O<prog>`, `clone -u`, all verified). Keyed by
+# subcommand because the letters mean different things elsewhere: `-x` is
+# harmless to `git log`, `-u` is `--update-head-ok` to `git fetch`.
+SHELL_GIT_EXEC_LONG_OPTIONS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"--exec"}),
+    "difftool": frozenset({"--extcmd", "--tool"}),
+    "mergetool": frozenset({"--tool"}),
+    "grep": frozenset({"--open-files-in-pager"}),
+    # --template copies hooks from an arbitrary directory into the new
+    # repository: under clone they ran during the checkout, under init on the
+    # next commit (both verified). What runs is a hook, not the value itself.
+    "clone": frozenset({"--upload-pack", "--template"}),
+    "init": frozenset({"--template"}),
+    "fetch": frozenset({"--upload-pack"}),
+    "pull": frozenset({"--upload-pack"}),
+    "ls-remote": frozenset({"--upload-pack", "--exec"}),
+    "fetch-pack": frozenset({"--upload-pack", "--exec"}),
+    "archive": frozenset({"--exec"}),
+    "push": frozenset({"--receive-pack", "--exec"}),
+    "send-pack": frozenset({"--receive-pack", "--exec"}),
+    "send-email": frozenset(
+        {"--smtp-server", "--sendmail-cmd", "--to-cmd", "--cc-cmd", "--header-cmd"}
+    ),
+    "instaweb": frozenset({"--httpd", "--browser"}),
+    "web--browse": frozenset({"--browser", "--tool"}),
+}
+
+# Short letters naming a program for each subcommand. difftool/mergetool
+# `-t` picks a tool, which is a launcher in its own right (the built-in
+# vimdiff/emacs tools run an editor), and is refused like `--tool` already is.
+SHELL_GIT_EXEC_SHORT_FLAGS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"x"}),
+    "difftool": frozenset({"x", "t"}),
+    "mergetool": frozenset({"t"}),
+    "grep": frozenset({"O"}),
+    "clone": frozenset({"u"}),
+    "instaweb": frozenset({"d", "b"}),
+    "web--browse": frozenset({"b", "t"}),
+}
+
+# Short letters that take a value in those subcommands. git reads the rest of
+# a cluster after such a letter as its value, so `grep -eOops` searches for
+# "Oops" rather than opening a pager; the scan stops there instead of
+# refusing a pattern that merely contains the letter.
+SHELL_GIT_VALUE_SHORT_FLAGS: dict[str, frozenset[str]] = {
+    "rebase": frozenset({"C", "s", "X", "S", "r"}),
+    # difftool forwards diff options, several of which take an attached value.
+    "difftool": frozenset({"S", "G", "O", "U", "M", "C", "B", "l", "I"}),
+    "mergetool": frozenset({"O"}),
+    "grep": frozenset({"C", "B", "A", "m", "f", "e"}),
+    "clone": frozenset({"j", "o", "b", "c"}),
+    "instaweb": frozenset({"p", "m"}),
+    "web--browse": frozenset({"c"}),
+}
+
+# A subcommand's own option that sets config in the repository it creates.
+# `git clone -c core.hooksPath=DIR` (and `--config`, `--conf=`, `-ckey=val`,
+# `-qc key=val`) ran a hook during the clone, and `-c core.sshCommand=PROG`
+# ran PROG, all verified. It is the per-command twin of the top-level `git
+# -c`, so the value goes through the same exec-key test and a harmless key
+# keeps working. fetch, pull, init and submodule have no such option (per
+# `git <cmd> -h` under 2.43).
+SHELL_GIT_SUBCOMMAND_CONFIG_LONG_OPTIONS: dict[str, str] = {"clone": "--config"}
+SHELL_GIT_SUBCOMMAND_CONFIG_SHORT_FLAGS: dict[str, str] = {"clone": "c"}
+# `--c` is ambiguous under clone (--checkout), so git refuses it; `--co` is
+# the shortest abbreviation git resolves to --config.
+SHELL_GIT_CONFIG_OPTION_MIN_ABBREV = 4
+
+# Real options that are a prefix of, or extend, a program-running one and
+# must keep working. An exact option name wins over an abbreviation in every
+# git parser, so `send-email --to` is the recipient, not `--to-cmd`.
+SHELL_GIT_EXEC_OPTION_LOOKALIKES: dict[str, frozenset[str]] = {
+    "send-email": frozenset({"--to", "--cc"}),
+    "difftool": frozenset({"--tool-help"}),
+    "mergetool": frozenset({"--tool-help"}),
+}
+
 
 # The argument that turns one of those subcommands into a command runner.
 # `git submodule status` and `git bisect start` launch nothing.
@@ -765,24 +854,31 @@ SHELL_GIT_CONFIG_EXEC_KEYS = frozenset(
         "uploadpack.packobjectshook",
         "ssh.variant",
         "init.templatedir",
+        # Not a program, but the switch that lets an `ext::<command>` URL run
+        # its command: git refuses the ext transport by default, and `clone
+        # -c protocol.allow=always ext::PROG` ran PROG (verified).
+        "protocol.allow",
+        "protocol.ext.allow",
     }
 )
+GIT_CONFIG_KEY_PREFIX_FILTER = "filter."
+GIT_CONFIG_KEY_SUFFIX_COMMAND = ".command"
 # (prefix, suffix) pairs matching sub-scoped keys like `credential.<url>.helper`,
 # `filter.<name>.clean`, and `alias.<name>` whose values git also runs.
 SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
     ("credential.", ".helper"),
-    ("filter.", ".clean"),
-    ("filter.", ".smudge"),
-    ("filter.", ".process"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".clean"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".smudge"),
+    (GIT_CONFIG_KEY_PREFIX_FILTER, ".process"),
     ("difftool.", ".cmd"),
     ("mergetool.", ".cmd"),
     ("alias.", ""),
     ("diff.", ".textconv"),
-    ("diff.", ".command"),
+    ("diff.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("merge.", ".driver"),
-    ("trailer.", ".command"),
+    ("trailer.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
     ("pager.", ""),
-    ("protocol.", ".command"),
+    ("protocol.", GIT_CONFIG_KEY_SUFFIX_COMMAND),
 )
 
 # Enumerating key NAMES cannot be complete: git's own config documentation
@@ -795,7 +891,7 @@ SHELL_GIT_CONFIG_EXEC_KEY_PATTERNS = (
 # suffix does not follow the convention (core.pager, core.editor).
 SHELL_GIT_CONFIG_EXEC_KEY_SUFFIXES = (
     ".cmd",
-    ".command",
+    GIT_CONFIG_KEY_SUFFIX_COMMAND,
     ".helper",
     ".program",
     ".driver",

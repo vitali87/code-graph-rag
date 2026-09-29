@@ -28,15 +28,64 @@ Two behaviours are deliberate and load-bearing:
 
 from __future__ import annotations
 
+import importlib
 import types
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Protocol
 
 from .. import constants as cs
-from ..types_defs import BatchParams, BatchWrapper, PropertyValue
+from .. import exceptions as ex
+from ..exceptions import ReadOnlyQueryError
+from ..types_defs import BatchParams, BatchWrapper, PropertyValue, ResultValue
 
-if TYPE_CHECKING:  # pragma: no cover - import cost only paid at type-check time
-    from neo4j import Driver, Session  # ty: ignore[unresolved-import]
+
+# The parts of the driver this module uses, typed here rather than taken
+# from `neo4j` (issue #2191). The package types every statement entry point,
+# `Query()` included, as `LiteralString` to discourage string-built Cypher,
+# so there is no typed route for a statement assembled at runtime, and ty
+# reports every call whenever the optional extra is installed. Ours come
+# from the dialect and the query builders, never from user input; the
+# parameters are always bound, never interpolated. The package is imported
+# by name (`importlib`), so the checker sees these protocols in both
+# environments, with or without the extra, and needs no ignore directive.
+class _Record(Protocol):
+    def values(self) -> list[ResultValue]: ...
+
+
+# One EXPLAIN plan node as the driver returns it: nested dicts and lists of
+# scalars, narrowed with isinstance where `explain` reads it.
+type _PlanField = (
+    str | int | float | bool | None | dict[str, _PlanField] | list[_PlanField]
+)
+
+
+class _Summary(Protocol):
+    @property
+    def plan(self) -> dict[str, _PlanField] | None: ...
+
+
+class _Result(Protocol):
+    def keys(self) -> Sequence[str]: ...
+
+    def __iter__(self) -> Iterator[_Record]: ...
+
+    def consume(self) -> _Summary: ...
+
+
+class _Session(Protocol):
+    def run(
+        self,
+        query: str,
+        parameters: Mapping[str, PropertyValue] | BatchWrapper | None = None,
+    ) -> _Result: ...
+
+    def close(self) -> None: ...
+
+
+class _Driver(Protocol):
+    def session(self, **config: str) -> _Session: ...
+
+    def close(self) -> None: ...
 
 
 class _Column:
@@ -53,9 +102,9 @@ class Neo4jCursor:
 
     __slots__ = ("_session", "_rows", "_keys")
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: _Session) -> None:
         self._session = session
-        self._rows: list[tuple[PropertyValue, ...]] = []
+        self._rows: list[tuple[ResultValue, ...]] = []
         self._keys: list[str] = []
 
     def execute(
@@ -71,29 +120,17 @@ class Neo4jCursor:
         # `UNWIND $batch AS row` idiom wants. A bare sequence would have
         # no name to bind to, so it is rejected rather than guessed at.
         if params is None:
-            parameters: dict[str, Any] = {}
+            parameters: Mapping[str, PropertyValue] | BatchWrapper = {}
         elif isinstance(params, dict):
-            parameters = dict(params)
+            parameters = params
         else:
             raise TypeError(
                 "Neo4j parameters must be a mapping; "
                 f"got {type(params).__name__}. Batched writes pass "
                 "BatchWrapper({'batch': rows})."
             )
-        # The driver types every query entry point as `LiteralString` to
-        # discourage string-built Cypher, and `Query()` demands one too,
-        # so there is no typed route for a statement assembled at
-        # runtime. Ours comes from the dialect and the query builders,
-        # never from user input; the parameters below are always bound,
-        # never interpolated.
-        #
-        # Not suppressed with a `ty: ignore`: `neo4j` is an optional
-        # extra, so the environment CI type-checks in cannot resolve
-        # `Session` and reports any narrower directive here as unused.
-        # `run` is looked up through a local to keep that difference from
-        # turning into a checker error in one environment or the other.
-        session_run = self._session.run
-        result = session_run(query, parameters)
+        # `_Session.run` takes a plain `str`; see the protocols above.
+        result = self._session.run(query, parameters)
         self._keys = list(result.keys())
         # Materialise before the result is invalidated by the next
         # statement on this session; the ingestor reads rows after the
@@ -104,7 +141,7 @@ class Neo4jCursor:
     def description(self) -> Sequence[_Column] | None:
         return [_Column(k) for k in self._keys] if self._keys else None
 
-    def fetchall(self) -> list[tuple[PropertyValue, ...]]:
+    def fetchall(self) -> list[tuple[ResultValue, ...]]:
         return self._rows
 
     def close(self) -> None:
@@ -124,7 +161,7 @@ class Neo4jConnection:
 
     __slots__ = ("_session", "autocommit")
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: _Session) -> None:
         self._session = session
         self.autocommit = True
 
@@ -136,17 +173,35 @@ class Neo4jConnection:
 
         EXPLAIN plans without executing, so nothing in `query` runs here.
         """
-        session_run = self._session.run
-        plan = session_run(cs.CYPHER_EXPLAIN_PREFIX + query).consume().plan
+        plan = self._session.run(cs.CYPHER_EXPLAIN_PREFIX + query).consume().plan
         operators: list[tuple[str, str]] = []
-        pending = [plan] if plan else []
+        pending: list[dict[str, _PlanField]] = [plan] if plan else []
         while pending:
             node = pending.pop()
-            details = (node.get(cs.NEO4J_PLAN_ARGS) or {}).get(cs.NEO4J_PLAN_DETAILS)
+            # Absent (or null) means none; any other value must have the right
+            # shape, a falsy wrong one included (CodeRabbit, PR #2255).
+            args = node.get(cs.NEO4J_PLAN_ARGS)
+            args = {} if args is None else args
+            children = node.get(cs.NEO4J_PLAN_CHILDREN)
+            children = [] if children is None else children
+            # The read-only guard checks every operator this returns, so a
+            # node it cannot fully walk must refuse the query rather than be
+            # skipped: a skipped child is an operator nobody inspected
+            # (CodeRabbit, PR #2255).
+            if not isinstance(args, dict) or not isinstance(children, list):
+                raise ReadOnlyQueryError(
+                    ex.READ_ONLY_UNREADABLE_PLAN.format(query=query)
+                )
+            nodes = [child for child in children if isinstance(child, dict)]
+            if len(nodes) != len(children):
+                raise ReadOnlyQueryError(
+                    ex.READ_ONLY_UNREADABLE_PLAN.format(query=query)
+                )
+            details = args.get(cs.NEO4J_PLAN_DETAILS)
             operators.append(
                 (str(node.get(cs.NEO4J_PLAN_OPERATOR_TYPE, "")), str(details or ""))
             )
-            pending.extend(node.get(cs.NEO4J_PLAN_CHILDREN) or [])
+            pending.extend(nodes)
         return operators
 
     def close(self) -> None:
@@ -177,7 +232,7 @@ class Neo4jDriver:
         database: str,
     ) -> None:
         try:
-            from neo4j import GraphDatabase  # ty: ignore[unresolved-import]
+            neo4j = importlib.import_module(cs.NEO4J_MODULE)
         except ImportError as exc:  # pragma: no cover - depends on extras
             raise ImportError(
                 "The neo4j backend needs the `neo4j` package. "
@@ -185,7 +240,7 @@ class Neo4jDriver:
             ) from exc
 
         auth = (username, password) if username and password else None
-        self._driver: Driver = GraphDatabase.driver(uri, auth=auth)
+        self._driver: _Driver = neo4j.GraphDatabase.driver(uri, auth=auth)
         self._database = database
 
     def connect(self, read_only: bool = False) -> Neo4jConnection:
@@ -209,11 +264,10 @@ class Neo4jDriver:
         """
         if not read_only:
             return Neo4jConnection(self._driver.session(database=self._database))
-        from neo4j import READ_ACCESS  # ty: ignore[unresolved-import]
-
+        read_access: str = importlib.import_module(cs.NEO4J_MODULE).READ_ACCESS
         return Neo4jConnection(
             self._driver.session(
-                database=self._database, default_access_mode=READ_ACCESS
+                database=self._database, default_access_mode=read_access
             )
         )
 

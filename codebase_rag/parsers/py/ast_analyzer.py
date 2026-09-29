@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from abc import abstractmethod
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -451,16 +451,15 @@ def _annotates(binder: Node) -> bool:
 def _enclosing_functions(node: Node, stop: Node) -> Iterator[Node]:
     """Function scopes ENCLOSING `node`'s own, innermost first, up to `stop`.
 
-    The function `node` sits directly inside is skipped: a `nonlocal` never
-    binds in the scope that declares it.
+    The scope `node` sits directly inside is skipped, whatever it is: a
+    `nonlocal` never binds in the scope that declares it, and a class body's
+    `nonlocal` binds the nearest enclosing FUNCTION (bot review).
     """
-    current = node.parent
-    own_scope_seen = False
+    own = _own_scope(node)
+    current = own.parent if own is not None else None
     while current is not None:
         if current.type == cs.TS_PY_FUNCTION_DEFINITION:
-            if own_scope_seen:
-                yield current
-            own_scope_seen = True
+            yield current
         if current.id == stop.id:
             return
         current = current.parent
@@ -474,29 +473,44 @@ def _binds_name(scope: Node, name: str) -> bool:
     )
 
 
-def _nonlocal_names(scope: Node) -> frozenset[str]:
-    """Names a nested body declares `nonlocal` that `scope` itself owns.
+def _own_scope(node: Node) -> Node | None:
+    """The def, class or module whose body a node sits in directly."""
+    current = node.parent
+    while current is not None and current.type not in _PY_SCOPE_TYPES:
+        current = current.parent
+    return current
+
+
+def _nonlocal_names(binding: Node, scope: Node) -> frozenset[str]:
+    """The names `binding` rebinds in `scope` through a `nonlocal`.
 
     A `nonlocal x` makes an assignment to `x` in that body rebind the
     enclosing function's `x`, so the binding belongs to the enclosing map
     even though it sits in a nested scope (#1922). `global` is different:
     it binds the module's name, leaving the enclosing local alone.
 
-    Which enclosing function it rebinds matters once there are three
-    levels: Python binds the NEAREST enclosing function scope that already
-    binds the name, so an `inner` declaring `nonlocal v` under a `middle`
-    that binds `v` rebinds middle's `v`, and outer's `v` must be left
-    alone. Collecting every descendant's declarations flat let that
-    innermost assignment overwrite outer's inferred type (Greptile,
+    Decided per binding, from the binding's OWN body (#2124): a `nonlocal v`
+    in `middle` does not reach an `inner` below it that declares nothing,
+    whose `v = ...` binds inner's own local. And the declaration must
+    resolve to `scope`: Python binds the NEAREST enclosing function scope
+    that already binds the name, so an `inner` declaring `nonlocal v` under
+    a `middle` that binds `v` rebinds middle's `v`, not outer's (Greptile,
     PR #1928).
     """
+    own = _own_scope(binding)
+    if own is None or own.id == scope.id:
+        return frozenset()
     names: set[str] = set()
-    stack: list[Node] = [scope]
+    stack: list[Node] = [own]
     while stack:
         current = stack.pop()
-        if current.type == cs.TS_PY_NONLOCAL_STATEMENT:
-            names.update(_names_owned_by(current, scope))
-        stack.extend(current.children)
+        for child in current.named_children:
+            if child.type in _PY_NESTED_SCOPE_TYPES:
+                continue
+            if child.type == cs.TS_PY_NONLOCAL_STATEMENT:
+                names.update(_names_owned_by(child, scope))
+            else:
+                stack.append(child)
     return frozenset(names)
 
 
@@ -511,7 +525,13 @@ def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
             (
                 fn
                 for fn in _enclosing_functions(declaration, scope)
-                if _binds_name(fn, text)
+                # A parameter is a binding too: `nonlocal v` inside a def
+                # nested in `middle(v)` names middle's parameter (bot review).
+                # A function that itself declares the name `nonlocal` (or
+                # `global`) forwards it rather than owning it, so the search
+                # continues outward past it (bot review).
+                if (_binds_name(fn, text) or text in set(_parameter_names(fn)))
+                and text not in _declared_non_local(fn)
             ),
             None,
         )
@@ -522,17 +542,47 @@ def _names_owned_by(declaration: Node, scope: Node) -> Iterator[str]:
             yield text
 
 
-def _rebinds_nonlocal(assignment: Node, nonlocal_names: frozenset[str]) -> bool:
-    """Whether a nested assignment rebinds a name declared `nonlocal`."""
-    if not nonlocal_names:
-        return False
-    left = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
+def _rebinds_nonlocal(binding: Node, scope: Node) -> bool:
+    """Whether a nested assignment or `for` rebinds a name of `scope`'s that
+    its own body declares `nonlocal`."""
+    left = binding.child_by_field_name(cs.TS_FIELD_LEFT)
     if left is None:
         return False
+    if not (declared := _nonlocal_names(binding, scope)):
+        return False
     return any(
-        safe_decode_text(identifier) in nonlocal_names
-        for identifier in _identifiers_in(left)
+        safe_decode_text(identifier) in declared for identifier in _identifiers_in(left)
     )
+
+
+def _belongs_to(binding: Node, scope: Node) -> bool:
+    """Whether an assignment or `for` binds into `scope`'s own names: it sits
+    in `scope`'s body, or rebinds one of them through `nonlocal`."""
+    return _scope_of(binding) == scope.id or _rebinds_nonlocal(binding, scope)
+
+
+def _own_bound_names(scope: Node) -> frozenset[str]:
+    """Every name `scope`'s own body binds, parameters included."""
+    names = set(_parameter_names(scope))
+    names.update(
+        name
+        for _node, identifier in _bindings_in(scope)
+        if (name := safe_decode_text(identifier))
+    )
+    return frozenset(names)
+
+
+def _comprehension_names(comprehension: Node) -> frozenset[str]:
+    """The names a comprehension's `for ... in` clauses bind."""
+    names: set[str] = set()
+    for clause in comprehension.children:
+        if clause.type != cs.TS_PY_FOR_IN_CLAUSE:
+            continue
+        left = clause.child_by_field_name(cs.TS_FIELD_LEFT)
+        for identifier in _identifiers_in(left) if left is not None else ():
+            if name := safe_decode_text(identifier):
+                names.add(name)
+    return frozenset(names)
 
 
 def _homogeneous_element(name: str, inner: str) -> str | None:
@@ -562,14 +612,17 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
-    class _AstAnalyzerDeps(Protocol):
+    # A plain class, not a Protocol: a protocol's stub methods count as
+    # abstract, and this base sits ahead of the mixins that implement them in
+    # the engine's MRO. It exists for the checker only.
+    class _AstAnalyzerDeps:
         import_processor: ImportProcessor
 
         def build_local_variable_type_map(
             self, caller_node: Node, module_qn: str, class_context: str | None = None
         ) -> dict[str, str]: ...
 
-        def _extract_full_method_call(self, node: Node) -> str | None: ...
+        def _extract_full_method_call(self, attr_node: Node) -> str | None: ...
 
         def _resolve_method_qualified_name(
             self,
@@ -579,11 +632,11 @@ if TYPE_CHECKING:
         ) -> str | None: ...
 
         def _analyze_comprehension(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, comp_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _analyze_for_loop(
-            self, node: Node, local_var_types: dict[str, str], module_qn: str
+            self, for_node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
 
         def _infer_instance_variable_types_from_assignments(
@@ -596,6 +649,14 @@ if TYPE_CHECKING:
     _AstBase: type = _AstAnalyzerDeps
 else:
     _AstBase = object
+
+
+def _node_name(node: Node) -> str | None:
+    # The decoded `name` field of a definition, or None when it has no text.
+    name_node = node.child_by_field_name(cs.TS_FIELD_NAME)
+    if not name_node or name_node.text is None:
+        return None
+    return safe_decode_text(name_node)
 
 
 class PythonAstAnalyzerMixin(_AstBase):
@@ -657,39 +718,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         """Types locals in one traversal; returns (comprehensions, for
         statements) so the coordinator can re-run loop inference after the
         attribute passes populate ``self.x`` types."""
-        assignments: list[Node] = []
-        comprehensions: list[Node] = []
-        for_statements: list[Node] = []
-
-        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
-        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
-        if py_lang_obj is not None:
-            try:
-                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
-                cursor = QueryCursor(q)
-                captures = cursor.captures(node)
-                assignments = captures.get("assignment", [])
-                comprehensions = captures.get("comprehension", [])
-                for_statements = captures.get("for_stmt", [])
-                if return_stmts := captures.get("return_stmt"):
-                    self._return_stmt_cache[node] = return_stmts
-            except Exception:
-                py_lang_obj = None
-
-        if py_lang_obj is None:
-            stack: list[Node] = [node]
-            while stack:
-                current = stack.pop()
-                node_type = current.type
-
-                if node_type == cs.TS_PY_ASSIGNMENT:
-                    assignments.append(current)
-                elif node_type == cs.TS_PY_LIST_COMPREHENSION:
-                    comprehensions.append(current)
-                elif node_type == cs.TS_PY_FOR_STATEMENT:
-                    for_statements.append(current)
-
-                stack.extend(reversed(current.children))
+        assignments, comprehensions, for_statements = self._collect_traverse_nodes(node)
 
         # Only what THIS body binds. The captures above walk the whole
         # subtree, so a name bound inside a nested def or class body would
@@ -706,12 +735,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         # binding does belong here (Greptile, #1922). `global` is not an
         # exception -- it binds the module name, and the enclosing
         # function's local of the same name is untouched.
-        nonlocal_names = _nonlocal_names(node)
-        assignments = [
-            a
-            for a in assignments
-            if _scope_of(a) == node.id or _rebinds_nonlocal(a, nonlocal_names)
-        ]
+        assignments = [a for a in assignments if _belongs_to(a, node)]
+        # Every other writer into the map takes the same rule (#2124). A
+        # nested `for` target is the nested body's local unless declared
+        # `nonlocal` there. A comprehension is a scope of its own that
+        # cannot declare `nonlocal`, so one in a nested body binds nothing
+        # here; one in this body still types its variables for calls inside
+        # it, except a name this body binds itself, whose type it must not
+        # overwrite (`analyze_scoped_comprehensions`).
+        for_statements = [f for f in for_statements if _belongs_to(f, node)]
+        comprehensions = [c for c in comprehensions if _scope_of(c) == node.id]
 
         for assignment in assignments:
             self._process_assignment_simple(assignment, local_var_types, module_qn)
@@ -725,8 +758,9 @@ class PythonAstAnalyzerMixin(_AstBase):
             node, assignments, local_var_types, module_qn
         )
 
-        for comp in comprehensions:
-            self._analyze_comprehension(comp, local_var_types, module_qn)
+        self.analyze_scoped_comprehensions(
+            node, comprehensions, local_var_types, module_qn
+        )
 
         for for_stmt in for_statements:
             self._analyze_for_loop(for_stmt, local_var_types, module_qn)
@@ -735,6 +769,76 @@ class PythonAstAnalyzerMixin(_AstBase):
             assignments, local_var_types, module_qn
         )
         return comprehensions, for_statements
+
+    def _collect_traverse_nodes(
+        self, node: Node
+    ) -> tuple[list[Node], list[Node], list[Node]]:
+        """(assignments, comprehensions, for statements) under `node`.
+
+        Uses the cached query when the Python grammar is loaded, and falls
+        back to a plain tree walk when it is not or the query fails.
+        """
+        py_lang_queries = self.queries.get(cs.SupportedLanguage.PYTHON)
+        py_lang_obj = py_lang_queries["language"] if py_lang_queries else None
+        if py_lang_obj is not None:
+            try:
+                q = get_cached_query(py_lang_obj, _PY_TRAVERSE_QUERY)
+                cursor = QueryCursor(q)
+                captures = cursor.captures(node)
+                if return_stmts := captures.get("return_stmt"):
+                    self._return_stmt_cache[node] = return_stmts
+                return (
+                    captures.get("assignment", []),
+                    captures.get("comprehension", []),
+                    captures.get("for_stmt", []),
+                )
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
+                pass
+
+        assignments: list[Node] = []
+        comprehensions: list[Node] = []
+        for_statements: list[Node] = []
+        stack: list[Node] = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
+
+            if node_type == cs.TS_PY_ASSIGNMENT:
+                assignments.append(current)
+            elif node_type == cs.TS_PY_LIST_COMPREHENSION:
+                comprehensions.append(current)
+            elif node_type == cs.TS_PY_FOR_STATEMENT:
+                for_statements.append(current)
+
+            stack.extend(reversed(current.children))
+        return assignments, comprehensions, for_statements
+
+    def analyze_scoped_comprehensions(
+        self,
+        scope: Node,
+        comprehensions: list[Node],
+        local_var_types: dict[str, str],
+        module_qn: str,
+    ) -> None:
+        """Type `scope`'s comprehension targets, one target at a time.
+
+        A target named like one of `scope`'s own bindings is skipped, since
+        the comprehension's variable is a different object; the others keep
+        their types. Skipping the whole comprehension on any overlap left a
+        non-overlapping target untyped (#2201).
+        """
+        if not comprehensions:
+            return
+        own_names = _own_bound_names(scope)
+        for comp in comprehensions:
+            names = _comprehension_names(comp) - own_names
+            if not names:
+                continue
+            scratch = dict(local_var_types)
+            self._analyze_comprehension(comp, scratch, module_qn)
+            for name in names:
+                if name in scratch:
+                    local_var_types[name] = scratch[name]
 
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -875,14 +979,10 @@ class PythonAstAnalyzerMixin(_AstBase):
         # `nonlocal` is the same exception the value passes make: an
         # unpacking in a nested body whose target is declared `nonlocal`
         # rebinds THIS caller's name, so it belongs here (CodeRabbit).
-        nonlocal_names = _nonlocal_names(caller)
         unpackings = [
             assignment
             for assignment in assignments
-            if (
-                _scope_of(assignment) == caller.id
-                or _rebinds_nonlocal(assignment, nonlocal_names)
-            )
+            if _belongs_to(assignment, caller)
             and (left := assignment.child_by_field_name(cs.TS_FIELD_LEFT)) is not None
             and left.type in cs.PY_UNPACKING_TARGET_TYPES
         ]
@@ -921,16 +1021,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         # `a`, while `b` belongs to the inner scope and must not reach this
         # map (Greptile, #1922).
         nested = _scope_of(assignment) != caller.id
-        declared = _nonlocal_names(caller) if nested else frozenset()
+        declared = _nonlocal_names(assignment, caller) if nested else frozenset()
         for target, (element, _homogeneous) in zip(targets, elements, strict=True):
             # A nested pattern or a starred target binds no one type.
             name = (
                 safe_decode_text(target) if target.type == cs.TS_PY_IDENTIFIER else None
             )
-            if not name or (nested and name not in declared):
-                continue
-            if name not in local_var_types:
-                local_var_types[name] = element
+            if name and (not nested or name in declared):
+                local_var_types.setdefault(name, element)
 
     def _unpacked_elements(
         self,
@@ -1241,32 +1339,17 @@ class PythonAstAnalyzerMixin(_AstBase):
             return None
 
         for class_node in captures.get(cs.QUERY_CAPTURE_CLASS, []):
-            if not isinstance(class_node, Node):
+            if not isinstance(class_node, Node) or _node_name(class_node) != class_name:
                 continue
-
-            name_node = class_node.child_by_field_name(cs.TS_FIELD_NAME)
-            if not name_node or name_node.text is None:
-                continue
-
-            if safe_decode_text(name_node) != class_name:
-                continue
-
             body_node = class_node.child_by_field_name(cs.TS_FIELD_BODY)
             if not body_node:
                 continue
-
-            method_cursor = QueryCursor(method_query)
-            method_captures = sorted_captures(method_cursor, body_node)
-
+            method_captures = sorted_captures(QueryCursor(method_query), body_node)
             for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
-                if not isinstance(method_node, Node):
-                    continue
-
-                method_name_node = method_node.child_by_field_name(cs.TS_FIELD_NAME)
-                if not method_name_node or method_name_node.text is None:
-                    continue
-
-                if safe_decode_text(method_name_node) == method_name:
+                if (
+                    isinstance(method_node, Node)
+                    and _node_name(method_node) == method_name
+                ):
                     return method_node
 
         return None
@@ -1382,7 +1465,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 captures = cursor.captures(node)
                 return_nodes.extend(captures.get("return_stmt", []))
                 return
-            except Exception:
+            except Exception:  # noqa: S110 - a failed query falls back to the walk below
                 pass
         stack: list[Node] = [node]
         while stack:

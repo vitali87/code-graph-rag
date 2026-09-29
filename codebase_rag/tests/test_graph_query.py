@@ -757,7 +757,9 @@ def test_cli_definition_reads_source_only_for_the_repos_own_project(
         "--repo-path",
         str(tmp_path),
     ]
-    with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
+    with patch(
+        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect()
+    ):
         foreign = CliRunner().invoke(graph_cli, args)
         with patch.object(sys.modules[__name__], "PROJECT_ROOT", str(tmp_path)):
             own = CliRunner().invoke(graph_cli, args)
@@ -776,7 +778,9 @@ def _mock_connect() -> MagicMock:
 
 
 def test_cli_callers_prints_sorted_json(tmp_path: Path) -> None:
-    with patch("codebase_rag.main.connect_memgraph", return_value=_mock_connect()):
+    with patch(
+        "codebase_rag.cli_runtime.connect_memgraph", return_value=_mock_connect()
+    ):
         result = CliRunner().invoke(
             graph_cli,
             [

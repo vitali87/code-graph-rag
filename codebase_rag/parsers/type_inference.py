@@ -1,10 +1,11 @@
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .. import constants as cs
 from ..types_defs import (
     ASTNode,
+    CSharpCallShape,
     FunctionLocation,
     FunctionRegistryTrieProtocol,
     FunctionSpanKey,
@@ -28,6 +29,13 @@ from .rs import utils as rs_utils
 
 if TYPE_CHECKING:
     from .factory import ASTCacheProtocol
+
+
+def _shared[T](value: T | None, empty: Callable[[], T]) -> T:
+    # Keep the caller's container (a shared reference populated after
+    # construction); only a missing one gets a fresh empty container. `or`
+    # would swap an empty-but-shared dict for a new one and lose later writes.
+    return value if value is not None else empty()
 
 
 class TypeInferenceEngine:
@@ -61,6 +69,7 @@ class TypeInferenceEngine:
         "csharp_external_sites",
         "csharp_local_functions",
         "csharp_generic_methods",
+        "csharp_call_shapes",
         "csharp_class_generic_arity",
         "csharp_class_owner_module",
         "csharp_class_namespaced",
@@ -114,6 +123,7 @@ class TypeInferenceEngine:
         csharp_external_sites: set[CallSiteKey] | None = None,
         csharp_local_functions: dict[str, tuple[FunctionSpanKey, int]] | None = None,
         csharp_generic_methods: set[str] | None = None,
+        csharp_call_shapes: dict[str, CSharpCallShape] | None = None,
         csharp_class_generic_arity: dict[str, int] | None = None,
         csharp_class_owner_module: dict[str, str] | None = None,
         csharp_class_namespaced: dict[str, str] | None = None,
@@ -136,98 +146,63 @@ class TypeInferenceEngine:
         # DefinitionProcessor's map, empty at construction and populated later during
         # ingestion. `or {}` would swap it for a new dict and silently lose every
         # field type written afterward.
-        self.class_field_types = (
-            class_field_types if class_field_types is not None else {}
-        )
+        self.class_field_types = _shared(class_field_types, dict)
         # Shared reference (as with class_field_types): Rust guard-field inner types
         # (`Shared.state` -> State for a `Mutex<State>` field), applied only at a
         # guard-accessor hop so a direct wrapper call isn't mis-resolved to it.
-        self.class_field_guard_inner = (
-            class_field_guard_inner if class_field_guard_inner is not None else {}
-        )
+        self.class_field_guard_inner = _shared(class_field_guard_inner, dict)
         # Shared reference (as with class_field_types): Rust sequence-field
         # element types (`Pool.workers` -> Worker for a `Vec<Worker>` field),
         # applied only when an iterator adaptor's closure parameter binds the
         # element (issue #1045).
-        self.class_field_element_types = (
-            class_field_element_types if class_field_element_types is not None else {}
-        )
+        self.class_field_element_types = _shared(class_field_element_types, dict)
         # Shared reference (as with class_field_types): DefinitionProcessor's
         # func_qn -> return-type map, populated during ingestion and read by the
         # resolver's chained-call path.
-        self.method_return_types = (
-            method_return_types if method_return_types is not None else {}
-        )
+        self.method_return_types = _shared(method_return_types, dict)
         # Shared reference (as with class_field_types): Go free-fn qn ->
         # FIRST return type, read only by the single-segment binding path.
-        self.go_function_return_types = (
-            go_function_return_types if go_function_return_types is not None else {}
-        )
+        self.go_function_return_types = _shared(go_function_return_types, dict)
         # Shared references (as with csharp_call_sites): the go/types call-site
         # facts and external sites, populated after construction and read by the
         # Go resolver's semantic path (issue #1179).
-        self.go_call_sites = go_call_sites if go_call_sites is not None else {}
-        self.go_external_sites = (
-            go_external_sites if go_external_sites is not None else set()
-        )
-        self.java_call_sites = java_call_sites if java_call_sites is not None else {}
-        self.java_external_sites = (
-            java_external_sites if java_external_sites is not None else set()
-        )
+        self.go_call_sites = _shared(go_call_sites, dict)
+        self.go_external_sites = _shared(go_external_sites, set)
+        self.java_call_sites = _shared(java_call_sites, dict)
+        self.java_external_sites = _shared(java_external_sites, set)
         # Shared references, same discipline: the Jedi call-site facts and
         # external proofs (issue #1183), populated after construction.
-        self.python_call_sites = (
-            python_call_sites if python_call_sites is not None else {}
-        )
-        self.python_external_sites = (
-            python_external_sites if python_external_sites is not None else set()
-        )
+        self.python_call_sites = _shared(python_call_sites, dict)
+        self.python_external_sites = _shared(python_external_sites, set)
         self._go_free_fn_index: dict[tuple[str, str], str] = {}
         self._go_free_fn_index_size = -1
         # Shared reference (as with class_field_types): C# partial-class part
         # groups, populated during ingestion and read by the C# resolver to
         # span all parts of a split type.
-        self.csharp_partial_groups = (
-            csharp_partial_groups if csharp_partial_groups is not None else {}
-        )
+        self.csharp_partial_groups = _shared(csharp_partial_groups, dict)
         # Shared reference (as with class_field_types): C# extension-method
         # index, populated during ingestion and read by the C# resolver's
         # receiver-binding fallback.
-        self.csharp_extension_methods = (
-            csharp_extension_methods if csharp_extension_methods is not None else {}
-        )
+        self.csharp_extension_methods = _shared(csharp_extension_methods, dict)
         # Shared references (as with class_field_types): the Roslyn call-site
         # facts and the Pass-2 function-location registry, both populated
         # after construction and read by the C# resolver's semantic path.
-        self.csharp_call_sites = (
-            csharp_call_sites if csharp_call_sites is not None else {}
-        )
+        self.csharp_call_sites = _shared(csharp_call_sites, dict)
         # Shared reference (as with csharp_call_sites): Roslyn argument-flow
         # facts, read by the C# path of the lean flow walk (issue #1187).
-        self.csharp_arg_flows = csharp_arg_flows if csharp_arg_flows is not None else {}
-        self.csharp_out_writes = (
-            csharp_out_writes if csharp_out_writes is not None else {}
-        )
-        self.csharp_bind_flows = (
-            csharp_bind_flows if csharp_bind_flows is not None else {}
-        )
-        self.csharp_external_sites = (
-            csharp_external_sites if csharp_external_sites is not None else set()
-        )
+        self.csharp_arg_flows = _shared(csharp_arg_flows, dict)
+        self.csharp_out_writes = _shared(csharp_out_writes, dict)
+        self.csharp_bind_flows = _shared(csharp_bind_flows, dict)
+        self.csharp_external_sites = _shared(csharp_external_sites, set)
         # Shared reference (as with class_field_types): C# local-function
         # host/arity index, populated during ingestion and read by the C#
         # resolver's bare-name path.
-        self.csharp_local_functions = (
-            csharp_local_functions if csharp_local_functions is not None else {}
-        )
+        self.csharp_local_functions = _shared(csharp_local_functions, dict)
         # Shared reference (as with class_field_types): generic-method qn
         # set, populated during ingestion, read by C# bare-call dispatch.
-        self.csharp_generic_methods = (
-            csharp_generic_methods if csharp_generic_methods is not None else set()
-        )
-        self.csharp_class_generic_arity = (
-            csharp_class_generic_arity if csharp_class_generic_arity is not None else {}
-        )
+        self.csharp_generic_methods = _shared(csharp_generic_methods, set)
+        self.csharp_call_shapes = _shared(csharp_call_shapes, dict)
+        self.csharp_class_generic_arity = _shared(csharp_class_generic_arity, dict)
         # The module qn of the file that DECLARED each class, recorded at
         # ingest because it cannot be recovered from the class qn: a C#
         # class qn embeds its namespace, so `proj/Core.cs` declaring
@@ -241,32 +216,18 @@ class TypeInferenceEngine:
         # `unexpected keyword argument` inside the call pass, where the
         # exception was SWALLOWED -- the arity map is populated earlier, so a
         # probe checking only that map still looked correct (#1769 review).
-        self.csharp_class_owner_module = (
-            csharp_class_owner_module if csharp_class_owner_module is not None else {}
-        )
-        self.csharp_class_namespaced = (
-            csharp_class_namespaced if csharp_class_namespaced is not None else {}
-        )
-        self.csharp_namespaced_qns = (
-            csharp_namespaced_qns if csharp_namespaced_qns is not None else {}
-        )
-        self.csharp_method_return_types = (
-            csharp_method_return_types if csharp_method_return_types is not None else {}
-        )
-        self.function_locations = (
-            function_locations if function_locations is not None else {}
-        )
+        self.csharp_class_owner_module = _shared(csharp_class_owner_module, dict)
+        self.csharp_class_namespaced = _shared(csharp_class_namespaced, dict)
+        self.csharp_namespaced_qns = _shared(csharp_namespaced_qns, dict)
+        self.csharp_method_return_types = _shared(csharp_method_return_types, dict)
+        self.function_locations = _shared(function_locations, dict)
         # Shared reference (as with class_field_types): Dart `extends Base<T>`
         # type arguments per class qn, read by the resolver's undeclared
         # receiver fallback (#875).
-        self.dart_extends_type_args = (
-            dart_extends_type_args if dart_extends_type_args is not None else {}
-        )
+        self.dart_extends_type_args = _shared(dart_extends_type_args, dict)
         # Constructor qns, read by the call pass to record a named
         # constructor call as a construction (#2012).
-        self.dart_constructor_qns = (
-            dart_constructor_qns if dart_constructor_qns is not None else set()
-        )
+        self.dart_constructor_qns = _shared(dart_constructor_qns, set)
 
         self._java_type_inference: JavaTypeInferenceEngine | None = None
         self._csharp_type_inference: CSharpTypeInferenceEngine | None = None
@@ -341,6 +302,7 @@ class TypeInferenceEngine:
                 csharp_external_sites=self.csharp_external_sites,
                 csharp_local_functions=self.csharp_local_functions,
                 csharp_generic_methods=self.csharp_generic_methods,
+                csharp_call_shapes=self.csharp_call_shapes,
                 csharp_class_generic_arity=self.csharp_class_generic_arity,
                 csharp_class_namespaced=self.csharp_class_namespaced,
                 csharp_namespaced_qns=self.csharp_namespaced_qns,
@@ -686,6 +648,7 @@ class TypeInferenceEngine:
         self.csharp_generic_methods -= function_qns
         for qn in function_qns:
             self.csharp_local_functions.pop(qn, None)
+            self.csharp_call_shapes.pop(qn, None)
         for qn in class_qns:
             self.csharp_class_generic_arity.pop(qn, None)
             # Dropped together: an owner record for a class whose arity is
@@ -1003,16 +966,14 @@ class TypeInferenceEngine:
                     caller_node, module_qn
                 )
             case cs.SupportedLanguage.GO:
-                return self.go_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
-                )
+                return self.go_type_inference.build_local_variable_type_map(caller_node)
             case cs.SupportedLanguage.RUST:
                 return self.rust_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node
                 )
             case cs.SupportedLanguage.CPP:
                 return self.cpp_type_inference.build_local_variable_type_map(
-                    caller_node, module_qn
+                    caller_node
                 )
             case _:
                 return {}
