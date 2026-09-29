@@ -117,9 +117,12 @@ Note: Updated codebase_rag/language_spec.py
 
 ```bash
 cgr language list-languages
+cgr language list-languages --verbose
 
 cgr language remove-language <language-name>
 ```
+
+`list-languages` shows every language by tier and whether its grammar is installed; `--verbose` adds the node types each tree-sitter language maps, so you can check what `add-grammar` detected.
 
 ## Language Configuration
 

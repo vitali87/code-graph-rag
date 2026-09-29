@@ -135,6 +135,8 @@ def _parse_rules(raw: object, path_name: str, section: str) -> tuple[_Rule, ...]
 
 @dataclass(frozen=True)
 class _LangConfig:
+    # the config's `language`, falling back to the file stem; only displayed
+    language: str
     ast_grep_id: str
     functions: tuple[_Rule, ...]
     classes: tuple[_Rule, ...]
@@ -157,6 +159,7 @@ def load_pattern_configs() -> dict[str, _LangConfig]:
         if isinstance(extensions, str):
             extensions = [ext.strip() for ext in extensions.split(",") if ext.strip()]
         config = _LangConfig(
+            language=str(data.get("language") or path.stem),
             ast_grep_id=str(ast_grep_id),
             functions=_parse_rules(data.get("functions"), path.name, "functions"),
             classes=_parse_rules(data.get("classes"), path.name, "classes"),
@@ -180,6 +183,20 @@ def structural_tier_extensions() -> frozenset[str]:
         return frozenset(load_pattern_configs())
     except Exception:  # noqa: BLE001
         return frozenset()
+
+
+def structural_tier_languages() -> dict[str, tuple[str, ...]]:
+    """Each configured language's name, mapped to the extensions routed to it.
+
+    Grouped from the same loader the tier uses, so a language listed here is
+    exactly one the tier parses once the [ast-grep] extra is installed.
+    Raises what `load_pattern_configs` raises: a caller that lists languages
+    decides for itself how to report a config it cannot read.
+    """
+    languages: dict[str, list[str]] = {}
+    for extension, config in load_pattern_configs().items():
+        languages.setdefault(config.language, []).append(extension)
+    return {name: tuple(extensions) for name, extensions in languages.items()}
 
 
 def _leading_identifier(text: str) -> str | None:

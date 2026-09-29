@@ -16,11 +16,17 @@ from .language_spec import LANGUAGE_SPECS, LanguageSpec
 from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
+def _submodule_path(lang_name: str) -> Path:
+    return Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
+
+
+def _submodule_bindings_path(lang_name: str) -> Path:
+    return _submodule_path(lang_name) / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
+
+
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
-    submodule_path = Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
-    python_bindings_path = (
-        submodule_path / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
-    )
+    submodule_path = _submodule_path(lang_name)
+    python_bindings_path = _submodule_bindings_path(lang_name)
 
     if not python_bindings_path.exists():
         return None
@@ -84,18 +90,24 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
     return None
 
 
-def _try_import_language(
-    module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
-) -> LanguageLoader:
+def _import_pip_grammar(module_path: str, attr_name: str) -> LanguageLoader:
     # AttributeError covers a pip package too old to export the requested
-    # grammar variant (tree_sitter_typescript without language_tsx); fall
-    # back rather than crash parser init.
+    # grammar variant (tree_sitter_typescript without language_tsx); report
+    # it missing rather than crash parser init.
     try:
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
         return loader
     except (ImportError, AttributeError):
-        return _try_load_from_submodule(lang_name)
+        return None
+
+
+def _try_import_language(
+    module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
+) -> LanguageLoader:
+    return _import_pip_grammar(module_path, attr_name) or _try_load_from_submodule(
+        lang_name
+    )
 
 
 def _language_imports() -> list[LanguageImport]:
@@ -204,6 +216,21 @@ _IMPORT_SPECS: dict[cs.SupportedLanguage, LanguageImport] = {
 }
 
 _loader_cache: dict[cs.SupportedLanguage, LanguageLoader] = {}
+
+
+def grammar_installed(lang_name: str) -> bool:
+    """Whether a grammar for `lang_name` is present, without loading it.
+
+    Checks the same two sources as `_get_language_library`, but stops at the
+    submodule's bindings directory: the loader compiles a submodule grammar on
+    first use, and a listing must not start a build to answer a yes/no.
+    """
+    lang_import = _IMPORT_SPECS.get(lang_name)
+    if lang_import is None:
+        return _submodule_bindings_path(lang_name).exists()
+    if _import_pip_grammar(lang_import.module_path, lang_import.attr_name) is not None:
+        return True
+    return _submodule_bindings_path(lang_import.submodule_name).exists()
 
 
 def _get_language_library(lang_name: cs.SupportedLanguage) -> LanguageLoader:
