@@ -160,3 +160,49 @@ class TestEmbedCallsSync:
             embed_code("def hello(): pass")
 
         mock_sync.assert_called_once()
+
+
+class TestModelLoadDrain:
+    """The weight upload is drained before the first batch (issue #2218)."""
+
+    @pytest.mark.parametrize(
+        ("device", "moved", "drained"),
+        [
+            (cs.EmbeddingDevice.MPS, True, True),
+            (cs.EmbeddingDevice.CUDA, True, False),
+            (cs.EmbeddingDevice.CPU, False, False),
+        ],
+    )
+    def test_only_an_mps_load_drains_the_stream(
+        self,
+        mock_unixcoder: MagicMock,
+        device: cs.EmbeddingDevice,
+        moved: bool,
+        drained: bool,
+    ) -> None:
+        from codebase_rag import embedder
+
+        events: list[str] = []
+        mock_unixcoder.to.side_effect = lambda _device: (
+            events.append("to") or mock_unixcoder
+        )
+
+        embedder.get_model.cache_clear()
+        with (
+            patch("codebase_rag.embedder.UniXcoder", return_value=mock_unixcoder),
+            patch("codebase_rag.embedder._select_device", return_value=device),
+            patch(
+                "codebase_rag.embedder.torch.mps.synchronize",
+                side_effect=lambda: events.append("sync"),
+            ),
+            patch("codebase_rag.embedder.torch.mps.empty_cache") as mock_empty,
+        ):
+            assert embedder.get_model() is mock_unixcoder
+
+        expected = (["to"] if moved else []) + (["sync"] if drained else [])
+        assert events == expected
+        mock_empty.assert_not_called()
+        # The load drain is not a batch: it must not advance the cache-drop
+        # interval that `_sync_after_batch` counts.
+        assert embedder._batches_since_cache_drop == 0
+        embedder.get_model.cache_clear()

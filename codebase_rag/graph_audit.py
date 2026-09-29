@@ -246,6 +246,15 @@ def collect_live_violations(
                     ),
                 )
             )
+    violations.extend(_missing_required_violations(fetch_all, documented_props))
+    return violations
+
+
+def _missing_required_violations(
+    fetch_all: Callable[[str], Sequence[ResultRow]],
+    documented_props: dict[str, dict[str, bool]],
+) -> list[AuditViolation]:
+    violations: list[AuditViolation] = []
     for label, schema_props in documented_props.items():
         required = [prop for prop, is_required in schema_props.items() if is_required]
         # An all-optional schema would render an empty WHERE clause, which

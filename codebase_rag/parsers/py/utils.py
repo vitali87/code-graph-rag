@@ -124,7 +124,7 @@ def external_stdlib_base_method_names(parent_qns: list[str]) -> frozenset[str]:
         try:
             module = importlib.import_module(module_path)
             base = getattr(module, class_name, None)
-        except Exception:
+        except Exception:  # noqa: S112
             # Broad on purpose: importing a stdlib module executes its
             # module-level code, which can raise arbitrary platform-specific
             # errors; the parser must degrade to "no external base info"
