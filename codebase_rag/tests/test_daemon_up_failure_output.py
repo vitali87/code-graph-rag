@@ -39,11 +39,11 @@ PROGRESS = """ Network cgr_default Creating
 """
 
 
-def _bind_failure(service: str, port: int) -> str:
-    return PROGRESS + (
+def _bind_failure(service: str, port: int, project: str = "cgr") -> str:
+    return PROGRESS.replace("cgr", project) + (
         "Error response from daemon: failed to set up container networking: "
         "driver failed programming external connectivity on endpoint "
-        f"cgr-{service}-1 (fcf7977130513683d013447a8b854c4ead8edb6997b7): "
+        f"{project}-{service}-1 (fcf7977130513683d013447a8b854c4ead8edb6997b7): "
         f"failed to bind host port 127.0.0.1:{port}/tcp: address already in use\n"
     )
 
@@ -108,6 +108,43 @@ def test_a_lab_that_cannot_start_does_not_fail_a_usable_stack(
 
     warnings = [r for r in records if r.startswith("WARNING|")]
     assert any("127.0.0.1:3000" in w and "LAB_PORT" in w for w in warnings), records
+
+
+@pytest.mark.parametrize("project", ["demo", "my.stack"])
+def test_a_lab_failure_under_another_project_name_is_still_optional(
+    tmp_path: Path, project: str
+) -> None:
+    # Review of PR 2493: Compose names containers after the manager's project
+    # (`demo-lab-1`), and a pattern fixed to `cgr` missed them, so a Lab
+    # failure failed a usable stack again.
+    src = tmp_path / "compose.yaml"
+    src.write_text("services: {}\n", encoding="utf-8")
+    mgr = StackManager(home=tmp_path, package_compose=src, project_name=project)
+
+    records = _up(
+        mgr,
+        _bind_failure(stack_cs.SERVICE_LAB, 3000, project),
+        {stack_cs.SERVICE_MEMGRAPH, stack_cs.SERVICE_QDRANT},
+    )
+
+    warnings = [r for r in records if r.startswith("WARNING|")]
+    assert any("127.0.0.1:3000" in w and "LAB_PORT" in w for w in warnings), records
+
+
+def test_another_projects_container_is_not_this_stacks_lab(tmp_path: Path) -> None:
+    # Negative: under project `my.stack`, a name like `myxstack-lab-1` (the dot
+    # read as a regex wildcard) or plain `cgr-lab-1` is not this stack's Lab.
+    src = tmp_path / "compose.yaml"
+    src.write_text("services: {}\n", encoding="utf-8")
+    mgr = StackManager(home=tmp_path, package_compose=src, project_name="my.stack")
+
+    for other in ("myxstack", "cgr"):
+        with pytest.raises(StackError):
+            _up(
+                mgr,
+                _bind_failure(stack_cs.SERVICE_LAB, 3000, other),
+                {stack_cs.SERVICE_MEMGRAPH, stack_cs.SERVICE_QDRANT},
+            )
 
 
 def test_a_lab_failure_with_memgraph_down_still_fails(mgr: StackManager) -> None:

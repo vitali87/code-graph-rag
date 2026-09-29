@@ -64,10 +64,11 @@ MSG_COMPOSE_UP_OUTPUT = "docker compose up output:\n{output}"
 COMPOSE_ERROR_LINE = re.compile(r"\berror\b", re.IGNORECASE)
 # The failing container, named by the daemon's error ("endpoint cgr-lab-1")
 # or by Compose's own state line ("Container cgr-lab-1 Error"); the progress
-# lines name every container and must not count.
-COMPOSE_FAILED_SERVICE = re.compile(
-    rf"endpoint {COMPOSE_PROJECT_NAME}[-_](?P<endpoint>[a-z]+)[-_]\d+"
-    rf"|Container {COMPOSE_PROJECT_NAME}[-_](?P<container>[a-z]+)[-_]\d+ Error"
+# lines name every container and must not count. `{project}` is the stack's
+# Compose project name, escaped: containers are named after it.
+COMPOSE_FAILED_SERVICE = (
+    r"endpoint {project}[-_](?P<endpoint>[a-z]+)[-_]\d+"
+    r"|Container {project}[-_](?P<container>[a-z]+)[-_]\d+ Error"
 )
 COMPOSE_PORT_IN_USE = re.compile(
     r"failed to bind host port (?P<address>\S+?)/(?:tcp|udp): address already in use"

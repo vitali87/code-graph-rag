@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -232,14 +233,16 @@ class StackError(RuntimeError):
     pass
 
 
-def _compose_failure(output: str) -> tuple[str, str | None]:
+def _compose_failure(output: str, project_name: str) -> tuple[str, str | None]:
     """Why `docker compose up` failed, briefly, and which service failed.
 
     A port clash is named with the variable that moves it; otherwise the
     error lines are kept and the progress lines dropped. Output with no
     recognisable error line is reported whole rather than lost.
     """
-    failed = cs.COMPOSE_FAILED_SERVICE.search(output)
+    failed = re.search(
+        cs.COMPOSE_FAILED_SERVICE.format(project=re.escape(project_name)), output
+    )
     service = (
         (failed.group("endpoint") or failed.group("container")) if failed else None
     )
@@ -640,7 +643,7 @@ class StackManager:
                 part for part in (result.stdout.strip(), result.stderr.strip()) if part
             )
             logger.debug(cs.MSG_COMPOSE_UP_OUTPUT.format(output=output))
-            detail, service = _compose_failure(output)
+            detail, service = _compose_failure(output, self.project_name)
             if service == cs.SERVICE_LAB and self._core_services_running():
                 logger.warning(cs.WARN_LAB_NOT_STARTED.format(detail=detail))
                 return
