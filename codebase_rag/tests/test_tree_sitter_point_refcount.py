@@ -11,15 +11,18 @@ upstream after 0.26.0, not yet released).
 
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-from tree_sitter import Node
+from tree_sitter import Node, Point
 
+import codebase_rag
 from codebase_rag import constants as cs
+from codebase_rag import tree_sitter_point
 from codebase_rag.config import settings
 from codebase_rag.parser_loader import load_parsers
 
@@ -65,6 +68,94 @@ def test_row_and_column_still_read_the_point() -> None:
     for point in (node.start_point, node.end_point, node.children[0].start_point):
         assert (point.row, point.column) == (point[0], point[1])
     assert isinstance(node.start_point, tuple)
+
+
+def test_importing_the_package_installs_the_accessors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The cgr pytest plugin imports `codebase_rag` before any test runs, so
+    # the accessors are already replaced here. Take them away and forget the
+    # module, then import the package again: the package import alone must
+    # put them back, or a caller that never names the module stays exposed.
+    monkeypatch.delattr(Point, "row")
+    monkeypatch.delattr(Point, "column")
+    monkeypatch.delitem(sys.modules, tree_sitter_point.__name__)
+    monkeypatch.delattr(codebase_rag, "tree_sitter_point")
+    monkeypatch.delattr(codebase_rag, "_tree_sitter_point")
+    assert not hasattr(Point, "row")
+
+    importlib.reload(codebase_rag)
+
+    assert isinstance(Point.__dict__["row"], property)
+    assert isinstance(Point.__dict__["column"], property)
+    point = _far_node().start_point
+    row = point[0]
+    before = sys.getrefcount(row)
+    assert (point.row, point.column) == (point[0], point[1])
+    assert sys.getrefcount(row) == before
+
+
+def test_install_makes_row_and_column_read_the_items(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StalePoint(tuple):
+        # A tuple Point whose getters are still the binding's own.
+        @property
+        def row(self) -> str:
+            return "stale"
+
+        @property
+        def column(self) -> str:
+            return "stale"
+
+    monkeypatch.setattr(tree_sitter_point, "Point", StalePoint)
+
+    tree_sitter_point.install()
+
+    point = StalePoint((FAR, FAR + 1))
+    assert (point.row, point.column) == (FAR, FAR + 1)
+
+
+def test_install_leaves_a_point_that_is_not_a_tuple_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Negative: a Point that is not a tuple has no items to read, so its own
+    # accessors are the only correct ones.
+    class OpaquePoint:
+        row = "own row"
+        column = "own column"
+
+    monkeypatch.setattr(tree_sitter_point, "Point", OpaquePoint)
+
+    tree_sitter_point.install()
+
+    assert OpaquePoint.__dict__["row"] == "own row"
+    assert OpaquePoint.__dict__["column"] == "own column"
+
+
+def test_install_gives_up_quietly_on_an_immutable_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Negative: a binding that rebuilt Point as an immutable type is one that
+    # fixed the getters, and importing cgr must not fail on it.
+    attempts: list[str] = []
+
+    class ImmutableType(type):
+        # What CPython raises on assigning to a static or immutable type.
+        def __setattr__(cls, name: str, value: property) -> None:
+            attempts.append(name)
+            raise TypeError(name)
+
+    class ImmutablePoint(tuple, metaclass=ImmutableType):
+        pass
+
+    monkeypatch.setattr(tree_sitter_point, "Point", ImmutablePoint)
+
+    tree_sitter_point.install()
+
+    assert attempts == ["row"]
+    assert "row" not in ImmutablePoint.__dict__
+    assert "column" not in ImmutablePoint.__dict__
 
 
 def _go_file_with_a_shadowed_type_past_row_257() -> str:
