@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -56,6 +56,7 @@ from . import exceptions as ex
 from . import logs as ls
 from .cli_runtime import app_context, connect_memgraph, dim, style
 from .config import (
+    CGRIGNORE_FILENAME,
     ModelConfig,
     load_ignore_patterns,
     provider_env_api_key,
@@ -1960,21 +1961,77 @@ def prompt_for_unignored_directories(
     )
 
     if response.lower() == cs.INTERACTIVE_KEEP_ALL:
-        return frozenset(all_candidates) | cgrignore.unignore
+        kept = frozenset(all_candidates)
+    elif response.lower() == cs.INTERACTIVE_KEEP_NONE:
+        kept = frozenset()
+    else:
+        expand_requests, regular_selections = _parse_keep_selection(response)
+        selected: set[str] = set()
+        for root in _selected_roots(expand_requests, sorted_roots):
+            selected.update(_prompt_nested_selection(root, groups[root]))
+        for root in _selected_roots(regular_selections, sorted_roots):
+            selected.update(groups[root])
+        kept = frozenset(selected)
 
-    if response.lower() == cs.INTERACTIVE_KEEP_NONE:
-        return cgrignore.unignore
+    _offer_to_save_keeps(repo_path, kept - cgrignore.unignore)
+    return kept | cgrignore.unignore
 
-    expand_requests, regular_selections = _parse_keep_selection(response)
-    selected: set[str] = set()
 
-    for root in _selected_roots(expand_requests, sorted_roots):
-        selected.update(_prompt_nested_selection(root, groups[root]))
+def _offer_to_save_keeps(repo_path: Path, new_keeps: frozenset[str]) -> None:
+    """Offer to save new keeps to `.cgrignore` so later syncs keep them too.
 
-    for root in _selected_roots(regular_selections, sorted_roots):
-        selected.update(groups[root])
-
-    return frozenset(selected) | cgrignore.unignore
+    Otherwise a choice made here holds for this run only: the next ordinary
+    sync reads the exclusions from `.cgrignore` alone and removes the kept
+    directories from the graph again (#2448).
+    """
+    if not new_keeps:
+        return
+    lines = [f"{cs.CGRIGNORE_UNIGNORE_PREFIX}{path}" for path in sorted(new_keeps)]
+    listing = cs.SEPARATOR_COMMA_SPACE.join(lines)
+    ignore_file = repo_path / CGRIGNORE_FILENAME
+    if not Confirm.ask(
+        style(cs.INTERACTIVE_PROMPT_SAVE_KEEPS.format(lines=listing), cs.Color.CYAN),
+        default=True,
+    ):
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_THIS_RUN.format(
+                    lines=listing, file=CGRIGNORE_FILENAME
+                ),
+                cs.Color.YELLOW,
+            )
+        )
+        return
+    try:
+        existing = (
+            ignore_file.read_text(encoding=cs.ENCODING_UTF8)
+            if ignore_file.is_file()
+            else ""
+        )
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        ignore_file.write_text(
+            existing + "\n".join([cs.CGRIGNORE_KEEPS_HEADER, *lines]) + "\n",
+            encoding=cs.ENCODING_UTF8,
+        )
+    except OSError as e:
+        app_context.console.print(
+            style(
+                cs.INTERACTIVE_MSG_KEEPS_NOT_SAVED.format(
+                    file=CGRIGNORE_FILENAME, error=e
+                ),
+                cs.Color.YELLOW,
+            )
+        )
+        return
+    app_context.console.print(
+        style(
+            cs.INTERACTIVE_MSG_KEEPS_SAVED.format(
+                lines=listing, file=CGRIGNORE_FILENAME
+            ),
+            cs.Color.GREEN,
+        )
+    )
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:

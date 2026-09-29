@@ -535,6 +535,20 @@ INTERACTIVE_INSTRUCTIONS_NESTED = (
 INTERACTIVE_PROMPT_KEEP = "Keep"
 INTERACTIVE_KEEP_ALL = "all"
 INTERACTIVE_KEEP_NONE = "none"
+# Saving keeps from interactive setup (issue #2448).
+CGRIGNORE_UNIGNORE_PREFIX = "!"
+CGRIGNORE_KEEPS_HEADER = "# Kept by `cgr --interactive-setup`"
+INTERACTIVE_PROMPT_SAVE_KEEPS = (
+    "Save {lines} to .cgrignore so every later sync keeps them too?"
+)
+INTERACTIVE_MSG_KEEPS_SAVED = "Saved {lines} to {file}; every later sync keeps them."
+INTERACTIVE_MSG_KEEPS_THIS_RUN = (
+    "Kept for this run only: the next sync without --interactive-setup excludes "
+    "them again. To keep them, add {lines} to {file}."
+)
+INTERACTIVE_MSG_KEEPS_NOT_SAVED = (
+    "Could not write {file} ({error}); the choice is kept for this run only."
+)
 INTERACTIVE_EXPAND_SUFFIX = "e"
 INTERACTIVE_BFS_MAX_DEPTH = 10
 INTERACTIVE_DEFAULT_GROUP = "."
