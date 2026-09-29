@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 class WorkspaceRepo(BaseModel):
     path: str
     project_name: str
+    # Older workspace files have no provenance field. Keep their historical
+    # named behavior while new entries record the user's actual choice.
+    project_named: bool = True
 
     def repo_path(self) -> Path:
         return Path(self.path).expanduser().resolve()

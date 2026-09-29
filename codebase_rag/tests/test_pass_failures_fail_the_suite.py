@@ -48,7 +48,7 @@ def _run_with_broken_pass(
         (CallProcessor, "_ingest_function_calls", "Failed to process calls in "),
         (DefinitionProcessor, "_ingest_all_functions", "Failed to parse or ingest "),
         (ImportProcessor, "_parse_python_imports", "Failed to parse imports in "),
-        (dependency_parser.toml, "load", "Error parsing "),
+        (dependency_parser, "_load_toml", "Error parsing "),
     ],
     ids=["calls", "definitions", "imports", "dependencies"],
 )

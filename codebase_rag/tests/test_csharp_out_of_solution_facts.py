@@ -72,6 +72,23 @@ def test_slnx_member_projects_parsed(temp_repo: Path) -> None:
     assert members == {(temp_repo / "Main" / "Main.csproj").resolve()}
 
 
+def test_slnx_declaring_entities_is_refused_not_raised(temp_repo: Path) -> None:
+    from codebase_rag.parsers.csharp_frontend.frontend import _solution_member_projects
+
+    # Negative test. defusedxml refuses entity declarations with
+    # EntitiesForbidden, a ValueError rather than a ParseError, so it escaped
+    # this handler and, with no guard further up, aborted the whole index run
+    # instead of degrading like any other unreadable solution file.
+    _solution_repo(
+        temp_repo,
+        "Repo.slnx",
+        '<!DOCTYPE Solution [<!ENTITY p "Main/Main.csproj">]>\n'
+        '<Solution><Project Path="&p;" /></Solution>\n',
+    )
+
+    assert _solution_member_projects(temp_repo / "Repo.slnx") == set()
+
+
 def test_uncovered_projects_found_for_solution(temp_repo: Path) -> None:
     from codebase_rag.parsers.csharp_frontend.frontend import uncovered_csharp_projects
 

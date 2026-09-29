@@ -189,7 +189,7 @@ def test_an_unreadable_but_present_target_is_not_treated_as_deleted(
     updater = _create_graph_updater(target, store)
 
     with (
-        patch.object(graph_updater_module, "_hash_file_with_bytes", lambda _p: None),
+        patch.object(graph_updater_module, "_hash_file_with_bytes", return_value=None),
         patch.object(store, "execute_write", wraps=store.execute_write) as spy,
     ):
         updater.run()

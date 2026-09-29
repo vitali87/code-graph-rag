@@ -137,6 +137,18 @@ PROVIDER_ENV_KEYS = {
 }
 
 
+def provider_env_api_key(provider: str) -> str | None:
+    """The key `provider` falls back to when none is configured for a role.
+
+    `_resolve_api_key` in providers/base.py reads the same variable, so a
+    config built for a provider chosen on the command line carries the key the
+    provider will actually send; the context token counter reads `api_key`
+    directly (#2195).
+    """
+    env_var = PROVIDER_ENV_KEYS.get(provider.lower())
+    return normalised_credential(os.environ.get(env_var)) if env_var else None
+
+
 @dataclass
 class ModelConfig:
     provider: str
@@ -177,10 +189,17 @@ class AppConfig(BaseSettings):
     All settings are loaded from environment variables or a .env file.
     """
 
+    # `.env` is read from the directory cgr runs in, which is usually the
+    # user's own project, so it routinely holds keys that are not cgr settings
+    # (a provider key the missing-key message asks for, issue #2194, or the
+    # project's own `CRATES_API_TOKEN`). Refusing them made every command fail
+    # at start-up and echoed the secret in the validation error, so undeclared
+    # keys are ignored rather than forbidden.
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Which graph engine the ingestor talks to. Memgraph stays the default,
@@ -332,6 +351,14 @@ class AppConfig(BaseSettings):
 
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_URL: str | None = None
+    # Sent as the `api-key` header, so only a server (QDRANT_URL) uses it:
+    # Qdrant Cloud always requires one, and a self-hosted server does once
+    # QDRANT__SERVICE__API_KEY is set. qdrant-client never reads it from the
+    # environment, so it must be passed explicitly.
+    QDRANT_API_KEY: str | None = None
+    # Over a plain http:// QDRANT_URL the key would travel unencrypted, so it is
+    # refused unless this is set, for a transport protected some other way.
+    QDRANT_ALLOW_INSECURE_API_KEY: bool = False
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
@@ -368,7 +395,10 @@ class AppConfig(BaseSettings):
     FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
+    # Measured in bytes of source the cached ASTs span (see ast_cache.py).
     CACHE_MAX_MEMORY_MB: int = 500
+    # No longer read (the AST cache now evicts LRU until under its cap); kept
+    # so an existing .env that sets them still validates.
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
@@ -453,6 +483,26 @@ class AppConfig(BaseSettings):
 
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
         model = getattr(self, f"{role_upper}_MODEL", None)
+
+        # Half a role is a mistake, not a request for the default: falling
+        # back to Ollama here skipped the API-key gate (Ollama needs none) and
+        # then failed later as "Ollama not running" or quietly ran a small
+        # local model instead of the one the user asked for.
+        if bool(provider) != bool(model):
+            provider_var, model_var = f"{role_upper}_PROVIDER", f"{role_upper}_MODEL"
+            set_var, value, missing_var = (
+                (provider_var, provider, model_var)
+                if provider
+                else (model_var, model, provider_var)
+            )
+            raise ValueError(
+                ex.MODEL_ROLE_HALF_CONFIGURED.format(
+                    set_var=set_var,
+                    value=value,
+                    missing_var=missing_var,
+                    role=role_upper,
+                )
+            )
 
         if provider and model:
             return ModelConfig(

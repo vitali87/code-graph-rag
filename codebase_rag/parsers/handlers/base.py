@@ -25,9 +25,7 @@ class BaseLanguageHandler:
         return False
 
     def extract_function_name(self, node: ASTNode) -> str | None:
-        if (name_node := node.child_by_field_name(cs.TS_FIELD_NAME)) and name_node.text:
-            return safe_decode_text(name_node)
-        return None
+        return self._extract_node_name(node)
 
     def build_function_qualified_name(
         self,

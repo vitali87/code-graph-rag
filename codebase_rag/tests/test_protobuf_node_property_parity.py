@@ -64,8 +64,17 @@ _NOT_EXPORTED: dict[str, frozenset[str]] = {
     # Exporting it needs a proto field plus regenerated bindings, which needs
     # protoc; neither protoc nor grpc_tools is available in this environment,
     # and #1490 carries that question for the whole set.
+    # `unresolved_references` (issue #1568) degrades the same way as
+    # `unresolved_specifiers`: absent reads as "nothing waited", and the next
+    # parse of the module rewrites the list.
     "Module": frozenset(
-        {"absolute_path", "end_line", "start_line", "unresolved_specifiers"}
+        {
+            "absolute_path",
+            "end_line",
+            "start_line",
+            "unresolved_specifiers",
+            "unresolved_references",
+        }
     ),
     "Class": frozenset(
         {"anchor_hash", "absolute_path", "modifiers", "path", "start_col"}

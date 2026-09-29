@@ -55,50 +55,18 @@ def create_class_relationships(
         )
 
     if cpp_bases is not None and defer_cpp_inherits is not None:
-        # A C++ base often lives in another header, so its qn cannot resolve
-        # until every class is registered; hold the INHERITS edge back for
-        # resolve_deferred_cpp_inherits instead of emitting the module-anchored
-        # guess (a phantom the database drops for every cross-file base).
-        namespace_path = cs.SEPARATOR_DOT.join(
-            cpp_utils.extract_namespace_path(class_node)
-        )
-        for base_index, (written_name, guess_qn) in enumerate(cpp_bases):
-            defer_cpp_inherits.append(
-                DeferredCppInherit(
-                    child_label=str(node_type),
-                    child_qn=class_qn,
-                    base_name=written_name,
-                    guess_qn=guess_qn,
-                    namespace_path=namespace_path,
-                    base_index=base_index,
-                )
-            )
-    elif defer_inherits is not None:
-        # A non-C++ parent may live in a file not yet parsed, in which case
-        # the qn above is only the module-anchored fallback guess; hold the
-        # edge back for resolve_deferred_inherits so it is re-resolved
-        # against the full registry (an unresolvable parent emits no edge).
-        for base_index, parent_class_qn in enumerate(parent_classes):
-            defer_inherits.append(
-                DeferredInherit(
-                    rel_type=cs.RelationshipType.INHERITS,
-                    child_qn=class_qn,
-                    parent_qn=parent_class_qn,
-                    module_qn=module_qn,
-                    base_index=base_index,
-                    language=language,
-                )
-            )
+        _defer_cpp_bases(class_node, class_qn, node_type, cpp_bases, defer_cpp_inherits)
     else:
-        for base_index, parent_class_qn in enumerate(parent_classes):
-            create_inheritance_relationship(
-                node_type,
-                class_qn,
-                parent_class_qn,
-                function_registry,
-                ingestor,
-                base_index,
-            )
+        _link_parent_classes(
+            parent_classes,
+            class_qn,
+            module_qn,
+            node_type,
+            language,
+            ingestor,
+            function_registry,
+            defer_inherits,
+        )
 
     # A class OR an enum can `implements` interfaces; both expose them via the
     # `interfaces` field (a super_interfaces clause), so handle both. C#
@@ -112,28 +80,111 @@ def create_class_relationships(
         cs.TS_CSHARP_RECORD_DECLARATION,
         cs.TS_DART_CLASS_DEFINITION,
     ):
-        for interface_qn in pe.extract_implemented_interfaces(
-            class_node, module_qn, resolve_to_qn, csharp_base_kinds
-        ):
-            if defer_inherits is not None:
-                defer_inherits.append(
-                    DeferredInherit(
-                        rel_type=cs.RelationshipType.IMPLEMENTS,
-                        child_qn=class_qn,
-                        parent_qn=interface_qn,
-                        module_qn=module_qn,
-                        base_index=0,
-                        language=language,
-                    )
+        _link_implemented_interfaces(
+            pe.extract_implemented_interfaces(
+                class_node, module_qn, resolve_to_qn, csharp_base_kinds
+            ),
+            class_qn,
+            module_qn,
+            node_type,
+            language,
+            ingestor,
+            interface_implementers,
+            defer_inherits,
+        )
+
+
+def _link_parent_classes(
+    parent_classes: list[str],
+    class_qn: str,
+    module_qn: str,
+    node_type: NodeType,
+    language: cs.SupportedLanguage,
+    ingestor: IngestorProtocol,
+    function_registry: FunctionRegistryTrieProtocol,
+    defer_inherits: list[DeferredInherit] | None,
+) -> None:
+    if defer_inherits is None:
+        for base_index, parent_class_qn in enumerate(parent_classes):
+            create_inheritance_relationship(
+                node_type,
+                class_qn,
+                parent_class_qn,
+                function_registry,
+                ingestor,
+                base_index,
+            )
+        return
+    # A non-C++ parent may live in a file not yet parsed, in which case the qn
+    # above is only the module-anchored fallback guess; hold the edge back for
+    # resolve_deferred_inherits so it is re-resolved against the full registry
+    # (an unresolvable parent emits no edge).
+    for base_index, parent_class_qn in enumerate(parent_classes):
+        defer_inherits.append(
+            DeferredInherit(
+                rel_type=cs.RelationshipType.INHERITS,
+                child_qn=class_qn,
+                parent_qn=parent_class_qn,
+                module_qn=module_qn,
+                base_index=base_index,
+                language=language,
+            )
+        )
+
+
+def _link_implemented_interfaces(
+    interface_qns: list[str],
+    class_qn: str,
+    module_qn: str,
+    node_type: NodeType,
+    language: cs.SupportedLanguage,
+    ingestor: IngestorProtocol,
+    interface_implementers: dict[str, set[str]] | None,
+    defer_inherits: list[DeferredInherit] | None,
+) -> None:
+    for interface_qn in interface_qns:
+        if defer_inherits is not None:
+            defer_inherits.append(
+                DeferredInherit(
+                    rel_type=cs.RelationshipType.IMPLEMENTS,
+                    child_qn=class_qn,
+                    parent_qn=interface_qn,
+                    module_qn=module_qn,
+                    base_index=0,
+                    language=language,
                 )
-            else:
-                create_implements_relationship(
-                    node_type, class_qn, interface_qn, ingestor
-                )
-            # Record implementers so the resolver can dispatch an interface-typed
-            # call to the concrete method when the interface has exactly one impl.
-            if interface_implementers is not None:
-                interface_implementers.setdefault(interface_qn, set()).add(class_qn)
+            )
+        else:
+            create_implements_relationship(node_type, class_qn, interface_qn, ingestor)
+        # Record implementers so the resolver can dispatch an interface-typed
+        # call to the concrete method when the interface has exactly one impl.
+        if interface_implementers is not None:
+            interface_implementers.setdefault(interface_qn, set()).add(class_qn)
+
+
+def _defer_cpp_bases(
+    class_node: Node,
+    class_qn: str,
+    node_type: NodeType,
+    cpp_bases: list[tuple[str, str]],
+    defer_cpp_inherits: list[DeferredCppInherit],
+) -> None:
+    # A C++ base often lives in another header, so its qn cannot resolve until
+    # every class is registered; hold the INHERITS edge back for
+    # resolve_deferred_cpp_inherits instead of emitting the module-anchored
+    # guess (a phantom the database drops for every cross-file base).
+    namespace_path = cs.SEPARATOR_DOT.join(cpp_utils.extract_namespace_path(class_node))
+    for base_index, (written_name, guess_qn) in enumerate(cpp_bases):
+        defer_cpp_inherits.append(
+            DeferredCppInherit(
+                child_label=str(node_type),
+                child_qn=class_qn,
+                base_name=written_name,
+                guess_qn=guess_qn,
+                namespace_path=namespace_path,
+                base_index=base_index,
+            )
+        )
 
 
 def get_node_type_for_inheritance(

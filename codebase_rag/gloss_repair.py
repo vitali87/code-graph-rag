@@ -91,7 +91,7 @@ def _unanchored(row: ResultRow) -> _Unanchored:
     prefix = row.get(cs.KEY_ANCHOR_PREFIX)
     suffix = row.get(cs.KEY_ANCHOR_SUFFIX)
     anchor = (
-        TextAnchor(quote, prefix, suffix)  # type: ignore[arg-type]
+        TextAnchor(quote, prefix, suffix)
         if is_comparable_quote(quote)
         and isinstance(prefix, str)
         and isinstance(suffix, str)

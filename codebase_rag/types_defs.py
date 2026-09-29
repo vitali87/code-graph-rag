@@ -5,6 +5,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     ItemsView,
+    Iterable,
     KeysView,
     Mapping,
     Sequence,
@@ -19,8 +20,6 @@ from typing import (
     TypedDict,
     runtime_checkable,
 )
-
-from prompt_toolkit.styles import Style
 
 from .constants import (
     DUPLICATES_MAX_CANDIDATE_PAIRS,
@@ -40,6 +39,9 @@ type LanguageLoader = Callable[[], Language] | None
 
 PropertyValue = str | int | float | bool | list[str] | None
 PropertyDict = dict[str, PropertyValue]
+# Query parameters are only read, so callers may pass any mapping; a plain
+# dict parameter would reject a narrower dict such as dict[str, str].
+PropertyParams = Mapping[str, PropertyValue]
 
 # Any value a parsed JSON document can hold (a package.json manifest, a
 # tsconfig, an OpenAPI spec): recursive, so nested mappings stay typed.
@@ -48,7 +50,9 @@ type JsonValue = (
 )
 
 type ResultScalar = str | int | float | bool | None
-type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
+type ResultValue = (
+    ResultScalar | list[ResultScalar] | dict[str, ResultScalar | list[ResultScalar]]
+)
 type ResultRow = dict[str, ResultValue]
 
 
@@ -135,6 +139,10 @@ class FunctionRegistryTrieProtocol(Protocol):
     def items(self) -> ItemsView[QualifiedName, NodeType]: ...
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
 
+    def find_with_prefix_and_suffix(
+        self, prefix: str, suffix: str
+    ) -> list[QualifiedName]: ...
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
     def register_unique_qn(
@@ -194,7 +202,8 @@ class CursorProtocol(Protocol):
     def close(self) -> None: ...
     @property
     def description(self) -> Sequence[ColumnDescriptor] | None: ...
-    def fetchall(self) -> list[tuple[PropertyValue, ...]]: ...
+    # What a query returns, which is wider than what a write binds.
+    def fetchall(self) -> list[tuple[ResultValue, ...]]: ...
 
 
 @runtime_checkable
@@ -215,13 +224,20 @@ class PathValidatorProtocol(Protocol):
     def project_root(self) -> Path: ...
 
 
+# What `validate_project_path` builds when it refuses a path: any result type
+# constructible from these two keywords, such as the file tools' models.
+class PathResultFactory[T](Protocol):
+    def __call__(self, *, file_path: str, error_message: str) -> T: ...
+
+
 class TreeSitterNodeProtocol(Protocol):
     @property
     def type(self) -> str: ...
+    # Read-only views, so a tree-sitter Node (list[Node], bytes | None) fits.
     @property
-    def children(self) -> list[TreeSitterNodeProtocol]: ...
+    def children(self) -> Sequence[TreeSitterNodeProtocol]: ...
     @property
-    def text(self) -> bytes: ...
+    def text(self) -> bytes | None: ...
 
 
 class ModelConfigKwargs(TypedDict, total=False):
@@ -325,6 +341,16 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
+class CSharpCallShape(NamedTuple):
+    """How a C# method may be called: the arguments every call must pass
+    (parameters with neither a default nor `params`), whether a `params`
+    tail takes extra arguments, and whether it is static."""
+
+    required: int
+    variadic: bool
+    is_static: bool
+
+
 class CancelledResult(NamedTuple):
     cancelled: bool
 
@@ -341,14 +367,6 @@ class AgentLoopUI(NamedTuple):
     denial_default: str
     panel_title: str
 
-
-ORANGE_STYLE = Style.from_dict(
-    {
-        "": "#ff8c00",
-        "bottom-toolbar": "noreverse fg:#888888",
-        "bottom-toolbar.text": "noreverse fg:#888888",
-    }
-)
 
 OPTIMIZATION_LOOP_UI = AgentLoopUI(
     status_message="[bold green]Agent is analysing codebase... (Press Ctrl+C to cancel)[/bold green]",
@@ -572,7 +590,7 @@ class DuplicatesReport(NamedTuple):
 
 class GraphQueryClient(Protocol):
     def fetch_all(
-        self, query: str, params: dict[str, PropertyValue] | None = None
+        self, query: str, params: PropertyParams | None = None
     ) -> list[ResultRow]: ...
 
 
@@ -615,14 +633,9 @@ class DeleteProjectErrorResult(TypedDict):
 DeleteProjectResult = DeleteProjectSuccessResult | DeleteProjectErrorResult
 
 
-MCPResultType = (
-    str
-    | QueryResultDict
-    | CodeSnippetResultDict
-    | ListProjectsResult
-    | DeleteProjectResult
-)
-MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
+# The server hands a result straight to json.dumps or str(), so any value is a
+# valid handler result; a narrower union only disagreed with the handlers.
+MCPHandlerType = Callable[..., Awaitable[object]]
 
 
 class NodeSchema(NamedTuple):
@@ -702,6 +715,14 @@ class FunctionLocation(NamedTuple):
     is_named: bool = True
 
 
+# The source `dict.update` reads as a mapping: anything with keys() and
+# indexing, which is wider than Mapping.
+class KeysAndGetItem[KT, VT](Protocol):
+    def keys(self) -> Iterable[KT]: ...
+
+    def __getitem__(self, key: KT, /) -> VT: ...
+
+
 class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
     """`function_locations` that knows which module each span came from.
 
@@ -723,12 +744,17 @@ class FunctionLocations(dict[FunctionSpanKey, FunctionLocation]):
         super().__setitem__(key, value)
         self._by_module.setdefault(key[0], set()).add(key)
 
-    def update(  # type: ignore[override]
-        self, other: Mapping[FunctionSpanKey, FunctionLocation]
+    def update(
+        self,
+        other: KeysAndGetItem[FunctionSpanKey, FunctionLocation]
+        | Iterable[tuple[FunctionSpanKey, FunctionLocation]] = (),
+        /,
     ) -> None:
         # dict.update bypasses __setitem__ on a subclass, which would leave
-        # the index blind to whatever it wrote.
-        for key, value in other.items():
+        # the index blind to whatever it wrote. dict() takes every source form
+        # dict.update does, and fails on a malformed one before any write.
+        pairs: dict[FunctionSpanKey, FunctionLocation] = dict(other)
+        for key, value in pairs.items():
             self[key] = value
 
     def setdefault(  # type: ignore[override]
@@ -982,7 +1008,7 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, docstring: string?, flow_covered: boolean?, generated: boolean?, generator: string?, start_line: int?, end_line: int?, decorators: list[string]?, rust_cfg_test_mods: list[string]?, rust_ungated_mods: list[string]?, front_matter: list[string]?, unresolved_specifiers: list[string]?, unresolved_references: list[string]?}",
     ),
     NodeSchema(
         NodeLabel.CLASS,

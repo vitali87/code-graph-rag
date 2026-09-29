@@ -25,12 +25,12 @@ def extract_assigned_name(
     if not expression_list:
         return None
 
-    values = []
-    values.extend(
-        expression_list.child(i)
+    values = [
+        child
         for i in range(expression_list.child_count)
         if expression_list.field_name_for_child(i) == cs.FIELD_VALUE
-    )
+        and (child := expression_list.child(i)) is not None
+    ]
     target_index = next(
         (
             idx
@@ -49,12 +49,12 @@ def extract_assigned_name(
     if not variable_list:
         return None
 
-    names = []
-    names.extend(
-        variable_list.child(i)
+    names = [
+        child
         for i in range(variable_list.child_count)
         if variable_list.field_name_for_child(i) == cs.FIELD_NAME
-    )
+        and (child := variable_list.child(i)) is not None
+    ]
     if target_index < len(names):
         var_child = names[target_index]
         if var_child.type in accepted_var_types:

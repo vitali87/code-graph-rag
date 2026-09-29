@@ -13,6 +13,23 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def _lua_method_index_names(
+    index_expr: TreeSitterNodeProtocol,
+) -> tuple[str | None, str | None]:
+    # `Class:method(...)`: the first identifier names the class, the last the
+    # method.
+    class_name: str | None = None
+    method_name: str | None = None
+    for child in index_expr.children:
+        if child.type != cs.TS_LUA_IDENTIFIER:
+            continue
+        if class_name is None:
+            class_name = safe_decode_text(child)
+        else:
+            method_name = safe_decode_text(child)
+    return class_name, method_name
+
+
 class LuaTypeInferenceEngine:
     __slots__ = (
         "import_processor",
@@ -96,31 +113,22 @@ class LuaTypeInferenceEngine:
     def _infer_lua_variable_type_from_value(
         self, value_node: TreeSitterNodeProtocol, module_qn: str
     ) -> str | None:
-        if value_node.type == cs.TS_LUA_FUNCTION_CALL:
-            for child in value_node.children:
-                if child.type == cs.TS_LUA_METHOD_INDEX_EXPRESSION:
-                    class_name = None
-                    method_name = None
-
-                    for grandchild in child.children:
-                        if grandchild.type == cs.TS_LUA_IDENTIFIER:
-                            if class_name is None:
-                                class_name = safe_decode_text(grandchild)
-                            else:
-                                method_name = safe_decode_text(grandchild)
-
-                    if class_name and method_name:
-                        if class_qn := self._resolve_lua_class_name(
-                            class_name, module_qn
-                        ):
-                            logger.debug(
-                                ls.LUA_TYPE_INFERENCE_RETURN,
-                                class_name=class_name,
-                                method_name=method_name,
-                                class_qn=class_qn,
-                            )
-                            return class_qn
-
+        if value_node.type != cs.TS_LUA_FUNCTION_CALL:
+            return None
+        for child in value_node.children:
+            if child.type != cs.TS_LUA_METHOD_INDEX_EXPRESSION:
+                continue
+            class_name, method_name = _lua_method_index_names(child)
+            if not (class_name and method_name):
+                continue
+            if class_qn := self._resolve_lua_class_name(class_name, module_qn):
+                logger.debug(
+                    ls.LUA_TYPE_INFERENCE_RETURN,
+                    class_name=class_name,
+                    method_name=method_name,
+                    class_qn=class_qn,
+                )
+                return class_qn
         return None
 
     def _resolve_lua_class_name(self, class_name: str, module_qn: str) -> str | None:
