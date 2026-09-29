@@ -40,8 +40,11 @@ CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 # count instead of `WHERE NOT (n)--()`: Memgraph 3.x rejects pattern
 # expressions inside WHERE, and this form is accepted by both 2.x and 3.x
 # (issue #1257).
+# `:IncompleteRun` is the CLI's own sync marker, unattached to any project
+# tree on purpose (see CYPHER_MARK_PROJECT_INCOMPLETE); doctor reports it as
+# an interrupted sync, not as an orphan (issue #2394).
 CYPHER_AUDIT_ORPHANS = (
-    "MATCH (n) WHERE NOT n:Project "
+    "MATCH (n) WHERE NOT n:Project AND NOT n:IncompleteRun "
     "OPTIONAL MATCH (n)--(x) "
     "WITH n, count(x) AS degree "
     "WHERE degree = 0 "

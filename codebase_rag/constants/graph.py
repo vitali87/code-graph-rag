@@ -543,6 +543,12 @@ class AuditCheck(StrEnum):
     DANGLING_RELATIONSHIP = "dangling_relationship"
 
 
+# Labels cgr writes for its own bookkeeping rather than as part of the code
+# graph: not in NODE_SCHEMAS (the Cypher prompt is built from it), and not
+# graded by the structural audit. `IncompleteRun` is the sync marker, which
+# doctor reports as an interrupted sync instead (issue #2394).
+AUDIT_BOOKKEEPING_LABELS = frozenset({"IncompleteRun"})
+
 # Graph audit violation details (issue #646)
 AUDIT_DETAIL_ORPHAN = "{label} '{key}' has no relationships"
 AUDIT_DETAIL_UNDOCUMENTED_LABEL = "label '{label}' is not documented in NODE_SCHEMAS"
