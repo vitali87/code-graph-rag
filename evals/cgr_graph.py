@@ -753,6 +753,35 @@ class _StatefulIngestor:
                 return self._path_rows(_FOLDER_LABEL)
             case cs.CYPHER_ALL_PACKAGE_PATHS:
                 return self._path_rows(_PACKAGE_LABEL)
+            case cs.CYPHER_REPO_FILE_PATHS:
+                return self._repo_path_rows(_FILE_LABEL, params or {})
+            case cs.CYPHER_REPO_FOLDER_PATHS:
+                return self._repo_path_rows(_FOLDER_LABEL, params or {})
+            case cs.CYPHER_PROJECT_PACKAGE_PATHS:
+                name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                return [
+                    row
+                    for row in self._path_rows(_PACKAGE_LABEL)
+                    if isinstance(qn := row.get(cs.KEY_QUALIFIED_NAME), str)
+                    and (qn == name or (prefix is not None and qn.startswith(prefix)))
+                ]
+            case cs.CYPHER_PROJECT_PRUNABLE_MODULES:
+                name = _text(params.get(cs.KEY_PROJECT_NAME)) if params else None
+                prefix = _text(params.get(cs.KEY_PROJECT_PREFIX)) if params else None
+                prunable: list[ResultRow] = []
+                for (label, _uid), props in self.nodes.items():
+                    qn = _text(props.get(cs.KEY_QUALIFIED_NAME))
+                    path = _text(props.get(cs.KEY_PATH))
+                    if label != _MODULE_LABEL or qn is None or path is None:
+                        continue
+                    if qn == name or (prefix is not None and qn.startswith(prefix)):
+                        prunable.append({cs.KEY_PATH: path, cs.KEY_QUALIFIED_NAME: qn})
+                return prunable
+            case cs.CYPHER_PROJECT_OUTSIDE_FILE_KEYS:
+                return self._project_outside_file_keys(params or {})
+            case cs.CYPHER_FILE_CONTAINERS:
+                return self._file_containers(params or {})
             case cs.CYPHER_CONTAINER_KIND:
                 # Which container kind the graph records for one directory.
                 # Matches on absolute_path across BOTH labels, as the real
@@ -1321,6 +1350,68 @@ class _StatefulIngestor:
             if props.get(cs.KEY_PATH) in paths:
                 found.extend(self._in.get(node_id, ()))
         return found
+
+    def _repo_path_rows(self, label: str, params: PropertyDict) -> list[ResultRow]:
+        root = _text(params.get(cs.KEY_REPO_ROOT))
+        prefix = _text(params.get(cs.KEY_REPO_PREFIX))
+        return [
+            row
+            for row in self._path_rows(label)
+            if isinstance(key := row.get(cs.KEY_ABSOLUTE_PATH), str)
+            and (key == root or (prefix is not None and key.startswith(prefix)))
+        ]
+
+    def _file_container_edges(self) -> list[tuple[_NodeId, _NodeId]]:
+        return [
+            ((edge[0], edge[1]), (edge[3], edge[4]))
+            for edges in self._out.values()
+            for edge in edges
+            if edge[2] == cs.RelationshipType.CONTAINS_FILE and edge[3] == _FILE_LABEL
+        ]
+
+    def _project_outside_file_keys(self, params: PropertyDict) -> list[ResultRow]:
+        name = _text(params.get(cs.KEY_PROJECT_NAME))
+        root = _text(params.get(cs.KEY_REPO_ROOT))
+        prefix = _text(params.get(cs.KEY_REPO_PREFIX)) or ""
+
+        def _in_repo(key: str | None) -> bool:
+            return key is not None and (key == root or key.startswith(prefix))
+
+        rows: dict[str, ResultRow] = {}
+        for container, file_id in self._file_container_edges():
+            props = self.nodes.get(container, {})
+            ours = (
+                container[0] == cs.NodeLabel.PROJECT and props.get(cs.KEY_NAME) == name
+            ) or _in_repo(_text(props.get(cs.KEY_ABSOLUTE_PATH)))
+            file_props = self.nodes.get(file_id, {})
+            key = _text(file_props.get(cs.KEY_ABSOLUTE_PATH))
+            if ours and key is not None and not _in_repo(key):
+                rows[key] = {
+                    cs.KEY_PATH: _text(file_props.get(cs.KEY_PATH)),
+                    cs.KEY_ABSOLUTE_PATH: key,
+                }
+        return list(rows.values())
+
+    def _file_containers(self, params: PropertyDict) -> list[ResultRow]:
+        raw = params.get(cs.CYPHER_PARAM_PATHS)
+        wanted = (
+            {k for k in raw if isinstance(k, str)} if isinstance(raw, list) else set()
+        )
+        rows: list[ResultRow] = []
+        for container, file_id in self._file_container_edges():
+            key = _text(self.nodes.get(file_id, {}).get(cs.KEY_ABSOLUTE_PATH))
+            if key not in wanted:
+                continue
+            props = self.nodes.get(container, {})
+            rows.append(
+                {
+                    cs.KEY_FILE_KEY: key,
+                    "labels": [container[0]],
+                    cs.KEY_NAME: _text(props.get(cs.KEY_NAME)),
+                    cs.KEY_ABSOLUTE_PATH: _text(props.get(cs.KEY_ABSOLUTE_PATH)),
+                }
+            )
+        return rows
 
     def _path_rows(self, label: str) -> list[ResultRow]:
         rows: list[ResultRow] = []
