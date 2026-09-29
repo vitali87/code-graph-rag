@@ -238,6 +238,13 @@ PROTOBUF_INVALID_REL = (
 PROTOBUF_FLUSH_SUCCESS = "Successfully flushed {nodes} unique nodes and {rels} unique relationships to {path}"
 PROTOBUF_FLUSHING = "Flushing data to {path}..."
 
+# Provenance manifest logs
+CODEC_SCHEMA_MISSING = (
+    "Codec schema {path} is missing from this install, so the manifest records "
+    "no codec_schema_sha256 and cgr diff-index will refuse this index; "
+    "upgrade code-graph-rag"
+)
+
 # Parser loader logs
 BUILDING_BINDINGS = "Building Python bindings for {lang}..."
 BUILD_FAILED = "Failed to build {lang} bindings: stdout={stdout}, stderr={stderr}"
