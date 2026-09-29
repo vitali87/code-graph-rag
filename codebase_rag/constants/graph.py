@@ -731,6 +731,22 @@ CYPHER_DELETE_ORPHAN_EXTERNAL_MODULES = (
     "WHERE inbound = 0 "
     "DETACH DELETE m"
 )
+# A manifest re-parse only MERGEs the dependencies it still names, and an edge
+# does not record which manifest declared it, so the project's edges are
+# dropped and rebuilt from every manifest whenever one changes (issue #2396).
+CYPHER_DELETE_PROJECT_DEPENDENCIES = (
+    "MATCH (:Project {name: $project_name})-[r:DEPENDS_ON_EXTERNAL]->(:ExternalPackage) "
+    "DELETE r"
+)
+# ExternalPackage nodes are shared by name across projects, so only a package
+# no project depends on any more goes.
+CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES = (
+    "MATCH (e:ExternalPackage) "
+    "OPTIONAL MATCH (x)-->(e) "
+    "WITH e, count(x) AS inbound "
+    "WHERE inbound = 0 "
+    "DETACH DELETE e"
+)
 CYPHER_PROJECT_MODULE_PATHS = (
     # The bare-name alternative covers the repository-root __init__.py,
     # whose module qn is the project name itself.

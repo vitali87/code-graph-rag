@@ -1864,6 +1864,51 @@ class GraphUpdater:
             or filepath.suffix.lower() == cs.CSPROJ_SUFFIX
         )
 
+    def _resync_dependencies(
+        self,
+        touched_keys: Iterable[str],
+        reparsed_keys: Collection[str],
+        manifests: Iterable[tuple[Path, str]] | None = None,
+    ) -> None:
+        """Rebuild the project's DEPENDS_ON_EXTERNAL edges when a manifest moved.
+
+        Re-parsing a manifest only MERGEs the dependencies it still names, so
+        a dependency removed from it, or a whole manifest deleted, kept its
+        edge through every later sync while a fresh index dropped it (issue
+        #2396). An edge does not record which manifest declared it (two
+        manifests can name one package), so the project's edges go and every
+        manifest is parsed again; manifests are few and cheap to parse. The
+        ones in `reparsed_keys` are skipped because the caller's re-parse
+        re-adds them. `manifests` is the caller's own walk when it has one;
+        a caller holding a partial file list walks the tree here instead.
+
+        Runs before anything this sync buffers, so the orphan sweep cannot
+        race a re-add: a package still declared is MERGEd back afterwards.
+        """
+        if not isinstance(self.ingestor, QueryProtocol):
+            return
+        if not any(
+            self._is_dependency_file(PurePosixPath(key).name, Path(key))
+            for key in touched_keys
+        ):
+            return
+        logger.info(ls.DEPENDENCIES_RESYNC, project=self.project_name)
+        self.ingestor.execute_write(
+            cs.CYPHER_DELETE_PROJECT_DEPENDENCIES,
+            {cs.KEY_PROJECT_NAME: self.project_name},
+        )
+        self.ingestor.execute_write(cs.CYPHER_DELETE_ORPHAN_EXTERNAL_PACKAGES)
+        if manifests is None:
+            manifests = (
+                (Path(f"{dirpath}/{fname}"), rel_path)
+                for dirpath, fname, rel_path in walk_eligible_files(
+                    self.repo_path, self.exclude_paths, self.unignore_paths
+                )
+            )
+        for path, key in manifests:
+            if key not in reparsed_keys and self._is_dependency_file(path.name, path):
+                self.factory.definition_processor.process_dependencies(path)
+
     def _resolve_deferred_definitions(self, rehydrate: bool) -> dict[str, str]:
         """Every deferred definition-level resolution that must follow Pass 2.
 
@@ -5228,6 +5273,13 @@ class GraphUpdater:
         # emptied graph.
         self._delete_stale_subtrees((*reindexed_keys, *deleted_before_parse))
         self._drop_deleted_file_state(deleted_before_parse)
+        # A single-file run walked only its target, so it cannot supply the
+        # other manifests; the helper walks for them.
+        self._resync_dependencies(
+            (*self._reparsed_file_keys, *deleted_before_parse),
+            self._reparsed_file_keys,
+            eligible_files if self._single_file is None else None,
+        )
         # LIBCLANG ran before this method and emitted the covered files'
         # subtrees; the delete above matches by path, so it took any it had
         # just written for a stem-flux survivor, and the loop below skips
@@ -7192,6 +7244,7 @@ class GraphUpdater:
             )
         )
         self._reingest_delete(reparse, gone, hashes)
+        self._resync_dependencies((*reparse, *gone), reparse)
         parsed = self._reingest_reparse(reparse, gone)
         # After BOTH seed calls and after the re-parse, so a re-parsed file's
         # own entry is exempt while its Module node is still unflushed
